@@ -1,0 +1,15 @@
+apiVersion: 1
+
+providers:
+  - name: RGS release baseline
+    orgId: 1
+    folder: RGS
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
+
+# 仪表盘由版本库声明式提供，生产 UI 不允许漂移式编辑。

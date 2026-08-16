@@ -1,0 +1,1841 @@
+{
+  "nm": "statusbar",
+  "w": 1600,
+  "h": 900,
+  "fr": 30,
+  "bc": "#999999",
+  "cls": [
+    {
+      "nm": "AB",
+      "lcn": "StatusBar",
+      "d": 1,
+      "els": [
+        {
+          "c": "BB",
+          "nm": "customMenuPanel",
+          "pr": 0
+        },
+        {
+          "c": "CB",
+          "nm": "baseBottomCenter",
+          "pr": 0
+        },
+        {
+          "c": "DB",
+          "nm": "baseBottomLeft",
+          "pr": 0
+        },
+        {
+          "c": "EB",
+          "nm": "baseBottomRight",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 800,
+              "y": 900
+            },
+            {
+              "ei": 1,
+              "d": 1
+            },
+            {
+              "ei": 2,
+              "d": 1,
+              "y": 900
+            },
+            {
+              "ei": 3,
+              "d": 1,
+              "x": 1600,
+              "y": 900
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "BB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": -15,
+              "tfx": 800,
+              "tfy": 15,
+              "scx": 1.13,
+              "tex": "T0AB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "CB",
+      "d": 1,
+      "els": [
+        {
+          "c": "GB",
+          "nm": "statusBarPFR",
+          "pr": 0
+        },
+        {
+          "c": "GB",
+          "nm": "statusBarDefault",
+          "pr": 0
+        },
+        {
+          "c": "HB",
+          "nm": "statusBarFreeGame",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 600,
+              "y": 899.6
+            },
+            {
+              "ei": 1,
+              "d": 1,
+              "x": 600,
+              "y": 899.6
+            },
+            {
+              "ei": 2,
+              "d": 1,
+              "x": 785,
+              "y": 899.6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "DB",
+      "d": 1,
+      "els": [
+        {
+          "c": "IB",
+          "nm": "infosBtn",
+          "pr": 0
+        },
+        {
+          "c": "T",
+          "nm": "freeBetText",
+          "pr": 0
+        },
+        {
+          "c": "JB",
+          "nm": "tutorialBtn",
+          "pr": 0
+        },
+        {
+          "c": "KB",
+          "nm": "historyBtn",
+          "pr": 0
+        },
+        {
+          "c": "LB",
+          "nm": "fastPlayBtn",
+          "pr": 0
+        },
+        {
+          "c": "MB",
+          "nm": "modalContainer",
+          "pr": 0
+        },
+        {
+          "c": "NB",
+          "nm": "soundsBtn",
+          "pr": 0
+        },
+        {
+          "c": "OB",
+          "nm": "settingsBtn",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 137,
+              "y": -14
+            },
+            {
+              "ei": 1,
+              "d": 1,
+              "x": 324,
+              "y": -15,
+              "tfx": 79.95,
+              "tfy": 15.05,
+              "txt": "Free bet: $3.00",
+              "fnt": "? ? 18px ROBOTO_CONDENSED_REGULAR",
+              "fc": "#CCCCCC",
+              "txw": 159.85,
+              "txh": 30.15
+            },
+            {
+              "ei": 2,
+              "d": 1,
+              "x": 216,
+              "y": -14
+            },
+            {
+              "ei": 3,
+              "d": 1,
+              "x": 175,
+              "y": -14
+            },
+            {
+              "ei": 4,
+              "d": 1,
+              "x": 108,
+              "y": -16
+            },
+            {
+              "ei": 5,
+              "d": 1
+            },
+            {
+              "ei": 6,
+              "d": 1,
+              "x": 73,
+              "y": -14
+            },
+            {
+              "ei": 7,
+              "d": 1,
+              "x": 13,
+              "y": -23
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "EB",
+      "d": 1,
+      "els": [
+        {
+          "c": "T",
+          "nm": "freeGameWinText",
+          "pr": 0
+        },
+        {
+          "c": "PB",
+          "nm": "clock",
+          "pr": 0
+        },
+        {
+          "c": "QB",
+          "nm": "exitBtn",
+          "pr": 0
+        },
+        {
+          "c": "RB",
+          "nm": "playForRealBtn",
+          "pr": 0
+        },
+        {
+          "c": "SB",
+          "nm": "pngLogo",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": -289.5,
+              "y": -14.85,
+              "tfx": 56.45,
+              "tfy": 15.05,
+              "txt": "Win: $3.00",
+              "fnt": "? ? 18px ROBOTO_CONDENSED_REGULAR",
+              "fc": "#CCCCCC",
+              "al": 2,
+              "txw": 112.95,
+              "txh": 30.15
+            },
+            {
+              "ei": 1,
+              "d": 1,
+              "x": -129,
+              "y": -30
+            },
+            {
+              "ei": 2,
+              "d": 1,
+              "x": -37,
+              "y": -28
+            },
+            {
+              "ei": 3,
+              "d": 1,
+              "x": -320,
+              "y": -14.5,
+              "tfx": 77.5,
+              "tfy": 15.5
+            },
+            {
+              "ei": 4,
+              "d": 1,
+              "x": -225,
+              "y": -30,
+              "ap": 0.55
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "GB",
+      "d": 1,
+      "els": [
+        {
+          "c": "T",
+          "nm": "winText",
+          "pr": 0
+        },
+        {
+          "c": "T",
+          "nm": "betText",
+          "pr": 0
+        },
+        {
+          "c": "T",
+          "nm": "balanceText",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 170.5,
+              "y": -14.85,
+              "tfx": 80.4,
+              "tfy": 15.1,
+              "txt": "Win: $12345.67",
+              "fnt": "? ? 18px ROBOTO_CONDENSED_REGULAR",
+              "fc": "#CCCCCC",
+              "al": 2,
+              "txw": 160.75,
+              "txh": 30.15
+            },
+            {
+              "ei": 1,
+              "d": 1,
+              "x": 6,
+              "y": -14.8,
+              "tfx": 81.95,
+              "tfy": 15.05,
+              "txt": "Bet: $120",
+              "fnt": "? ? 18px ROBOTO_CONDENSED_REGULAR",
+              "fc": "#CCCCCC",
+              "al": 1,
+              "txw": 163.85,
+              "txh": 30.15
+            },
+            {
+              "ei": 2,
+              "d": 1,
+              "x": -172,
+              "y": -14.85,
+              "tfx": 93.9,
+              "tfy": 15.1,
+              "txt": "Balance: $12345.67",
+              "fnt": "? ? 18px ROBOTO_CONDENSED_REGULAR",
+              "fc": "#CCCCCC",
+              "txw": 187.8,
+              "txh": 30.15
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "HB",
+      "d": 1,
+      "els": [
+        {
+          "c": "T",
+          "nm": "totalWinText",
+          "pr": 0
+        },
+        {
+          "c": "T",
+          "nm": "freeGamesText",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 90,
+              "y": -14.8,
+              "tfx": 81.95,
+              "tfy": 15.05,
+              "txt": "Total win: $4.00",
+              "fnt": "? ? 18px ROBOTO_CONDENSED_REGULAR",
+              "fc": "#CCCCCC",
+              "al": 2,
+              "txw": 163.85,
+              "txh": 30.15
+            },
+            {
+              "ei": 1,
+              "d": 1,
+              "x": -111,
+              "y": -14.85,
+              "tfx": 79.9,
+              "tfy": 15.05,
+              "txt": "Free games: 3",
+              "fnt": "? ? 18px ROBOTO_CONDENSED_REGULAR",
+              "fc": "#CCCCCC",
+              "txw": 159.85,
+              "txh": 30.15
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "IB",
+      "d": 4,
+      "lbs": [
+        {
+          "fr": 0,
+          "nm": "up"
+        },
+        {
+          "fr": 1,
+          "nm": "over"
+        },
+        {
+          "fr": 2,
+          "nm": "down"
+        },
+        {
+          "fr": 3,
+          "nm": "disabled"
+        }
+      ],
+      "els": [
+        {
+          "c": "TB",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 1,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 2,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 1
+            }
+          ]
+        },
+        {
+          "fr": 3,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 0,
+              "rp": 0.4,
+              "gp": 0.4,
+              "bp": 0.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "JB",
+      "d": 4,
+      "lbs": [
+        {
+          "fr": 0,
+          "nm": "up"
+        },
+        {
+          "fr": 1,
+          "nm": "over"
+        },
+        {
+          "fr": 2,
+          "nm": "down"
+        },
+        {
+          "fr": 3,
+          "nm": "disabled"
+        }
+      ],
+      "els": [
+        {
+          "c": "UB",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": -2,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 1,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 2,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": -1
+            }
+          ]
+        },
+        {
+          "fr": 3,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": -2,
+              "rp": 0.4,
+              "gp": 0.4,
+              "bp": 0.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "KB",
+      "d": 4,
+      "lbs": [
+        {
+          "fr": 0,
+          "nm": "up"
+        },
+        {
+          "fr": 1,
+          "nm": "over"
+        },
+        {
+          "fr": 2,
+          "nm": "down"
+        },
+        {
+          "fr": 3,
+          "nm": "disabled"
+        }
+      ],
+      "els": [
+        {
+          "c": "VB",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 1,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 2,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 1
+            }
+          ]
+        },
+        {
+          "fr": 3,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 0,
+              "rp": 0.4,
+              "gp": 0.4,
+              "bp": 0.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "LB",
+      "d": 8,
+      "lbs": [
+        {
+          "fr": 0,
+          "nm": "up"
+        },
+        {
+          "fr": 1,
+          "nm": "over"
+        },
+        {
+          "fr": 2,
+          "nm": "down"
+        },
+        {
+          "fr": 3,
+          "nm": "disabled"
+        },
+        {
+          "fr": 4,
+          "nm": "selected"
+        },
+        {
+          "fr": 5,
+          "nm": "sover"
+        },
+        {
+          "fr": 6,
+          "nm": "sdown"
+        },
+        {
+          "fr": 7,
+          "nm": "sdisabled"
+        }
+      ],
+      "els": [
+        {
+          "c": "WB",
+          "pr": 0
+        },
+        {
+          "c": "XB",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 1,
+              "d": 1,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 1,
+          "dl": [
+            {
+              "ei": 1,
+              "d": 1,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 2,
+          "dl": [
+            {
+              "ei": 1,
+              "d": 1,
+              "y": 1
+            }
+          ]
+        },
+        {
+          "fr": 3,
+          "dl": [
+            {
+              "ei": 1,
+              "d": 1,
+              "y": 0,
+              "rp": 0.4,
+              "gp": 0.4,
+              "bp": 0.4
+            }
+          ]
+        },
+        {
+          "fr": 4,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 5,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 6,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 1
+            }
+          ]
+        },
+        {
+          "fr": 7,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 0,
+              "rp": 0.4,
+              "gp": 0.4,
+              "bp": 0.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "MB",
+      "d": 1,
+      "lbs": [
+        {
+          "fr": 0,
+          "nm": "dummy"
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": []
+        }
+      ]
+    },
+    {
+      "nm": "NB",
+      "d": 8,
+      "lbs": [
+        {
+          "fr": 0,
+          "nm": "up"
+        },
+        {
+          "fr": 1,
+          "nm": "over"
+        },
+        {
+          "fr": 2,
+          "nm": "down"
+        },
+        {
+          "fr": 3,
+          "nm": "disabled"
+        },
+        {
+          "fr": 4,
+          "nm": "selected"
+        },
+        {
+          "fr": 5,
+          "nm": "sover"
+        },
+        {
+          "fr": 6,
+          "nm": "sdown"
+        },
+        {
+          "fr": 7,
+          "nm": "sdisabled"
+        }
+      ],
+      "els": [
+        {
+          "c": "YB",
+          "pr": 0
+        },
+        {
+          "c": "ZB",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 1,
+              "d": 1,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 1,
+          "dl": [
+            {
+              "ei": 1,
+              "d": 1,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 2,
+          "dl": [
+            {
+              "ei": 1,
+              "d": 1,
+              "y": 1
+            }
+          ]
+        },
+        {
+          "fr": 3,
+          "dl": [
+            {
+              "ei": 1,
+              "d": 1,
+              "y": 0,
+              "rp": 0.4,
+              "gp": 0.4,
+              "bp": 0.4
+            }
+          ]
+        },
+        {
+          "fr": 4,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 5,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 6,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 1
+            }
+          ]
+        },
+        {
+          "fr": 7,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 0,
+              "rp": 0.4,
+              "gp": 0.4,
+              "bp": 0.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "OB",
+      "d": 4,
+      "lbs": [
+        {
+          "fr": 0,
+          "nm": "up"
+        },
+        {
+          "fr": 1,
+          "nm": "over"
+        },
+        {
+          "fr": 2,
+          "nm": "down"
+        },
+        {
+          "fr": 3,
+          "nm": "disabled"
+        }
+      ],
+      "els": [
+        {
+          "c": "AC",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 1,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 2,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 1
+            }
+          ]
+        },
+        {
+          "fr": 3,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 0,
+              "rp": 0.4,
+              "gp": 0.4,
+              "bp": 0.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "PB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        },
+        {
+          "c": "T",
+          "nm": "clockText",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 11,
+              "y": 15,
+              "tfx": 11,
+              "tfy": 11,
+              "tex": "T0BB.png"
+            },
+            {
+              "ei": 1,
+              "d": 1,
+              "x": 12,
+              "y": 21.25,
+              "tfx": -14.95,
+              "tfy": 21.1,
+              "txt": "23:59",
+              "fnt": "? ? 18px ROBOTO_CONDENSED_REGULAR",
+              "fc": "#CCCCCC",
+              "al": 1,
+              "txw": 55.95,
+              "txh": 29.75,
+              "apx": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "QB",
+      "d": 4,
+      "lbs": [
+        {
+          "fr": 0,
+          "nm": "up"
+        },
+        {
+          "fr": 1,
+          "nm": "over"
+        },
+        {
+          "fr": 2,
+          "nm": "down"
+        },
+        {
+          "fr": 3,
+          "nm": "disabled"
+        }
+      ],
+      "els": [
+        {
+          "c": "BC",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 22,
+              "y": 17.5,
+              "tfx": 22,
+              "tfy": 17.5,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 1,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 2,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 18.5
+            }
+          ]
+        },
+        {
+          "fr": 3,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 17.5,
+              "rp": 0.4,
+              "gp": 0.4,
+              "bp": 0.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "RB",
+      "d": 4,
+      "lbs": [
+        {
+          "fr": 0,
+          "nm": "up"
+        },
+        {
+          "fr": 1,
+          "nm": "over"
+        },
+        {
+          "fr": 2,
+          "nm": "down"
+        },
+        {
+          "fr": 3,
+          "nm": "disabled"
+        }
+      ],
+      "els": [
+        {
+          "c": "CC",
+          "nm": "inner",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 77.5,
+              "y": 15.5,
+              "tfx": 77.5,
+              "tfy": 15.5,
+              "rp": 0.9,
+              "gp": 0.9,
+              "bp": 0.9
+            }
+          ]
+        },
+        {
+          "fr": 1,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 3,
+              "rp": 1,
+              "gp": 1,
+              "bp": 1
+            }
+          ]
+        },
+        {
+          "fr": 2,
+          "dl": []
+        },
+        {
+          "fr": 3,
+          "dl": []
+        }
+      ]
+    },
+    {
+      "nm": "SB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 42,
+              "y": 15.5,
+              "tfx": 42,
+              "tfy": 11.5,
+              "tex": "T0CB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "TB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "tfx": 3.5,
+              "tfy": 8.5,
+              "tex": "T0DB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "UB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "y": 0.5,
+              "tfx": 16,
+              "tfy": 12,
+              "tex": "T0EB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "VB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "tfx": 11.5,
+              "tfy": 10,
+              "tex": "T0FB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "WB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 1.15,
+              "y": 1,
+              "tfx": 7.56,
+              "tfy": 14.5,
+              "scx": 0.9,
+              "scy": 0.9,
+              "tex": "T0GB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "XB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 1,
+              "y": 1,
+              "tfx": 6.5,
+              "tfy": 12,
+              "tex": "T0HB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "YB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "tfx": 14,
+              "tfy": 14,
+              "tex": "T0IB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "ZB",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 0.5,
+              "tfx": 11.5,
+              "tfy": 10,
+              "tex": "T0JB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "AC",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 12.5,
+              "y": 8.5,
+              "tfx": 12.5,
+              "tfy": 8.5,
+              "tex": "T0KB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "BC",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 18.5,
+              "y": 13.25,
+              "tfx": 17,
+              "tfy": 17.5,
+              "scx": 0.5,
+              "scy": 0.5,
+              "tex": "T0LB.png"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nm": "CC",
+      "d": 1,
+      "els": [
+        {
+          "c": "I",
+          "pr": 0
+        },
+        {
+          "c": "T",
+          "nm": "IDS_MENU_BTN_PFR",
+          "pr": 0
+        }
+      ],
+      "tl": [
+        {
+          "fr": 0,
+          "dl": [
+            {
+              "ei": 0,
+              "d": 1,
+              "x": 80.5,
+              "y": 15,
+              "tfx": 80.5,
+              "tfy": 15,
+              "tex": "T0MB.png"
+            },
+            {
+              "ei": 1,
+              "d": 1,
+              "x": 80.5,
+              "y": 14.95,
+              "tfx": 75.5,
+              "tfy": 10.95,
+              "txt": "Play For Real",
+              "fnt": "bold ? 16px Arial",
+              "al": 1,
+              "txw": 151,
+              "txh": 21.9,
+              "lsp": 2
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "tex": {
+    "statusbar_texture0": {
+      "frames": {
+        "T0AB.png": {
+          "frame": {
+            "x": 40,
+            "y": 0,
+            "w": 1600,
+            "h": 30
+          },
+          "rotated": false,
+          "trimmed": false,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 1600,
+            "h": 30
+          },
+          "sourceSize": {
+            "w": 1600,
+            "h": 30
+          }
+        },
+        "T0BB.png": {
+          "frame": {
+            "x": 190,
+            "y": 35,
+            "w": 25,
+            "h": 25
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 25,
+            "h": 25
+          },
+          "sourceSize": {
+            "w": 22,
+            "h": 22
+          }
+        },
+        "T0CB.png": {
+          "frame": {
+            "x": 60,
+            "y": 35,
+            "w": 85,
+            "h": 25
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 85,
+            "h": 25
+          },
+          "sourceSize": {
+            "w": 84,
+            "h": 23
+          }
+        },
+        "T0DB.png": {
+          "frame": {
+            "x": 270,
+            "y": 35,
+            "w": 10,
+            "h": 20
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 10,
+            "h": 20
+          },
+          "sourceSize": {
+            "w": 7,
+            "h": 17
+          }
+        },
+        "T0EB.png": {
+          "frame": {
+            "x": 150,
+            "y": 35,
+            "w": 35,
+            "h": 25
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 35,
+            "h": 25
+          },
+          "sourceSize": {
+            "w": 32,
+            "h": 24
+          }
+        },
+        "T0FB.png": {
+          "frame": {
+            "x": 0,
+            "y": 40,
+            "w": 25,
+            "h": 20
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 25,
+            "h": 20
+          },
+          "sourceSize": {
+            "w": 23,
+            "h": 20
+          }
+        },
+        "T0GB.png": {
+          "frame": {
+            "x": 1850,
+            "y": 0,
+            "w": 15,
+            "h": 30
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 15,
+            "h": 30
+          },
+          "sourceSize": {
+            "w": 15,
+            "h": 29
+          }
+        },
+        "T0HB.png": {
+          "frame": {
+            "x": 220,
+            "y": 35,
+            "w": 15,
+            "h": 25
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 15,
+            "h": 25
+          },
+          "sourceSize": {
+            "w": 13,
+            "h": 24
+          }
+        },
+        "T0IB.png": {
+          "frame": {
+            "x": 1815,
+            "y": 0,
+            "w": 30,
+            "h": 30
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 30,
+            "h": 30
+          },
+          "sourceSize": {
+            "w": 28,
+            "h": 28
+          }
+        },
+        "T0JB.png": {
+          "frame": {
+            "x": 30,
+            "y": 40,
+            "w": 25,
+            "h": 20
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 25,
+            "h": 20
+          },
+          "sourceSize": {
+            "w": 23,
+            "h": 20
+          }
+        },
+        "T0KB.png": {
+          "frame": {
+            "x": 240,
+            "y": 35,
+            "w": 25,
+            "h": 20
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 25,
+            "h": 20
+          },
+          "sourceSize": {
+            "w": 25,
+            "h": 17
+          }
+        },
+        "T0LB.png": {
+          "frame": {
+            "x": 0,
+            "y": 0,
+            "w": 35,
+            "h": 35
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 35,
+            "h": 35
+          },
+          "sourceSize": {
+            "w": 34,
+            "h": 35
+          }
+        },
+        "T0MB.png": {
+          "frame": {
+            "x": 1645,
+            "y": 0,
+            "w": 165,
+            "h": 30
+          },
+          "rotated": false,
+          "trimmed": true,
+          "spriteSourceSize": {
+            "x": 0,
+            "y": 0,
+            "w": 165,
+            "h": 30
+          },
+          "sourceSize": {
+            "w": 161,
+            "h": 30
+          }
+        }
+      },
+      "meta": {
+        "image": "statusbar_texture0_level0.png",
+        "format": "RGBA8888",
+        "size": {
+          "w": 1865,
+          "h": 60
+        },
+        "scale": "1",
+        "files": {
+          "level0": {
+            "url": "statusbar_texture0_level0.png",
+            "size": 11391
+          },
+          "level1": {
+            "url": "statusbar_texture0_level1.png",
+            "size": 7605
+          },
+          "level2": {
+            "url": "statusbar_texture0_level2.png",
+            "size": 4068
+          }
+        },
+        "hash": "f86a22e",
+        "hasWebp": true,
+        "hasJp2": false,
+        "hasAvif": true
+      }
+    }
+  }
+}

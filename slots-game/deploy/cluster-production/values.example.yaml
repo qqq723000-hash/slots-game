@@ -1,0 +1,111 @@
+images:
+  rgs:
+    repository: registry.example.com/slots/rgs-runtime
+    digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+  migrator:
+    repository: registry.example.com/slots/rgs-migrator
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+  web:
+    repository: registry.example.com/slots/web
+    digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+  pullSecrets:
+    - name: company-registry
+
+rgs:
+  publicBaseURL: https://rgs.example.com
+  allowedOrigins:
+    - https://slots.example.com
+
+ingress:
+  className: nginx
+  apiHost: rgs.example.com
+  webHost: slots.example.com
+  apiTLSSecretName: rgs-ingress-tls
+  webTLSSecretName: web-ingress-tls
+  tlsRedirectAnnotationKey: nginx.ingress.kubernetes.io/force-ssl-redirect
+  tlsRedirectAnnotationValue: "true"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 128k
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+
+externalSecrets:
+  runtimeDatabase:
+    name: slots-rgs-runtime-database-v1
+  migratorDatabase:
+    name: slots-rgs-migrator-database-v1
+  operationsBearer:
+    name: slots-rgs-operations-bearer-v1
+  runtimeAssets:
+    name: slots-rgs-runtime-assets-v1
+    additionalItems:
+      - key: operator-access-private.pem
+        path: keys/operator-access-private.pem
+      - key: operator-access-public.pem
+        path: keys/operator-access-public.pem
+      - key: operator-request-public.pem
+        path: keys/operator-request-public.pem
+      - key: operator-response-private.pem
+        path: keys/operator-response-private.pem
+      - key: operator-response-public.pem
+        path: keys/operator-response-public.pem
+      - key: wallet-request-private.pem
+        path: keys/wallet-request-private.pem
+      - key: wallet-request-public.pem
+        path: keys/wallet-request-public.pem
+      - key: wallet-response-public.pem
+        path: keys/wallet-response-public.pem
+
+audit:
+  endpointURL: https://audit.example.com/rgs/events
+  hmacKeyID: rgs-audit-2026-01
+
+externalControls:
+  globalRateLimitProvider: company-api-gateway
+  tlsEnforcementProvider: ingress-nginx-policy
+  logPipelineProvider: company-node-log-pipeline
+  webVersionIsolationProvider: company-web-blue-green
+
+release:
+  compatibilityClass: same-schema-and-definition
+
+monitoring:
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: monitoring
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  ruleLabels:
+    prometheus: company-platform
+
+networkPolicy:
+  ingressController:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: ingress-nginx
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: ingress-nginx
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  egress:
+    database:
+      cidrs:
+        - 10.20.0.0/24
+    wallet:
+      cidrs:
+        - 10.30.0.0/24
+    audit:
+      cidrs:
+        - 10.40.0.0/24
+
+scheduling:
+  nodeSelector:
+    kubernetes.io/os: linux
+    kubernetes.io/arch: amd64

@@ -1,0 +1,662 @@
+name: slots-game-production
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  init: true
+  pids_limit: 128
+  logging:
+    driver: local
+    options: {max-size: 10m, max-file: "3"}
+
+x-build-metadata: &build-metadata
+  args:
+    OCI_IMAGE_CREATED: ${LOCAL_PRODUCTION_IMAGE_CREATED:?run bootstrap.sh first}
+    OCI_IMAGE_REVISION: ${LOCAL_PRODUCTION_IMAGE_REVISION:?run bootstrap.sh first}
+    OCI_IMAGE_SOURCE: ${LOCAL_PRODUCTION_IMAGE_SOURCE:?run bootstrap.sh first}
+    OCI_IMAGE_VERSION: ${LOCAL_PRODUCTION_IMAGE_VERSION:?run bootstrap.sh first}
+
+x-go-build: &go-build
+  <<: *build-metadata
+  context: ../..
+  dockerfile: deploy/local-production/Dockerfile.services
+
+services:
+  service-volume-init:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    restart: "no"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    entrypoint: [/bin/sh, /source/local/initialize-volumes.sh]
+    # 该一次性容器会读取全部源秘密，只做本地卷分发，必须完全禁用网络。
+    network_mode: none
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m"]
+    secrets:
+      - {source: definition_json, target: definition.json}
+      - {source: definition_approval_json, target: definition-approval.json}
+      - {source: definition_approval_public, target: definition-approval-public.pem}
+      - {source: operators_json, target: operators.json}
+      - {source: access_private, target: access-private.pem}
+      - {source: access_public, target: access-public.pem}
+      - {source: operator_request_private, target: operator-request-private.pem}
+      - {source: operator_request_public, target: operator-request-public.pem}
+      - {source: operator_response_private, target: operator-response-private.pem}
+      - {source: operator_response_public, target: operator-response-public.pem}
+      - {source: wallet_request_private, target: wallet-request-private.pem}
+      - {source: wallet_request_public, target: wallet-request-public.pem}
+      - {source: wallet_response_private, target: wallet-response-private.pem}
+      - {source: wallet_response_public, target: wallet-response-public.pem}
+      - {source: launch_hmac, target: launch-hmac.key}
+      - {source: outbox_hmac, target: outbox-hmac.key}
+      - {source: operations_token, target: operations.token}
+      - {source: local_operator_admin_token, target: local-operator-admin.token}
+      - {source: local_operator_metrics_token, target: local-operator-metrics.token}
+      - {source: local_operator_audit_token, target: local-operator-audit-bearer.token}
+      - {source: local_operator_log_token, target: local-operator-log-bearer.token}
+      - {source: local_operator_keys, target: local-operator-keys.json}
+      - {source: local_operator_cert, target: local-operator-server.pem}
+      - {source: local_operator_key, target: local-operator-server-key.pem}
+      - {source: local_operator_owner_password, target: local-operator-owner.password}
+      - {source: local_operator_runtime_password, target: local-operator-runtime.password}
+      - {source: alertmanager_token, target: alertmanager.token}
+      - {source: alertmanager_cert, target: alertmanager-server.pem}
+      - {source: alertmanager_key, target: alertmanager-server-key.pem}
+      - {source: grafana_admin_password, target: grafana-admin-password}
+      - {source: postgres_admin_password, target: postgres-admin.password}
+      - {source: postgres_backup_password, target: postgres-backup.password}
+      - {source: rgs_migrator_password, target: rgs-migrator.password}
+      - {source: rgs_runtime_password, target: rgs-runtime.password}
+      - {source: postgres_cert, target: postgres-server.pem}
+      - {source: postgres_key, target: postgres-server-key.pem}
+      - {source: ingress_cert, target: ingress-server.pem}
+      - {source: ingress_key, target: ingress-server-key.pem}
+      - {source: root_ca, target: local-production-root-ca.pem}
+      - {source: rgs_runtime_database_url, target: rgs-runtime-database.url}
+      - {source: rgs_migrator_database_url, target: rgs-migrator-database.url}
+      - {source: postgres_admin_operator_url, target: postgres-admin-local-operator.url}
+    volumes:
+      - ./:/source/local:ro
+      - ${LOCAL_PRODUCTION_STATE_ROOT:?run bootstrap.sh first}/rendered:/source/rendered:ro
+      - rgs_runtime_secrets:/target/rgs-runtime
+      - rgs_migrator_secrets:/target/rgs-migrator
+      - operator_secrets:/target/operator
+      - operator_bootstrap_secrets:/target/operator-bootstrap
+      - operator_derived:/target/operator-derived
+      - root_ca_bundle:/target/root-ca
+      - postgres_secrets:/target/postgres
+      - ingress_secrets:/target/ingress
+      - prometheus_bundle:/target/prometheus
+      - grafana_bundle:/target/grafana
+      - alert_secrets:/target/alert
+      - alertmanager_webhook_secrets:/target/alertmanager-webhook
+      - vector_secrets:/target/vector
+      - backup_secrets:/target/backup
+      - operator_data:/target/operator-data
+      - prometheus_data:/target/prometheus-data
+      - grafana_data:/target/grafana-data
+      - alertmanager_data:/target/alertmanager-data
+      - vector_data:/target/vector-data
+    mem_limit: 128m
+    cpus: 0.5
+
+  postgres:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    restart: unless-stopped
+    depends_on:
+      service-volume-init: {condition: service_completed_successfully}
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: rgs
+      POSTGRES_PASSWORD_FILE: /run/postgres-input/postgres-admin.password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    entrypoint: [/local/postgres-entrypoint.sh]
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/data/tls/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/data/tls/server.key
+      - -c
+      - ssl_ca_file=/var/lib/postgresql/data/tls/root-ca.pem
+      - -c
+      - listen_addresses=*
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - max_connections=80
+      - -c
+      - shared_buffers=128MB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_secrets:/run/postgres-input:ro
+      - ./postgres-entrypoint.sh:/local/postgres-entrypoint.sh:ro
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/010-local-production.sh:ro
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, 'PGPASSWORD="$$(sed -n "1p" /run/postgres-input/postgres-admin.password)" psql "host=postgres port=5432 dbname=rgs user=postgres sslmode=verify-full sslrootcert=/run/postgres-input/local-production-root-ca.pem" -Atqc "SELECT 1" | grep -qx 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    stop_grace_period: 45s
+    shm_size: 128m
+    mem_limit: 768m
+    cpus: 2.0
+    pids_limit: 256
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,nodev,size=32m"
+      - "/var/run/postgresql:rw,noexec,nosuid,nodev,size=16m,uid=70,gid=70"
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: "4"}
+
+  rgs-migrator:
+    <<: *hardened
+    image: slots-rgs-migrator:local-production
+    build: {<<: *go-build, target: rgs-migrator}
+    restart: "no"
+    depends_on:
+      service-volume-init: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+    command: [up]
+    environment:
+      RGS_MIGRATOR_DATABASE_URL_FILE: /run/local-production/rgs-migrator-database.url
+      RGS_RUNTIME_DATABASE_ROLE: rgs_runtime
+      RGS_MIGRATION_TIMEOUT: 2m
+    volumes:
+      - rgs_migrator_secrets:/run/local-production:ro
+    networks: [database]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=8m"]
+    mem_limit: 128m
+    cpus: 1.0
+
+  local-operator-bootstrap:
+    <<: *hardened
+    image: slots-local-operator:local-production
+    build: {<<: *go-build, target: local-operator}
+    restart: "no"
+    depends_on:
+      service-volume-init: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+    command: [bootstrap]
+    environment:
+      LOCAL_OPERATOR_BOOTSTRAP_DATABASE_URL_FILE: /run/operator-bootstrap/postgres-admin-local-operator.url
+      LOCAL_OPERATOR_OWNER_DATABASE_ROLE: local_operator_owner
+      LOCAL_OPERATOR_OWNER_PASSWORD_FILE: /run/operator-bootstrap/local-operator-owner.password
+      LOCAL_OPERATOR_OWNER_DATABASE_URL_FILE: /run/operator-derived/owner.url
+      LOCAL_OPERATOR_RUNTIME_DATABASE_ROLE: local_operator_runtime
+      LOCAL_OPERATOR_RUNTIME_PASSWORD_FILE: /run/operator-bootstrap/local-operator-runtime.password
+      LOCAL_OPERATOR_RUNTIME_DATABASE_URL_FILE: /run/operator-derived/runtime.url
+    volumes:
+      - operator_bootstrap_secrets:/run/operator-bootstrap:ro
+      - operator_derived:/run/operator-derived
+      - root_ca_bundle:/run/local-production:ro
+    networks: [database]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=8m"]
+    mem_limit: 128m
+    cpus: 1.0
+
+  local-operator-migrate:
+    <<: *hardened
+    image: slots-local-operator:local-production
+    build: {<<: *go-build, target: local-operator}
+    restart: "no"
+    depends_on:
+      local-operator-bootstrap: {condition: service_completed_successfully}
+    command: [migrate]
+    environment:
+      LOCAL_OPERATOR_DATABASE_URL_FILE: /run/operator-derived/owner.url
+      LOCAL_OPERATOR_OWNER_DATABASE_ROLE: local_operator_owner
+      LOCAL_OPERATOR_RUNTIME_DATABASE_ROLE: local_operator_runtime
+    volumes:
+      - operator_derived:/run/operator-derived:ro
+      - root_ca_bundle:/run/local-production:ro
+    networks: [database]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=8m"]
+    mem_limit: 128m
+    cpus: 1.0
+
+  local-operator:
+    <<: *hardened
+    image: slots-local-operator:local-production
+    build: {<<: *go-build, target: local-operator}
+    restart: unless-stopped
+    depends_on:
+      local-operator-migrate: {condition: service_completed_successfully}
+    environment:
+      LOCAL_OPERATOR_LISTEN_ADDRESS: :8443
+      LOCAL_OPERATOR_TLS_CERT_FILE: /run/operator-secrets/local-operator-server.pem
+      LOCAL_OPERATOR_TLS_KEY_FILE: /run/operator-secrets/local-operator-server-key.pem
+      LOCAL_OPERATOR_DATABASE_URL_FILE: /run/operator-derived/runtime.url
+      LOCAL_OPERATOR_RUNTIME_DATABASE_ROLE: local_operator_runtime
+      LOCAL_OPERATOR_KEY_DOCUMENT_FILE: /run/operator-secrets/local-operator-keys.json
+      LOCAL_OPERATOR_RGS_BASE_URL: https://rgs.localhost:8443
+      LOCAL_OPERATOR_RGS_ROOT_CA_FILE: /run/local-production/local-production-root-ca.pem
+      LOCAL_OPERATOR_WEB_BASE_URL: https://slots.localhost:8443
+      LOCAL_OPERATOR_ADMIN_TOKEN_FILE: /run/operator-secrets/local-operator-admin.token
+      LOCAL_OPERATOR_METRICS_TOKEN_FILE: /run/operator-secrets/local-operator-metrics.token
+      LOCAL_OPERATOR_ALERTMANAGER_TOKEN_FILE: /run/operator-secrets/alertmanager.token
+      LOCAL_OPERATOR_ALERT_FILE: /var/lib/local-operator/alerts/events.jsonl
+      LOCAL_OPERATOR_AUDIT_HMAC_KEY_ID: local-production-outbox-1
+      LOCAL_OPERATOR_AUDIT_HMAC_KEY_FILE: /run/operator-secrets/outbox-hmac.key
+      LOCAL_OPERATOR_AUDIT_BEARER_TOKEN_FILE: /run/operator-secrets/local-operator-audit-bearer.token
+      LOCAL_OPERATOR_AUDIT_FILE: /var/lib/local-operator/audit/events.jsonl
+      LOCAL_OPERATOR_LOG_BEARER_TOKEN_FILE: /run/operator-secrets/local-operator-log-bearer.token
+      LOCAL_OPERATOR_LOG_FILE: /var/lib/local-operator/logs/rgs.jsonl
+      LOCAL_OPERATOR_BACKUP_STATUS_FILE: /var/lib/local-production-backups/backup-status.json
+      LOCAL_OPERATOR_GAME_ID: ${LOCAL_PRODUCTION_GAME_ID:?run bootstrap.sh first}
+      LOCAL_OPERATOR_DEFINITION_VERSION: ${LOCAL_PRODUCTION_DEFINITION_VERSION:?run bootstrap.sh first}
+      LOCAL_OPERATOR_DEFINITION_HASH: ${LOCAL_PRODUCTION_DEFINITION_HASH:?run bootstrap.sh first}
+      PROBE_URL: https://127.0.0.1:8443/healthz
+      PROBE_ROOT_CA_FILE: /run/operator-secrets/local-production-root-ca.pem
+      PROBE_SERVER_NAME: local-operator
+    volumes:
+      - operator_secrets:/run/operator-secrets:ro
+      - operator_derived:/run/operator-derived:ro
+      - root_ca_bundle:/run/local-production:ro
+      - operator_data:/var/lib/local-operator
+      - ${LOCAL_PRODUCTION_STATE_ROOT:?run bootstrap.sh first}/backups:/var/lib/local-production-backups:ro
+    networks:
+      database: {}
+      edge: {aliases: [wallet]}
+      audit: {aliases: [wallet]}
+      alert: {aliases: [wallet]}
+      log_egress: {aliases: [wallet]}
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m"]
+    healthcheck:
+      test: [CMD, /service-probe]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    mem_limit: 256m
+    cpus: 1.0
+
+  vector:
+    image: timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39
+    restart: unless-stopped
+    depends_on:
+      service-volume-init: {condition: service_completed_successfully}
+      local-operator: {condition: service_healthy}
+    command: [--config, /etc/vector/vector.yaml]
+    user: 65534:65534
+    volumes:
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+      - vector_secrets:/run/vector-secrets:ro
+      - vector_data:/var/lib/vector
+    ports:
+      - 127.0.0.1:24224:24224
+    networks: [observability, log_egress, host_access]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1.0
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: "3"}
+
+  rgs-server:
+    <<: *hardened
+    image: slots-rgs-runtime:local-production
+    build: {<<: *go-build, target: rgs-runtime}
+    restart: unless-stopped
+    depends_on:
+      rgs-migrator: {condition: service_completed_successfully}
+      local-operator: {condition: service_healthy}
+      vector: {condition: service_started}
+    environment:
+      RGS_DATABASE_URL_FILE: /run/local-production/rgs-runtime-database.url
+      RGS_ENVIRONMENT: production
+      RGS_HTTP_ADDR: :8080
+      RGS_OPERATIONS_HTTP_ADDR: :8081
+      RGS_PUBLIC_BASE_URL: https://rgs.localhost:8443
+      RGS_TLS_TERMINATED_UPSTREAM: "true"
+      RGS_ALLOWED_ORIGINS: https://slots.localhost:8443
+      RGS_OPERATOR_CONFIG_FILE: /run/local-production/operators.json
+      RGS_DEFINITION_FILE: /run/local-production/definition.json
+      RGS_DEFINITION_APPROVAL_FILE: /run/local-production/definition-approval.json
+      RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE: /run/local-production/definition-approval-public.pem
+      RGS_LAUNCH_HMAC_KEY_FILE: /run/local-production/launch-hmac.key
+      RGS_OPERATIONS_BEARER_TOKEN_FILE: /run/local-production/operations.token
+      RGS_OUTBOX_ENDPOINT_URL: https://wallet:8443/audit
+      RGS_OUTBOX_HMAC_KEY_ID: local-production-outbox-1
+      RGS_OUTBOX_HMAC_KEY_FILE: /run/local-production/outbox-hmac.key
+      RGS_OUTBOX_BEARER_TOKEN_FILE: /run/local-production/local-operator-audit-bearer.token
+      RGS_OUTBOX_ROOT_CA_FILE: /run/local-production/local-production-root-ca.pem
+      RGS_OUTBOX_OWNER: local-production-rgs-1
+      RGS_DB_MAX_OPEN_CONNS: "20"
+      RGS_DB_MAX_IDLE_CONNS: "5"
+      RGS_MAX_IN_FLIGHT_REQUESTS: "128"
+      RGS_MAX_CONNECTIONS_PER_LISTENER: "512"
+      RGS_RATE_PER_SECOND: "50"
+      RGS_RATE_BURST: "100"
+      PROBE_URL: http://127.0.0.1:8081/readyz
+      PROBE_BEARER_FILE: /run/local-production/operations.token
+    volumes:
+      - rgs_runtime_secrets:/run/local-production:ro
+    networks:
+      database: {}
+      edge: {aliases: [rgs]}
+      audit: {}
+      operations: {}
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m"]
+    healthcheck:
+      test: [CMD, /service-probe]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    mem_limit: 384m
+    cpus: 2.0
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: host.docker.internal:24224
+        fluentd-async: "true"
+        fluentd-async-reconnect-interval: 1s
+        tag: slots.production.rgs
+
+  web:
+    <<: *hardened
+    image: slots-web:local-production
+    build:
+      <<: *build-metadata
+      context: ../..
+      dockerfile: deploy/local-production/Dockerfile.web
+    restart: unless-stopped
+    networks: [edge]
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,nodev,size=16m"
+      - "/var/cache/nginx:rw,noexec,nosuid,nodev,size=16m"
+    healthcheck:
+      test: [CMD, wget, -q, -T, "2", -O, /dev/null, http://127.0.0.1:8080/healthz]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    mem_limit: 128m
+    cpus: 0.5
+
+  ingress:
+    <<: *hardened
+    image: nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:e88d990b349df8cf4aa82f16642d7a23375016638c9ace4e5c6ca25028e62e65
+    restart: unless-stopped
+    depends_on:
+      web: {condition: service_healthy}
+      rgs-server: {condition: service_healthy}
+      local-operator: {condition: service_healthy}
+    volumes:
+      - ./ingress-nginx.conf:/etc/nginx/nginx.conf:ro
+      - ingress_secrets:/run/ingress-secrets:ro
+    ports:
+      - 127.0.0.1:8443:8443
+    networks:
+      edge: {aliases: [rgs.localhost, slots.localhost]}
+      host_access: {}
+    extra_hosts:
+      - slots.localhost=127.0.0.1
+      - rgs.localhost=127.0.0.1
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,nodev,size=32m"
+      - "/var/cache/nginx:rw,noexec,nosuid,nodev,size=16m"
+    healthcheck:
+      # BusyBox wget 通过显式 CA 文件同时验证证书链和 slots.localhost 主机名。
+      test: [CMD, env, SSL_CERT_FILE=/run/ingress-secrets/local-production-root-ca.pem, wget, -q, -T, "3", -O, /dev/null, https://slots.localhost:8443/healthz]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    mem_limit: 128m
+    cpus: 1.0
+
+  alertmanager:
+    <<: *hardened
+    image: quay.io/prometheus/alertmanager:v0.33.1@sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d
+    restart: unless-stopped
+    depends_on:
+      service-volume-init: {condition: service_completed_successfully}
+      local-operator: {condition: service_healthy}
+    command: [--config.file=/etc/alertmanager/alertmanager.yml, --storage.path=/alertmanager, --web.listen-address=:9093]
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_webhook_secrets:/run/alertmanager-webhook-secrets:ro
+      - alertmanager_data:/alertmanager
+    networks: [alert]
+    healthcheck:
+      test: [CMD, wget, -q, -T, "2", -O, /dev/null, http://127.0.0.1:9093/-/ready]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+    mem_limit: 128m
+    cpus: 0.5
+
+  alert-proxy:
+    <<: *hardened
+    image: nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:e88d990b349df8cf4aa82f16642d7a23375016638c9ace4e5c6ca25028e62e65
+    restart: unless-stopped
+    depends_on:
+      alertmanager: {condition: service_healthy}
+      local-operator: {condition: service_healthy}
+    volumes:
+      - ./alert-proxy-nginx.conf:/etc/nginx/nginx.conf:ro
+      - alert_secrets:/run/alert-secrets:ro
+    ports:
+      - 127.0.0.1:9093:8443
+    networks: [alert, host_access]
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,nodev,size=16m"
+      - "/var/cache/nginx:rw,noexec,nosuid,nodev,size=8m"
+    healthcheck:
+      test: [CMD, env, SSL_CERT_FILE=/run/alert-secrets/local-production-root-ca.pem, wget, -q, -T, "3", -O, /dev/null, https://127.0.0.1:8443/healthz]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    mem_limit: 128m
+    cpus: 0.5
+
+  prometheus:
+    <<: *hardened
+    image: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+    restart: unless-stopped
+    depends_on:
+      rgs-server: {condition: service_healthy}
+      alert-proxy: {condition: service_started}
+      vector: {condition: service_started}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=1GB
+    volumes:
+      - prometheus_bundle:/etc/prometheus:ro
+      - prometheus_bundle:/run/secrets:ro
+      - prometheus_data:/prometheus
+    ports:
+      - 127.0.0.1:9090:9090
+    networks: [operations, observability, alert, host_access]
+    healthcheck:
+      test: [CMD, wget, -q, -T, "2", -O, /dev/null, http://127.0.0.1:9090/-/ready]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    mem_limit: 512m
+    cpus: 1.5
+
+  grafana:
+    <<: *hardened
+    image: grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
+    restart: unless-stopped
+    depends_on:
+      prometheus: {condition: service_healthy}
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/grafana-bundle/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PLUGIN_ADMIN_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      GF_SERVER_HTTP_ADDR: 0.0.0.0
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_LOG_MODE: console
+      GF_PATHS_PROVISIONING: /run/grafana-bundle/provisioning
+    volumes:
+      - grafana_bundle:/run/grafana-bundle:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - 127.0.0.1:3000:3000
+    networks: [observability, host_access]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=32m"]
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, "2", http://127.0.0.1:3000/api/health]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    mem_limit: 384m
+    cpus: 1.0
+
+  backup-policy:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    restart: "no"
+    depends_on:
+      rgs-migrator: {condition: service_completed_successfully}
+      local-operator-migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+    entrypoint: [/bin/sh, /local/postgres-backup-policy.sh]
+    user: 70:70
+    volumes:
+      - postgres_secrets:/run/postgres-input:ro
+      - ./postgres-backup-policy.sh:/local/postgres-backup-policy.sh:ro
+    networks: [database]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 0.5
+
+  backup:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    restart: unless-stopped
+    depends_on:
+      backup-policy: {condition: service_completed_successfully}
+    entrypoint: [/bin/sh, /local/postgres-backup-loop.sh]
+    user: 65532:65532
+    volumes:
+      - backup_secrets:/run/backup-secrets:ro
+      - ./postgres-backup-loop.sh:/local/postgres-backup-loop.sh:ro
+      - ./postgres-backup-once.sh:/local/postgres-backup-once.sh:ro
+      - ./postgres-backup-healthcheck.sh:/local/postgres-backup-healthcheck.sh:ro
+      - operator_data:/operator-data:ro
+      - ${LOCAL_PRODUCTION_STATE_ROOT:?run bootstrap.sh first}/backups:/backups
+    networks: [database]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - "/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=1m,uid=65532,gid=65532"
+      - "/tmp:rw,noexec,nosuid,nodev,size=16m,uid=65532,gid=65532"
+    healthcheck:
+      test: [CMD, /bin/sh, /local/postgres-backup-healthcheck.sh]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 5m
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.75
+
+networks:
+  edge: {internal: true}
+  database: {internal: true}
+  audit: {internal: true}
+  operations: {internal: true}
+  observability: {internal: true}
+  alert: {internal: true}
+  log_egress: {internal: true}
+  # 仅用于回环端口发布；关闭 IP masquerade，不为容器提供公网 NAT。
+  host_access:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+
+volumes:
+  postgres_data: {}
+  rgs_runtime_secrets: {}
+  rgs_migrator_secrets: {}
+  operator_secrets: {}
+  operator_bootstrap_secrets: {}
+  operator_derived: {}
+  root_ca_bundle: {}
+  operator_data: {}
+  postgres_secrets: {}
+  ingress_secrets: {}
+  prometheus_bundle: {}
+  prometheus_data: {}
+  grafana_bundle: {}
+  grafana_data: {}
+  alert_secrets: {}
+  alertmanager_webhook_secrets: {}
+  alertmanager_data: {}
+  vector_secrets: {}
+  vector_data: {}
+  backup_secrets: {}
+
+secrets:
+  definition_json: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/definition.json"}
+  definition_approval_json: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/definition-approval.json"}
+  definition_approval_public: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/definition-approval-public.pem"}
+  operators_json: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/operators.json"}
+  access_private: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/access-private.pem"}
+  access_public: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/access-public.pem"}
+  operator_request_private: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/operator-request-private.pem"}
+  operator_request_public: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/operator-request-public.pem"}
+  operator_response_private: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/operator-response-private.pem"}
+  operator_response_public: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/operator-response-public.pem"}
+  wallet_request_private: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/wallet-request-private.pem"}
+  wallet_request_public: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/wallet-request-public.pem"}
+  wallet_response_private: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/wallet-response-private.pem"}
+  wallet_response_public: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/wallet-response-public.pem"}
+  launch_hmac: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/launch-hmac.key"}
+  outbox_hmac: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/outbox-hmac.key"}
+  operations_token: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/operations.token"}
+  local_operator_admin_token: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-operator-admin.token"}
+  local_operator_metrics_token: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-operator-metrics.token"}
+  local_operator_audit_token: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-operator-audit-bearer.token"}
+  local_operator_log_token: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-operator-log-bearer.token"}
+  local_operator_keys: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-operator-keys.json"}
+  local_operator_cert: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-operator-server.pem"}
+  local_operator_key: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-operator-server-key.pem"}
+  local_operator_owner_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-operator-owner.password"}
+  local_operator_runtime_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-operator-runtime.password"}
+  alertmanager_token: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/alertmanager.token"}
+  alertmanager_cert: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/alertmanager-server.pem"}
+  alertmanager_key: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/alertmanager-server-key.pem"}
+  grafana_admin_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/grafana-admin-password"}
+  postgres_admin_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/postgres-admin.password"}
+  postgres_backup_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/postgres-backup.password"}
+  rgs_migrator_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/rgs-migrator.password"}
+  rgs_runtime_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/rgs-runtime.password"}
+  postgres_cert: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/postgres-server.pem"}
+  postgres_key: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/postgres-server-key.pem"}
+  ingress_cert: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/ingress-server.pem"}
+  ingress_key: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/ingress-server-key.pem"}
+  root_ca: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/local-production-root-ca.pem"}
+  rgs_runtime_database_url: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/rgs-runtime-database.url"}
+  rgs_migrator_database_url: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/rgs-migrator-database.url"}
+  postgres_admin_operator_url: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/postgres-admin-local-operator.url"}

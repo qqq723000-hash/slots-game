@@ -1,0 +1,103 @@
+name: Supply-chain conformance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supply-chain-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: slots-game
+    env:
+      SUPPLY_CHAIN_REPORT_DIR: /tmp/slots-supply-chain-source-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          lfs: true
+          persist-credentials: false
+
+      - name: Verify daemon-independent supply-chain contract
+        run: make verify-supply-chain-contract
+
+      - name: Scan Go, Node, secrets, filesystem and generate source SBOMs
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-source-cache
+        run: ./deploy/supply-chain/scan.sh source "$SUPPLY_CHAIN_REPORT_DIR"
+
+      - name: Upload source security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-supply-chain-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/*.json
+            ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/*.txt
+            ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/*.sha256
+            ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/*.env
+          if-no-files-found: error
+          retention-days: 30
+
+  container-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: slots-game
+    env:
+      SUPPLY_CHAIN_REPORT_DIR: /tmp/slots-supply-chain-images-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Verify daemon-independent supply-chain contract
+        run: make verify-supply-chain-contract
+
+      - name: Build immutable-input container targets
+        run: |
+          set -euo pipefail
+          CLUSTER_RUNTIME_IMAGE=slots-rgs-runtime:supply-chain \
+            CLUSTER_MIGRATOR_IMAGE=slots-rgs-migrator:supply-chain \
+            make verify-cluster-image-contract
+          DOCKER_BUILDKIT=1 docker build --file deploy/web/Dockerfile --target static-conformance --tag slots-web-static-conformance:ci-only .
+
+      - name: Generate container SBOMs and block high or critical findings
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-image-cache
+        run: |
+          set -euo pipefail
+          result=0
+          ./deploy/supply-chain/scan.sh image slots-rgs-runtime:supply-chain rgs-runtime "$SUPPLY_CHAIN_REPORT_DIR" || result=1
+          ./deploy/supply-chain/scan.sh image slots-rgs-migrator:supply-chain rgs-migrator "$SUPPLY_CHAIN_REPORT_DIR" || result=1
+          ./deploy/supply-chain/scan.sh image slots-web-static-conformance:ci-only web-static-conformance "$SUPPLY_CHAIN_REPORT_DIR" || result=1
+          exit "$result"
+
+      - name: Upload container security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-supply-chain-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/*.json
+            ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/*.txt
+            ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/*.sha256
+            ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/*.env
+          if-no-files-found: error
+          retention-days: 30

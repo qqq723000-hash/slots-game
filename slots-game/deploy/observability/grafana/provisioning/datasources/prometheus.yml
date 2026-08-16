@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: RGS Prometheus
+    uid: rgs-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      manageAlerts: false
+      prometheusType: Prometheus
+      prometheusVersion: "3.0.0"
+      timeInterval: 15s
+
+# Grafana 只通过内部 observability 网络访问 Prometheus；禁止浏览器直连数据源。

@@ -1,0 +1,360 @@
+// rgsapi 包定义生产 RGS 核心的 HTTP 传输契约。
+//
+// 本包只负责解析、认证、租户及会话绑定和响应形状。启动、轮次与钱包的持久化语义
+// 必须留在窄接口之后，禁止运营商特定适配逻辑渗入通用传输层。
+package rgsapi
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"slots-game/server/internal/game"
+	"slots-game/server/internal/operator"
+	"slots-game/server/internal/rgs"
+)
+
+const (
+	OperatorLaunchPath        = "/operator/v1/launches"
+	OperatorRoundStatusPath   = "/operator/v1/rounds/status"
+	ClientSessionExchangePath = "/client/v1/sessions/exchange"
+	ClientSessionRefreshPath  = "/client/v1/sessions/refresh"
+	ClientSpinPath            = "/client/v1/spins"
+	ClientRoundStatusPath     = "/client/v1/rounds/status"
+	ClientPendingResultPath   = "/client/v1/results/pending"
+	ClientResultAckPath       = "/client/v1/results/acknowledgements"
+
+	DefaultMaxRequestBytes int64 = 64 << 10
+)
+
+var (
+	// 启动适配器用同一哨兵报告凭据生命周期，HTTP 层无需依赖具体启动码存储。
+	// 未知、过期、已消费或绑定不匹配必须全部折叠为该值，避免兑换端点成为枚举判定接口。
+	ErrLaunchUnavailable = errors.New("rgsapi: launch credential unavailable")
+	ErrUnavailable       = errors.New("rgsapi: dependency unavailable")
+)
+
+type OperatorRequestVerifier interface {
+	// Authenticate 只验证签名并产出可信身份；HTTP 层据此准入后，必须在业务处理前
+	// 调用 ConsumeNonce。这样被限流的合法请求不会写随机数表，已准入请求仍保持防重放。
+	Authenticate(context.Context, *http.Request, []byte) (operator.VerifiedRequest, error)
+	ConsumeNonce(context.Context, operator.VerifiedRequest) error
+}
+
+type AccessTokenVerifier interface {
+	Verify(context.Context, string, string) (operator.AccessTokenClaims, error)
+}
+
+// ResponseSigningKeyResolver 为已验证或语法有效的声明租户选择 RGS 响应密钥；
+// 实现不得在查找失败时回退到其他租户的密钥。
+type ResponseSigningKeyResolver interface {
+	ResolveResponseSigningKey(context.Context, string) (operator.SigningKey, error)
+}
+
+type ResponseSigningKeyResolverFunc func(context.Context, string) (operator.SigningKey, error)
+
+func (f ResponseSigningKeyResolverFunc) ResolveResponseSigningKey(ctx context.Context, operatorID string) (operator.SigningKey, error) {
+	return f(ctx, operatorID)
+}
+
+// Admission 是可选的非阻塞准入控制。生产实现必须限制键数量；需要跨副本限流时，
+// 还应由边缘或共享设施实施。Admission 用于已验证的运营商签名请求，ClientAdmission
+// 则只在访问令牌验证成功后按其不可变会话绑定调用。
+type Admission interface {
+	Allow(key string, now time.Time) bool
+}
+
+type AdmissionFunc func(string, time.Time) bool
+
+func (f AdmissionFunc) Allow(key string, now time.Time) bool {
+	return f(key, now)
+}
+
+type LaunchService interface {
+	// CreateLaunch 必须先持久化创建（或幂等重放）会话，再返回一次性启动码；
+	// ExchangeSession 必须原子消费该启动码，之后才能签发访问令牌。
+	CreateLaunch(context.Context, LaunchCommand) (LaunchResult, error)
+	ExchangeSession(context.Context, ExchangeCommand) (ExchangeResult, error)
+	RefreshSession(context.Context, RefreshCommand) (ExchangeResult, error)
+}
+
+type SpinCoordinator interface {
+	Spin(context.Context, rgs.SpinRequest) (rgs.SpinResult, error)
+}
+
+type ResultDeliveryService interface {
+	GetPendingResultDelivery(context.Context, string, string) (rgs.ResultDelivery, error)
+	AcknowledgeResultDelivery(context.Context, rgs.ResultDeliveryAcknowledgement) (rgs.ResultDelivery, bool, error)
+}
+
+// RoundStatusReader 必须是具备隔离能力的状态服务，不能直接暴露原始存储库。
+// 处理器不得返回 PREPARED 结果；轮询发现损坏记录时必须持久隔离，禁止认领或调用钱包。
+type RoundStatusReader interface {
+	GetRound(context.Context, rgs.RoundKey) (rgs.RoundRecord, error)
+}
+
+type Config struct {
+	OperatorRequests    OperatorRequestVerifier
+	AccessTokens        AccessTokenVerifier
+	ResponseSigningKeys ResponseSigningKeyResolver
+	Launches            LaunchService
+	Spins               SpinCoordinator
+	Rounds              RoundStatusReader
+	Admission           Admission
+	// ClientAdmission 的键只能来自已验证声明，禁止使用请求头、RemoteAddr
+	// 或 X-Forwarded-For 构造，避免伪造键和反向代理后的跨玩家误限流。
+	ClientAdmission      Admission
+	MaxRequestBytes      int64
+	ResponseSignatureTTL time.Duration
+	Now                  func() time.Time
+	NewRequestID         func() string
+}
+
+type LaunchCommand struct {
+	OperatorID        string
+	RequestID         string
+	IdempotencyKey    string
+	PlayerID          string
+	WalletAccountID   string
+	WalletSessionID   string
+	SessionID         string
+	GameID            string
+	DefinitionVersion string
+	DefinitionHash    string
+	Currency          string
+	CurrencyExponent  int
+	Jurisdiction      string
+	BalanceMinor      int64
+	SessionTTL        time.Duration
+}
+
+// LaunchResult 是运营商启动器交给游戏客户端的短期凭据；消费语义由
+// LaunchService 实现，不能由无状态 HTTP 适配器自行推断。
+type LaunchResult struct {
+	LaunchCode  string
+	ExchangeURL string
+	ExpiresAt   time.Time
+	// HistoricalReplay 是适配器内部元数据：只允许在启动幂等保留窗口内精确重放，
+	// 不能让新签发凭据继承一个已经过期的兑换窗口。
+	HistoricalReplay bool
+}
+
+type ExchangeCommand struct {
+	LaunchCode string
+	OperatorID string
+	SessionID  string
+	RequestID  string
+}
+
+type ExchangeResult struct {
+	Session     rgs.Session
+	AccessToken string
+}
+
+type RefreshCommand struct {
+	Claims    operator.AccessTokenClaims
+	RequestID string
+}
+
+type sessionBindingRequest struct {
+	OperatorID        string `json:"operatorId"`
+	SessionID         string `json:"sessionId"`
+	GameID            string `json:"gameId"`
+	DefinitionVersion string `json:"definitionVersion"`
+	DefinitionHash    string `json:"definitionHash"`
+	Currency          string `json:"currency"`
+	CurrencyExponent  int    `json:"currencyExponent"`
+	Jurisdiction      string `json:"jurisdiction"`
+}
+
+type operatorLaunchRequest struct {
+	PlayerID          string `json:"playerId"`
+	WalletAccountID   string `json:"walletAccountId"`
+	WalletSessionID   string `json:"walletSessionId"`
+	SessionID         string `json:"sessionId"`
+	GameID            string `json:"gameId"`
+	DefinitionVersion string `json:"definitionVersion"`
+	DefinitionHash    string `json:"definitionHash"`
+	Currency          string `json:"currency"`
+	CurrencyExponent  int    `json:"currencyExponent"`
+	Jurisdiction      string `json:"jurisdiction"`
+	BalanceMinor      string `json:"balanceMinor"`
+	SessionTTLSeconds int64  `json:"sessionTtlSeconds"`
+}
+
+type clientSessionExchangeRequest struct {
+	LaunchCode string `json:"launchCode"`
+	OperatorID string `json:"operatorId"`
+	SessionID  string `json:"sessionId"`
+}
+
+type clientSessionRefreshRequest struct {
+	sessionBindingRequest
+}
+
+type clientSpinRequest struct {
+	sessionBindingRequest
+	RoundID       string        `json:"roundId"`
+	RoundKind     rgs.RoundKind `json:"roundKind"`
+	BetMinor      string        `json:"betMinor"`
+	StartRevision string        `json:"startRevision"`
+}
+
+type roundStatusRequest struct {
+	sessionBindingRequest
+	RoundID string `json:"roundId"`
+}
+
+type resultDeliveryAcknowledgementRequest struct {
+	sessionBindingRequest
+	RoundID    string `json:"roundId"`
+	Sequence   string `json:"sequence"`
+	ResultHash string `json:"resultHash"`
+}
+
+type successEnvelope struct {
+	Data      any    `json:"data"`
+	RequestID string `json:"requestId"`
+}
+
+type errorEnvelope struct {
+	Error     errorBody `json:"error"`
+	RequestID string    `json:"requestId"`
+}
+
+type errorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type launchResponse struct {
+	LaunchCode  string `json:"launchCode"`
+	ExchangeURL string `json:"exchangeUrl"`
+	ExpiresAt   string `json:"expiresAt"`
+}
+
+type sessionExchangeResponse struct {
+	AccessToken string          `json:"accessToken"`
+	Session     sessionResponse `json:"session"`
+}
+
+type sessionResponse struct {
+	OperatorID        string               `json:"operatorId"`
+	SessionID         string               `json:"sessionId"`
+	GameID            string               `json:"gameId"`
+	DefinitionVersion string               `json:"definitionVersion"`
+	DefinitionHash    string               `json:"definitionHash"`
+	Currency          string               `json:"currency"`
+	CurrencyExponent  int                  `json:"currencyExponent"`
+	Jurisdiction      string               `json:"jurisdiction"`
+	Status            rgs.SessionStatus    `json:"status"`
+	ExpiresAt         string               `json:"expiresAt"`
+	BalanceMinor      string               `json:"balanceMinor"`
+	Revision          string               `json:"revision"`
+	Sequence          string               `json:"sequence"`
+	Feature           featureStateResponse `json:"feature"`
+}
+
+type roundStatusResponse struct {
+	OperatorID string              `json:"operatorId"`
+	SessionID  string              `json:"sessionId"`
+	RoundID    string              `json:"roundId"`
+	Status     rgs.RoundStatus     `json:"status"`
+	Result     *spinResultResponse `json:"result,omitempty"`
+}
+
+type pendingResultDeliveryResponse struct {
+	OperatorID    string               `json:"operatorId"`
+	SessionID     string               `json:"sessionId"`
+	RoundID       string               `json:"roundId"`
+	Sequence      string               `json:"sequence"`
+	ResultHash    string               `json:"resultHash"`
+	OriginFeature featureStateResponse `json:"originFeature"`
+	Result        spinResultResponse   `json:"result"`
+}
+
+type resultDeliveryAcknowledgementResponse struct {
+	OperatorID     string `json:"operatorId"`
+	SessionID      string `json:"sessionId"`
+	RoundID        string `json:"roundId"`
+	Sequence       string `json:"sequence"`
+	ResultHash     string `json:"resultHash"`
+	AcknowledgedAt string `json:"acknowledgedAt"`
+}
+
+type spinResultResponse struct {
+	OperatorID          string               `json:"operatorId"`
+	SessionID           string               `json:"sessionId"`
+	RoundID             string               `json:"roundId"`
+	GameID              string               `json:"gameId"`
+	DefinitionVersion   string               `json:"definitionVersion"`
+	DefinitionHash      string               `json:"definitionHash"`
+	Currency            string               `json:"currency"`
+	RoundKind           rgs.RoundKind        `json:"roundKind"`
+	ServerTransactionID string               `json:"serverTransactionId"`
+	WalletTransactionID string               `json:"walletTransactionId"`
+	StartRevision       string               `json:"startRevision"`
+	EndRevision         string               `json:"endRevision"`
+	Sequence            string               `json:"sequence"`
+	ResultHash          string               `json:"resultHash"`
+	BetMinor            string               `json:"betMinor"`
+	ChargedBetMinor     string               `json:"chargedBetMinor"`
+	BalanceMinor        string               `json:"balanceMinor"`
+	TotalWinMinor       string               `json:"totalWinMinor"`
+	Grid                game.Grid            `json:"grid"`
+	Wins                []winResponse        `json:"wins"`
+	Events              []eventResponse      `json:"events"`
+	Feature             featureStateResponse `json:"feature"`
+}
+
+type winResponse struct {
+	ID          string              `json:"id"`
+	Symbol      game.Symbol         `json:"symbol"`
+	Ways        int                 `json:"ways"`
+	AmountMinor string              `json:"amountMinor"`
+	Multiplier  string              `json:"multiplier,omitempty"`
+	Cells       []game.Position     `json:"cells"`
+	PathAwards  []pathAwardResponse `json:"pathAwards"`
+}
+
+type pathAwardResponse struct {
+	Cells           []game.Position `json:"cells"`
+	Multiplier      string          `json:"multiplier"`
+	BaseAmountMinor string          `json:"baseAmountMinor"`
+	AmountMinor     string          `json:"amountMinor"`
+}
+
+type eventResponse struct {
+	Type               string           `json:"type"`
+	Count              int              `json:"count"`
+	Cells              []game.Position  `json:"cells"`
+	Triggered          bool             `json:"triggered"`
+	Guaranteed         bool             `json:"guaranteed"`
+	Outcome            string           `json:"outcome"`
+	Prize              string           `json:"prize"`
+	Multiplier         string           `json:"multiplier"`
+	AmountMinor        string           `json:"amountMinor"`
+	CumulativeWinMinor string           `json:"cumulativeWinMinor"`
+	Mode               game.FeatureMode `json:"mode"`
+	Awarded            int              `json:"awarded"`
+	Rows               int              `json:"rows"`
+	Ways               int              `json:"ways"`
+	Reel               int              `json:"reel"`
+	Row                int              `json:"row"`
+	Level              int              `json:"level"`
+	Total              int              `json:"total"`
+	Step               int              `json:"step"`
+	FromMultiplier     string           `json:"fromMultiplier"`
+	ToMultiplier       string           `json:"toMultiplier"`
+}
+
+type featureStateResponse struct {
+	Mode          game.FeatureMode `json:"mode"`
+	Remaining     int              `json:"remaining"`
+	Awarded       int              `json:"awarded"`
+	BetMinor      string           `json:"betMinor"`
+	WinMinor      string           `json:"winMinor"`
+	RageLevel     int              `json:"rageLevel"`
+	RageCollected int              `json:"rageCollected"`
+}

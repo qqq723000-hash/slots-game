@@ -1,0 +1,43 @@
+schemaVersion: 1
+status: DRAFT_NOT_APPROVED
+
+# 这是 fail-closed 模板，不是审批证据；不得原样用于生产。
+policyReference: "__REQUIRED_POLICY_REFERENCE__"
+jurisdictions:
+  - "__REQUIRED_JURISDICTION__"
+dataOwner: "__REQUIRED_DATA_OWNER__"
+approvedBy: "__REQUIRED_APPROVER__"
+effectiveAt: "__REQUIRED_RFC3339_TIMESTAMP__"
+expiresAt: "__REQUIRED_RFC3339_TIMESTAMP__"
+
+classes:
+  applicationLogs:
+    retentionDays: "__REQUIRED_POSITIVE_INTEGER__"
+    storageClass: "__REQUIRED_STORAGE_CLASS__"
+    immutable: false
+    containsPersonalData: true
+    deletionMode: "__REQUIRED_VERIFIABLE_DELETION_MODE__"
+  prometheusMetrics:
+    retentionDays: "__REQUIRED_POSITIVE_INTEGER__"
+    retentionSizeBytes: "__REQUIRED_POSITIVE_INTEGER__"
+    storageClass: "__REQUIRED_STORAGE_CLASS__"
+    immutable: false
+    containsPersonalData: false
+    deletionMode: "__REQUIRED_VERIFIABLE_DELETION_MODE__"
+  auditOutboxEvidence:
+    # 审计 outbox 的法律保留周期独立于普通应用日志，不能由此示例擅自设定。
+    retentionDays: "__REQUIRED_POSITIVE_INTEGER__"
+    storageClass: "__REQUIRED_IMMUTABLE_STORAGE_CLASS__"
+    immutable: true
+    containsPersonalData: "__REQUIRES_LEGAL_CLASSIFICATION__"
+    deletionMode: "__REQUIRED_VERIFIABLE_DELETION_MODE__"
+
+legalHold:
+  supported: true
+  procedureReference: "__REQUIRED_LEGAL_HOLD_RUNBOOK__"
+  releaseAuthority: "__REQUIRED_RELEASE_AUTHORITY__"
+
+evidence:
+  deletionReportSink: "__REQUIRED_EVIDENCE_SINK__"
+  restoreDrillCadence: "__REQUIRED_CADENCE__"
+  lastApprovedRestoreDrill: "__REQUIRED_RFC3339_TIMESTAMP__"

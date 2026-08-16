@@ -1,0 +1,49 @@
+.DS_Store
+/.tmp-pass*
+/tmp/
+.idea/
+.vscode/*
+
+# Go 生成物。
+server/bin/
+server/coverage.out
+
+# 自动生成的发布与一致性验证证据。
+.artifacts/
+
+# Web 依赖与构建输出。
+web/node_modules/
+web/dist/
+web/coverage/
+web/release-nginx.conf
+*.tsbuildinfo
+
+# 原始抓包和临时会话数据只允许存放在仓库外归档中。
+captures/primal-rampage/fiddler/
+captures/primal-rampage/resources/
+captures/primal-rampage/browser-resources/
+
+# 本地配置、运行状态、发布审批和密钥不得进入 Git。
+.env
+.env.*
+!.env.example
+!*.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+**/.secrets/
+**/.state/
+/secrets/
+/state/
+/deploy/local-production/secrets/
+/deploy/local-production/state/
+**/release-asset-approval*.json
+**/*release_asset_approval*.json
+
+# 只放行明确命名的公开测试证书/公钥；任何 private/key 文件仍保持拒绝。
+!server/**/testdata/*.public.pem
+!server/**/testdata/*.crt
+!server/**/fixtures/*.public.pem
+!server/**/fixtures/*.crt

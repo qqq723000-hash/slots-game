@@ -1,0 +1,95 @@
+data_dir: /var/lib/vector
+
+# token 由 Vector 的文件 secret backend 在运行时解析，不进入环境变量或镜像。
+secret:
+  local_files:
+    type: directory
+    path: /run/vector-secrets
+    remove_trailing_whitespace: true
+
+sources:
+  rgs_fluent:
+    type: fluent
+    address: 0.0.0.0:24224
+
+  vector_internal_metrics:
+    type: internal_metrics
+    namespace: vector
+    scrape_interval_secs: 15
+    tags:
+      host_key: ""
+
+transforms:
+  normalize_rgs_json:
+    type: remap
+    inputs: [rgs_fluent]
+    source: |-
+      raw = string(.message) ?? ""
+      app, app_err = parse_json(raw)
+      if app_err == null && is_object(app) {
+        . = merge(., object!(app))
+        del(.message)
+      } else {
+        .message = "unparseable-log-redacted"
+        .parse_error = true
+      }
+      .service = "rgs-server"
+
+      del(.remote_ip)
+      del(.authorization)
+      del(.access_token)
+      del(.refresh_token)
+      del(.cookie)
+      del(.signature)
+      del(.private_key)
+      del(.database_url)
+      del(.wallet_request)
+      del(.wallet_response)
+      del(.error)
+      del(.stack)
+      del(.stacktrace)
+
+      if exists(.path) {
+        path = string(.path) ?? "other"
+        allowed = [
+          "/operator/v1/launches", "/operator/v1/rounds/status",
+          "/client/v1/sessions/exchange", "/client/v1/sessions/refresh",
+          "/client/v1/spins", "/client/v1/rounds/status",
+          "/client/v1/results/pending", "/client/v1/results/acknowledgements",
+          "/healthz", "/readyz", "/metrics"
+        ]
+        if !includes(allowed, path) { .path = "other" }
+      }
+
+sinks:
+  local_https_archive:
+    type: http
+    inputs: [normalize_rgs_json]
+    uri: https://wallet:8443/logs
+    method: post
+    auth:
+      strategy: bearer
+      token: "SECRET[local_files.local-operator-log-bearer.token]"
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    batch:
+      max_bytes: 1048576
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block
+    request:
+      timeout_secs: 10
+    tls:
+      ca_file: /run/vector-secrets/local-production-root-ca.pem
+      verify_certificate: true
+      verify_hostname: true
+
+  vector_internal_prometheus:
+    type: prometheus_exporter
+    inputs: [vector_internal_metrics]
+    address: 0.0.0.0:9598
+    flush_period_secs: 60

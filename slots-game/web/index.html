@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#000e20" />
+    <meta name="description" content="Primal Rampage — a server-authoritative monster-city VideoSlot experience." />
+    <title>Primal Rampage</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="any" />
+    <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="/src/loading-official.css" />
+  </head>
+  <body>
+    <div id="app" data-startup-shell="paint-pending">
+      <div
+        class="launch-loading"
+        data-role="launch-loading"
+        data-visible="true"
+        role="status"
+        aria-live="polite"
+      >
+        <div class="launch-loading__mark" aria-hidden="true">
+          <img src="assets/brand/powered-by-gm-go.png" alt="" />
+        </div>
+        <span class="launch-loading__brand">Powered by G'm GO</span>
+        <span class="launch-loading__status">Loading game resources</span>
+        <div class="launch-loading__track"><b></b></div>
+        <span class="launch-loading__value">0%</span>
+      </div>
+    </div>
+    <script type="module" src="/src/bootstrap.ts"></script>
+  </body>
+</html>

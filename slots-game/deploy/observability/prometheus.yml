@@ -1,0 +1,67 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 5s
+  evaluation_interval: 15s
+  external_labels:
+    # 部署时必须渲染这两个占位符，以便跨环境告警路由与证据隔离。
+    environment: "__ENVIRONMENT__"
+    cluster: "__CLUSTER_ID__"
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - scheme: https
+      authorization:
+        type: Bearer
+        # 值只能由编排器以只读 secret 提供；禁止把凭据写入目标 URL 或规则 annotation。
+        credentials_file: /run/secrets/alertmanager_bearer_token
+      static_configs:
+        - targets:
+            # 发布渲染必须替换为 host:port；未替换时不得宣称值班已接通。
+            - "__ALERTMANAGER_TARGET__"
+
+scrape_configs:
+  - job_name: prometheus
+    scheme: http
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 127.0.0.1:9090
+        labels:
+          service: prometheus
+          environment: "__ENVIRONMENT__"
+
+  - job_name: rgs
+    scheme: http
+    metrics_path: /metrics
+    honor_labels: false
+    authorization:
+      type: Bearer
+      # 只能由编排器以只读 secret 提供；禁止把 token 直接写进 YAML 或环境变量。
+      credentials_file: /run/secrets/rgs_operations_bearer_token
+    static_configs:
+      - targets:
+          # 该 DNS 名称必须只解析到 RGS 的 RGS_OPERATIONS_HTTP_ADDR 监听器。
+          - rgs-server:8081
+        labels:
+          service: rgs
+          environment: "__ENVIRONMENT__"
+
+  - job_name: vector
+    scheme: http
+    metrics_path: /metrics
+    honor_labels: false
+    static_configs:
+      - targets:
+          # 仅解析到同一 internal observability 网络中的 Vector 容器；宿主不发布 9598。
+          - vector:9598
+        labels:
+          service: vector
+          environment: "__ENVIRONMENT__"
+
+# 安全不变量：Bearer 认证不能替代网络隔离。Prometheus 必须通过私有运维网络访问，
+# 且该网络不能被公网 ingress、业务前端或租户工作负载路由；token 必须定期轮换。
+# Alertmanager 走独立受限 HTTPS egress，不能经业务公网或日志出口绕行。
+# Vector 的 9598 只能由 observability 网络访问；log-egress 网络策略必须拒绝向该端口入站。

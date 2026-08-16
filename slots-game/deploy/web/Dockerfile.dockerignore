@@ -1,0 +1,24 @@
+**
+
+# 只构建已锁定的 Vite 应用。静态网页构建上下文严禁向 Docker 守护进程发送本机
+# node_modules、旧 dist 输出、抓包或研究证据。
+!web/
+!web/package.json
+!web/package-lock.json
+!web/index.html
+!web/tsconfig.json
+!web/vite.config.ts
+!web/scripts/
+!web/scripts/finalize-production-assets.mjs
+!web/scripts/release-manifest.mjs
+!web/scripts/verify-production-javascript-bundles.mjs
+!web/scripts/verify-release-asset-approval.mjs
+!web/src/
+!web/src/**
+!web/public/
+!web/public/**
+
+!deploy/
+!deploy/web/
+!deploy/web/nginx.conf
+!deploy/web/render-release-nginx.mjs

@@ -1,0 +1,232 @@
+name: Frontend conformance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: slots-game/web
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: slots-game/web/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Audit complete locked dependency tree
+        run: npm audit --audit-level=high
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Verify streaming package manifests
+        run: npm run assets:check-streaming-packages
+
+      - name: Type-check frontend
+        run: npm run typecheck
+
+      - name: Run frontend tests
+        # CI 低资源 runner 禁用 Vitest 文件级并行，避免并行 fixture 的 5s 抖动；本地默认不变。
+        run: npm test -- --run --fileParallelism=false
+
+      - name: Build production frontend
+        run: npm run build
+
+      - name: Rebuild and verify deterministic release bytes
+        run: npm run build:determinism-check
+
+  verify-web-static-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Verify release supply-chain contract
+        working-directory: slots-game
+        run: make verify-supply-chain-contract
+
+      - name: Verify daemon-independent web container contract
+        working-directory: slots-game
+        run: ./deploy/web/verify-static-contract.sh
+
+      - name: Build unprivileged CI-only static image
+        working-directory: slots-game
+        run: DOCKER_BUILDKIT=1 docker build --file deploy/web/Dockerfile --target static-conformance --tag slots-web-static-conformance:ci-only .
+
+      - name: Build CI-only release configuration conformance artifact
+        working-directory: slots-game
+        run: |
+          set -euo pipefail
+          # 固定 .invalid origin 只验证四项 release 配置、Vite 和 Nginx 生成链路；不生成或伪造素材授权。
+          DOCKER_BUILDKIT=1 docker build \
+            --file deploy/web/Dockerfile \
+            --target config-conformance \
+            --build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid/client/v1 \
+            --build-arg VITE_RGS_BET_OPTIONS_MINOR=100,200,500 \
+            --build-arg VITE_RGS_DEFAULT_BET_MINOR=200 \
+            --build-arg VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid \
+            --build-arg WEB_RELEASE_VERSION=0.0.0-ci \
+            --build-arg WEB_RELEASE_REVISION=0000000000000000000000000000000000000001 \
+            --tag slots-web-config-conformance:ci-only-not-release-evidence \
+            .
+
+      - name: Verify CI-only release configuration boundary
+        working-directory: slots-game
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect slots-web-config-conformance:ci-only-not-release-evidence --format '{{index .Config.Labels "org.opencontainers.image.title"}}')" = 'CI_ONLY_NOT_RELEASE_EVIDENCE'
+          container_id="$(docker create slots-web-config-conformance:ci-only-not-release-evidence)"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker export "$container_id" > web-config-conformance-rootfs.tar
+          tar -tf web-config-conformance-rootfs.tar > web-config-conformance-files.txt
+          grep -Fx 'ci-only-not-release-evidence/release-nginx.conf' web-config-conformance-files.txt >/dev/null
+          if grep -E '(^|/)usr/share/nginx/html(/|$)' web-config-conformance-files.txt >/dev/null; then
+            echo 'config-conformance output unexpectedly contains web content' >&2
+            exit 1
+          fi
+          if grep -E '(^|/)(dist|src|web|public|assets)(/|$)|\.(html|js|css|map|png|jpe?g|webp|gif|svg|woff2?|mp3|m4a|ogg|json)$' web-config-conformance-files.txt >/dev/null; then
+            echo 'config-conformance output unexpectedly contains source, assets or build output' >&2
+            exit 1
+          fi
+          mkdir web-config-conformance-rootfs
+          tar -xf web-config-conformance-rootfs.tar -C web-config-conformance-rootfs ci-only-not-release-evidence/release-nginx.conf
+          config='web-config-conformance-rootfs/ci-only-not-release-evidence/release-nginx.conf'
+          grep -F "connect-src 'self' https://rgs.ci.invalid" "$config" >/dev/null
+          grep -F 'frame-ancestors https://operator.ci.invalid' "$config" >/dev/null
+          if grep -Ei 'X-Frame-Options|frame-ancestors[[:space:]]+\*|connect-src[^;]*[[:space:]]\*' "$config" >/dev/null; then
+            echo 'config-conformance output contains a broad or conflicting frame/network policy' >&2
+            exit 1
+          fi
+
+      - name: Reject production web image without approval secret
+        working-directory: slots-game
+        run: |
+          set -euo pipefail
+          if DOCKER_BUILDKIT=1 docker build \
+            --file deploy/web/Dockerfile \
+            --target runtime \
+            --build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid/client/v1 \
+            --build-arg VITE_RGS_BET_OPTIONS_MINOR=100,200,500 \
+            --build-arg VITE_RGS_DEFAULT_BET_MINOR=200 \
+            --build-arg VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid \
+            --build-arg WEB_RELEASE_VERSION=0.0.0-ci \
+            --build-arg WEB_RELEASE_REVISION=0000000000000000000000000000000000000001 \
+            --tag slots-web-runtime-missing-approval:conformance \
+            . 2>&1 | tee web-runtime-missing-approval.log; then
+            echo 'production web image unexpectedly built without release_asset_approval secret' >&2
+            exit 1
+          fi
+          # 防止编译/配置偶发失败被误当作素材授权门禁生效。
+          grep -F 'release_asset_approval' web-runtime-missing-approval.log >/dev/null
+
+      - name: Verify CI-only static image ownership and content boundary
+        working-directory: slots-game
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect slots-web-static-conformance:ci-only --format '{{.Config.User}}')" = "101:101"
+          test "$(docker image inspect slots-web-static-conformance:ci-only --format '{{index .Config.Labels "org.opencontainers.image.title"}}')" = "CI_ONLY_STATIC_CONFORMANCE"
+          docker image inspect slots-web-static-conformance:ci-only --format '{{json .Config.Healthcheck.Test}}' | grep -q '/readyz'
+          docker run --rm --entrypoint sh slots-web-static-conformance:ci-only -c \
+            'test "$(stat -c %u:%g:%a /etc/nginx/conf.d)" = 0:0:555 &&
+             test "$(stat -c %u:%g:%a /etc/nginx/conf.d/default.conf)" = 0:0:444 &&
+             test "$(stat -c %u:%g:%a /usr/share/nginx/html)" = 0:0:555 &&
+             test "$(stat -c %u:%g:%a /usr/share/nginx/html/index.html)" = 0:0:444'
+          container_id="$(docker create slots-web-static-conformance:ci-only)"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker export "$container_id" > web-static-rootfs.tar
+          tar -tf web-static-rootfs.tar > web-static-rootfs-files.txt
+          grep -Fx 'usr/share/nginx/html/index.html' web-static-rootfs-files.txt >/dev/null
+          if grep -E '(^|/)(rgs-server|rgs-migrator)$' web-static-rootfs-files.txt >/dev/null; then
+            echo 'web-static image contains a forbidden RGS executable' >&2
+            exit 1
+          fi
+          mkdir web-static-rootfs
+          tar -xf web-static-rootfs.tar -C web-static-rootfs usr/share/nginx/html
+          if find web-static-rootfs/usr/share/nginx/html -type f \( -name '.env*' -o -name '*.pem' -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' \) | grep -q .; then
+            echo 'web-static document root contains a credential-like artifact' >&2
+            exit 1
+          fi
+          if grep -R -I -E -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|AKIA[0-9A-Z]{16}|postgres(ql)?://[^[:space:]]+:[^[:space:]]+@' web-static-rootfs/usr/share/nginx/html >/dev/null; then
+            echo 'web-static document root contains high-confidence credential material' >&2
+            exit 1
+          fi
+
+      - name: Probe CI-only static health, cache, range and security response contracts
+        working-directory: slots-game
+        run: |
+          set -euo pipefail
+          container_id="$(docker run --detach --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
+            --tmpfs /var/cache/nginx:rw,noexec,nosuid,nodev,size=16m \
+            --publish 127.0.0.1::8080 slots-web-static-conformance:ci-only)"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          port="$(docker port "$container_id" 8080/tcp | sed 's/.*://')"
+          base_url="http://127.0.0.1:${port}"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error "$base_url/readyz" | grep -qx 'ready'; then
+              break
+            fi
+            test "$attempt" -lt 30
+            sleep 1
+          done
+
+          assert_header() {
+            path="$1"
+            expression="$2"
+            curl --fail --silent --show-error --head "$base_url$path" | tr -d '\r' | grep -Ei "$expression"
+          }
+
+          test "$(curl --fail --silent --show-error "$base_url/livez")" = live
+          test "$(curl --fail --silent --show-error "$base_url/healthz")" = ok
+          for path in /healthz /livez /readyz /index.html /release-manifest.json /assets/primal-runtime/runtime-manifest.json; do
+            assert_header "$path" '^X-Content-Type-Options: nosniff$'
+            assert_header "$path" '^X-Frame-Options: SAMEORIGIN$'
+            assert_header "$path" '^Content-Security-Policy: '
+          done
+          assert_header /healthz '^Cache-Control: no-store, max-age=0$'
+          assert_header /readyz '^Cache-Control: no-store, max-age=0$'
+          assert_header /index.html '^Cache-Control: no-store, max-age=0$'
+          assert_header /release-manifest.json '^Cache-Control: no-store, max-age=0$'
+          assert_header /assets/primal-runtime/runtime-manifest.json '^Cache-Control: no-store, max-age=0$'
+          assert_header /assets/primal-runtime/audio/sounds_desktop_0.m4a '^Cache-Control: no-cache$'
+
+          hashed_asset="$(awk '/^usr\/share\/nginx\/html\/assets\/[^/]*-[A-Za-z0-9_-]{8,}\.js$/ { sub(/^usr\/share\/nginx\/html/, ""); print; exit }' web-static-rootfs-files.txt)"
+          test -n "$hashed_asset"
+          assert_header "$hashed_asset" '^Cache-Control: public, max-age=31536000, immutable$'
+          curl --silent --show-error --head "$base_url/assets/missing-12345678.js" | tr -d '\r' | grep -Eqi '^Cache-Control: no-store, max-age=0$'
+
+          range_headers="$(curl --fail --silent --show-error --range 0-15 --dump-header - --output /dev/null "$base_url/assets/primal-runtime/audio/sounds_desktop_0.m4a" | tr -d '\r')"
+          printf '%s\n' "$range_headers" | grep -Eqi '^HTTP/[^ ]+ 206 '
+          printf '%s\n' "$range_headers" | grep -Eqi '^Content-Range: bytes 0-15/'
+
+          for attempt in $(seq 1 10); do
+            health="$(docker inspect "$container_id" --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}')"
+            test "$health" = healthy && break
+            test "$attempt" -lt 10
+            sleep 2
+          done
+          test "$(docker inspect "$container_id" --format '{{.State.Health.Status}}')" = healthy

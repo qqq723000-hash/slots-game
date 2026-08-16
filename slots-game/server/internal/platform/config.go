@@ -1,0 +1,584 @@
+package platform
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type Environment string
+
+const (
+	Development Environment = "development"
+	Staging     Environment = "staging"
+	Production  Environment = "production"
+)
+
+type Config struct {
+	Environment                     Environment
+	HTTPAddress                     string
+	OperationsHTTPAddress           string
+	OperationsBearerTokenFile       string
+	PublicBaseURL                   string
+	DatabaseURL                     string
+	AllowedOrigins                  []string
+	TLSTerminatedUpstream           bool
+	TLSCertFile                     string
+	TLSKeyFile                      string
+	OperatorConfigFile              string
+	DefinitionFile                  string
+	DefinitionApprovalFile          string
+	DefinitionApprovalPublicKeyFile string
+	// AccessPrivateKeyFile 与 AccessPublicKeyFile 仅支持已弃用的 rgs-operators-v1 迁移路径。
+	// 生产环境必须使用 rgs-operators-v2 中逐运营商配置的路径，且绝不读取这些全局密钥设置。
+	AccessPrivateKeyFile      string
+	AccessPublicKeyFile       string
+	LaunchHMACKeyFile         string
+	ReadHeaderTimeout         time.Duration
+	ReadTimeout               time.Duration
+	RequestTimeout            time.Duration
+	WriteTimeout              time.Duration
+	IdleTimeout               time.Duration
+	ShutdownTimeout           time.Duration
+	DatabaseStatementTimeout  time.Duration
+	DatabaseLockTimeout       time.Duration
+	DatabaseMaxOpenConns      int
+	DatabaseMaxIdleConns      int
+	WalletTimeout             time.Duration
+	WalletMaxAttempts         int
+	LaunchTTL                 time.Duration
+	AccessTokenTTL            time.Duration
+	MaxRequestBytes           int64
+	MaxInFlightRequests       int
+	MaxConnectionsPerListener int
+	RatePerSecond             float64
+	RateBurst                 int
+	OutboxEndpointURL         string
+	OutboxHMACKeyID           string
+	OutboxHMACKeyFile         string
+	OutboxBearerTokenFile     string
+	OutboxRootCAFile          string
+	OutboxClientCertFile      string
+	OutboxClientKeyFile       string
+	OutboxOwner               string
+	OutboxInterval            time.Duration
+	OutboxLeaseDuration       time.Duration
+	OutboxPublishTimeout      time.Duration
+	OutboxWorkerMaxStaleness  time.Duration
+	OutboxBacklogMaxAge       time.Duration
+	OutboxInitialBackoff      time.Duration
+	OutboxMaximumBackoff      time.Duration
+	OutboxBatchSize           int
+	OutboxMaxParallel         int
+}
+
+type EnvLookup func(string) (string, bool)
+
+func LoadConfig() (Config, error) {
+	return LoadConfigFrom(os.LookupEnv)
+}
+
+func LoadConfigFrom(lookup EnvLookup) (Config, error) {
+	config := Config{
+		Environment:               Development,
+		HTTPAddress:               ":8080",
+		OperationsHTTPAddress:     "127.0.0.1:8081",
+		PublicBaseURL:             "http://localhost:8080",
+		ReadHeaderTimeout:         5 * time.Second,
+		ReadTimeout:               15 * time.Second,
+		RequestTimeout:            15 * time.Second,
+		WriteTimeout:              20 * time.Second,
+		IdleTimeout:               60 * time.Second,
+		ShutdownTimeout:           20 * time.Second,
+		DatabaseStatementTimeout:  10 * time.Second,
+		DatabaseLockTimeout:       2 * time.Second,
+		DatabaseMaxOpenConns:      40,
+		DatabaseMaxIdleConns:      10,
+		WalletTimeout:             4 * time.Second,
+		WalletMaxAttempts:         100,
+		LaunchTTL:                 2 * time.Minute,
+		AccessTokenTTL:            15 * time.Minute,
+		MaxRequestBytes:           64 << 10,
+		MaxInFlightRequests:       256,
+		MaxConnectionsPerListener: 1_024,
+		RatePerSecond:             20,
+		RateBurst:                 40,
+		OutboxInterval:            time.Second,
+		OutboxLeaseDuration:       3 * time.Minute,
+		OutboxPublishTimeout:      10 * time.Second,
+		OutboxWorkerMaxStaleness:  4 * time.Minute,
+		OutboxBacklogMaxAge:       5 * time.Minute,
+		OutboxInitialBackoff:      time.Second,
+		OutboxMaximumBackoff:      5 * time.Minute,
+		OutboxBatchSize:           100,
+		OutboxMaxParallel:         8,
+	}
+	if value, ok := lookup("RGS_ENVIRONMENT"); ok {
+		config.Environment = Environment(strings.ToLower(strings.TrimSpace(value)))
+	}
+	assignString(lookup, "RGS_HTTP_ADDR", &config.HTTPAddress)
+	assignString(lookup, "RGS_OPERATIONS_HTTP_ADDR", &config.OperationsHTTPAddress)
+	assignString(lookup, "RGS_OPERATIONS_BEARER_TOKEN_FILE", &config.OperationsBearerTokenFile)
+	assignString(lookup, "RGS_PUBLIC_BASE_URL", &config.PublicBaseURL)
+	assignString(lookup, "RGS_DATABASE_URL", &config.DatabaseURL)
+	assignString(lookup, "RGS_TLS_CERT_FILE", &config.TLSCertFile)
+	assignString(lookup, "RGS_TLS_KEY_FILE", &config.TLSKeyFile)
+	assignString(lookup, "RGS_OPERATOR_CONFIG_FILE", &config.OperatorConfigFile)
+	assignString(lookup, "RGS_DEFINITION_FILE", &config.DefinitionFile)
+	assignString(lookup, "RGS_DEFINITION_APPROVAL_FILE", &config.DefinitionApprovalFile)
+	assignString(lookup, "RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE", &config.DefinitionApprovalPublicKeyFile)
+	assignString(lookup, "RGS_ACCESS_PRIVATE_KEY_FILE", &config.AccessPrivateKeyFile)
+	assignString(lookup, "RGS_ACCESS_PUBLIC_KEY_FILE", &config.AccessPublicKeyFile)
+	assignString(lookup, "RGS_LAUNCH_HMAC_KEY_FILE", &config.LaunchHMACKeyFile)
+	assignString(lookup, "RGS_OUTBOX_ENDPOINT_URL", &config.OutboxEndpointURL)
+	assignString(lookup, "RGS_OUTBOX_HMAC_KEY_ID", &config.OutboxHMACKeyID)
+	assignString(lookup, "RGS_OUTBOX_HMAC_KEY_FILE", &config.OutboxHMACKeyFile)
+	assignString(lookup, "RGS_OUTBOX_BEARER_TOKEN_FILE", &config.OutboxBearerTokenFile)
+	assignString(lookup, "RGS_OUTBOX_ROOT_CA_FILE", &config.OutboxRootCAFile)
+	assignString(lookup, "RGS_OUTBOX_CLIENT_CERT_FILE", &config.OutboxClientCertFile)
+	assignString(lookup, "RGS_OUTBOX_CLIENT_KEY_FILE", &config.OutboxClientKeyFile)
+	assignString(lookup, "RGS_OUTBOX_OWNER", &config.OutboxOwner)
+	if value, ok := lookup("RGS_ALLOWED_ORIGINS"); ok {
+		for _, origin := range strings.Split(value, ",") {
+			if trimmed := strings.TrimSpace(origin); trimmed != "" {
+				config.AllowedOrigins = append(config.AllowedOrigins, trimmed)
+			}
+		}
+	}
+	var err error
+	if config.TLSTerminatedUpstream, err = boolValue(lookup, "RGS_TLS_TERMINATED_UPSTREAM", false); err != nil {
+		return Config{}, err
+	}
+	for name, target := range map[string]*time.Duration{
+		"RGS_READ_HEADER_TIMEOUT":         &config.ReadHeaderTimeout,
+		"RGS_READ_TIMEOUT":                &config.ReadTimeout,
+		"RGS_REQUEST_TIMEOUT":             &config.RequestTimeout,
+		"RGS_WRITE_TIMEOUT":               &config.WriteTimeout,
+		"RGS_IDLE_TIMEOUT":                &config.IdleTimeout,
+		"RGS_SHUTDOWN_TIMEOUT":            &config.ShutdownTimeout,
+		"RGS_DB_STATEMENT_TIMEOUT":        &config.DatabaseStatementTimeout,
+		"RGS_DB_LOCK_TIMEOUT":             &config.DatabaseLockTimeout,
+		"RGS_WALLET_TIMEOUT":              &config.WalletTimeout,
+		"RGS_LAUNCH_TTL":                  &config.LaunchTTL,
+		"RGS_ACCESS_TOKEN_TTL":            &config.AccessTokenTTL,
+		"RGS_OUTBOX_INTERVAL":             &config.OutboxInterval,
+		"RGS_OUTBOX_LEASE_DURATION":       &config.OutboxLeaseDuration,
+		"RGS_OUTBOX_PUBLISH_TIMEOUT":      &config.OutboxPublishTimeout,
+		"RGS_OUTBOX_WORKER_MAX_STALENESS": &config.OutboxWorkerMaxStaleness,
+		"RGS_OUTBOX_BACKLOG_MAX_AGE":      &config.OutboxBacklogMaxAge,
+		"RGS_OUTBOX_INITIAL_BACKOFF":      &config.OutboxInitialBackoff,
+		"RGS_OUTBOX_MAXIMUM_BACKOFF":      &config.OutboxMaximumBackoff,
+	} {
+		if err := durationValue(lookup, name, target); err != nil {
+			return Config{}, err
+		}
+	}
+	if err := int64Value(lookup, "RGS_MAX_REQUEST_BYTES", &config.MaxRequestBytes); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_MAX_IN_FLIGHT_REQUESTS", &config.MaxInFlightRequests); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_MAX_CONNECTIONS_PER_LISTENER", &config.MaxConnectionsPerListener); err != nil {
+		return Config{}, err
+	}
+	if err := floatValue(lookup, "RGS_RATE_PER_SECOND", &config.RatePerSecond); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_RATE_BURST", &config.RateBurst); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_WALLET_MAX_ATTEMPTS", &config.WalletMaxAttempts); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_DB_MAX_OPEN_CONNS", &config.DatabaseMaxOpenConns); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_DB_MAX_IDLE_CONNS", &config.DatabaseMaxIdleConns); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_OUTBOX_BATCH_SIZE", &config.OutboxBatchSize); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_OUTBOX_MAX_PARALLEL", &config.OutboxMaxParallel); err != nil {
+		return Config{}, err
+	}
+	if err := config.Validate(); err != nil {
+		return Config{}, err
+	}
+	return config, nil
+}
+
+func (c Config) Validate() error {
+	switch c.Environment {
+	case Development, Staging, Production:
+	default:
+		return fmt.Errorf("RGS_ENVIRONMENT must be development, staging, or production")
+	}
+	if strings.TrimSpace(c.HTTPAddress) == "" {
+		return errors.New("RGS_HTTP_ADDR is required")
+	}
+	if strings.TrimSpace(c.OperationsHTTPAddress) == "" {
+		return errors.New("RGS_OPERATIONS_HTTP_ADDR is required")
+	}
+	if _, _, err := net.SplitHostPort(c.OperationsHTTPAddress); err != nil {
+		return errors.New("RGS_OPERATIONS_HTTP_ADDR must be a host:port listen address")
+	}
+	if c.Environment == Production && listenAddressesConflict(c.HTTPAddress, c.OperationsHTTPAddress) {
+		return errors.New("RGS_OPERATIONS_HTTP_ADDR must not conflict with RGS_HTTP_ADDR in production")
+	}
+	publicURL, err := url.Parse(c.PublicBaseURL)
+	if err != nil || publicURL.Host == "" || (publicURL.Scheme != "http" && publicURL.Scheme != "https") ||
+		publicURL.User != nil || (publicURL.Path != "" && publicURL.Path != "/") ||
+		publicURL.RawQuery != "" || publicURL.Fragment != "" {
+		return errors.New("RGS_PUBLIC_BASE_URL must be an origin URL without path, query, fragment, or user info")
+	}
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+		return errors.New("RGS_TLS_CERT_FILE and RGS_TLS_KEY_FILE must be configured together")
+	}
+	if c.Environment == Production {
+		required := []struct {
+			name  string
+			value string
+		}{
+			{"RGS_DATABASE_URL", c.DatabaseURL},
+			{"RGS_OPERATOR_CONFIG_FILE", c.OperatorConfigFile},
+			{"RGS_DEFINITION_FILE", c.DefinitionFile},
+			{"RGS_DEFINITION_APPROVAL_FILE", c.DefinitionApprovalFile},
+			{"RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE", c.DefinitionApprovalPublicKeyFile},
+			{"RGS_LAUNCH_HMAC_KEY_FILE", c.LaunchHMACKeyFile},
+			{"RGS_OPERATIONS_BEARER_TOKEN_FILE", c.OperationsBearerTokenFile},
+			{"RGS_OUTBOX_ENDPOINT_URL", c.OutboxEndpointURL},
+			{"RGS_OUTBOX_HMAC_KEY_ID", c.OutboxHMACKeyID},
+			{"RGS_OUTBOX_HMAC_KEY_FILE", c.OutboxHMACKeyFile},
+		}
+		for _, item := range required {
+			if strings.TrimSpace(item.value) == "" {
+				return fmt.Errorf("%s is required in production", item.name)
+			}
+		}
+		if err := validateProductionDatabaseURL(c.DatabaseURL); err != nil {
+			return err
+		}
+		if publicURL.Scheme != "https" {
+			return errors.New("RGS_PUBLIC_BASE_URL must use https in production")
+		}
+		if c.TLSCertFile == "" && !c.TLSTerminatedUpstream {
+			return errors.New("production requires local TLS or RGS_TLS_TERMINATED_UPSTREAM=true")
+		}
+		if len(c.AllowedOrigins) == 0 {
+			return errors.New("RGS_ALLOWED_ORIGINS is required in production")
+		}
+	}
+	// 非回环运维监听可能被端口转发、测试入口或错误的安全组意外暴露；生产环境
+	// 已在上方必填项中拒绝空值，开发及预发布环境也必须在非回环时显式配置承载令牌。
+	if c.Environment != Production && operationsListenerRequiresBearer(c.OperationsHTTPAddress) &&
+		strings.TrimSpace(c.OperationsBearerTokenFile) == "" {
+		return errors.New("RGS_OPERATIONS_BEARER_TOKEN_FILE is required for a non-loopback operations listener")
+	}
+	if err := c.validateOutbox(); err != nil {
+		return err
+	}
+	seenOrigins := make(map[string]struct{}, len(c.AllowedOrigins))
+	for _, raw := range c.AllowedOrigins {
+		if raw == "*" {
+			return errors.New("wildcard CORS origins are not allowed")
+		}
+		origin, err := url.Parse(raw)
+		if err != nil || origin.Host == "" || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.User != nil {
+			return fmt.Errorf("invalid allowed origin %q", raw)
+		}
+		if c.Environment == Production && origin.Scheme != "https" {
+			return fmt.Errorf("production origin %q must use https", raw)
+		}
+		if _, duplicate := seenOrigins[origin.String()]; duplicate {
+			return fmt.Errorf("duplicate allowed origin %q", raw)
+		}
+		seenOrigins[origin.String()] = struct{}{}
+	}
+	for name, value := range map[string]time.Duration{
+		"read header timeout":        c.ReadHeaderTimeout,
+		"read timeout":               c.ReadTimeout,
+		"request timeout":            c.RequestTimeout,
+		"write timeout":              c.WriteTimeout,
+		"idle timeout":               c.IdleTimeout,
+		"shutdown timeout":           c.ShutdownTimeout,
+		"database statement timeout": c.DatabaseStatementTimeout,
+		"database lock timeout":      c.DatabaseLockTimeout,
+		"wallet timeout":             c.WalletTimeout,
+		"launch TTL":                 c.LaunchTTL,
+		"access token TTL":           c.AccessTokenTTL,
+	} {
+		if value <= 0 {
+			return fmt.Errorf("%s must be positive", name)
+		}
+	}
+	if c.ReadHeaderTimeout > c.ReadTimeout {
+		return errors.New("RGS_READ_HEADER_TIMEOUT must not exceed RGS_READ_TIMEOUT")
+	}
+	if c.ReadTimeout > c.RequestTimeout {
+		return errors.New("RGS_READ_TIMEOUT must not exceed RGS_REQUEST_TIMEOUT")
+	}
+	if c.RequestTimeout >= c.WriteTimeout {
+		return errors.New("RGS_REQUEST_TIMEOUT must be shorter than RGS_WRITE_TIMEOUT")
+	}
+	if c.DatabaseStatementTimeout >= c.RequestTimeout {
+		return errors.New("RGS_DB_STATEMENT_TIMEOUT must be shorter than RGS_REQUEST_TIMEOUT")
+	}
+	if c.DatabaseLockTimeout > c.DatabaseStatementTimeout {
+		return errors.New("RGS_DB_LOCK_TIMEOUT must not exceed RGS_DB_STATEMENT_TIMEOUT")
+	}
+	if c.DatabaseStatementTimeout < time.Millisecond || c.DatabaseLockTimeout < time.Millisecond ||
+		c.DatabaseStatementTimeout%time.Millisecond != 0 || c.DatabaseLockTimeout%time.Millisecond != 0 {
+		return errors.New("database timeouts must be whole milliseconds")
+	}
+	if c.WalletTimeout >= c.RequestTimeout {
+		return errors.New("RGS_WALLET_TIMEOUT must be shorter than RGS_REQUEST_TIMEOUT")
+	}
+	if c.LaunchTTL > 5*time.Minute || c.AccessTokenTTL > time.Hour {
+		return errors.New("launch/access credentials exceed maximum TTL")
+	}
+	if c.MaxRequestBytes < 1_024 || c.MaxRequestBytes > 1<<20 {
+		return errors.New("RGS_MAX_REQUEST_BYTES must be between 1024 and 1048576")
+	}
+	// 这是每个 RGS 副本在签名验证和数据库访问之前的硬资源预算；必须有界，
+	// 避免配置错误把非阻塞闸门退化为无效保护或制造过量内存占用。
+	if c.MaxInFlightRequests < 1 || c.MaxInFlightRequests > 4_096 {
+		return errors.New("RGS_MAX_IN_FLIGHT_REQUESTS must be between 1 and 4096")
+	}
+	// 请求闸门无法覆盖慢请求头、未读正文回收和空闲长连接；监听器还必须
+	// 独立限制已接受连接总数，才能给文件描述符、TLS 状态和协程设置硬预算。
+	if c.MaxConnectionsPerListener < 1 || c.MaxConnectionsPerListener > 16_384 {
+		return errors.New("RGS_MAX_CONNECTIONS_PER_LISTENER must be between 1 and 16384")
+	}
+	if c.RatePerSecond <= 0 || c.RatePerSecond > 100_000 || c.RateBurst < 1 || c.RateBurst > 1_000_000 {
+		return errors.New("invalid rate limit configuration")
+	}
+	if c.WalletMaxAttempts < 1 || c.WalletMaxAttempts > 10_000 {
+		return errors.New("RGS_WALLET_MAX_ATTEMPTS must be between 1 and 10000")
+	}
+	// 连接池上限是每个 RGS 副本的预算；限制其范围并要求空闲连接数不超过打开连接数，
+	// 避免一次环境变量误配在扩容时耗尽 PostgreSQL 可用连接。
+	if c.DatabaseMaxOpenConns < 1 || c.DatabaseMaxOpenConns > 200 {
+		return errors.New("RGS_DB_MAX_OPEN_CONNS must be between 1 and 200")
+	}
+	if c.DatabaseMaxIdleConns < 0 || c.DatabaseMaxIdleConns > c.DatabaseMaxOpenConns {
+		return errors.New("RGS_DB_MAX_IDLE_CONNS must be between 0 and RGS_DB_MAX_OPEN_CONNS")
+	}
+	return nil
+}
+
+// listenAddressesConflict 保守地识别同一端口的重叠监听地址。生产环境宁可
+// 拒绝一个含糊的同端口配置，也不能让健康/指标接口意外暴露到公网监听器。
+func listenAddressesConflict(left, right string) bool {
+	leftHost, leftPort, leftErr := net.SplitHostPort(left)
+	rightHost, rightPort, rightErr := net.SplitHostPort(right)
+	if leftErr != nil || rightErr != nil {
+		return left == right
+	}
+	if leftPort != rightPort {
+		return false
+	}
+	leftHost = normalizeListenHost(leftHost)
+	rightHost = normalizeListenHost(rightHost)
+	if leftHost == rightHost || isWildcardListenHost(leftHost) || isWildcardListenHost(rightHost) {
+		return true
+	}
+	return leftHost == "localhost" && isLoopbackListenHost(rightHost) ||
+		rightHost == "localhost" && isLoopbackListenHost(leftHost)
+}
+
+func normalizeListenHost(host string) string {
+	return strings.ToLower(strings.TrimSpace(host))
+}
+
+func isWildcardListenHost(host string) bool {
+	return host == "" || host == "0.0.0.0" || host == "::"
+}
+
+func isLoopbackListenHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
+}
+
+func operationsListenerRequiresBearer(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return true
+	}
+	return !isLoopbackListenHost(normalizeListenHost(host))
+}
+
+func validateProductionDatabaseURL(raw string) error {
+	databaseURL, err := url.Parse(raw)
+	if err != nil {
+		return errors.New("RGS_DATABASE_URL must include exactly one sslmode=verify-full query parameter in production")
+	}
+	query, err := url.ParseQuery(databaseURL.RawQuery)
+	if err != nil {
+		return errors.New("RGS_DATABASE_URL must include exactly one sslmode=verify-full query parameter in production")
+	}
+	var modes []string
+	for name, values := range query {
+		if strings.EqualFold(name, "sslmode") {
+			if name != "sslmode" {
+				return errors.New("RGS_DATABASE_URL must include exactly one sslmode=verify-full query parameter in production")
+			}
+			modes = append(modes, values...)
+		}
+	}
+	if len(modes) != 1 || modes[0] != "verify-full" {
+		return errors.New("RGS_DATABASE_URL must include exactly one sslmode=verify-full query parameter in production")
+	}
+	return nil
+}
+
+func (c Config) validateOutbox() error {
+	if (c.OutboxClientCertFile == "") != (c.OutboxClientKeyFile == "") {
+		return errors.New("RGS_OUTBOX_CLIENT_CERT_FILE and RGS_OUTBOX_CLIENT_KEY_FILE must be configured together")
+	}
+	if c.OutboxEndpointURL == "" {
+		if c.OutboxHMACKeyID != "" || c.OutboxHMACKeyFile != "" || c.OutboxBearerTokenFile != "" ||
+			c.OutboxRootCAFile != "" || c.OutboxClientCertFile != "" || c.OutboxClientKeyFile != "" ||
+			c.OutboxOwner != "" {
+			return errors.New("RGS_OUTBOX_ENDPOINT_URL is required when outbox sink settings are configured")
+		}
+	} else {
+		endpoint, err := url.Parse(c.OutboxEndpointURL)
+		if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.Path == "" ||
+			endpoint.RawQuery != "" || endpoint.Fragment != "" ||
+			(endpoint.Scheme != "https" && !(c.Environment == Development && endpoint.Scheme == "http")) {
+			return errors.New("RGS_OUTBOX_ENDPOINT_URL must be an HTTPS URL with a path and without credentials, query, or fragment")
+		}
+		if !validRuntimeIdentifier(c.OutboxHMACKeyID) || strings.TrimSpace(c.OutboxHMACKeyFile) == "" {
+			return errors.New("RGS_OUTBOX_HMAC_KEY_ID and RGS_OUTBOX_HMAC_KEY_FILE are required when outbox delivery is enabled")
+		}
+		if c.OutboxOwner != "" && !validRuntimeIdentifier(c.OutboxOwner) {
+			return errors.New("RGS_OUTBOX_OWNER must be a 1..128 character identifier")
+		}
+	}
+	for name, value := range map[string]time.Duration{
+		"RGS_OUTBOX_INTERVAL":             c.OutboxInterval,
+		"RGS_OUTBOX_LEASE_DURATION":       c.OutboxLeaseDuration,
+		"RGS_OUTBOX_PUBLISH_TIMEOUT":      c.OutboxPublishTimeout,
+		"RGS_OUTBOX_WORKER_MAX_STALENESS": c.OutboxWorkerMaxStaleness,
+		"RGS_OUTBOX_BACKLOG_MAX_AGE":      c.OutboxBacklogMaxAge,
+		"RGS_OUTBOX_INITIAL_BACKOFF":      c.OutboxInitialBackoff,
+		"RGS_OUTBOX_MAXIMUM_BACKOFF":      c.OutboxMaximumBackoff,
+	} {
+		if value <= 0 {
+			return fmt.Errorf("%s must be positive", name)
+		}
+	}
+	if c.OutboxInterval < 10*time.Millisecond || c.OutboxInterval > time.Hour ||
+		c.OutboxLeaseDuration < 10*time.Millisecond || c.OutboxLeaseDuration > 2*time.Hour ||
+		c.OutboxPublishTimeout < 10*time.Millisecond || c.OutboxPublishTimeout > time.Hour ||
+		c.OutboxWorkerMaxStaleness < time.Second || c.OutboxWorkerMaxStaleness > 24*time.Hour ||
+		c.OutboxWorkerMaxStaleness < c.OutboxInterval ||
+		c.OutboxBacklogMaxAge < time.Second || c.OutboxBacklogMaxAge > 30*24*time.Hour ||
+		c.OutboxInitialBackoff < time.Millisecond ||
+		c.OutboxMaximumBackoff < c.OutboxInitialBackoff || c.OutboxMaximumBackoff > 24*time.Hour ||
+		c.OutboxBatchSize < 1 || c.OutboxBatchSize > 1_000 ||
+		c.OutboxMaxParallel < 1 || c.OutboxMaxParallel > 256 {
+		return errors.New("invalid outbox delivery bounds")
+	}
+	waves := (c.OutboxBatchSize + c.OutboxMaxParallel - 1) / c.OutboxMaxParallel
+	if c.OutboxPublishTimeout > 2*time.Hour/time.Duration(waves) ||
+		c.OutboxLeaseDuration <= c.OutboxPublishTimeout*time.Duration(waves) {
+		return errors.New("RGS_OUTBOX_LEASE_DURATION is shorter than the bounded batch publish window")
+	}
+	return nil
+}
+
+func validRuntimeIdentifier(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for index, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			(index > 0 && (character == '.' || character == '_' || character == ':' || character == '-')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func assignString(lookup EnvLookup, name string, target *string) {
+	if value, ok := lookup(name); ok {
+		*target = strings.TrimSpace(value)
+	}
+}
+
+func durationValue(lookup EnvLookup, name string, target *time.Duration) error {
+	value, ok := lookup(name)
+	if !ok {
+		return nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	*target = parsed
+	return nil
+}
+
+func boolValue(lookup EnvLookup, name string, fallback bool) (bool, error) {
+	value, ok := lookup(name)
+	if !ok {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", name, err)
+	}
+	return parsed, nil
+}
+
+func intValue(lookup EnvLookup, name string, target *int) error {
+	value, ok := lookup(name)
+	if !ok {
+		return nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	*target = parsed
+	return nil
+}
+
+func int64Value(lookup EnvLookup, name string, target *int64) error {
+	value, ok := lookup(name)
+	if !ok {
+		return nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	*target = parsed
+	return nil
+}
+
+func floatValue(lookup EnvLookup, name string, target *float64) error {
+	value, ok := lookup(name)
+	if !ok {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	*target = parsed
+	return nil
+}

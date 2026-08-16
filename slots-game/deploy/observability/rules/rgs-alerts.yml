@@ -1,0 +1,295 @@
+groups:
+  - name: rgs-recording
+    interval: 30s
+    rules:
+      # 记录规则只按固定 scrape 标签聚合，严禁引入 operator/session/round 等高基数标签。
+      - record: rgs:http_request_rate:rate5m
+        expr: sum by (job, environment) (rate(rgs_http_requests_total[5m]))
+      - record: rgs:http_total_failure_rate:rate5m
+        expr: sum by (job, environment) (rate(rgs_http_failures_total[5m]))
+      - record: rgs:http_server_failure_ratio:rate5m
+        expr: sum by (job, environment) (rate(rgs_http_server_failures_total[5m])) / clamp_min(sum by (job, environment) (rate(rgs_http_requests_total[5m])), 0.001)
+      - record: rgs:http_request_duration_seconds:p99_5m
+        expr: histogram_quantile(0.99, sum by (le, job, environment) (rate(rgs_http_request_duration_seconds_bucket[5m])))
+      - record: rgs:round_commit_gap:increase10m
+        expr: clamp_min(sum by (job, environment) (increase(rgs_rounds_prepared_total[10m])) - sum by (job, environment) (increase(rgs_rounds_committed_total[10m])), 0)
+      - record: rgs:db_pool_utilization:ratio
+        expr: sum by (job, environment) (rgs_db_pool_in_use_connections) / clamp_min(sum by (job, environment) (rgs_db_pool_max_open_connections), 1)
+      - record: rgs:http_connection_utilization:ratio
+        # 取同一环境中最繁忙副本，避免总量平均值掩盖单副本慢连接或文件描述符耗尽。
+        expr: max by (job, environment) (rgs_http_active_connections / clamp_min(rgs_http_connection_limit, 1))
+
+  - name: rgs-alerts
+    interval: 30s
+    rules:
+      - alert: RGSInstanceDown
+        expr: up{job="rgs"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: rgs
+        annotations:
+          summary: RGS 运维监听器不可抓取
+          description: Prometheus 连续两分钟无法抓取 RGS；同时核查进程、私有运维网络与就绪状态。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-instance-down"
+
+      - alert: RGSNotReady
+        # 已登录运维抓取却缺少该 gauge 同样失败闭合，避免旧镜像或指标回归静默变绿。
+        expr: (rgs_ready{job="rgs"} == 0) or (up{job="rgs"} == 1 unless on (job, instance) rgs_ready{job="rgs"})
+        for: 2m
+        labels:
+          severity: critical
+          service: rgs
+        annotations:
+          summary: RGS 依赖检查未就绪
+          description: 运维指标仍可抓取，但 DB、schema、密钥或 outbox 等有界就绪检查连续两分钟失败或 gauge 缺失；在恢复前停止接入新流量。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-not-ready"
+
+      - alert: RGSHTTPFailureRatioHigh
+        expr: rgs:http_server_failure_ratio:rate5m > 0.05 and on (job, environment) rgs:http_request_rate:rate5m > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 服务端失败比例持续升高
+          description: 五分钟 5xx 比例超过 5%，且存在持续请求流量；认证、限流和其他 4xx 不触发此可用性告警。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-http-failure-ratio"
+
+      - alert: RGSRequestLatencyP99High
+        expr: rgs:http_request_duration_seconds:p99_5m > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS P99 请求时延过高
+          description: 五分钟窗口 P99 超过 2 秒；检查数据库、钱包和下游审计出口。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-request-latency"
+
+      - alert: RGSDatabasePoolSaturated
+        expr: rgs:db_pool_utilization:ratio > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 数据库连接池接近耗尽
+          description: 运行时连接池使用率持续超过 85%。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-database-pool"
+
+      - alert: RGSWalletUnknownOutcome
+        expr: sum by (job, environment) (increase(rgs_wallet_unknown_outcomes_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: rgs
+        annotations:
+          summary: 钱包结果未知，需要对账
+          description: 检测到钱包调用未知结果；禁止重跑 RNG，按持久化 operation ID 对账。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-wallet-unknown-outcome"
+
+      - alert: RGSRoundManualReviewRequired
+        expr: sum by (job, environment) (increase(rgs_rounds_manual_review_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: rgs
+        annotations:
+          summary: 回合进入人工复核
+          description: 至少一个回合持久化进入 MANUAL_REVIEW；不得通过提高重试次数绕过。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-manual-review"
+
+      - alert: RGSIntegrityQuarantine
+        expr: sum by (job, environment) (increase(rgs_round_integrity_quarantines_total[5m]) + increase(rgs_session_integrity_quarantines_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: rgs
+        annotations:
+          summary: RGS 完整性隔离触发
+          description: 回合或会话首次写入完整性隔离标记；停止相关流量并保全审计证据。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-integrity-quarantine"
+
+      - alert: RGSOutboxDeliveryDeferred
+        expr: sum by (job, environment) (increase(rgs_outbox_deferred_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 审计 outbox 投递延迟
+          description: 审计事件被持久化延迟重试；检查审批出口、证书和下游可用性。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-outbox-deferred"
+
+      - alert: RGSOutboxPublishStalled
+        expr: sum by (job, environment) (increase(rgs_outbox_claimed_total[10m])) > 0 and on (job, environment) sum by (job, environment) (increase(rgs_outbox_published_total[10m])) == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: rgs
+        annotations:
+          summary: RGS 审计 outbox 有领取但无发布
+          description: 十分钟存在 delivery claim 却没有任何持久化发布确认；核查出口与 worker 进度。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-outbox-publish-stalled"
+
+      - alert: RGSOutboxLeaseLost
+        expr: sum by (job, environment) (increase(rgs_outbox_lease_lost_total[5m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS outbox 租约围栏拒绝完成
+          description: 发生 outbox lease fencing；检查时钟、工作线程停顿与数据库延迟。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-outbox-lease-lost"
+
+      - alert: RGSRoundCommitGapGrowing
+        expr: rgs:round_commit_gap:increase10m > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 已准备与已提交回合差距扩大
+          description: 十分钟窗口内 prepared 与 committed 差距超过 5；检查钱包对账与恢复 worker。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-round-commit-gap"
+
+      - alert: RGSAuthenticationFailuresBurst
+        expr: sum by (job, environment) (increase(rgs_auth_failures_total[5m])) > 20
+        for: 2m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 认证失败突增
+          description: 五分钟认证失败超过 20；排查密钥轮换、时钟偏差及恶意请求。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-auth-failures"
+
+      - alert: RGSRateLimitingSustained
+        expr: sum by (job, environment) (increase(rgs_rate_limited_total[5m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 限流持续触发
+          description: 五分钟本地限流超过 20；同时核查边缘限流、容量与攻击流量。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-rate-limiting"
+
+      - alert: RGSCapacityRejectionsSustained
+        # 容量耗尽与租户/攻击限流语义不同；使用独立无标签 counter，避免误判根因。
+        expr: sum(increase(rgs_capacity_rejected_total[5m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 公网并发容量持续耗尽
+          description: 滑动五分钟内容量闸门拒绝超过 20 次并持续五分钟；检查请求并发、下游时延、实例资源与扩容预算，禁止通过放宽硬闸门掩盖故障。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-capacity-rejections"
+
+      - alert: RGSConnectionCapacityNearLimit
+        expr: rgs:http_connection_utilization:ratio > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 公网连接容量接近硬上限
+          description: 单副本已接受连接持续五分钟超过硬上限的 85%；检查慢请求头、悬挂正文、TLS 握手、keep-alive、边缘连接保护与文件描述符预算。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-connection-capacity"
+
+  - name: observability-plane-alerts
+    interval: 30s
+    rules:
+      # Watchdog 必须由外部 Alertmanager 路由到独立 dead-man switch；仅在 Prometheus UI
+      # 看到 firing 不代表通知链路可用。
+      - alert: RGSObservabilityWatchdog
+        expr: vector(1)
+        labels:
+          severity: none
+          service: observability
+        annotations:
+          summary: RGS 可观测性通知链路心跳
+          description: 外部 dead-man switch 应持续收到该告警；缺失表示 Prometheus、Alertmanager 或值班路由中断。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-observability-watchdog"
+
+      - alert: PrometheusRuleEvaluationFailures
+        expr: increase(prometheus_rule_evaluation_failures_total{job="prometheus"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: observability
+        annotations:
+          summary: Prometheus 规则计算失败
+          description: 五分钟内发生规则计算错误；现有业务告警可能不可信。
+          runbook_url: "__RUNBOOK_BASE_URL__/prometheus-rule-evaluation-failures"
+
+      - alert: PrometheusNotificationErrors
+        expr: increase(prometheus_notifications_errors_total{job="prometheus"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: observability
+        annotations:
+          summary: Prometheus 向 Alertmanager 发送通知失败
+          description: 五分钟内出现通知发送错误；检查受限 egress、TLS、Bearer secret 与 Alertmanager 可用性。
+          runbook_url: "__RUNBOOK_BASE_URL__/prometheus-notification-errors"
+
+      - alert: VectorTelemetryUnavailable
+        # 静态 target 缺失、抓取失败和异常多副本都必须失败闭合为不可用。
+        expr: (min(up{job="vector"}) or vector(0)) < 1
+        for: 2m
+        labels:
+          severity: critical
+          service: observability
+        annotations:
+          summary: Vector 内部指标不可抓取
+          description: 日志收集器连续两分钟没有可用内部遥测；检查进程、私有 observability 网络和 9598 监听器。
+          runbook_url: "__RUNBOOK_BASE_URL__/vector-telemetry-unavailable"
+
+      - alert: VectorLogPipelineErrors
+        expr: sum(increase(vector_component_errors_total{job="vector",component_id=~"rgs_container_stdout|normalize_rgs_json|redact_rgs_sensitive_fields|approved_https_archive"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: observability
+        annotations:
+          summary: Vector 日志管道发生组件错误
+          description: RGS 文件源、脱敏转换或审批 HTTPS sink 在五分钟内报告错误；长期日志链路可能不完整。
+          runbook_url: "__RUNBOOK_BASE_URL__/vector-log-pipeline-errors"
+
+      - alert: VectorLogEventsDiscarded
+        expr: sum(increase(vector_component_discarded_events_total{job="vector",intentional="false",component_id=~"rgs_container_stdout|normalize_rgs_json|redact_rgs_sensitive_fields|approved_https_archive"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: observability
+        annotations:
+          summary: Vector 非预期丢弃日志事件
+          description: 五分钟内发生非预期事件丢弃；立即检查超长行、解析/转换错误、缓冲与出口状态。
+          runbook_url: "__RUNBOOK_BASE_URL__/vector-log-events-discarded"
+
+      - alert: VectorLogBufferNearCapacity
+        # 与 vector.yaml 的 268435488-byte 硬上限绑定；持续超过 80% 时在阻塞日志读取前告警。
+        expr: max(vector_buffer_size_bytes{job="vector",component_id="approved_https_archive"}) > 214748390
+        for: 5m
+        labels:
+          severity: warning
+          service: observability
+        annotations:
+          summary: Vector 日志磁盘缓冲接近上限
+          description: 审批日志出口的最小约 256 MiB 磁盘缓冲持续超过 80%；检查接收端、受限 egress 与磁盘容量。
+          runbook_url: "__RUNBOOK_BASE_URL__/vector-log-buffer-capacity"
+
+      - alert: VectorLogDeliveryStalled
+        expr: sum(increase(vector_component_received_events_total{job="vector",component_id="approved_https_archive"}[10m])) > 0 and (sum(increase(vector_component_sent_events_total{job="vector",component_id="approved_https_archive"}[10m])) or vector(0)) == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: observability
+        annotations:
+          summary: Vector 日志出口有输入但无成功发送
+          description: HTTPS sink 十分钟持续接收日志却没有发送事件并保持五分钟；日志可能正在积压直至硬缓冲阻塞。
+          runbook_url: "__RUNBOOK_BASE_URL__/vector-log-delivery-stalled"

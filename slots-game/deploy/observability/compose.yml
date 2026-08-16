@@ -1,0 +1,143 @@
+name: slots-observability
+
+# 该 Compose 仅提供低资源单节点基线，不替代多可用区、长期归档或监管审批。
+# 所有镜像变量必须由发布系统传入带 @sha256: 的完整引用；禁止回退到 mutable tag。
+services:
+  prometheus:
+    image: "${PROMETHEUS_IMAGE:?PROMETHEUS_IMAGE must be pinned by digest}"
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:?set approved metrics retention}"
+      - "--storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:?set approved metrics size cap}"
+      - --web.enable-lifecycle=false
+      - --web.enable-admin-api=false
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    secrets:
+      # 与 RGS 运维监听器共享同一受控 secret 文件；Prometheus 配置中不出现 token 值。
+      - rgs_operations_bearer_token
+      # 告警路由凭据只能来自 secret 文件，不能写入规则或环境变量。
+      - alertmanager_bearer_token
+    ports:
+      # 安全不变量：默认只绑定回环地址；公网入口不得转发 Prometheus。
+      - "${OBSERVABILITY_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - observability
+      - rgs-operations
+      # 只允许到外部 Alertmanager 的 HTTPS 出站；不得复用日志或公网业务网络。
+      - alert-egress
+    mem_limit: 256m
+    cpus: 0.50
+
+  grafana:
+    image: "${GRAFANA_IMAGE:?GRAFANA_IMAGE must be pinned by digest}"
+    restart: unless-stopped
+    user: "472:472"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SERVER_ENABLE_GZIP: "true"
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    ports:
+      # 安全不变量：生产应再置于 SSO/RBAC 反向代理之后，不能直接暴露公网。
+      - "${OBSERVABILITY_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    networks:
+      - observability
+    depends_on:
+      - prometheus
+    mem_limit: 256m
+    cpus: 0.50
+
+  vector:
+    image: "${VECTOR_IMAGE:?VECTOR_IMAGE must be pinned by digest}"
+    restart: unless-stopped
+    user: "65534:65534"
+    group_add:
+      # 宿主只给该专用组读取精确 RGS stdout 目录的 ACL；不得授予 docker/root 组。
+      - "${RGS_CONTAINER_LOG_GID:?set the dedicated read-only RGS log group id}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # 仅允许经过审批的 HTTPS/mTLS 出口；认证应由受控 egress proxy 注入。
+      RGS_CONTAINER_LOG_GLOB: "${RGS_CONTAINER_LOG_GLOB:?set the RGS stdout log glob}"
+      RGS_LOG_SINK_URI: "${RGS_LOG_SINK_URI:?set the approved HTTPS log sink URI}"
+      # Vector 0.57+ 默认关闭配置环境插值；这里只开放上面两个已做静态/发布校验的非秘密值。
+      VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION: "true"
+    volumes:
+      # 不挂载 docker.sock。仅以只读方式暴露 RGS stdout 日志目录，缩小宿主权限面。
+      - "${RGS_CONTAINER_LOG_ROOT:?set the read-only container log root}:/var/log/containers:ro"
+      - ./vector.yaml:/etc/vector/vector.yaml:ro
+      # 必须预创建为 65534 可写、其他主体不可写；用于 checkpoint 与有界磁盘缓冲。
+      - "${RGS_VECTOR_DATA_DIR:?set the pre-provisioned Vector state directory}:/var/lib/vector"
+    command:
+      - --config
+      - /etc/vector/vector.yaml
+      # 首次部署时接收端不可达即退出；不能把“配置已加载”误当作日志链路已接通。
+      - --require-healthy
+    networks:
+      - observability
+      # 仅用于访问审批日志接收端；平台必须对 DNS/IP/端口做精确 egress allowlist。
+      # 同时必须拒绝该网络任何主体向 Vector 9598 发起连接；指标仅供 observability 网络。
+      - log-egress
+    mem_limit: 128m
+    cpus: 0.25
+
+secrets:
+  grafana_admin_password:
+    # 文件必须由密钥管理系统在部署时生成，禁止提交到仓库。
+    file: "${GRAFANA_ADMIN_PASSWORD_FILE:?set an untracked Grafana admin password file}"
+  rgs_operations_bearer_token:
+    # 同一文件需以只读 secret 挂载给 RGS；值不得进入环境变量、镜像层或日志。
+    file: "${RGS_OPERATIONS_BEARER_TOKEN_FILE:?set the RGS operations bearer token file}"
+  alertmanager_bearer_token:
+    file: "${ALERTMANAGER_BEARER_TOKEN_FILE:?set the Alertmanager bearer token file}"
+
+networks:
+  observability:
+    internal: true
+  rgs-operations:
+    external: true
+    # 该网络只应连接 Prometheus 与 RGS 独立运维监听器，不应承载公网流量。
+    name: "${RGS_OPERATIONS_NETWORK:?set the private RGS operations network}"
+  log-egress:
+    external: true
+    # 该网络只授予 Vector 到审批日志接收端的出站能力，不允许任何入站发布端口。
+    name: "${RGS_LOG_EGRESS_NETWORK:?set the restricted log egress network}"
+  alert-egress:
+    external: true
+    # 该网络只授予 Prometheus 到审批 Alertmanager 的出站能力，不允许任何入站发布端口。
+    name: "${RGS_ALERT_EGRESS_NETWORK:?set the restricted alert egress network}"
+
+volumes:
+  prometheus-data:
+  grafana-data:

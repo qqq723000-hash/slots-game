@@ -1,0 +1,114 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-alerts") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    {{- with .Values.monitoring.ruleLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: slots-rgs.rules
+      rules:
+        - alert: SlotsRGSTargetUnavailable
+          expr: |
+            min(up{job="slots-rgs",namespace="{{ .Release.Namespace }}"}) < 1
+            or absent(up{job="slots-rgs",namespace="{{ .Release.Namespace }}"})
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS 指标目标不可用
+            description: 至少一个 RGS operations 指标目标连续两分钟不可抓取，或全部目标已从服务发现消失。
+        - alert: SlotsRGSNotReady
+          expr: |
+            min(rgs_ready{job="slots-rgs",namespace="{{ .Release.Namespace }}"}) < 1
+            or absent(rgs_ready{job="slots-rgs",namespace="{{ .Release.Namespace }}"})
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS 副本持续未就绪
+            description: 至少一个可抓取 RGS 副本的数据库、审计 outbox 或后台恢复就绪检查持续失败。
+        - alert: SlotsRGSServerErrorRateHigh
+          expr: |
+            (
+              sum(rate(rgs_http_server_failures_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m]))
+              /
+              clamp_min(sum(rate(rgs_http_requests_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])), 0.001)
+            ) > 0.05
+            and sum(rate(rgs_http_requests_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0.1
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS 服务端错误率过高
+            description: 过去五分钟的 5xx 比例持续超过百分之五，且请求量已超过最低噪声门槛。
+        - alert: SlotsRGSCapacityRejected
+          expr: |
+            sum(increase(rgs_capacity_rejected_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: RGS 进程并发闸门持续拒绝请求
+            description: RGS 已因进程级并发容量上限拒绝公网请求；应核对 HPA、Pod 资源和上游全局限流。
+        - alert: SlotsRGSWalletUnknownOutcome
+          expr: |
+            sum(increase(rgs_wallet_unknown_outcomes_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: 钱包调用出现未知结果
+            description: 钱包操作需要状态对账；必须确认恢复任务、钱包幂等查询和资金结果最终一致。
+        - alert: SlotsRGSIntegrityQuarantine
+          expr: |
+            sum(increase(rgs_round_integrity_quarantines_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m]))
+            + sum(increase(rgs_session_integrity_quarantines_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS 完整性隔离事件
+            description: 新的轮次或会话被持久化隔离；不得自动解封，必须保留证据并执行人工审查。
+        - alert: SlotsRGSOutboxDeferred
+          expr: |
+            sum(increase(rgs_outbox_deferred_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: 审计 outbox 持续延迟
+            description: 审计事件发布失败并进入重试；应核对接收端、TLS、NetworkPolicy 和 backlog 新鲜度。
+        - alert: SlotsRGSOutboxLeaseLost
+          expr: |
+            sum(increase(rgs_outbox_lease_lost_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[10m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: 审计 outbox 租约围栏冲突
+            description: outbox 完成确认被租约围栏拒绝；应检查数据库延迟、工作器超时和副本争用。
+        - alert: SlotsRGSDatabasePoolSaturated
+          expr: |
+            max(
+              rgs_db_pool_in_use_connections{job="slots-rgs",namespace="{{ .Release.Namespace }}"}
+              /
+              clamp_min(rgs_db_pool_max_open_connections{job="slots-rgs",namespace="{{ .Release.Namespace }}"}, 1)
+            ) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: RGS 数据库连接池接近耗尽
+            description: 至少一个副本的运行时数据库连接池使用率持续超过百分之九十。
+        - alert: SlotsRGSDatabasePoolWaits
+          expr: |
+            sum(rate(rgs_db_pool_wait_count_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: RGS 数据库连接池持续等待
+            description: RGS 请求持续等待数据库连接；应联动检查外部 PostgreSQL 容量和每 Pod 连接预算。

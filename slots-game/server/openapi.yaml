@@ -1,0 +1,1624 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Slots Game RGS Integration API
+  version: 1.0.0
+  summary: Operator and player-client contract for the clean-room RGS.
+  description: |
+    This draft documents the production RGS HTTP boundary implemented under
+    `server/internal/rgsapi`. All money, revision and sequence values are
+    canonical base-10 strings so JavaScript clients cannot lose integer
+    precision. Unknown and duplicate JSON fields are rejected.
+
+    Operator routes use the repository's fixed Ed25519 HTTP Message Signature
+    profiles for requests and responses. Client routes use a short-lived
+    RGS-ACCESS v2 compact bearer token issued after a one-time launch-code
+    exchange and replaced only while the prior token and durable session remain
+    valid. Signed endpoints do not accept query strings.
+
+    This document is not evidence of regulatory approval or certification. A
+    real-money deployment additionally requires the applicable licences,
+    independent RNG and mathematics certification, an independent security
+    audit, and a wallet adapter plus conformance approval for every operator.
+servers:
+  - url: https://rgs.example.invalid
+    description: Replace with the operator-approved RGS origin.
+tags:
+  - name: Operator
+    description: Signed server-to-server integration.
+  - name: Client
+    description: Browser/client launch, round and recovery integration.
+  - name: Operations
+    description: Restrict readiness and metrics at the network edge.
+
+paths:
+  /operator/v1/launches:
+    post:
+      tags: [Operator]
+      operationId: createLaunch
+      summary: Create one short-lived, single-use launch code
+      description: |
+        The authenticated operator comes from the verified signing key. The
+        request binds a player and wallet session to one immutable game
+        definition, currency and jurisdiction. Idempotency-Key identifies one
+        browser handoff, independently of the durable `sessionId`. Exact retries
+        use the same key and replay the same launch code and original expiry,
+        including after consumption or exchange expiry. That response is never
+        reactivated. Its digest remains an idempotency tombstone until 25 hours
+        after `expiresAt`. A new key issues a new code for the same active,
+        unexpired session without resetting its balance, absolute expiry,
+        revision, or feature state. For an existing session `balanceMinor` and
+        `sessionTtlSeconds` are creation-only inputs and do not replace durable
+        state. Within the same operator/session scope, reusing a key with
+        different request data is rejected. Every
+        response after the pre-authentication capacity gate is signed when a
+        tenant response key can be selected. At process capacity, the gate may
+        return a generic unsigned, data-free 503 SERVICE_UNAVAILABLE with
+        Retry-After before identity, signature, or nonce parsing. It is transport
+        backpressure, not an authenticated business result; retain the body and
+        idempotency key and follow the uncertain-transport retry/status contract
+        with a fresh nonce and signature. If no safe tenant key can be selected,
+        the server instead fails closed with an unsigned, data-free 503
+        RESPONSE_SIGNING_UNAVAILABLE envelope.
+      security:
+        - operatorMessageSignature: []
+      parameters:
+        - $ref: '#/components/parameters/OperatorId'
+        - $ref: '#/components/parameters/SignedRequestId'
+        - $ref: '#/components/parameters/Nonce'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/ContentDigest'
+        - $ref: '#/components/parameters/SignatureInput'
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLaunchRequest'
+      responses:
+        '201':
+          description: Launch credential created, or the exact retained response replayed for the same handoff key.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Content-Digest:
+              $ref: '#/components/headers/ContentDigest'
+            Signature-Input:
+              $ref: '#/components/headers/SignatureInput'
+            Signature:
+              $ref: '#/components/headers/Signature'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaunchSuccessEnvelope'
+        '400':
+          $ref: '#/components/responses/SignedError'
+        '401':
+          $ref: '#/components/responses/SignedError'
+        '403':
+          $ref: '#/components/responses/SignedError'
+        '409':
+          $ref: '#/components/responses/SignedError'
+        '413':
+          $ref: '#/components/responses/SignedError'
+        '415':
+          $ref: '#/components/responses/SignedError'
+        '405':
+          $ref: '#/components/responses/SignedMethodNotAllowed'
+        '410':
+          $ref: '#/components/responses/SignedError'
+        '423':
+          $ref: '#/components/responses/SignedError'
+        '429':
+          $ref: '#/components/responses/SignedRateLimited'
+        '500':
+          $ref: '#/components/responses/SignedError'
+        '503':
+          $ref: '#/components/responses/OperatorUnavailable'
+
+  /operator/v1/rounds/status:
+    post:
+      tags: [Operator]
+      operationId: getOperatorRoundStatus
+      summary: Read a persisted round for reconciliation
+      description: |
+        POST keeps tenant/session/round identifiers out of query logs. A 200
+        response may contain any persisted status, including WALLET_PENDING or
+        MANUAL_REVIEW. Only COMMITTED includes `result`. Responses follow the
+        same signing/fail-closed rule as the launch route.
+      security:
+        - operatorMessageSignature: []
+      parameters:
+        - $ref: '#/components/parameters/OperatorId'
+        - $ref: '#/components/parameters/SignedRequestId'
+        - $ref: '#/components/parameters/Nonce'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/ContentDigest'
+        - $ref: '#/components/parameters/SignatureInput'
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoundStatusRequest'
+      responses:
+        '200':
+          description: Current durable round state.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Content-Digest:
+              $ref: '#/components/headers/ContentDigest'
+            Signature-Input:
+              $ref: '#/components/headers/SignatureInput'
+            Signature:
+              $ref: '#/components/headers/Signature'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoundStatusSuccessEnvelope'
+        '400':
+          $ref: '#/components/responses/SignedError'
+        '401':
+          $ref: '#/components/responses/SignedError'
+        '403':
+          $ref: '#/components/responses/SignedError'
+        '404':
+          $ref: '#/components/responses/SignedError'
+        '413':
+          $ref: '#/components/responses/SignedError'
+        '415':
+          $ref: '#/components/responses/SignedError'
+        '405':
+          $ref: '#/components/responses/SignedMethodNotAllowed'
+        '429':
+          $ref: '#/components/responses/SignedRateLimited'
+        '500':
+          $ref: '#/components/responses/SignedError'
+        '503':
+          $ref: '#/components/responses/OperatorUnavailable'
+
+  /client/v1/sessions/exchange:
+    post:
+      tags: [Client]
+      operationId: exchangeLaunchCode
+      summary: Consume a launch code and establish the RGS session
+      description: |
+        The code is stored only as a digest and consumed atomically under its
+        operator/session binding. Do not send Authorization on this endpoint.
+        Do not cache or persist the returned bearer token outside memory.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExchangeLaunchRequest'
+      responses:
+        '200':
+          description: Launch code consumed; session and access token returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeSuccessEnvelope'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          description: Launch credential is unknown, expired, consumed, or binding-mismatched; these cases are intentionally indistinguishable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '410':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '415':
+          $ref: '#/components/responses/Error'
+        '405':
+          $ref: '#/components/responses/ClientMethodNotAllowed'
+        '423':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /client/v1/sessions/refresh:
+    post:
+      tags: [Client]
+      operationId: refreshClientSession
+      summary: Replace a still-valid access token for an active session
+      description: |
+        Requires a currently valid RGS-ACCESS v2 bearer token and the complete
+        session binding. The replacement token remains bound to the same
+        operator, player, wallet session, RGS session, game definition hash,
+        currency and jurisdiction. Its lifetime is no longer than
+        RGS_ACCESS_TOKEN_TTL and is clipped to the durable session expiry.
+        Refresh does not extend the session, unblock MANUAL_REVIEW, or provide
+        a grace path for an expired token. Replace the old in-memory token only
+        after this response succeeds.
+      security:
+        - clientAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionRefreshRequest'
+      responses:
+        '200':
+          description: Replacement token and current authoritative session projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeSuccessEnvelope'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/ClientUnauthorized'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '410':
+          description: The durable RGS session has expired and cannot be refreshed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '413':
+          $ref: '#/components/responses/Error'
+        '415':
+          $ref: '#/components/responses/Error'
+        '405':
+          $ref: '#/components/responses/ClientMethodNotAllowed'
+        '423':
+          description: Session is BLOCKED/MANUAL_REVIEW; refreshing must not re-enable wagering.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /client/v1/spins:
+    post:
+      tags: [Client]
+      operationId: createSpin
+      summary: Prepare, settle and return one authoritative round
+      description: |
+        `roundId` is the retry identity inside the token-bound session. A
+        timeout is never permission to create a replacement round. Retry the
+        exact request with the same round ID, or call round status. HTTP 202 is
+        an error envelope with code ROUND_PENDING and exposes no payable result.
+      security:
+        - clientAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpinRequest'
+      responses:
+        '200':
+          description: Canonical committed result, including an exact replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpinSuccessEnvelope'
+        '202':
+          description: Settlement is pending. Query status with the same binding and round ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/ClientUnauthorized'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '410':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '415':
+          $ref: '#/components/responses/Error'
+        '405':
+          $ref: '#/components/responses/ClientMethodNotAllowed'
+        '423':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /client/v1/rounds/status:
+    post:
+      tags: [Client]
+      operationId: getClientRoundStatus
+      summary: Recover a persisted round after a disconnect
+      description: A 200 response contains the current durable status. Only COMMITTED includes `result`.
+      security:
+        - clientAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoundStatusRequest'
+      responses:
+        '200':
+          description: Current durable round state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoundStatusSuccessEnvelope'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/ClientUnauthorized'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '410':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '415':
+          $ref: '#/components/responses/Error'
+        '405':
+          $ref: '#/components/responses/ClientMethodNotAllowed'
+        '423':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /client/v1/results/pending:
+    get:
+      tags: [Client]
+      operationId: getPendingResultDelivery
+      summary: Discover the token-bound session's unacknowledged committed result
+      description: |
+        This recovery route does not require a round ID, so a reconnect can
+        recover after browser storage loss. A result remains economically
+        COMMITTED independently of this delivery cursor. The subsequent ACK is
+        a client canonical-payload consumption receipt, not evidence that the
+        player viewed its presentation.
+      security:
+        - clientAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ClientOperatorId'
+      responses:
+        '200':
+          description: The sole unacknowledged canonical result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingResultSuccessEnvelope'
+        '204':
+          description: No committed result is awaiting acknowledgement.
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/ClientUnauthorized'
+        '404':
+          $ref: '#/components/responses/Error'
+        '405':
+          $ref: '#/components/responses/ClientMethodNotAllowed'
+        '423':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /client/v1/results/acknowledgements:
+    post:
+      tags: [Client]
+      operationId: acknowledgeResultDelivery
+      summary: Acknowledge consumption of one canonical committed result
+      description: |
+        The exact session, round, sequence, and complete committed-result hash
+        are required. Exact retries are idempotent. This transition never
+        changes balance, feature state, wallet settlement, or economic outbox
+        facts.
+      security:
+        - clientAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResultDeliveryAcknowledgementRequest'
+      responses:
+        '200':
+          description: Consumption receipt recorded or exactly replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultDeliveryAcknowledgementSuccessEnvelope'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/ClientUnauthorized'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '405':
+          $ref: '#/components/responses/ClientMethodNotAllowed'
+        '423':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /healthz:
+    servers:
+      - url: https://rgs.example.invalid
+        description: Public liveness compatibility endpoint.
+      - url: http://127.0.0.1:8081
+        description: Protected operations listener.
+    get:
+      tags: [Operations]
+      operationId: getLiveness
+      summary: Process liveness probe
+      security: []
+      responses:
+        '200':
+          description: The process is alive; this is not a readiness or certification signal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liveness'
+        '400':
+          $ref: '#/components/responses/OperationsBadRequest'
+        '405':
+          $ref: '#/components/responses/OperationsMethodNotAllowed'
+
+  /readyz:
+    servers:
+      - url: http://127.0.0.1:8081
+        description: Protected operations listener only; never publish on the RGS origin.
+    get:
+      tags: [Operations]
+      operationId: getReadiness
+      summary: Dependency readiness probe
+      description: |
+        Available only on RGS_OPERATIONS_HTTP_ADDR. In production, and whenever
+        that listener is not loopback, callers must send the exact Bearer value
+        loaded from RGS_OPERATIONS_BEARER_TOKEN_FILE. Configure Prometheus or the
+        orchestrator with bearer_token_file; never place this secret in a URL or
+        command line.
+      security:
+        - operationsBearer: []
+      responses:
+        '200':
+          description: Required dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: At least one dependency is not ready; secret error details are omitted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '401':
+          $ref: '#/components/responses/OperationsUnauthorized'
+        '400':
+          $ref: '#/components/responses/OperationsBadRequest'
+        '405':
+          $ref: '#/components/responses/OperationsMethodNotAllowed'
+
+  /metrics:
+    servers:
+      - url: http://127.0.0.1:8081
+        description: Protected operations listener only; never publish on the RGS origin.
+    get:
+      tags: [Operations]
+      operationId: getMetrics
+      summary: Bounded-cardinality Prometheus metrics
+      description: |
+        Never expose publicly. Identifiers are not metric labels; request latency
+        uses a fixed bucket histogram and database-pool values are process-local.
+        Every scrape runs the readiness dependency set under one total two-second
+        deadline and exposes the unlabeled rgs_ready gauge. A not-ready result is
+        rgs_ready 0 while this endpoint remains HTTP 200, so Prometheus up reports
+        transport reachability rather than traffic-admission readiness.
+        In production, and whenever the listener is not loopback, callers must
+        use the Bearer value from RGS_OPERATIONS_BEARER_TOKEN_FILE.
+      security:
+        - operationsBearer: []
+      responses:
+        '200':
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/OperationsUnauthorized'
+        '400':
+          $ref: '#/components/responses/OperationsBadRequest'
+        '405':
+          $ref: '#/components/responses/OperationsMethodNotAllowed'
+
+components:
+  securitySchemes:
+    operatorMessageSignature:
+      type: apiKey
+      in: header
+      name: Signature
+      description: |
+        Fixed Ed25519 request profile. All X-Operator-Id, X-Request-Id,
+        X-Nonce, Idempotency-Key, Content-Digest, Signature-Input and Signature
+        headers are mandatory. It covers "@method", "@authority", "@path",
+        "content-digest", "content-type", "x-operator-id", "x-request-id",
+        "x-nonce" and "idempotency-key" in that order.
+    clientAccessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: RGS-ACCESS-v2
+      description: Fixed compact Ed25519 v2 token, including game-definition hash; not a general JWT profile.
+    operationsBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: RGS-OPERATIONS
+      description: A deployment-only secret loaded from RGS_OPERATIONS_BEARER_TOKEN_FILE; required for readiness and metrics in production and on every non-loopback operations listener.
+
+  parameters:
+    OperatorId:
+      name: X-Operator-Id
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+      description: Must match the tenant bound to the verified key.
+    SignedRequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+      description: Signed correlation ID; must not contain a player identifier.
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema:
+        $ref: '#/components/schemas/Identifier'
+      description: Optional client correlation ID. The RGS generates one when absent or invalid.
+    ClientOperatorId:
+      name: X-Operator-Id
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+      description: Explicit tenant selector; it must match the verified access token.
+    Nonce:
+      name: X-Nonce
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 256
+      description: Cryptographically random, single-use nonce within the verified key scope.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+      description: Stable across retries of the same operator operation. For createLaunch it identifies one browser handoff, not the durable session; its response is retained until 25 hours after code expiry. Use a new value only when intentionally issuing the next handoff.
+    ContentDigest:
+      name: Content-Digest
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^sha-256=:[A-Za-z0-9+/]+={0,2}:$'
+    SignatureInput:
+      name: Signature-Input
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Exact sig1 components, created/expires, keyid and alg="ed25519".
+    Signature:
+      name: Signature
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^sig1=:[A-Za-z0-9+/]+={0,2}:$'
+
+  headers:
+    RequestId:
+      required: true
+      schema:
+        $ref: '#/components/schemas/Identifier'
+    ContentDigest:
+      required: true
+      schema:
+        type: string
+        pattern: '^sha-256=:[A-Za-z0-9+/]+={0,2}:$'
+    SignatureInput:
+      required: true
+      schema:
+        type: string
+    Signature:
+      required: true
+      schema:
+        type: string
+        pattern: '^sig1=:[A-Za-z0-9+/]+={0,2}:$'
+    RetryAfter:
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 60
+
+  responses:
+    SignedError:
+      description: Signed error envelope. Inspect the stable body code; no internal error text is exposed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Content-Digest:
+          $ref: '#/components/headers/ContentDigest'
+        Signature-Input:
+          $ref: '#/components/headers/SignatureInput'
+        Signature:
+          $ref: '#/components/headers/Signature'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    SignedMethodNotAllowed:
+      description: Signed method-not-allowed error envelope.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Content-Digest:
+          $ref: '#/components/headers/ContentDigest'
+        Signature-Input:
+          $ref: '#/components/headers/SignatureInput'
+        Signature:
+          $ref: '#/components/headers/Signature'
+        Allow:
+          required: true
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    SignedRateLimited:
+      description: Signed local admission-control rejection.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Content-Digest:
+          $ref: '#/components/headers/ContentDigest'
+        Signature-Input:
+          $ref: '#/components/headers/SignatureInput'
+        Signature:
+          $ref: '#/components/headers/Signature'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    OperatorUnavailable:
+      description: |
+        Dependency, capacity, or response-signing failure. Normally signed. The
+        process-wide pre-authentication capacity gate returns an intentionally
+        unsigned SERVICE_UNAVAILABLE response with Retry-After because no tenant
+        identity is trusted yet. If a safe tenant response key cannot be selected,
+        the minimal RESPONSE_SIGNING_UNAVAILABLE envelope is also intentionally
+        unsigned. Neither unsigned response is an authoritative business outcome:
+        after Retry-After, query status where available or retain the exact body
+        and idempotency key and retry with a fresh nonce/request ID/signature. Do
+        not infer nonce or round side effects and do not create a new business
+        identity to bypass capacity.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Content-Digest:
+          schema:
+            type: string
+            pattern: '^sha-256=:[A-Za-z0-9+/]+={0,2}:$'
+          description: Absent for the pre-authentication capacity gate and when response signing itself was unavailable.
+        Signature-Input:
+          schema:
+            type: string
+          description: Absent for the pre-authentication capacity gate and when response signing itself was unavailable.
+        Signature:
+          schema:
+            type: string
+            pattern: '^sig1=:[A-Za-z0-9+/]+={0,2}:$'
+          description: Absent for the pre-authentication capacity gate and when response signing itself was unavailable.
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Error:
+      description: Stable client error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ClientUnauthorized:
+      description: Client access token is absent, malformed, expired, invalid, or does not belong to the claimed operator. No credential detail is disclosed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ClientMethodNotAllowed:
+      description: Client method-not-allowed error envelope.
+      headers:
+        Allow:
+          required: true
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    OperationsUnauthorized:
+      description: Operations credentials are absent, malformed, duplicated, or invalid. The response never indicates which condition occurred.
+      headers:
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+        Cache-Control:
+          required: true
+          schema:
+            type: string
+      content:
+        text/plain:
+          schema:
+            type: string
+    RateLimited:
+      description: Local admission-control rejection.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unavailable:
+      description: A required dependency or process capacity is unavailable, or the economic outcome is not safely known.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    OperationsMethodNotAllowed:
+      description: Operations method-not-allowed response.
+      headers:
+        Allow:
+          required: true
+          schema:
+            type: string
+      content:
+        text/plain:
+          schema:
+            type: string
+    OperationsBadRequest:
+      description: A read-only liveness, readiness, or metrics GET declared a request body; the connection is closed without reading it.
+      headers:
+        Cache-Control:
+          required: true
+          schema:
+            type: string
+        Connection:
+          required: true
+          schema:
+            type: string
+      content:
+        text/plain:
+          schema:
+            type: string
+
+  schemas:
+    Identifier:
+      type: string
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+      examples: [req_01JABCDEF]
+    Digest:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+      examples: [0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef]
+    Currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      examples: [EUR]
+    Jurisdiction:
+      type: string
+      pattern: '^[A-Z0-9][A-Z0-9-]{1,15}$'
+      examples: [GB]
+    MoneyMinor:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+      maxLength: 19
+      description: Canonical non-negative signed-int64 value in minor currency units.
+      examples: ['100']
+    PositiveMoneyMinor:
+      type: string
+      pattern: '^[1-9][0-9]*$'
+      maxLength: 19
+      description: Canonical positive signed-int64 value in minor currency units.
+      examples: ['100']
+    PositiveIntegerString:
+      type: string
+      pattern: '^[1-9][0-9]*$'
+      maxLength: 19
+      description: Canonical positive signed-int64 integer encoded as a string.
+      examples: ['2']
+    RevisionString:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+      maxLength: 19
+      description: Canonical uint value no greater than 9223372036854775807.
+      examples: ['0']
+    SequenceString:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+      maxLength: 16
+      description: Canonical uint value no greater than 9007199254740991.
+      examples: ['1']
+    RoundKind:
+      type: string
+      enum: [BASE, FREE_SPIN, BONUS]
+    RoundState:
+      type: string
+      enum: [PREPARED, WALLET_PENDING, COMMITTED, REJECTED, MANUAL_REVIEW]
+
+    SessionBinding:
+      type: object
+      required:
+        - operatorId
+        - sessionId
+        - gameId
+        - definitionVersion
+        - definitionHash
+        - currency
+        - currencyExponent
+        - jurisdiction
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        gameId:
+          $ref: '#/components/schemas/Identifier'
+        definitionVersion:
+          $ref: '#/components/schemas/Identifier'
+        definitionHash:
+          $ref: '#/components/schemas/Digest'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        currencyExponent:
+          type: integer
+          minimum: 0
+          maximum: 6
+        jurisdiction:
+          $ref: '#/components/schemas/Jurisdiction'
+
+    CreateLaunchRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - playerId
+        - walletAccountId
+        - walletSessionId
+        - sessionId
+        - gameId
+        - definitionVersion
+        - definitionHash
+        - currency
+        - currencyExponent
+        - jurisdiction
+        - balanceMinor
+        - sessionTtlSeconds
+      properties:
+        playerId:
+          $ref: '#/components/schemas/Identifier'
+        walletAccountId:
+          $ref: '#/components/schemas/Identifier'
+        walletSessionId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        gameId:
+          $ref: '#/components/schemas/Identifier'
+        definitionVersion:
+          $ref: '#/components/schemas/Identifier'
+        definitionHash:
+          $ref: '#/components/schemas/Digest'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        currencyExponent:
+          type: integer
+          minimum: 0
+          maximum: 6
+        jurisdiction:
+          $ref: '#/components/schemas/Jurisdiction'
+        balanceMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+          description: Creation-only balance snapshot. Relaunch keeps the persisted session balance and ignores this value for durable state; retries with one Idempotency-Key must still keep the complete request unchanged.
+        sessionTtlSeconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          description: Creation-only lifetime. Relaunch keeps the persisted absolute session expiry and never extends it; retries with one Idempotency-Key must still keep the complete request unchanged.
+
+    ExchangeLaunchRequest:
+      type: object
+      additionalProperties: false
+      required: [launchCode, operatorId, sessionId]
+      properties:
+        launchCode:
+          type: string
+          pattern: '^lc_[A-Za-z0-9_-]{43}$'
+          minLength: 46
+          maxLength: 46
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+
+    SessionRefreshRequest:
+      description: Exact token/session binding required for access-token replacement.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/SessionBinding'
+
+    SpinRequest:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/SessionBinding'
+        - type: object
+          required: [roundId, roundKind, betMinor, startRevision]
+          properties:
+            roundId:
+              $ref: '#/components/schemas/Identifier'
+            roundKind:
+              $ref: '#/components/schemas/RoundKind'
+            betMinor:
+              $ref: '#/components/schemas/PositiveMoneyMinor'
+            startRevision:
+              $ref: '#/components/schemas/RevisionString'
+
+    RoundStatusRequest:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/SessionBinding'
+        - type: object
+          required: [roundId]
+          properties:
+            roundId:
+              $ref: '#/components/schemas/Identifier'
+
+    ResultDeliveryAcknowledgementRequest:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/SessionBinding'
+        - type: object
+          required: [roundId, sequence, resultHash]
+          properties:
+            roundId:
+              $ref: '#/components/schemas/Identifier'
+            sequence:
+              $ref: '#/components/schemas/SequenceString'
+            resultHash:
+              $ref: '#/components/schemas/Digest'
+
+    LaunchSuccessEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/LaunchResponse'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    LaunchResponse:
+      type: object
+      additionalProperties: false
+      required: [launchCode, exchangeUrl, expiresAt]
+      properties:
+        launchCode:
+          type: string
+          pattern: '^lc_[A-Za-z0-9_-]{43}$'
+          minLength: 46
+          maxLength: 46
+        exchangeUrl:
+          type: string
+          format: uri
+          pattern: '^https://'
+        expiresAt:
+          type: string
+          format: date-time
+
+    ExchangeSuccessEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/ExchangeResponse'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    ExchangeResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, session]
+      properties:
+        accessToken:
+          type: string
+          minLength: 80
+          maxLength: 8192
+        session:
+          $ref: '#/components/schemas/SessionResponse'
+    SessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - operatorId
+        - sessionId
+        - gameId
+        - definitionVersion
+        - definitionHash
+        - currency
+        - currencyExponent
+        - jurisdiction
+        - status
+        - expiresAt
+        - balanceMinor
+        - revision
+        - sequence
+        - feature
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        gameId:
+          $ref: '#/components/schemas/Identifier'
+        definitionVersion:
+          $ref: '#/components/schemas/Identifier'
+        definitionHash:
+          $ref: '#/components/schemas/Digest'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        currencyExponent:
+          type: integer
+          minimum: 0
+          maximum: 6
+        jurisdiction:
+          $ref: '#/components/schemas/Jurisdiction'
+        status:
+          type: string
+          enum: [ACTIVE, BLOCKED, CLOSED, EXPIRED]
+        expiresAt:
+          type: string
+          format: date-time
+        balanceMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+        revision:
+          $ref: '#/components/schemas/RevisionString'
+        sequence:
+          $ref: '#/components/schemas/SequenceString'
+        feature:
+          $ref: '#/components/schemas/FeatureState'
+
+    SpinSuccessEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/SpinResult'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    RoundStatusSuccessEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/RoundStatusResponse'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    RoundStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [operatorId, sessionId, roundId, status]
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        roundId:
+          $ref: '#/components/schemas/Identifier'
+        status:
+          $ref: '#/components/schemas/RoundState'
+        result:
+          $ref: '#/components/schemas/SpinResult'
+
+    PendingResultSuccessEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/PendingResultDeliveryResponse'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    PendingResultDeliveryResponse:
+      type: object
+      additionalProperties: false
+      required: [operatorId, sessionId, roundId, sequence, resultHash, originFeature, result]
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        roundId:
+          $ref: '#/components/schemas/Identifier'
+        sequence:
+          $ref: '#/components/schemas/SequenceString'
+        resultHash:
+          $ref: '#/components/schemas/Digest'
+        originFeature:
+          allOf:
+            - $ref: '#/components/schemas/FeatureState'
+          description: >-
+            Authoritative feature state persisted before this round was
+            evaluated. Clients recovering without browser storage must use
+            this value and must not infer the origin from the post-round
+            session or result.
+        result:
+          $ref: '#/components/schemas/SpinResult'
+    ResultDeliveryAcknowledgementSuccessEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/ResultDeliveryAcknowledgementResponse'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    ResultDeliveryAcknowledgementResponse:
+      type: object
+      additionalProperties: false
+      required: [operatorId, sessionId, roundId, sequence, resultHash, acknowledgedAt]
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        roundId:
+          $ref: '#/components/schemas/Identifier'
+        sequence:
+          $ref: '#/components/schemas/SequenceString'
+        resultHash:
+          $ref: '#/components/schemas/Digest'
+        acknowledgedAt:
+          type: string
+          format: date-time
+
+    SpinResult:
+      type: object
+      additionalProperties: false
+      required:
+        - operatorId
+        - sessionId
+        - roundId
+        - gameId
+        - definitionVersion
+        - definitionHash
+        - currency
+        - roundKind
+        - serverTransactionId
+        - walletTransactionId
+        - startRevision
+        - endRevision
+        - sequence
+        - resultHash
+        - betMinor
+        - chargedBetMinor
+        - balanceMinor
+        - totalWinMinor
+        - grid
+        - wins
+        - events
+        - feature
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        roundId:
+          $ref: '#/components/schemas/Identifier'
+        gameId:
+          $ref: '#/components/schemas/Identifier'
+        definitionVersion:
+          $ref: '#/components/schemas/Identifier'
+        definitionHash:
+          $ref: '#/components/schemas/Digest'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        roundKind:
+          $ref: '#/components/schemas/RoundKind'
+        serverTransactionId:
+          $ref: '#/components/schemas/Identifier'
+        walletTransactionId:
+          $ref: '#/components/schemas/Identifier'
+        startRevision:
+          $ref: '#/components/schemas/RevisionString'
+        endRevision:
+          $ref: '#/components/schemas/RevisionString'
+        sequence:
+          $ref: '#/components/schemas/SequenceString'
+        resultHash:
+          $ref: '#/components/schemas/Digest'
+        betMinor:
+          $ref: '#/components/schemas/PositiveMoneyMinor'
+        chargedBetMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+        balanceMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+        totalWinMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+        grid:
+          type: array
+          minItems: 3
+          maxItems: 3
+          description: Reel-major grid addressed as grid[reel][row].
+          items:
+            type: array
+            minItems: 3
+            maxItems: 8
+            items:
+              $ref: '#/components/schemas/Cell'
+        wins:
+          type: array
+          maxItems: 4096
+          items:
+            $ref: '#/components/schemas/Win'
+        events:
+          type: array
+          maxItems: 4096
+          items:
+            $ref: '#/components/schemas/GameEvent'
+        feature:
+          $ref: '#/components/schemas/FeatureState'
+    Cell:
+      type: object
+      additionalProperties: false
+      description: >-
+        Authoritative reel cell. A multiplier WILD carries its sampled
+        multiplier while a plain WILD
+        omits it. An unlocked VAULT carries its final prize and multiplier;
+        FREE_SPIN carries prize only. A still-locked VAULT may expose the
+        non-paying lockedVaultFace presentation pose.
+      required: [symbol]
+      allOf:
+        - if:
+            properties:
+              lockedVaultFace: {}
+            required: [lockedVaultFace]
+          then:
+            properties:
+              symbol:
+                enum: [VAULT]
+            not:
+              anyOf:
+                - properties:
+                    multiplier: {}
+                  required: [multiplier]
+                - properties:
+                    prize: {}
+                  required: [prize]
+      properties:
+        symbol:
+          $ref: '#/components/schemas/Identifier'
+        multiplier:
+          type: integer
+          minimum: 1
+        prize:
+          $ref: '#/components/schemas/Identifier'
+        lockedVaultFace:
+          type: string
+          description: >-
+            Server-authoritative Symbol8 value pose for a still-locked VAULT.
+            This field is presentation-only and is mutually exclusive with
+            multiplier and prize.
+          enum:
+            [x1, x2, x3, x4, x5, x6, x7, x8, x9, mini, minor, major, mega, grand, free_spin]
+    Position:
+      type: object
+      additionalProperties: false
+      required: [reel, row]
+      properties:
+        reel:
+          type: integer
+          minimum: 0
+          maximum: 2
+        row:
+          type: integer
+          minimum: 0
+          maximum: 7
+    PathAward:
+      type: object
+      additionalProperties: false
+      required: [cells, multiplier, baseAmountMinor, amountMinor]
+      properties:
+        cells:
+          type: array
+          minItems: 3
+          maxItems: 3
+          description: Exactly one cell for reels 0, 1, and 2, in reel order.
+          items:
+            $ref: '#/components/schemas/Position'
+        multiplier:
+          $ref: '#/components/schemas/PositiveIntegerString'
+        baseAmountMinor:
+          allOf:
+            - $ref: '#/components/schemas/MoneyMinor'
+          description: Server-resolved amount shown before the WILD multiplier merge; clients must not derive it by division.
+        amountMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+    Win:
+      type: object
+      additionalProperties: false
+      description: >-
+        One aggregate paying-symbol record. multiplier is optional presentation
+        metadata and is emitted only when every pathAward has the same
+        multiplier; mixed records retain only their per-path multipliers.
+      required: [id, symbol, ways, amountMinor, cells, pathAwards]
+      properties:
+        id:
+          $ref: '#/components/schemas/Identifier'
+        symbol:
+          $ref: '#/components/schemas/Identifier'
+        ways:
+          type: integer
+          minimum: 1
+        amountMinor:
+          $ref: '#/components/schemas/PositiveMoneyMinor'
+        multiplier:
+          allOf:
+            - $ref: '#/components/schemas/PositiveIntegerString'
+          description: >-
+            Uniform multiplier shared by every pathAward. It is not an
+            independent payout input.
+        cells:
+          type: array
+          minItems: 1
+          maxItems: 24
+          items:
+            $ref: '#/components/schemas/Position'
+        pathAwards:
+          type: array
+          minItems: 1
+          maxItems: 512
+          items:
+            $ref: '#/components/schemas/PathAward'
+    GameEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - count
+        - cells
+        - triggered
+        - guaranteed
+        - outcome
+        - prize
+        - multiplier
+        - amountMinor
+        - cumulativeWinMinor
+        - mode
+        - awarded
+        - rows
+        - ways
+        - reel
+        - row
+        - level
+        - total
+        - step
+        - fromMultiplier
+        - toMultiplier
+      properties:
+        type:
+          $ref: '#/components/schemas/Identifier'
+        count:
+          type: integer
+          minimum: 0
+        cells:
+          type: array
+          maxItems: 24
+          items:
+            $ref: '#/components/schemas/Position'
+        triggered:
+          type: boolean
+        guaranteed:
+          type: boolean
+        outcome:
+          type: string
+          maxLength: 128
+        prize:
+          type: string
+          maxLength: 128
+        multiplier:
+          $ref: '#/components/schemas/MoneyMinor'
+        amountMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+        cumulativeWinMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+        mode:
+          type: string
+          enum: [NONE, EXPANSION, OVERDRIVE]
+        awarded:
+          type: integer
+          minimum: 0
+        rows:
+          type: integer
+          minimum: 0
+          maximum: 8
+        ways:
+          type: integer
+          minimum: 0
+        reel:
+          type: integer
+          minimum: 0
+          maximum: 2
+        row:
+          type: integer
+          minimum: 0
+          maximum: 7
+        level:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        step:
+          type: integer
+          minimum: 0
+          maximum: 16
+        fromMultiplier:
+          $ref: '#/components/schemas/MoneyMinor'
+        toMultiplier:
+          $ref: '#/components/schemas/MoneyMinor'
+    FeatureState:
+      type: object
+      additionalProperties: false
+      required: [mode, remaining, awarded, betMinor, winMinor, rageLevel, rageCollected]
+      properties:
+        mode:
+          type: string
+          enum: [NONE, EXPANSION, OVERDRIVE]
+        remaining:
+          type: integer
+          minimum: 0
+        awarded:
+          type: integer
+          minimum: 0
+        betMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+        winMinor:
+          $ref: '#/components/schemas/MoneyMinor'
+        rageLevel:
+          type: integer
+          minimum: 1
+        rageCollected:
+          type: integer
+          minimum: 0
+
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error, requestId]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    ErrorBody:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]{1,127}$'
+        message:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Stable non-sensitive guidance; never an internal error string.
+
+    Liveness:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, ok]
+            properties:
+              name:
+                type: string
+                minLength: 1
+                maxLength: 64
+              ok:
+                type: boolean

@@ -1,0 +1,655 @@
+{
+  "schemaVersion": 1,
+  "assetSet": "primal-rampage-runtime:desktop",
+  "packages": [
+    {
+      "id": "desktop-startup-shell",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "startup-shell",
+      "resources": [
+        {
+          "id": "desktop:shell:shared:feature-preview",
+          "url": "/assets/primal-runtime/interface/feature_preview_texture0_level1.avif",
+          "bytes": 61463,
+          "sha256": "ed805eef3c05e0c6534a6c147b7d7042db617329392e1990c2b4432d8e84c05c",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:shell:shared:fps-ui",
+          "url": "/assets/primal-runtime/interface/fps_ui_texture0_level1.avif",
+          "bytes": 4551,
+          "sha256": "5b747c648976e16234b84784ae48cde337ed336b605e843af0f45a819033fe0c",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:shell:shared:powered-by-playngo",
+          "url": "/assets/primal-runtime/interface/powered-by-playngo.png",
+          "bytes": 13543,
+          "sha256": "7a532e8cd7c23f44e54497b3d4dada97f0ad282a524df80b76d83bf107acf5db",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:shell:shared:statusbar-level1-atlas",
+          "url": "/assets/primal-runtime/interface/statusbar_texture0_level1.avif",
+          "bytes": 5206,
+          "sha256": "342814a7a55e13da881640193f726bba3f12ad9b2e0995c37c8d69c555d4ee02",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:shell:shared:kanit-bold",
+          "url": "/assets/primal-runtime/fonts/KANIT_BOLD.woff",
+          "bytes": 22464,
+          "sha256": "d18399ff3fa658c62aef0ca2b79da804d0fb5fe084359a066ebf9fd22b6af35e",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:shell:shared:roboto-condensed-bold",
+          "url": "/assets/primal-runtime/fonts/ROBOTO_CONDENSED_BOLD.woff",
+          "bytes": 109277,
+          "sha256": "de19d3ed40dda1ff72f31cc0cbbd3ad9cfc380f45851173365755eadde145807",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:shell:shared:roboto-condensed-regular",
+          "url": "/assets/primal-runtime/fonts/ROBOTO_CONDENSED_REGULAR.woff",
+          "bytes": 109929,
+          "sha256": "fe233bd33b58cb76eae1bd15098bdd052e705762aa277915f65a63af4164f20a",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:shell:shared:statusbar-atlas-data",
+          "url": "/assets/primal-runtime/interface/statusbar.json",
+          "bytes": 33114,
+          "sha256": "03164c6613951dccb183ac4f60b56dee0c20870097e867291c8154d7bc8942ae",
+          "decoder": "json"
+        }
+      ]
+    },
+    {
+      "id": "desktop-spine-fps-shared",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "startup-shell",
+      "resources": [
+        {
+          "id": "desktop:fps:atlas",
+          "url": "/assets/primal-runtime/spine/spine_fps/spine_fps.atlas",
+          "bytes": 3652,
+          "sha256": "facb9e58ffe41dc06a00567c67da2632f8dddabdaf2f852c8ff64555dd8fa208",
+          "decoder": "text"
+        },
+        {
+          "id": "desktop:fps:page:spine-fps-level1-avif",
+          "url": "/assets/primal-runtime/spine/spine_fps/spine_fps_level1.avif",
+          "bytes": 33682,
+          "sha256": "9837875c34ba1f05928f288ec3954711542711e4931ec91c4a50a6a0145abba5",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:fps:page:spine-fps-level1-2-avif",
+          "url": "/assets/primal-runtime/spine/spine_fps/spine_fps_level1_2.avif",
+          "bytes": 52521,
+          "sha256": "a025a10b49b925fc6c59fa34ac112a0b53670b1b4f4cca8f934ad447c4c78144",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-spine-fps-base",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "startup-shell",
+      "dependsOn": [
+        "desktop-spine-fps-shared"
+      ],
+      "resources": [
+        {
+          "id": "desktop:fps:skeleton:fps",
+          "url": "/assets/primal-runtime/spine/spine_fps/fps.skel",
+          "bytes": 45017,
+          "sha256": "9230a1192d1b64f06660ceffeaeea6e830ba6483ccd9ce32ae1e225fea15b225",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-spine-background-shared",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "base-critical",
+      "resources": [
+        {
+          "id": "desktop:background:atlas",
+          "url": "/assets/primal-runtime/spine/spine_background/spine_background.atlas",
+          "bytes": 15263,
+          "sha256": "d696962a11089ffcab87c6a1a5c3be653a8ddb05f51ccfb594de7d2669a2c1db",
+          "decoder": "text"
+        },
+        {
+          "id": "desktop:background:page:spine-background-level1-avif",
+          "url": "/assets/primal-runtime/spine/spine_background/spine_background_level1.avif",
+          "bytes": 345190,
+          "sha256": "72aa67fe1527621efb6faf8b059af0497b3d21a05d34fd4167a9bf65d9ab0ee2",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:background:page:spine-background-level1-2-avif",
+          "url": "/assets/primal-runtime/spine/spine_background/spine_background_level1_2.avif",
+          "bytes": 328995,
+          "sha256": "356a4af06339d79028e9f5e9acef9d1924324005163d8c98b7a333273b771814",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-spine-background-base",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "base-critical",
+      "dependsOn": [
+        "desktop-spine-background-shared"
+      ],
+      "resources": [
+        {
+          "id": "desktop:background:skeleton:pr-background",
+          "url": "/assets/primal-runtime/spine/spine_background/PR_background.skel",
+          "bytes": 299831,
+          "sha256": "53bbb2e702792993e6bfdee9e63604434c4dc8c479e6376f2e4f68aecabbabba",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:background:skeleton:pr-background-frnt",
+          "url": "/assets/primal-runtime/spine/spine_background/PR_background_frnt.skel",
+          "bytes": 53819,
+          "sha256": "b4074f340ec1adc776374389e6082da05bcbfa3252cba00073c71c4023a7564e",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-spine-symbols-shared",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "base-critical",
+      "resources": [
+        {
+          "id": "desktop:symbols:atlas",
+          "url": "/assets/primal-runtime/spine/spine_symbols/spine_symbols.atlas",
+          "bytes": 94582,
+          "sha256": "dfb243e5f91182705bbd06266cb865984d6ab4e43ac3c9dd1b98102cdbdea6bc",
+          "decoder": "text"
+        },
+        {
+          "id": "desktop:symbols:page:spine-symbols-level1-avif",
+          "url": "/assets/primal-runtime/spine/spine_symbols/spine_symbols_level1.avif",
+          "bytes": 402199,
+          "sha256": "44d9f0cd476e5159f8a14224afee977e654491e0ec47a4f9ac8e8c6351cdee3e",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:page:spine-symbols-level1-2-avif",
+          "url": "/assets/primal-runtime/spine/spine_symbols/spine_symbols_level1_2.avif",
+          "bytes": 78261,
+          "sha256": "865d476db0378f75e6208b50eb5bf04e1f5975374fc08b05c1eab93f07d77b35",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:page:spine-symbols-level1-3-avif",
+          "url": "/assets/primal-runtime/spine/spine_symbols/spine_symbols_level1_3.avif",
+          "bytes": 876041,
+          "sha256": "f6a5a1dfd121382700d024eb796b1a969f894eddd92b3e12bc8bb2a83eaa64c4",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-spine-symbols-base",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "base-critical",
+      "dependsOn": [
+        "desktop-spine-symbols-shared"
+      ],
+      "resources": [
+        {
+          "id": "desktop:symbols:skeleton:character",
+          "url": "/assets/primal-runtime/spine/spine_symbols/character.skel",
+          "bytes": 469565,
+          "sha256": "d25500c134afc3fc30f92c7463372434fd8b129139dcafc826216b5f5a7cc30c",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:reel-frame",
+          "url": "/assets/primal-runtime/spine/spine_symbols/reel_frame.skel",
+          "bytes": 178853,
+          "sha256": "4daf98493c7c1f208da10569f6d2ac9acedfdb6da3ab7c2ae52b4caf918ea2fc",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol0",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol0.skel",
+          "bytes": 29386,
+          "sha256": "8f4085066093431f45e14847783265d70b8241e91425d3fda668e640526acd18",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol1",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol1.skel",
+          "bytes": 29942,
+          "sha256": "807ff06105f31f1702d0df3d94612f862cd5b68a207d49e730137f4f8489ab4b",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol2",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol2.skel",
+          "bytes": 52661,
+          "sha256": "45443fd00e66109bc0a24d99d33539c284e8ea2dd2a36393ceabcc87d7b85922",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol3",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol3.skel",
+          "bytes": 43966,
+          "sha256": "f9a5fb119d5e4a1b2597bfc41a27ec3eb47d2416d335a8be4b1ac18190a114dd",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol4",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol4.skel",
+          "bytes": 72076,
+          "sha256": "73b6c53598756d8bef9ea7f9377c4e3fa47791760354180dd0187dce93bddec9",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol5",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol5.skel",
+          "bytes": 86360,
+          "sha256": "db5c84e80ab35321cb1d1c05315ff4f5f345287d9bfc24b00ce40ef4987a3f52",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol6",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol6.skel",
+          "bytes": 76466,
+          "sha256": "22b6ccae468e3d04b7c0dabf2a59c3dfcf00ed1d4f96fc4ee6a15c10ef3fc87d",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol7",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol7.skel",
+          "bytes": 177981,
+          "sha256": "249dfd4d317b4f36718752c92ccf4025da9b923d3b20f04f55db33ae9045d3a4",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol8",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol8.skel",
+          "bytes": 119308,
+          "sha256": "7ecbc13a0dd2017a6f6f5daef4a6d1c432455709811b86101c12b21d48c8a490",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol9",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol9.skel",
+          "bytes": 198249,
+          "sha256": "ce0130943965b328f5d9c895a5f7d46662a5e20067f614d55eafee9202eae2b6",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:symbols:skeleton:symbol-blurred-dummy",
+          "url": "/assets/primal-runtime/spine/spine_symbols/Symbol_blurred_dummy.skel",
+          "bytes": 243,
+          "sha256": "f8a5143901628a4d9182ddeb82d862464fff5a3158a2b25b68118a9dacbcd1f1",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-spine-ui-shared",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "base-critical",
+      "resources": [
+        {
+          "id": "desktop:ui:atlas",
+          "url": "/assets/primal-runtime/spine/spine_ui/spine_ui.atlas",
+          "bytes": 57464,
+          "sha256": "6daea5d854eddb997e34cc60c737472a2d8a9ec3f05462f88327d0d730e284dc",
+          "decoder": "text"
+        },
+        {
+          "id": "desktop:ui:page:spine-ui-level1-avif",
+          "url": "/assets/primal-runtime/spine/spine_ui/spine_ui_level1.avif",
+          "bytes": 443875,
+          "sha256": "6cba95b748ca495bc5e321cc232463594c4429bd247c3ca4d6ed58084b2abfd7",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:page:spine-ui-level1-2-avif",
+          "url": "/assets/primal-runtime/spine/spine_ui/spine_ui_level1_2.avif",
+          "bytes": 865915,
+          "sha256": "6dd7ff6d2452614234db4cda3d488efd164542a8e3b4ae097eac8b8bdec36230",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-spine-ui-base",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "base-critical",
+      "dependsOn": [
+        "desktop-spine-ui-shared"
+      ],
+      "resources": [
+        {
+          "id": "desktop:ui:skeleton:grand-jackpot",
+          "url": "/assets/primal-runtime/spine/spine_ui/grand_jackpot.skel",
+          "bytes": 83117,
+          "sha256": "60b4b2689e577b1b0bb46b60c8d1ca07cce992d0a24c0a60eea23cd72ea69f5e",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:logo-game",
+          "url": "/assets/primal-runtime/spine/spine_ui/logo_game.skel",
+          "bytes": 30036,
+          "sha256": "dbf109c62022c735e70435c9a8aa1d7237916d33aee830b2e6a8404dd3d4247c",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:logo-intro",
+          "url": "/assets/primal-runtime/spine/spine_ui/logo_intro.skel",
+          "bytes": 83624,
+          "sha256": "a984d22072967755967659fa41e557a27151d6114e56cd2e6bd8d4604cf687e6",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:major-jackpot",
+          "url": "/assets/primal-runtime/spine/spine_ui/major_jackpot.skel",
+          "bytes": 83126,
+          "sha256": "7fea43a147559e6c24f9008a9a94549f517d2316b81d8cac49be75f185d42f29",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:mega-jackpot",
+          "url": "/assets/primal-runtime/spine/spine_ui/mega_jackpot.skel",
+          "bytes": 83018,
+          "sha256": "78acf03faf52c52553a85f3bbea019539de31386a741f77342ff1e2c50b21d01",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:mini-jackpot",
+          "url": "/assets/primal-runtime/spine/spine_ui/mini_jackpot.skel",
+          "bytes": 83116,
+          "sha256": "b710a1332c21e8fda05419e6c457eb6b7bf664affafb840338d0be8904ed190b",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:minor-jackpot",
+          "url": "/assets/primal-runtime/spine/spine_ui/minor_jackpot.skel",
+          "bytes": 83126,
+          "sha256": "7ebd7db31a7703b624f73a7808c0e0a844df6a1c92ddba53cd5c7b114bc105ab",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-interaction-visuals",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "interaction-ready",
+      "dependsOn": [
+        "desktop-spine-ui-shared"
+      ],
+      "resources": [
+        {
+          "id": "desktop:ui:skeleton:anticipation",
+          "url": "/assets/primal-runtime/spine/spine_ui/anticipation.skel",
+          "bytes": 3373,
+          "sha256": "b4254f30635ee3575602b5ceccff438b596746b60b7eb4bf665a60fada593d47",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:trail",
+          "url": "/assets/primal-runtime/spine/spine_ui/trail.skel",
+          "bytes": 3301,
+          "sha256": "506b69183ff2520fcd80912b702b4096b3d5ab08de507980e8ec6d30650892d5",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:winbox",
+          "url": "/assets/primal-runtime/spine/spine_ui/winbox.skel",
+          "bytes": 3643,
+          "sha256": "26d26ca5cf4b8cff4b2699c1097e3766227cf5956ae1e4225615485b626ff3bb",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:winlabel",
+          "url": "/assets/primal-runtime/spine/spine_ui/winlabel.skel",
+          "bytes": 13584,
+          "sha256": "520ca8d94584afc0590660eb7f345d58d95bd1d8930cd6742ad55b24ec99020b",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-feature-wheel",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "feature-on-demand",
+      "dependsOn": [
+        "desktop-spine-ui-shared",
+        "desktop-interaction-audio"
+      ],
+      "resources": [
+        {
+          "id": "desktop:ui:skeleton:wheel",
+          "url": "/assets/primal-runtime/spine/spine_ui/wheel.skel",
+          "bytes": 230206,
+          "sha256": "f8553c8a57e00ee662899c5c0b535ca5403e0f7d4bfd8f1468db9d3845f2bec7",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:wheel-hyperspin",
+          "url": "/assets/primal-runtime/spine/spine_ui/wheel_hyperspin.skel",
+          "bytes": 9183,
+          "sha256": "97a9bdccf69f89f29e53107f8df04bc8648ac9ba567c1b027285875786adaa1d",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:wheel-popup-start",
+          "url": "/assets/primal-runtime/spine/spine_ui/wheel_popup_start.skel",
+          "bytes": 29368,
+          "sha256": "fc2194f177f6a9feb762f0ef6dc0f1101c2ee170673dc21e722c571c7861f85a",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:wheel-summary-freespins",
+          "url": "/assets/primal-runtime/spine/spine_ui/wheel_summary_freespins.skel",
+          "bytes": 28687,
+          "sha256": "233e1779b965f04c3f7d180688eb92bb09960d4ffeca4c69067424fa25bf77dc",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:wheel-summary-jackpot",
+          "url": "/assets/primal-runtime/spine/spine_ui/wheel_summary_jackpot.skel",
+          "bytes": 28816,
+          "sha256": "8dd30b68b78f1348dde562766ee1da8930390827e65b540dc04066a2e1196f57",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-feature-free-spins",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "feature-on-demand",
+      "dependsOn": [
+        "desktop-spine-ui-shared",
+        "desktop-interaction-audio"
+      ],
+      "resources": [
+        {
+          "id": "desktop:ui:skeleton:freespin-counter",
+          "url": "/assets/primal-runtime/spine/spine_ui/freespin_counter.skel",
+          "bytes": 12193,
+          "sha256": "1ad9c4ee4aa08b77e1e2f5b21b88adfb2e47701aa11851d2c362afd69f3a22b0",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:freespin-retrigger",
+          "url": "/assets/primal-runtime/spine/spine_ui/freespin_retrigger.skel",
+          "bytes": 688,
+          "sha256": "1e5f624609d0c112e5d7f915fd1e9ddd99c6fb069c0444c11c8b84e8cc6d5269",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:fs-intro-1",
+          "url": "/assets/primal-runtime/spine/spine_ui/fs_intro_1.skel",
+          "bytes": 38907,
+          "sha256": "c79a5df561944b002fa9ff372c0a3c777759b6215b8c5ee511fb8b14c29eea3b",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:fs-intro-2",
+          "url": "/assets/primal-runtime/spine/spine_ui/fs_intro_2.skel",
+          "bytes": 12494,
+          "sha256": "d136e755b2fa791cad950652b5f0622660b616840091bf5176790c6a5e93d173",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:ui:skeleton:fs-summary",
+          "url": "/assets/primal-runtime/spine/spine_ui/fs_summary.skel",
+          "bytes": 53254,
+          "sha256": "72a3f231d6708acb929b2f6c3eb3c912a493500a2e99cc4aa77a6da3195aec69",
+          "decoder": "binary"
+        }
+      ]
+    },
+    {
+      "id": "desktop-feature-big-win",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "feature-on-demand",
+      "dependsOn": [
+        "desktop-spine-ui-shared"
+      ],
+      "resources": [
+        {
+          "id": "desktop:ui:skeleton:big-win",
+          "url": "/assets/primal-runtime/spine/spine_ui/BigWin.skel",
+          "bytes": 195638,
+          "sha256": "f09dd8332388d102315b336c3669a270cc5f00407deef8dc629eb07eaaaca527",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:big-win:interface:primal-rampage-bitmap-font",
+          "url": "/assets/primal-runtime/fonts/primal-rampage/PrimalRampage.fnt",
+          "bytes": 5248,
+          "sha256": "06c65c637c3d01b9428bd04223fea97c3ffa3392cd81f2361a01ec45d562c538",
+          "decoder": "text"
+        },
+        {
+          "id": "desktop:big-win:interface:primal-rampage-bitmap-font-page",
+          "url": "/assets/primal-runtime/fonts/primal-rampage/PrimalRampage.png",
+          "bytes": 3792144,
+          "sha256": "11340623fd9dcba4db5217ae3cb8a2f2da7ea574490ba04f75c693cef54f6bad",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:big-win:interface:big-win-coin-atlas-data",
+          "url": "/assets/primal-runtime/interface/big-win-coins.json",
+          "bytes": 51676,
+          "sha256": "4eb9dbb6eb6de7f7aa682113d7f9af78472de291bf88192082bbe9eb4b9a9f37",
+          "decoder": "json"
+        }
+      ]
+    },
+    {
+      "id": "desktop-interaction-audio",
+      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "stage": "interaction-ready",
+      "resources": [
+        {
+          "id": "desktop:audio:game",
+          "url": "/assets/primal-runtime/audio/sounds_desktop.json",
+          "bytes": 153,
+          "sha256": "807d36b64570c58d5db331714b0f05ebfd5d2f2bb9886e80d9f669f55bfbe0cc",
+          "decoder": "json"
+        },
+        {
+          "id": "desktop:audio:delayed",
+          "url": "/assets/primal-runtime/audio/snd_delayed_desktop.json",
+          "bytes": 99,
+          "sha256": "e0b8f3b98e2cc468afa86b6f94df7fc32c617e50b7f4ce967dae07b91c8f3679",
+          "decoder": "json"
+        },
+        {
+          "id": "desktop:audio:delayed-loader",
+          "url": "/assets/primal-runtime/audio/delayed_bundle_desktop.json",
+          "bytes": 124,
+          "sha256": "9d80b6cdb7c0d3dc4fe8dadbf78e77743e8b8ef865dc0231670af35cf903484f",
+          "decoder": "json"
+        },
+        {
+          "id": "desktop:audio:common",
+          "url": "/assets/primal-runtime/audio/common_sounds_desktop.json",
+          "bytes": 651,
+          "sha256": "4604c3faafda747dc5cc08afd4ecaba03c3f49b027b838f39b21fe2b05a3c3cd",
+          "decoder": "json"
+        },
+        {
+          "id": "desktop:audio:sounds-desktop-0",
+          "url": "/assets/primal-runtime/audio/sounds_desktop_0.json",
+          "bytes": 1531,
+          "sha256": "258ddce3ba7267a270bc7b8762f4cf5d88ffa79b48c0989d31ff370577f2c712",
+          "decoder": "json"
+        },
+        {
+          "id": "desktop:audio:sounds-desktop-1",
+          "url": "/assets/primal-runtime/audio/sounds_desktop_1.json",
+          "bytes": 5380,
+          "sha256": "f3d93e67238c509470672d6258e65bed62ef3be2871f1facea9d8be0ddd95bf4",
+          "decoder": "json"
+        },
+        {
+          "id": "desktop:audio:sounds-desktop-2",
+          "url": "/assets/primal-runtime/audio/sounds_desktop_2.json",
+          "bytes": 2014,
+          "sha256": "cfb928f40dec1b71b9157e6cef752051247419e94d217347d6b85226df45ab6a",
+          "decoder": "json"
+        },
+        {
+          "id": "desktop:audio:snd-delayed-desktop-0",
+          "url": "/assets/primal-runtime/audio/snd_delayed_desktop_0.json",
+          "bytes": 2269,
+          "sha256": "6b3dbf937ff98a391badb9d658ac7aae7d6232b58401fa6066be66fb0a9b541d",
+          "decoder": "json"
+        },
+        {
+          "id": "desktop:audio:sounds-0",
+          "url": "/assets/primal-runtime/audio/sounds_desktop_0.m4a",
+          "bytes": 2764387,
+          "sha256": "8ffe927ae1aa4e54cfcc09bdb23d603ceee593094a879ee0883576845864e999",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:audio:sounds-1",
+          "url": "/assets/primal-runtime/audio/sounds_desktop_1.m4a",
+          "bytes": 2290735,
+          "sha256": "027cc655c2bb52b188a25cec0c166c4a39ae18a6542bd469343c347a5ac80140",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:audio:sounds-2",
+          "url": "/assets/primal-runtime/audio/sounds_desktop_2.m4a",
+          "bytes": 1225925,
+          "sha256": "46c2478619cae2f349f9807643178d8298d134d7b25fd0eb1a89ffab31f2a459",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:audio:snd-delayed-0",
+          "url": "/assets/primal-runtime/audio/snd_delayed_desktop_0.m4a",
+          "bytes": 316676,
+          "sha256": "4e4f0823adf37f304dad941ce3b0c34b4cf8e1f9e1d6aa85000928c5e1528080",
+          "decoder": "binary"
+        },
+        {
+          "id": "desktop:audio:common-sounds",
+          "url": "/assets/primal-runtime/audio/common_sounds_desktop.mp3",
+          "bytes": 34119,
+          "sha256": "b4447ee42b8dc43c88012ef67a22390937f86ee17dd6171bc8d1d976a9b2fb21",
+          "decoder": "binary"
+        }
+      ]
+    }
+  ]
+}

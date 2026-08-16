@@ -1,0 +1,58 @@
+{
+  "schema": "rgs-operators-v2",
+  "tokenIssuer": "https://rgs.example.com",
+  "tokenAudience": "slots-game-client",
+  "operators": [
+    {
+      "operatorId": "operator-example",
+      "accessTokenSigningKey": {
+        "keyId": "operator-example-access-2026-01",
+        "notBefore": "2026-07-01T00:00:00Z",
+        "notAfter": "2027-07-01T00:00:00Z",
+        "privateKeyFile": "keys/rgs-operator-example-access-private.pem",
+        "publicKeyFile": "keys/rgs-operator-example-access-public.pem"
+      },
+      "accessTokenVerificationKeys": [
+        {
+          "keyId": "operator-example-access-2025-01",
+          "notBefore": "2025-07-01T00:00:00Z",
+          "notAfter": "2026-08-01T00:00:00Z",
+          "publicKeyFile": "keys/rgs-operator-example-access-2025-public.pem"
+        }
+      ],
+      "operatorRequestVerificationKeys": [
+        {
+          "keyId": "operator-example-request-2026-01",
+          "notBefore": "2026-07-01T00:00:00Z",
+          "notAfter": "2027-07-01T00:00:00Z",
+          "publicKeyFile": "keys/operator-request-public.pem"
+        }
+      ],
+      "operatorResponseSigningKey": {
+        "keyId": "rgs-operator-example-response-2026-01",
+        "notBefore": "2026-07-01T00:00:00Z",
+        "notAfter": "2027-07-01T00:00:00Z",
+        "privateKeyFile": "keys/rgs-operator-response-private.pem",
+        "publicKeyFile": "keys/rgs-operator-response-public.pem"
+      },
+      "wallet": {
+        "baseUrl": "https://wallet.example.com",
+        "requestSigningKey": {
+          "keyId": "rgs-wallet-request-2026-01",
+          "notBefore": "2026-07-01T00:00:00Z",
+          "notAfter": "2027-07-01T00:00:00Z",
+          "privateKeyFile": "keys/rgs-wallet-request-private.pem",
+          "publicKeyFile": "keys/rgs-wallet-request-public.pem"
+        },
+        "responseVerificationKeys": [
+          {
+            "keyId": "operator-wallet-response-2026-01",
+            "notBefore": "2026-07-01T00:00:00Z",
+            "notAfter": "2027-07-01T00:00:00Z",
+            "publicKeyFile": "keys/operator-wallet-response-public.pem"
+          }
+        ]
+      }
+    }
+  ]
+}

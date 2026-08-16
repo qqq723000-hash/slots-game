@@ -1,0 +1,39 @@
+name: slots-rgs-postgres
+
+# 仅用于开发/一致性验证；本文件不构成具备 HA、备份、传输加密、监控或监管审批的生产拓扑。
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rgs}
+      POSTGRES_USER: ${POSTGRES_USER:-rgs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the shell or an untracked env file}
+      RGS_MIGRATOR_PASSWORD: ${RGS_MIGRATOR_PASSWORD:?set RGS_MIGRATOR_PASSWORD in the shell or an untracked env file}
+      RGS_RUNTIME_PASSWORD: ${RGS_RUNTIME_PASSWORD:?set RGS_RUNTIME_PASSWORD in the shell or an untracked env file}
+    ports:
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - rgs-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init/001-roles.sh:/docker-entrypoint-initdb.d/001-roles.sh:ro
+    networks:
+      - rgs-data
+      - rgs-host-access
+
+volumes:
+  rgs-postgres-data:
+
+networks:
+  rgs-data:
+    internal: true
+  # 单独承担 127.0.0.1 端口发布；关闭转发 NAT，避免测试数据库取得通用外网出口。
+  rgs-host-access:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"

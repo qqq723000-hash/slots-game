@@ -1,0 +1,23 @@
+# 两个上游音频清单按原始字节参与运行时 SHA-256 校验；保留 CRLF，且不把其
+# 既有行尾解释为仓库源码的空白错误。
+web/public/assets/primal-runtime/audio/common_sounds_desktop.json -text -whitespace
+web/public/assets/primal-runtime/mobile/audio/common_sounds_mobile.json -text -whitespace
+
+# 生产二进制资源通过 Git LFS 交付，避免普通 Git push/clone 传输大对象；CI 必须
+# 显式启用 lfs checkout，JSON/SVG/atlas 等可审阅清单仍保留为普通 Git 文本。
+web/public/assets/primal-runtime/**/*.png filter=lfs diff=lfs merge=lfs -text
+web/public/assets/primal-runtime/**/*.avif filter=lfs diff=lfs merge=lfs -text
+web/public/assets/primal-runtime/**/*.m4a filter=lfs diff=lfs merge=lfs -text
+web/public/assets/primal-runtime/**/*.mp3 filter=lfs diff=lfs merge=lfs -text
+web/public/assets/primal-runtime/**/*.skel filter=lfs diff=lfs merge=lfs -text
+web/public/assets/primal-runtime/**/*.woff filter=lfs diff=lfs merge=lfs -text
+web/public/assets/primal-reference/**/*.png filter=lfs diff=lfs merge=lfs -text
+web/public/assets/primal-reference/**/*.avif filter=lfs diff=lfs merge=lfs -text
+
+# 下列五个资源均小于 4 MiB。当前交付网络对 Git LFS 对象存储的大请求存在超时，
+# 因此仅将这些精确路径作为普通 Git 二进制对象交付；其余生产资源继续使用 LFS。
+web/public/assets/primal-runtime/audio/sounds_desktop_0.m4a -filter -diff -merge -text
+web/public/assets/primal-runtime/audio/sounds_desktop_1.m4a -filter -diff -merge -text
+web/public/assets/primal-runtime/fonts/primal-rampage/PrimalRampage.png -filter -diff -merge -text
+web/public/assets/primal-runtime/mobile/audio/sounds_mobile_0.m4a -filter -diff -merge -text
+web/public/assets/primal-runtime/mobile/audio/sounds_mobile_1.m4a -filter -diff -merge -text

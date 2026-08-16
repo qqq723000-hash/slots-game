@@ -1,0 +1,139 @@
+data_dir: /var/lib/vector
+
+sources:
+  rgs_container_stdout:
+    type: file
+    # 由 Compose 强制注入，仅应匹配 RGS 容器 stdout 文件，不能使用全节点通配符。
+    include:
+      - "${RGS_CONTAINER_LOG_GLOB}"
+    read_from: end
+    ignore_older_secs: 86400
+    internal_metrics:
+      # 文件路径随容器轮换且基数无界；运行态只保留固定 component_id 标签。
+      include_file_tag: false
+
+  vector_internal_metrics:
+    type: internal_metrics
+    namespace: vector
+    scrape_interval_secs: 15
+    tags:
+      # 容器 hostname 会在重建后变化；禁止它制造无界历史时序。
+      host_key: ""
+
+transforms:
+  normalize_rgs_json:
+    type: remap
+    inputs:
+      - rgs_container_stdout
+    source: |-
+      raw = string!(.message)
+
+      # 兼容 Kubernetes CRI stdout 包装；未匹配时继续按裸 JSONL 处理。
+      cri, cri_err = parse_regex(raw, r'^(?P<timestamp>[^ ]+) (?P<stream>stdout|stderr) (?P<partial>[FP]) (?P<payload>.*)$')
+      if cri_err == null {
+        raw = string!(cri.payload)
+        .container_timestamp = cri.timestamp
+        .stream = cri.stream
+        .partial = cri.partial
+      }
+
+      # 兼容 Docker json-file 的外层包装，但绝不连接高权限 docker.sock。
+      docker, docker_err = parse_json(raw)
+      if docker_err == null && is_object(docker) {
+        docker = object!(docker)
+        if exists(docker.log) {
+          raw = string!(docker.log)
+          .stream = string(docker.stream) ?? .stream
+          .container_timestamp = string(docker.time) ?? .container_timestamp
+        }
+      }
+
+      app, app_err = parse_json(raw)
+      if app_err == null && is_object(app) {
+        . = merge(., object!(app))
+        del(.message)
+      } else {
+        # 非结构化行可能来自第三方库并夹带 DSN、token 或请求内容；只保留固定标记，
+        # 禁止把无法按字段脱敏的原文发送到长期日志接收端。
+        .message = "unparseable-log-redacted"
+        .parse_error = true
+      }
+      .service = "rgs-server"
+
+  redact_rgs_sensitive_fields:
+    type: remap
+    inputs:
+      - normalize_rgs_json
+    source: |-
+      # 防御性最小化：即使未来日志字段扩展，也不能转发凭据、签名、密钥或客户端 IP。
+      del(.remote_ip)
+      del(.authorization)
+      del(.access_token)
+      del(.refresh_token)
+      del(.cookie)
+      del(.signature)
+      del(.private_key)
+      del(.database_url)
+      del(.wallet_request)
+      del(.wallet_response)
+      # error/stack 可能由第三方库拼接 DSN、端点或业务标识，长期出口一律删除。
+      del(.error)
+      del(.stack)
+      del(.stacktrace)
+
+      # 当前路由均为固定模板；未知路径折叠，避免未来路径参数制造 PII/高基数。
+      if exists(.path) {
+        path = string(.path) ?? "other"
+        allowed_paths = [
+          "/operator/v1/launches",
+          "/operator/v1/rounds/status",
+          "/client/v1/sessions/exchange",
+          "/client/v1/sessions/refresh",
+          "/client/v1/spins",
+          "/client/v1/rounds/status",
+          "/client/v1/results/pending",
+          "/client/v1/results/acknowledgements",
+          "/healthz",
+          "/readyz",
+          "/metrics"
+        ]
+        if !includes(allowed_paths, path) {
+          .path = "other"
+        }
+      }
+
+sinks:
+  approved_https_archive:
+    type: http
+    inputs:
+      - redact_rgs_sensitive_fields
+    # 必须是经过网络与合规审批的 HTTPS/mTLS egress；禁止在 URI 中嵌入用户名或令牌。
+    uri: "${RGS_LOG_SINK_URI}"
+    method: post
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    batch:
+      max_bytes: 1048576
+      timeout_secs: 5
+    buffer:
+      type: disk
+      # Vector 当前磁盘缓冲实现要求至少 268435488 bytes；使用精确最小值控制资源占用。
+      max_size: 268435488
+      when_full: block
+    request:
+      timeout_secs: 10
+      # 保留 Vector 的近无限默认重试；有限次数会在短时出口故障后丢弃已缓冲批次。
+
+  vector_internal_prometheus:
+    type: prometheus_exporter
+    inputs:
+      - vector_internal_metrics
+    # 只由同一 internal observability 网络中的 Prometheus 抓取；Compose 不发布该端口。
+    # Vector 同时连接受限日志 egress，平台网络策略必须拒绝该网络向 9598 发起连接。
+    address: 0.0.0.0:9598
+    flush_period_secs: 60
+
+# 安全不变量：该配置不决定删除周期。接收端必须按 retention-policy.example.yml
+# 的已批准副本实施保留、legal hold、可审计删除和容量告警。

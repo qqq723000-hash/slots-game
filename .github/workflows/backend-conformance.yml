@@ -1,0 +1,126 @@
+name: Backend PostgreSQL conformance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: slots-game
+    env:
+      RGS_CONFORMANCE_ARTIFACT_DIR: ${{ github.workspace }}/slots-game/.artifacts/postgres-conformance
+      RGS_RUNTIME_SMOKE_ARTIFACT_DIR: ${{ github.workspace }}/slots-game/.artifacts/runtime-smoke
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGDATABASE: rgs_conformance
+      PGUSER: rgs_conformance
+      PGPASSWORD: conformance-${{ github.run_id }}-${{ github.run_attempt }}
+      RGS_MIGRATOR_PASSWORD: migrator-${{ github.run_id }}-${{ github.run_attempt }}
+      RGS_RUNTIME_PASSWORD: runtime-${{ github.run_id }}-${{ github.run_attempt }}
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_DB: rgs_conformance
+          POSTGRES_USER: rgs_conformance
+          POSTGRES_PASSWORD: conformance-${{ github.run_id }}-${{ github.run_attempt }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rgs_conformance -d rgs_conformance"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Verify release supply-chain contract
+        run: make verify-supply-chain-contract
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: 1.26.6
+          cache-dependency-path: slots-game/server/go.sum
+
+      - name: Confirm PostgreSQL readiness
+        run: pg_isready --host 127.0.0.1 --port 5432 --username rgs_conformance --dbname rgs_conformance
+
+      - name: Bootstrap isolated database roles
+        run: |
+          POSTGRES_USER="$PGUSER" POSTGRES_DB="$PGDATABASE" \
+            ./deploy/postgres/init/001-roles.sh
+
+      - name: Configure ephemeral conformance DSNs
+        shell: bash
+        run: |
+          printf 'RGS_POSTGRES_TEST_URL=postgres://%s:%s@%s:%s/%s?sslmode=disable\n' \
+            "rgs_runtime" "$RGS_RUNTIME_PASSWORD" "$PGHOST" "$PGPORT" "$PGDATABASE" >> "$GITHUB_ENV"
+          printf 'RGS_POSTGRES_MIGRATOR_TEST_URL=postgres://%s:%s@%s:%s/%s?sslmode=disable\n' \
+            "rgs_migrator" "$RGS_MIGRATOR_PASSWORD" "$PGHOST" "$PGPORT" "$PGDATABASE" >> "$GITHUB_ENV"
+
+      - name: Run backend release gates
+        run: make verify-backend
+
+      - name: Build and inspect isolated container targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --file deploy/Dockerfile --target runtime --tag slots-rgs-runtime:conformance .
+          docker build --file deploy/Dockerfile --target migrator --tag slots-rgs-migrator:conformance .
+          runtime_container=$(docker create slots-rgs-runtime:conformance)
+          migrator_container=$(docker create slots-rgs-migrator:conformance)
+          trap 'docker rm -f "$runtime_container" "$migrator_container" >/dev/null 2>&1 || true' EXIT
+          docker export "$runtime_container" | tar -tf - > /tmp/runtime-files.txt
+          docker export "$migrator_container" | tar -tf - > /tmp/migrator-files.txt
+          grep -Eq '(^|/)rgs-server$' /tmp/runtime-files.txt
+          if grep -Eq '(^|/)rgs-migrator$' /tmp/runtime-files.txt; then
+            echo "runtime target unexpectedly contains rgs-migrator" >&2
+            exit 1
+          fi
+          grep -Eq '(^|/)rgs-migrator$' /tmp/migrator-files.txt
+          if grep -Eq '(^|/)rgs-server$' /tmp/migrator-files.txt; then
+            echo "migrator target unexpectedly contains rgs-server" >&2
+            exit 1
+          fi
+
+      - name: Run migrator and authenticated operations runtime smoke
+        # CI 临时使用 development-only 密钥夹具；它不是生产审批或发布证据。
+        run: make smoke-runtime-operations
+
+      - name: Run production-configuration fail-closed runtime smoke
+        # v2 审批引用、TLS 证书与密钥均为短命 CI-only 材料，不得当作生产/监管证据。
+        env:
+          RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: make smoke-runtime-production
+
+      - name: Upload PostgreSQL conformance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: postgres-conformance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: slots-game/.artifacts/postgres-conformance/*.jsonl
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload runtime operations smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runtime-operations-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: slots-game/.artifacts/runtime-smoke/*
+          if-no-files-found: warn
+          retention-days: 30

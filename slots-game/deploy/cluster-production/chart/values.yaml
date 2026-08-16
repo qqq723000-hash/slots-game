@@ -1,0 +1,180 @@
+nameOverride: ""
+fullnameOverride: ""
+
+images:
+  rgs:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  migrator:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  web:
+    repository: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  pullSecrets: []
+
+rgs:
+  replicaCount: 3
+  publicBaseURL: ""
+  allowedOrigins: []
+  terminationGracePeriodSeconds: 45
+  preStopSeconds: 5
+  shutdownTimeoutSeconds: 30
+  resources:
+    requests:
+      cpu: 500m
+      memory: 384Mi
+      ephemeral-storage: 64Mi
+    limits:
+      cpu: "2"
+      memory: 768Mi
+      ephemeral-storage: 256Mi
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 65
+    targetMemoryUtilizationPercentage: 75
+  pdb:
+    minAvailable: 2
+  runtime:
+    databaseMaxOpenConnections: 20
+    databaseMaxIdleConnections: 5
+    maxInFlightRequests: 128
+    maxConnectionsPerListener: 512
+    ratePerSecondPerPod: 50
+    rateBurstPerPod: 100
+    walletTimeoutSeconds: 4
+    walletMaxAttempts: 100
+    outboxBatchSize: 100
+    outboxMaxParallel: 8
+    outboxLeaseSeconds: 180
+    outboxPublishTimeoutSeconds: 10
+
+migrator:
+  activeDeadlineSeconds: 900
+  backoffLimit: 2
+  migrationTimeoutSeconds: 600
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+      ephemeral-storage: 32Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+      ephemeral-storage: 128Mi
+
+web:
+  replicaCount: 3
+  terminationGracePeriodSeconds: 30
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+      ephemeral-storage: 32Mi
+    limits:
+      cpu: 500m
+      memory: 192Mi
+      ephemeral-storage: 128Mi
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  pdb:
+    minAvailable: 2
+
+ingress:
+  className: ""
+  apiHost: ""
+  webHost: ""
+  apiTLSSecretName: ""
+  webTLSSecretName: ""
+  tlsRedirectAnnotationKey: ""
+  tlsRedirectAnnotationValue: ""
+  annotations: {}
+  apiAnnotations: {}
+  webAnnotations: {}
+
+externalSecrets:
+  runtimeDatabase:
+    name: ""
+    urlKey: database-url
+  migratorDatabase:
+    name: ""
+    urlKey: database-url
+  operationsBearer:
+    name: ""
+    key: operations.token
+  runtimeAssets:
+    name: ""
+    keys:
+      operatorConfig: operators.json
+      definition: definition.json
+      definitionApproval: definition-approval.json
+      definitionApprovalPublicKey: definition-approval-public.pem
+      launchHMAC: launch-hmac.key
+      outboxHMAC: outbox-hmac.key
+      outboxBearerToken: outbox-bearer.token
+      outboxRootCA: outbox-root-ca.pem
+      trustBundle: trust-bundle.pem
+    additionalItems: []
+
+audit:
+  endpointURL: ""
+  hmacKeyID: ""
+  mtls:
+    enabled: false
+    clientCertKey: ""
+    clientKeyKey: ""
+
+externalControls:
+  globalRateLimitProvider: ""
+  tlsEnforcementProvider: ""
+  logPipelineProvider: ""
+  webVersionIsolationProvider: ""
+
+release:
+  compatibilityClass: ""
+
+monitoring:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  namespaceSelector:
+    matchLabels: {}
+  podSelector:
+    matchLabels: {}
+  ruleLabels: {}
+
+networkPolicy:
+  ingressController:
+    namespaceSelector:
+      matchLabels: {}
+    podSelector:
+      matchLabels: {}
+  dns:
+    namespaceSelector:
+      matchLabels: {}
+    podSelector:
+      matchLabels: {}
+  egress:
+    database:
+      cidrs: []
+      port: 5432
+    wallet:
+      cidrs: []
+      port: 443
+    audit:
+      cidrs: []
+      port: 443
+
+scheduling:
+  zoneTopologyKey: topology.kubernetes.io/zone
+  hostnameTopologyKey: kubernetes.io/hostname
+  zoneMinDomains: 3
+  nodeSelector: {}
+  tolerations: []

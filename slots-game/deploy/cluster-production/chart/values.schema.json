@@ -1,0 +1,454 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "nameOverride",
+    "fullnameOverride",
+    "images",
+    "rgs",
+    "migrator",
+    "web",
+    "ingress",
+    "externalSecrets",
+    "audit",
+    "externalControls",
+    "release",
+    "monitoring",
+    "networkPolicy",
+    "scheduling"
+  ],
+  "properties": {
+    "nameOverride": {"type": "string", "pattern": "^(?:|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)$", "maxLength": 63},
+    "fullnameOverride": {"type": "string", "pattern": "^(?:|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)$", "maxLength": 63},
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rgs", "migrator", "web", "pullSecrets"],
+      "properties": {
+        "rgs": {"$ref": "#/definitions/image"},
+        "migrator": {"$ref": "#/definitions/image"},
+        "web": {"$ref": "#/definitions/image"},
+        "pullSecrets": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {"name": {"$ref": "#/definitions/dnsName"}}
+          }
+        }
+      }
+    },
+    "rgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replicaCount",
+        "publicBaseURL",
+        "allowedOrigins",
+        "terminationGracePeriodSeconds",
+        "preStopSeconds",
+        "shutdownTimeoutSeconds",
+        "resources",
+        "autoscaling",
+        "pdb",
+        "runtime"
+      ],
+      "properties": {
+        "replicaCount": {"type": "integer", "minimum": 3, "maximum": 100},
+        "publicBaseURL": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]+)?$", "maxLength": 253},
+        "allowedOrigins": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]+)?$", "maxLength": 253}
+        },
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 10, "maximum": 300},
+        "preStopSeconds": {"type": "integer", "minimum": 5, "maximum": 30},
+        "shutdownTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 290},
+        "resources": {"$ref": "#/definitions/resources"},
+        "autoscaling": {"$ref": "#/definitions/autoscaling"},
+        "pdb": {"$ref": "#/definitions/pdb"},
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "databaseMaxOpenConnections",
+            "databaseMaxIdleConnections",
+            "maxInFlightRequests",
+            "maxConnectionsPerListener",
+            "ratePerSecondPerPod",
+            "rateBurstPerPod",
+            "walletTimeoutSeconds",
+            "walletMaxAttempts",
+            "outboxBatchSize",
+            "outboxMaxParallel",
+            "outboxLeaseSeconds",
+            "outboxPublishTimeoutSeconds"
+          ],
+          "properties": {
+            "databaseMaxOpenConnections": {"type": "integer", "minimum": 2, "maximum": 200},
+            "databaseMaxIdleConnections": {"type": "integer", "minimum": 1, "maximum": 200},
+            "maxInFlightRequests": {"type": "integer", "minimum": 1, "maximum": 4096},
+            "maxConnectionsPerListener": {"type": "integer", "minimum": 16, "maximum": 16384},
+            "ratePerSecondPerPod": {"type": "number", "exclusiveMinimum": 0, "maximum": 100000},
+            "rateBurstPerPod": {"type": "integer", "minimum": 1, "maximum": 1000000},
+            "walletTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 14},
+            "walletMaxAttempts": {"type": "integer", "minimum": 1, "maximum": 1000},
+            "outboxBatchSize": {"type": "integer", "minimum": 1, "maximum": 1000},
+            "outboxMaxParallel": {"type": "integer", "minimum": 1, "maximum": 256},
+            "outboxLeaseSeconds": {"type": "integer", "minimum": 1, "maximum": 7200},
+            "outboxPublishTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 3600}
+          }
+        }
+      }
+    },
+    "migrator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activeDeadlineSeconds", "backoffLimit", "migrationTimeoutSeconds", "resources"],
+      "properties": {
+        "activeDeadlineSeconds": {"type": "integer", "minimum": 60, "maximum": 1800},
+        "backoffLimit": {"type": "integer", "minimum": 0, "maximum": 5},
+        "migrationTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 1800},
+        "resources": {"$ref": "#/definitions/resources"}
+      }
+    },
+    "web": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicaCount", "terminationGracePeriodSeconds", "resources", "autoscaling", "pdb"],
+      "properties": {
+        "replicaCount": {"type": "integer", "minimum": 3, "maximum": 100},
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 15, "maximum": 300},
+        "resources": {"$ref": "#/definitions/resources"},
+        "autoscaling": {"$ref": "#/definitions/autoscaling"},
+        "pdb": {"$ref": "#/definitions/pdb"}
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "className",
+        "apiHost",
+        "webHost",
+        "apiTLSSecretName",
+        "webTLSSecretName",
+        "tlsRedirectAnnotationKey",
+        "tlsRedirectAnnotationValue",
+        "annotations",
+        "apiAnnotations",
+        "webAnnotations"
+      ],
+      "properties": {
+        "className": {"$ref": "#/definitions/nonEmpty"},
+        "apiHost": {"$ref": "#/definitions/dnsName"},
+        "webHost": {"$ref": "#/definitions/dnsName"},
+        "apiTLSSecretName": {"$ref": "#/definitions/dnsName"},
+        "webTLSSecretName": {"$ref": "#/definitions/dnsName"},
+        "tlsRedirectAnnotationKey": {"type": "string", "minLength": 3, "maxLength": 253},
+        "tlsRedirectAnnotationValue": {"type": "string", "minLength": 1, "maxLength": 128},
+        "annotations": {"$ref": "#/definitions/stringMap"},
+        "apiAnnotations": {"$ref": "#/definitions/stringMap"},
+        "webAnnotations": {"$ref": "#/definitions/stringMap"}
+      }
+    },
+    "externalSecrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtimeDatabase", "migratorDatabase", "operationsBearer", "runtimeAssets"],
+      "properties": {
+        "runtimeDatabase": {"$ref": "#/definitions/databaseSecret"},
+        "migratorDatabase": {"$ref": "#/definitions/databaseSecret"},
+        "operationsBearer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "key"],
+          "properties": {
+            "name": {"$ref": "#/definitions/dnsName"},
+            "key": {"$ref": "#/definitions/secretKey"}
+          }
+        },
+        "runtimeAssets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "keys", "additionalItems"],
+          "properties": {
+            "name": {"$ref": "#/definitions/dnsName"},
+            "keys": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "operatorConfig",
+                "definition",
+                "definitionApproval",
+                "definitionApprovalPublicKey",
+                "launchHMAC",
+                "outboxHMAC",
+                "outboxBearerToken",
+                "outboxRootCA",
+                "trustBundle"
+              ],
+              "properties": {
+                "operatorConfig": {"$ref": "#/definitions/secretKey"},
+                "definition": {"$ref": "#/definitions/secretKey"},
+                "definitionApproval": {"$ref": "#/definitions/secretKey"},
+                "definitionApprovalPublicKey": {"$ref": "#/definitions/secretKey"},
+                "launchHMAC": {"$ref": "#/definitions/secretKey"},
+                "outboxHMAC": {"$ref": "#/definitions/secretKey"},
+                "outboxBearerToken": {"$ref": "#/definitions/secretKey"},
+                "outboxRootCA": {"$ref": "#/definitions/secretKey"},
+                "trustBundle": {"$ref": "#/definitions/secretKey"}
+              }
+            },
+            "additionalItems": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "path"],
+                "properties": {
+                  "key": {"$ref": "#/definitions/secretKey"},
+                  "path": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$", "maxLength": 240}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpointURL", "hmacKeyID", "mtls"],
+      "properties": {
+        "endpointURL": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/[^?#]+$", "maxLength": 2048},
+        "hmacKeyID": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "mtls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "clientCertKey", "clientKeyKey"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "clientCertKey": {"type": "string", "pattern": "^(?:|[A-Za-z0-9._-]+)$"},
+            "clientKeyKey": {"type": "string", "pattern": "^(?:|[A-Za-z0-9._-]+)$"}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mtls": {"properties": {"enabled": {"const": true}}}}},
+          "then": {
+            "properties": {
+              "mtls": {
+                "properties": {
+                  "clientCertKey": {"$ref": "#/definitions/secretKey"},
+                  "clientKeyKey": {"$ref": "#/definitions/secretKey"}
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "externalControls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["globalRateLimitProvider", "tlsEnforcementProvider", "logPipelineProvider", "webVersionIsolationProvider"],
+      "properties": {
+        "globalRateLimitProvider": {"type": "string", "minLength": 3, "maxLength": 128},
+        "tlsEnforcementProvider": {"type": "string", "minLength": 3, "maxLength": 128},
+        "logPipelineProvider": {"$ref": "#/definitions/labelValue"},
+        "webVersionIsolationProvider": {"$ref": "#/definitions/labelValue"}
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compatibilityClass"],
+      "properties": {
+        "compatibilityClass": {"const": "same-schema-and-definition"}
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "interval", "scrapeTimeout", "namespaceSelector", "podSelector", "ruleLabels"],
+      "properties": {
+        "enabled": {"const": true},
+        "interval": {"$ref": "#/definitions/duration"},
+        "scrapeTimeout": {"$ref": "#/definitions/duration"},
+        "namespaceSelector": {"$ref": "#/definitions/selector"},
+        "podSelector": {"$ref": "#/definitions/selector"},
+        "ruleLabels": {"$ref": "#/definitions/labelMap"}
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ingressController", "dns", "egress"],
+      "properties": {
+        "ingressController": {"$ref": "#/definitions/networkPeer"},
+        "dns": {"$ref": "#/definitions/networkPeer"},
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["database", "wallet", "audit"],
+          "properties": {
+            "database": {"$ref": "#/definitions/egressTarget"},
+            "wallet": {"$ref": "#/definitions/egressTarget"},
+            "audit": {"$ref": "#/definitions/egressTarget"}
+          }
+        }
+      }
+    },
+    "scheduling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["zoneTopologyKey", "hostnameTopologyKey", "zoneMinDomains", "nodeSelector", "tolerations"],
+      "properties": {
+        "zoneTopologyKey": {"$ref": "#/definitions/nonEmpty"},
+        "hostnameTopologyKey": {"$ref": "#/definitions/nonEmpty"},
+        "zoneMinDomains": {"type": "integer", "minimum": 3, "maximum": 16},
+        "nodeSelector": {"$ref": "#/definitions/stringMap"},
+        "tolerations": {"type": "array", "items": {"type": "object"}}
+      }
+    }
+  },
+  "definitions": {
+    "nonEmpty": {"type": "string", "minLength": 1, "maxLength": 253},
+    "dnsName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$"
+    },
+    "secretKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "duration": {"type": "string", "pattern": "^[1-9][0-9]*(?:ms|s|m|h)$"},
+    "labelValue": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$"
+    },
+    "labelMap": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^(?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$"
+      },
+      "additionalProperties": {"$ref": "#/definitions/labelValue"}
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "maxLength": 1024}
+    },
+    "selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["matchLabels"],
+      "properties": {
+        "matchLabels": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 253}
+        }
+      }
+    },
+    "networkPeer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespaceSelector", "podSelector"],
+      "properties": {
+        "namespaceSelector": {"$ref": "#/definitions/selector"},
+        "podSelector": {"$ref": "#/definitions/selector"}
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$", "maxLength": 512},
+        "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "pullPolicy": {"enum": ["IfNotPresent", "Always", "Never"]}
+      }
+    },
+    "quantity": {"type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?(?:m|Ki|Mi|Gi|Ti|Pi|Ei)?$"},
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"$ref": "#/definitions/resourceList"},
+        "limits": {"$ref": "#/definitions/resourceList"}
+      }
+    },
+    "resourceList": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory", "ephemeral-storage"],
+      "properties": {
+        "cpu": {"$ref": "#/definitions/quantity"},
+        "memory": {"$ref": "#/definitions/quantity"},
+        "ephemeral-storage": {"$ref": "#/definitions/quantity"}
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minReplicas", "maxReplicas", "targetCPUUtilizationPercentage", "targetMemoryUtilizationPercentage"],
+      "properties": {
+        "minReplicas": {"type": "integer", "minimum": 3, "maximum": 100},
+        "maxReplicas": {"type": "integer", "minimum": 4, "maximum": 500},
+        "targetCPUUtilizationPercentage": {"type": "integer", "minimum": 20, "maximum": 95},
+        "targetMemoryUtilizationPercentage": {"type": "integer", "minimum": 20, "maximum": 95}
+      }
+    },
+    "pdb": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minAvailable"],
+      "properties": {"minAvailable": {"type": "integer", "minimum": 2, "maximum": 99}}
+    },
+    "databaseSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "urlKey"],
+      "properties": {
+        "name": {"$ref": "#/definitions/dnsName"},
+        "urlKey": {"$ref": "#/definitions/secretKey"}
+      }
+    },
+    "egressTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cidrs", "port"],
+      "properties": {
+        "cidrs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:2[4-9]|3[0-2])$"
+          }
+        },
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    }
+  }
+}

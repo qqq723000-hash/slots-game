@@ -1,0 +1,121 @@
+# 所有工作负载默认拒绝双向流量，后续规则只开放已知调用路径。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "default-deny") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "slots.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Web 只接受入口控制器访问，静态运行时没有任何主动出口。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "web-ingress") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "slots.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressController.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.ingressController.podSelector | nindent 12 }}
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# RGS 公网面仅允许入口控制器，运维面仅允许受标记的 Prometheus。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-ingress") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "slots.selectorLabels" (dict "root" . "component" "rgs") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressController.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.ingressController.podSelector | nindent 12 }}
+      ports:
+        - port: 8080
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.monitoring.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.monitoring.podSelector | nindent 12 }}
+      ports:
+        - port: 8081
+          protocol: TCP
+---
+# RGS 只可解析 DNS，并访问外部 PostgreSQL、钱包和审计接收端的明确网段与端口。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-egress") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "slots.selectorLabels" (dict "root" . "component" "rgs") | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 12 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        {{- range .Values.networkPolicy.egress.database.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicy.egress.database.port }}
+          protocol: TCP
+    - to:
+        {{- range .Values.networkPolicy.egress.wallet.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicy.egress.wallet.port }}
+          protocol: TCP
+    - to:
+        {{- range .Values.networkPolicy.egress.audit.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicy.egress.audit.port }}
+          protocol: TCP

@@ -1,0 +1,2108 @@
+{
+  "schemaVersion": 3,
+  "assetSet": "primal-rampage-runtime",
+  "generatedAt": "2026-07-27T00:41:14.030Z",
+  "notice": "Production runtime resources are bound by exact byte length and SHA-256.",
+  "source": {
+    "package": "iron-colossus-runtime-2026.08"
+  },
+  "spine": {
+    "runtimeVersion": "4.1.24",
+    "groupCount": 4,
+    "skeletonCount": 38,
+    "groups": [
+      {
+        "id": "spine_background",
+        "atlas": {
+          "relativePath": "spine/spine_background/spine_background.atlas",
+          "publicUrl": "/assets/primal-runtime/spine/spine_background/spine_background.atlas",
+          "bytes": 15263,
+          "sha256": "d696962a11089ffcab87c6a1a5c3be653a8ddb05f51ccfb594de7d2669a2c1db"
+        },
+        "pages": [
+          {
+            "name": "spine_background_level1.avif",
+            "relativePath": "spine/spine_background/spine_background_level1.avif",
+            "publicUrl": "/assets/primal-runtime/spine/spine_background/spine_background_level1.avif",
+            "bytes": 345190,
+            "sha256": "72aa67fe1527621efb6faf8b059af0497b3d21a05d34fd4167a9bf65d9ab0ee2"
+          },
+          {
+            "name": "spine_background_level1_2.avif",
+            "relativePath": "spine/spine_background/spine_background_level1_2.avif",
+            "publicUrl": "/assets/primal-runtime/spine/spine_background/spine_background_level1_2.avif",
+            "bytes": 328995,
+            "sha256": "356a4af06339d79028e9f5e9acef9d1924324005163d8c98b7a333273b771814"
+          }
+        ],
+        "skeletons": [
+          {
+            "name": "PR_background",
+            "instance": "Spine_PR_background",
+            "sourceUrl": "PR_background.json",
+            "sourceEncodedBytes": 399776,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_background/PR_background.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_background/PR_background.skel",
+            "bytes": 299831,
+            "sha256": "53bbb2e702792993e6bfdee9e63604434c4dc8c479e6376f2e4f68aecabbabba"
+          },
+          {
+            "name": "PR_background_frnt",
+            "instance": "Spine_PR_background_frnt",
+            "sourceUrl": "PR_background_frnt.json",
+            "sourceEncodedBytes": 71760,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_background/PR_background_frnt.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_background/PR_background_frnt.skel",
+            "bytes": 53819,
+            "sha256": "b4074f340ec1adc776374389e6082da05bcbfa3252cba00073c71c4023a7564e"
+          }
+        ]
+      },
+      {
+        "id": "spine_fps",
+        "atlas": {
+          "relativePath": "spine/spine_fps/spine_fps.atlas",
+          "publicUrl": "/assets/primal-runtime/spine/spine_fps/spine_fps.atlas",
+          "bytes": 3652,
+          "sha256": "facb9e58ffe41dc06a00567c67da2632f8dddabdaf2f852c8ff64555dd8fa208"
+        },
+        "pages": [
+          {
+            "name": "spine_fps_level1.avif",
+            "relativePath": "spine/spine_fps/spine_fps_level1.avif",
+            "publicUrl": "/assets/primal-runtime/spine/spine_fps/spine_fps_level1.avif",
+            "bytes": 33682,
+            "sha256": "9837875c34ba1f05928f288ec3954711542711e4931ec91c4a50a6a0145abba5"
+          },
+          {
+            "name": "spine_fps_level1_2.avif",
+            "relativePath": "spine/spine_fps/spine_fps_level1_2.avif",
+            "publicUrl": "/assets/primal-runtime/spine/spine_fps/spine_fps_level1_2.avif",
+            "bytes": 52521,
+            "sha256": "a025a10b49b925fc6c59fa34ac112a0b53670b1b4f4cca8f934ad447c4c78144"
+          }
+        ],
+        "skeletons": [
+          {
+            "name": "fps",
+            "instance": "Spine_fps",
+            "sourceUrl": "fps.json",
+            "sourceEncodedBytes": 60024,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_fps/fps.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_fps/fps.skel",
+            "bytes": 45017,
+            "sha256": "9230a1192d1b64f06660ceffeaeea6e830ba6483ccd9ce32ae1e225fea15b225"
+          }
+        ]
+      },
+      {
+        "id": "spine_symbols",
+        "atlas": {
+          "relativePath": "spine/spine_symbols/spine_symbols.atlas",
+          "publicUrl": "/assets/primal-runtime/spine/spine_symbols/spine_symbols.atlas",
+          "bytes": 94582,
+          "sha256": "dfb243e5f91182705bbd06266cb865984d6ab4e43ac3c9dd1b98102cdbdea6bc"
+        },
+        "pages": [
+          {
+            "name": "spine_symbols_level1.avif",
+            "relativePath": "spine/spine_symbols/spine_symbols_level1.avif",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/spine_symbols_level1.avif",
+            "bytes": 402199,
+            "sha256": "44d9f0cd476e5159f8a14224afee977e654491e0ec47a4f9ac8e8c6351cdee3e"
+          },
+          {
+            "name": "spine_symbols_level1_2.avif",
+            "relativePath": "spine/spine_symbols/spine_symbols_level1_2.avif",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/spine_symbols_level1_2.avif",
+            "bytes": 78261,
+            "sha256": "865d476db0378f75e6208b50eb5bf04e1f5975374fc08b05c1eab93f07d77b35"
+          },
+          {
+            "name": "spine_symbols_level1_3.avif",
+            "relativePath": "spine/spine_symbols/spine_symbols_level1_3.avif",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/spine_symbols_level1_3.avif",
+            "bytes": 876041,
+            "sha256": "f6a5a1dfd121382700d024eb796b1a969f894eddd92b3e12bc8bb2a83eaa64c4"
+          }
+        ],
+        "skeletons": [
+          {
+            "name": "character",
+            "instance": "Spine_character",
+            "sourceUrl": "character.json",
+            "sourceEncodedBytes": 626088,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/character.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/character.skel",
+            "bytes": 469565,
+            "sha256": "d25500c134afc3fc30f92c7463372434fd8b129139dcafc826216b5f5a7cc30c"
+          },
+          {
+            "name": "reel_frame",
+            "instance": "Spine_reel_frame",
+            "sourceUrl": "reel_frame.json",
+            "sourceEncodedBytes": 238472,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/reel_frame.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/reel_frame.skel",
+            "bytes": 178853,
+            "sha256": "4daf98493c7c1f208da10569f6d2ac9acedfdb6da3ab7c2ae52b4caf918ea2fc"
+          },
+          {
+            "name": "Symbol0",
+            "instance": "Spine_Symbol0",
+            "sourceUrl": "Symbol0.json",
+            "sourceEncodedBytes": 39184,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol0.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol0.skel",
+            "bytes": 29386,
+            "sha256": "8f4085066093431f45e14847783265d70b8241e91425d3fda668e640526acd18"
+          },
+          {
+            "name": "Symbol1",
+            "instance": "Spine_Symbol1",
+            "sourceUrl": "Symbol1.json",
+            "sourceEncodedBytes": 39924,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol1.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol1.skel",
+            "bytes": 29942,
+            "sha256": "807ff06105f31f1702d0df3d94612f862cd5b68a207d49e730137f4f8489ab4b"
+          },
+          {
+            "name": "Symbol2",
+            "instance": "Spine_Symbol2",
+            "sourceUrl": "Symbol2.json",
+            "sourceEncodedBytes": 70216,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol2.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol2.skel",
+            "bytes": 52661,
+            "sha256": "45443fd00e66109bc0a24d99d33539c284e8ea2dd2a36393ceabcc87d7b85922"
+          },
+          {
+            "name": "Symbol3",
+            "instance": "Spine_Symbol3",
+            "sourceUrl": "Symbol3.json",
+            "sourceEncodedBytes": 58624,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol3.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol3.skel",
+            "bytes": 43966,
+            "sha256": "f9a5fb119d5e4a1b2597bfc41a27ec3eb47d2416d335a8be4b1ac18190a114dd"
+          },
+          {
+            "name": "Symbol4",
+            "instance": "Spine_Symbol4",
+            "sourceUrl": "Symbol4.json",
+            "sourceEncodedBytes": 96104,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol4.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol4.skel",
+            "bytes": 72076,
+            "sha256": "73b6c53598756d8bef9ea7f9377c4e3fa47791760354180dd0187dce93bddec9"
+          },
+          {
+            "name": "Symbol5",
+            "instance": "Spine_Symbol5",
+            "sourceUrl": "Symbol5.json",
+            "sourceEncodedBytes": 115148,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol5.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol5.skel",
+            "bytes": 86360,
+            "sha256": "db5c84e80ab35321cb1d1c05315ff4f5f345287d9bfc24b00ce40ef4987a3f52"
+          },
+          {
+            "name": "Symbol6",
+            "instance": "Spine_Symbol6",
+            "sourceUrl": "Symbol6.json",
+            "sourceEncodedBytes": 101956,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol6.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol6.skel",
+            "bytes": 76466,
+            "sha256": "22b6ccae468e3d04b7c0dabf2a59c3dfcf00ed1d4f96fc4ee6a15c10ef3fc87d"
+          },
+          {
+            "name": "Symbol7",
+            "instance": "Spine_Symbol7",
+            "sourceUrl": "Symbol7.json",
+            "sourceEncodedBytes": 237308,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol7.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol7.skel",
+            "bytes": 177981,
+            "sha256": "249dfd4d317b4f36718752c92ccf4025da9b923d3b20f04f55db33ae9045d3a4"
+          },
+          {
+            "name": "Symbol8",
+            "instance": "Spine_Symbol8",
+            "sourceUrl": "Symbol8.json",
+            "sourceEncodedBytes": 159080,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol8.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol8.skel",
+            "bytes": 119308,
+            "sha256": "7ecbc13a0dd2017a6f6f5daef4a6d1c432455709811b86101c12b21d48c8a490"
+          },
+          {
+            "name": "Symbol9",
+            "instance": "Spine_Symbol9",
+            "sourceUrl": "Symbol9.json",
+            "sourceEncodedBytes": 264332,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol9.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol9.skel",
+            "bytes": 198249,
+            "sha256": "ce0130943965b328f5d9c895a5f7d46662a5e20067f614d55eafee9202eae2b6"
+          },
+          {
+            "name": "Symbol_blurred_dummy",
+            "instance": "Spine_Symbol_blurred_dummy",
+            "sourceUrl": "Symbol_blurred_dummy.json",
+            "sourceEncodedBytes": 324,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_symbols/Symbol_blurred_dummy.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_symbols/Symbol_blurred_dummy.skel",
+            "bytes": 243,
+            "sha256": "f8a5143901628a4d9182ddeb82d862464fff5a3158a2b25b68118a9dacbcd1f1"
+          }
+        ]
+      },
+      {
+        "id": "spine_ui",
+        "atlas": {
+          "relativePath": "spine/spine_ui/spine_ui.atlas",
+          "publicUrl": "/assets/primal-runtime/spine/spine_ui/spine_ui.atlas",
+          "bytes": 57464,
+          "sha256": "6daea5d854eddb997e34cc60c737472a2d8a9ec3f05462f88327d0d730e284dc"
+        },
+        "pages": [
+          {
+            "name": "spine_ui_level1.avif",
+            "relativePath": "spine/spine_ui/spine_ui_level1.avif",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/spine_ui_level1.avif",
+            "bytes": 443875,
+            "sha256": "6cba95b748ca495bc5e321cc232463594c4429bd247c3ca4d6ed58084b2abfd7"
+          },
+          {
+            "name": "spine_ui_level1_2.avif",
+            "relativePath": "spine/spine_ui/spine_ui_level1_2.avif",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/spine_ui_level1_2.avif",
+            "bytes": 865915,
+            "sha256": "6dd7ff6d2452614234db4cda3d488efd164542a8e3b4ae097eac8b8bdec36230"
+          }
+        ],
+        "skeletons": [
+          {
+            "name": "anticipation",
+            "instance": "Spine_anticipation",
+            "sourceUrl": "anticipation.json",
+            "sourceEncodedBytes": 4500,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_ui/anticipation.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/anticipation.skel",
+            "bytes": 3373,
+            "sha256": "b4254f30635ee3575602b5ceccff438b596746b60b7eb4bf665a60fada593d47"
+          },
+          {
+            "name": "BigWin",
+            "instance": "Spine_BigWin",
+            "sourceUrl": "BigWin.json",
+            "sourceEncodedBytes": 260852,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "bigwinValue",
+                "size": 32,
+                "bitmapFont": true,
+                "bounds": [
+                  -3.910000000000025,
+                  -7.564999999999998,
+                  966.3599999999999,
+                  128.95
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/BigWin.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/BigWin.skel",
+            "bytes": 195638,
+            "sha256": "f09dd8332388d102315b336c3669a270cc5f00407deef8dc629eb07eaaaca527"
+          },
+          {
+            "name": "freespin_counter",
+            "instance": "Spine_freespin_counter",
+            "sourceUrl": "freespin_counter.json",
+            "sourceEncodedBytes": 16260,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "fsCounterFreespin",
+                "size": 25,
+                "bitmapFont": false,
+                "bounds": [
+                  -2.4350000000000023,
+                  -44.625,
+                  228.76999999999998,
+                  36.629999999999995
+                ]
+              },
+              {
+                "name": "fsCounterValue",
+                "size": 35,
+                "bitmapFont": false,
+                "bounds": [
+                  -1.3400000000000034,
+                  -40.985,
+                  227.66,
+                  56.11000000000001
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/freespin_counter.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/freespin_counter.skel",
+            "bytes": 12193,
+            "sha256": "1ad9c4ee4aa08b77e1e2f5b21b88adfb2e47701aa11851d2c362afd69f3a22b0"
+          },
+          {
+            "name": "freespin_retrigger",
+            "instance": "Spine_freespin_retrigger",
+            "sourceUrl": "freespin_retrigger.json",
+            "sourceEncodedBytes": 920,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "retriggerText",
+                "size": 60,
+                "bitmapFont": false,
+                "bounds": [
+                  -5.5049999999999955,
+                  -0.4449999999999932,
+                  935.55,
+                  315.65
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/freespin_retrigger.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/freespin_retrigger.skel",
+            "bytes": 688,
+            "sha256": "1e5f624609d0c112e5d7f915fd1e9ddd99c6fb069c0444c11c8b84e8cc6d5269"
+          },
+          {
+            "name": "fs_intro_1",
+            "instance": "Spine_fs_intro_1",
+            "sourceUrl": "fs_intro_1.json",
+            "sourceEncodedBytes": 51876,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "IDS_PR_KQ_FSINTRO1",
+                "size": 100,
+                "bitmapFont": false,
+                "bounds": [
+                  0.5650000000000546,
+                  1.2849999999999966,
+                  1329.5700000000002,
+                  202.05
+                ]
+              },
+              {
+                "name": "IDS_PR_KQ_FSINTRO3",
+                "size": 65,
+                "bitmapFont": false,
+                "bounds": [
+                  0.6850000000000591,
+                  -0.09499999999999886,
+                  1304.5100000000002,
+                  129.87
+                ]
+              },
+              {
+                "name": "IDS_PR_KQ_FSINTRO4",
+                "size": 80,
+                "bitmapFont": false,
+                "bounds": [
+                  10.470000000000027,
+                  17.86500000000001,
+                  1371.98,
+                  232.63
+                ]
+              },
+              {
+                "name": "IDS_PR_KQ_FSINTRO2",
+                "size": 65,
+                "bitmapFont": false,
+                "bounds": [
+                  11.555000000000064,
+                  -0.8900000000000006,
+                  1217.0500000000002,
+                  178.36
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/fs_intro_1.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/fs_intro_1.skel",
+            "bytes": 38907,
+            "sha256": "c79a5df561944b002fa9ff372c0a3c777759b6215b8c5ee511fb8b14c29eea3b"
+          },
+          {
+            "name": "fs_intro_2",
+            "instance": "Spine_fs_intro_2",
+            "sourceUrl": "fs_intro_2.json",
+            "sourceEncodedBytes": 16660,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "IDS_PR_KS_FSINTRO1",
+                "size": 100,
+                "bitmapFont": false,
+                "bounds": [
+                  14.355000000000018,
+                  -3.3900000000000006,
+                  1339.49,
+                  207.1
+                ]
+              },
+              {
+                "name": "IDS_PR_KS_FSINTRO3",
+                "size": 65,
+                "bitmapFont": false,
+                "bounds": [
+                  -7.029999999999973,
+                  7.635000000000005,
+                  1120.24,
+                  161.32999999999998
+                ]
+              },
+              {
+                "name": "IDS_PR_KS_FSINTRO4",
+                "size": 90,
+                "bitmapFont": false,
+                "bounds": [
+                  12.965000000000032,
+                  -27.019999999999996,
+                  1380.03,
+                  218.28
+                ]
+              },
+              {
+                "name": "IDS_PR_KS_FSINTRO2",
+                "size": 65,
+                "bitmapFont": false,
+                "bounds": [
+                  5.649999999999977,
+                  0.18999999999999773,
+                  1081.22,
+                  150.04
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/fs_intro_2.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/fs_intro_2.skel",
+            "bytes": 12494,
+            "sha256": "d136e755b2fa791cad950652b5f0622660b616840091bf5176790c6a5e93d173"
+          },
+          {
+            "name": "fs_summary",
+            "instance": "Spine_fs_summary",
+            "sourceUrl": "fs_summary.json",
+            "sourceEncodedBytes": 71008,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "fsSummaryCongrats",
+                "size": 60,
+                "bitmapFont": false,
+                "bounds": [
+                  -1.8900000000000432,
+                  -50.480000000000004,
+                  740.3199999999999,
+                  113.78
+                ]
+              },
+              {
+                "name": "fsSummaryValue",
+                "size": 90,
+                "bitmapFont": false,
+                "bounds": [
+                  -10.470000000000027,
+                  0.3299999999999983,
+                  815.28,
+                  132.56
+                ]
+              },
+              {
+                "name": "fsSummaryTotal",
+                "size": 60,
+                "bitmapFont": false,
+                "bounds": [
+                  -4.639999999999986,
+                  20.465000000000003,
+                  568,
+                  133.95
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/fs_summary.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/fs_summary.skel",
+            "bytes": 53254,
+            "sha256": "72a3f231d6708acb929b2f6c3eb3c912a493500a2e99cc4aa77a6da3195aec69"
+          },
+          {
+            "name": "grand_jackpot",
+            "instance": "Spine_grand_jackpot",
+            "sourceUrl": "grand_jackpot.json",
+            "sourceEncodedBytes": 110824,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "grandTitle",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -1.875,
+                  -1.5150000000000006,
+                  166.81,
+                  48.43
+                ]
+              },
+              {
+                "name": "grandValue",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -4.670000000000002,
+                  -1.5749999999999993,
+                  164.76,
+                  47.85
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/grand_jackpot.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/grand_jackpot.skel",
+            "bytes": 83117,
+            "sha256": "60b4b2689e577b1b0bb46b60c8d1ca07cce992d0a24c0a60eea23cd72ea69f5e"
+          },
+          {
+            "name": "logo_game",
+            "instance": "Spine_logo_game",
+            "sourceUrl": "logo_game.json",
+            "sourceEncodedBytes": 40048,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_ui/logo_game.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/logo_game.skel",
+            "bytes": 30036,
+            "sha256": "dbf109c62022c735e70435c9a8aa1d7237916d33aee830b2e6a8404dd3d4247c"
+          },
+          {
+            "name": "logo_intro",
+            "instance": "Spine_logo_intro",
+            "sourceUrl": "logo_intro.json",
+            "sourceEncodedBytes": 111500,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_ui/logo_intro.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/logo_intro.skel",
+            "bytes": 83624,
+            "sha256": "a984d22072967755967659fa41e557a27151d6114e56cd2e6bd8d4604cf687e6"
+          },
+          {
+            "name": "major_jackpot",
+            "instance": "Spine_major_jackpot",
+            "sourceUrl": "major_jackpot.json",
+            "sourceEncodedBytes": 110836,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "majorTitle",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -1.875,
+                  -1.5150000000000006,
+                  166.81,
+                  48.43
+                ]
+              },
+              {
+                "name": "majorValue",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -4.670000000000002,
+                  -1.5749999999999993,
+                  164.76,
+                  47.85
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/major_jackpot.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/major_jackpot.skel",
+            "bytes": 83126,
+            "sha256": "7fea43a147559e6c24f9008a9a94549f517d2316b81d8cac49be75f185d42f29"
+          },
+          {
+            "name": "mega_jackpot",
+            "instance": "Spine_mega_jackpot",
+            "sourceUrl": "mega_jackpot.json",
+            "sourceEncodedBytes": 110692,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "megaTitle",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  0.01999999999999602,
+                  -1.1149999999999984,
+                  147.45999999999998,
+                  47.41
+                ]
+              },
+              {
+                "name": "megaValue",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -4.670000000000002,
+                  -1.5749999999999993,
+                  164.76,
+                  47.85
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/mega_jackpot.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/mega_jackpot.skel",
+            "bytes": 83018,
+            "sha256": "78acf03faf52c52553a85f3bbea019539de31386a741f77342ff1e2c50b21d01"
+          },
+          {
+            "name": "mini_jackpot",
+            "instance": "Spine_mini_jackpot",
+            "sourceUrl": "mini_jackpot.json",
+            "sourceEncodedBytes": 110824,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "miniTitle",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  2.0799999999999983,
+                  -1.3350000000000009,
+                  145.5,
+                  48.67
+                ]
+              },
+              {
+                "name": "miniValue",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -4.670000000000002,
+                  -1.5749999999999993,
+                  164.76,
+                  47.85
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/mini_jackpot.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/mini_jackpot.skel",
+            "bytes": 83116,
+            "sha256": "b710a1332c21e8fda05419e6c457eb6b7bf664affafb840338d0be8904ed190b"
+          },
+          {
+            "name": "minor_jackpot",
+            "instance": "Spine_minor_jackpot",
+            "sourceUrl": "minor_jackpot.json",
+            "sourceEncodedBytes": 110836,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "minorTitle",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  0.5600000000000023,
+                  -2.4250000000000007,
+                  147.94,
+                  48.43
+                ]
+              },
+              {
+                "name": "minorValue",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -4.670000000000002,
+                  -1.5749999999999993,
+                  164.76,
+                  47.85
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/minor_jackpot.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/minor_jackpot.skel",
+            "bytes": 83126,
+            "sha256": "7ebd7db31a7703b624f73a7808c0e0a844df6a1c92ddba53cd5c7b114bc105ab"
+          },
+          {
+            "name": "trail",
+            "instance": "Spine_trail",
+            "sourceUrl": "trail.json",
+            "sourceEncodedBytes": 4404,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_ui/trail.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/trail.skel",
+            "bytes": 3301,
+            "sha256": "506b69183ff2520fcd80912b702b4096b3d5ab08de507980e8ec6d30650892d5"
+          },
+          {
+            "name": "wheel",
+            "instance": "Spine_wheel",
+            "sourceUrl": "wheel.json",
+            "sourceEncodedBytes": 306944,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_ui/wheel.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/wheel.skel",
+            "bytes": 230206,
+            "sha256": "f8553c8a57e00ee662899c5c0b535ca5403e0f7d4bfd8f1468db9d3845f2bec7"
+          },
+          {
+            "name": "wheel_hyperspin",
+            "instance": "Spine_wheel_hyperspin",
+            "sourceUrl": "wheel_hyperspin.json",
+            "sourceEncodedBytes": 12244,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_ui/wheel_hyperspin.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/wheel_hyperspin.skel",
+            "bytes": 9183,
+            "sha256": "97a9bdccf69f89f29e53107f8df04bc8648ac9ba567c1b027285875786adaa1d"
+          },
+          {
+            "name": "wheel_popup_start",
+            "instance": "Spine_wheel_popup_start",
+            "sourceUrl": "wheel_popup_start.json",
+            "sourceEncodedBytes": 39160,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_ui/wheel_popup_start.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/wheel_popup_start.skel",
+            "bytes": 29368,
+            "sha256": "fc2194f177f6a9feb762f0ef6dc0f1101c2ee170673dc21e722c571c7861f85a"
+          },
+          {
+            "name": "wheel_summary_freespins",
+            "instance": "Spine_wheel_summary_freespins",
+            "sourceUrl": "wheel_summary_freespins.json",
+            "sourceEncodedBytes": 38252,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "congratulations",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -0.7199999999999136,
+                  -190.04500000000002,
+                  1100.38,
+                  100.22999999999999
+                ]
+              },
+              {
+                "name": "primalWheelBonusWin",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -0.7199999999999136,
+                  -54.885000000000005,
+                  1100.38,
+                  152.77
+                ]
+              },
+              {
+                "name": "freespins",
+                "size": 75,
+                "bitmapFont": false,
+                "bounds": [
+                  -0.7199999999999136,
+                  117.3,
+                  1100.38,
+                  224.64000000000001
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/wheel_summary_freespins.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/wheel_summary_freespins.skel",
+            "bytes": 28687,
+            "sha256": "233e1779b965f04c3f7d180688eb92bb09960d4ffeca4c69067424fa25bf77dc"
+          },
+          {
+            "name": "wheel_summary_jackpot",
+            "instance": "Spine_wheel_summary_jackpot",
+            "sourceUrl": "wheel_summary_jackpot.json",
+            "sourceEncodedBytes": 38424,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "congratulations",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -0.7199999999999136,
+                  -190.04500000000002,
+                  1100.38,
+                  100.22999999999999
+                ]
+              },
+              {
+                "name": "primalWheelBonusWin",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -0.7199999999999136,
+                  -54.885000000000005,
+                  1100.38,
+                  152.77
+                ]
+              },
+              {
+                "name": "totalWin",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -0.7199999999999136,
+                  58.935,
+                  1100.38,
+                  107.91
+                ]
+              },
+              {
+                "name": "totalWinValue",
+                "size": 50,
+                "bitmapFont": false,
+                "bounds": [
+                  -0.7199999999999136,
+                  170.57,
+                  1100.38,
+                  110.02000000000001
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/wheel_summary_jackpot.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/wheel_summary_jackpot.skel",
+            "bytes": 28816,
+            "sha256": "8dd30b68b78f1348dde562766ee1da8930390827e65b540dc04066a2e1196f57"
+          },
+          {
+            "name": "winbox",
+            "instance": "Spine_winbox",
+            "sourceUrl": "winbox.json",
+            "sourceEncodedBytes": 4860,
+            "spineVersion": "4.1.24",
+            "textFields": [],
+            "relativePath": "spine/spine_ui/winbox.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/winbox.skel",
+            "bytes": 3643,
+            "sha256": "26d26ca5cf4b8cff4b2699c1097e3766227cf5956ae1e4225615485b626ff3bb"
+          },
+          {
+            "name": "winlabel",
+            "instance": "Spine_winlabel",
+            "sourceUrl": "winlabel.json",
+            "sourceEncodedBytes": 18112,
+            "spineVersion": "4.1.24",
+            "textFields": [
+              {
+                "name": "winLabelValue",
+                "size": 60,
+                "bitmapFont": false,
+                "bounds": [
+                  -0.01500000000001478,
+                  -5.23,
+                  262.53,
+                  67.14
+                ]
+              },
+              {
+                "name": "winLabelInfo",
+                "size": 30,
+                "bitmapFont": false,
+                "bounds": [
+                  0.12999999999999545,
+                  -9.844999999999999,
+                  262.7,
+                  32.79
+                ]
+              },
+              {
+                "name": "winLabelMultiplier",
+                "size": 60,
+                "bitmapFont": false,
+                "bounds": [
+                  0,
+                  -4.9999999999999964,
+                  114.36,
+                  67.6
+                ]
+              }
+            ],
+            "relativePath": "spine/spine_ui/winlabel.skel",
+            "publicUrl": "/assets/primal-runtime/spine/spine_ui/winlabel.skel",
+            "bytes": 13584,
+            "sha256": "520ca8d94584afc0590660eb7f345d58d95bd1d8930cd6742ad55b24ec99020b"
+          }
+        ]
+      }
+    ]
+  },
+  "audio": {
+    "spriteCount": 5,
+    "cueCount": 125,
+    "aggregateManifests": [
+      {
+        "id": "game",
+        "relativePath": "audio/sounds_desktop.json",
+        "publicUrl": "/assets/primal-runtime/audio/sounds_desktop.json",
+        "bytes": 153,
+        "sha256": "807d36b64570c58d5db331714b0f05ebfd5d2f2bb9886e80d9f669f55bfbe0cc"
+      },
+      {
+        "id": "delayed",
+        "relativePath": "audio/snd_delayed_desktop.json",
+        "publicUrl": "/assets/primal-runtime/audio/snd_delayed_desktop.json",
+        "bytes": 99,
+        "sha256": "e0b8f3b98e2cc468afa86b6f94df7fc32c617e50b7f4ce967dae07b91c8f3679"
+      },
+      {
+        "id": "delayed-loader",
+        "relativePath": "audio/delayed_bundle_desktop.json",
+        "publicUrl": "/assets/primal-runtime/audio/delayed_bundle_desktop.json",
+        "bytes": 124,
+        "sha256": "9d80b6cdb7c0d3dc4fe8dadbf78e77743e8b8ef865dc0231670af35cf903484f"
+      },
+      {
+        "id": "common",
+        "cueCount": 4,
+        "relativePath": "audio/common_sounds_desktop.json",
+        "publicUrl": "/assets/primal-runtime/audio/common_sounds_desktop.json",
+        "bytes": 651,
+        "sha256": "4604c3faafda747dc5cc08afd4ecaba03c3f49b027b838f39b21fe2b05a3c3cd"
+      }
+    ],
+    "spriteManifests": [
+      {
+        "id": "sounds_desktop_0",
+        "cueCount": 18,
+        "relativePath": "audio/sounds_desktop_0.json",
+        "publicUrl": "/assets/primal-runtime/audio/sounds_desktop_0.json",
+        "bytes": 1531,
+        "sha256": "258ddce3ba7267a270bc7b8762f4cf5d88ffa79b48c0989d31ff370577f2c712"
+      },
+      {
+        "id": "sounds_desktop_1",
+        "cueCount": 64,
+        "relativePath": "audio/sounds_desktop_1.json",
+        "publicUrl": "/assets/primal-runtime/audio/sounds_desktop_1.json",
+        "bytes": 5380,
+        "sha256": "f3d93e67238c509470672d6258e65bed62ef3be2871f1facea9d8be0ddd95bf4"
+      },
+      {
+        "id": "sounds_desktop_2",
+        "cueCount": 23,
+        "relativePath": "audio/sounds_desktop_2.json",
+        "publicUrl": "/assets/primal-runtime/audio/sounds_desktop_2.json",
+        "bytes": 2014,
+        "sha256": "cfb928f40dec1b71b9157e6cef752051247419e94d217347d6b85226df45ab6a"
+      },
+      {
+        "id": "snd_delayed_desktop_0",
+        "cueCount": 16,
+        "relativePath": "audio/snd_delayed_desktop_0.json",
+        "publicUrl": "/assets/primal-runtime/audio/snd_delayed_desktop_0.json",
+        "bytes": 2269,
+        "sha256": "6b3dbf937ff98a391badb9d658ac7aae7d6232b58401fa6066be66fb0a9b541d"
+      }
+    ],
+    "sprites": [
+      {
+        "id": "sounds_0",
+        "codec": "audio/mp4",
+        "cueCount": 18,
+        "manifest": "/assets/primal-runtime/audio/sounds_desktop_0.json",
+        "relativePath": "audio/sounds_desktop_0.m4a",
+        "publicUrl": "/assets/primal-runtime/audio/sounds_desktop_0.m4a",
+        "bytes": 2764387,
+        "sha256": "8ffe927ae1aa4e54cfcc09bdb23d603ceee593094a879ee0883576845864e999"
+      },
+      {
+        "id": "sounds_1",
+        "codec": "audio/mp4",
+        "cueCount": 64,
+        "manifest": "/assets/primal-runtime/audio/sounds_desktop_1.json",
+        "relativePath": "audio/sounds_desktop_1.m4a",
+        "publicUrl": "/assets/primal-runtime/audio/sounds_desktop_1.m4a",
+        "bytes": 2290735,
+        "sha256": "027cc655c2bb52b188a25cec0c166c4a39ae18a6542bd469343c347a5ac80140"
+      },
+      {
+        "id": "sounds_2",
+        "codec": "audio/mp4",
+        "cueCount": 23,
+        "manifest": "/assets/primal-runtime/audio/sounds_desktop_2.json",
+        "relativePath": "audio/sounds_desktop_2.m4a",
+        "publicUrl": "/assets/primal-runtime/audio/sounds_desktop_2.m4a",
+        "bytes": 1225925,
+        "sha256": "46c2478619cae2f349f9807643178d8298d134d7b25fd0eb1a89ffab31f2a459"
+      },
+      {
+        "id": "snd_delayed_0",
+        "codec": "audio/mp4",
+        "cueCount": 16,
+        "manifest": "/assets/primal-runtime/audio/snd_delayed_desktop_0.json",
+        "relativePath": "audio/snd_delayed_desktop_0.m4a",
+        "publicUrl": "/assets/primal-runtime/audio/snd_delayed_desktop_0.m4a",
+        "bytes": 316676,
+        "sha256": "4e4f0823adf37f304dad941ce3b0c34b4cf8e1f9e1d6aa85000928c5e1528080"
+      },
+      {
+        "id": "common_sounds",
+        "codec": "audio/mpeg",
+        "cueCount": 4,
+        "manifest": "/assets/primal-runtime/audio/common_sounds_desktop.json",
+        "relativePath": "audio/common_sounds_desktop.mp3",
+        "publicUrl": "/assets/primal-runtime/audio/common_sounds_desktop.mp3",
+        "bytes": 34119,
+        "sha256": "b4447ee42b8dc43c88012ef67a22390937f86ee17dd6171bc8d1d976a9b2fb21"
+      }
+    ]
+  },
+  "interface": {
+    "files": [
+      {
+        "id": "feature-preview",
+        "relativePath": "interface/feature_preview_texture0_level1.avif",
+        "publicUrl": "/assets/primal-runtime/interface/feature_preview_texture0_level1.avif",
+        "bytes": 61463,
+        "sha256": "ed805eef3c05e0c6534a6c147b7d7042db617329392e1990c2b4432d8e84c05c"
+      },
+      {
+        "id": "fps-ui",
+        "relativePath": "interface/fps_ui_texture0_level1.avif",
+        "publicUrl": "/assets/primal-runtime/interface/fps_ui_texture0_level1.avif",
+        "bytes": 4551,
+        "sha256": "5b747c648976e16234b84784ae48cde337ed336b605e843af0f45a819033fe0c"
+      },
+      {
+        "id": "powered-by-playngo",
+        "relativePath": "interface/powered-by-playngo.png",
+        "publicUrl": "/assets/primal-runtime/interface/powered-by-playngo.png",
+        "bytes": 13543,
+        "sha256": "7a532e8cd7c23f44e54497b3d4dada97f0ad282a524df80b76d83bf107acf5db"
+      },
+      {
+        "id": "statusbar-level1-atlas",
+        "relativePath": "interface/statusbar_texture0_level1.avif",
+        "publicUrl": "/assets/primal-runtime/interface/statusbar_texture0_level1.avif",
+        "bytes": 5206,
+        "sha256": "342814a7a55e13da881640193f726bba3f12ad9b2e0995c37c8d69c555d4ee02"
+      },
+      {
+        "id": "kanit-bold",
+        "relativePath": "fonts/KANIT_BOLD.woff",
+        "publicUrl": "/assets/primal-runtime/fonts/KANIT_BOLD.woff",
+        "bytes": 22464,
+        "sha256": "d18399ff3fa658c62aef0ca2b79da804d0fb5fe084359a066ebf9fd22b6af35e"
+      },
+      {
+        "id": "roboto-condensed-bold",
+        "relativePath": "fonts/ROBOTO_CONDENSED_BOLD.woff",
+        "publicUrl": "/assets/primal-runtime/fonts/ROBOTO_CONDENSED_BOLD.woff",
+        "bytes": 109277,
+        "sha256": "de19d3ed40dda1ff72f31cc0cbbd3ad9cfc380f45851173365755eadde145807"
+      },
+      {
+        "id": "roboto-condensed-regular",
+        "relativePath": "fonts/ROBOTO_CONDENSED_REGULAR.woff",
+        "publicUrl": "/assets/primal-runtime/fonts/ROBOTO_CONDENSED_REGULAR.woff",
+        "bytes": 109929,
+        "sha256": "fe233bd33b58cb76eae1bd15098bdd052e705762aa277915f65a63af4164f20a"
+      },
+      {
+        "id": "primal-rampage-bitmap-font",
+        "relativePath": "fonts/primal-rampage/PrimalRampage.fnt",
+        "publicUrl": "/assets/primal-runtime/fonts/primal-rampage/PrimalRampage.fnt",
+        "bytes": 5248,
+        "sha256": "06c65c637c3d01b9428bd04223fea97c3ffa3392cd81f2361a01ec45d562c538"
+      },
+      {
+        "id": "primal-rampage-bitmap-font-page",
+        "relativePath": "fonts/primal-rampage/PrimalRampage.png",
+        "publicUrl": "/assets/primal-runtime/fonts/primal-rampage/PrimalRampage.png",
+        "bytes": 3792144,
+        "sha256": "11340623fd9dcba4db5217ae3cb8a2f2da7ea574490ba04f75c693cef54f6bad"
+      },
+      {
+        "id": "statusbar-atlas-data",
+        "relativePath": "interface/statusbar.json",
+        "publicUrl": "/assets/primal-runtime/interface/statusbar.json",
+        "bytes": 33114,
+        "sha256": "03164c6613951dccb183ac4f60b56dee0c20870097e867291c8154d7bc8942ae"
+      },
+      {
+        "id": "big-win-coin-atlas-data",
+        "relativePath": "interface/big-win-coins.json",
+        "publicUrl": "/assets/primal-runtime/interface/big-win-coins.json",
+        "bytes": 51676,
+        "sha256": "4eb9dbb6eb6de7f7aa682113d7f9af78472de291bf88192082bbe9eb4b9a9f37"
+      }
+    ]
+  },
+  "mobile": {
+    "schemaVersion": 1,
+    "channel": "mobile",
+    "textureLevel": 2,
+    "exclusions": [
+      {
+        "reason": "proprietary-javascript-bundle",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/games/primalrampage/primalrampage_mobile.bundle.js",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/games/primalrampage/primalrampage_mobile.bundle.js",
+        "bytes": 3242317,
+        "sha256": "52e667dc5afef7c6b3a4b25dc9683d48edb1ad7f913a7319b95a2fc61e2a0d08"
+      },
+      {
+        "reason": "external-help-page-style",
+        "url": "https://cdn.playngonetwork.com/gamehelp/4496/styles/mobilehelp.css",
+        "archiveRelativePath": "cdn.playngonetwork.com/gamehelp/4496/styles/mobilehelp.css",
+        "bytes": 3154,
+        "sha256": "f924a02d80c2bf0104ce724864cf5bd65124ce048535f8c2374ce88733e1e0f8"
+      },
+      {
+        "reason": "external-help-page-style",
+        "url": "https://cdn.playngonetwork.com/gamehelp/4496/styles/template37mobile.css",
+        "archiveRelativePath": "cdn.playngonetwork.com/gamehelp/4496/styles/template37mobile.css",
+        "bytes": 2099,
+        "sha256": "7f10d50dc515c9fd226f0ca8ceebca98528305491ab79c28ca7b1dd2231e6998"
+      }
+    ],
+    "spine": {
+      "textureLevel": 2,
+      "groupCount": 4,
+      "groups": [
+        {
+          "id": "spine_background",
+          "textureLevel": 2,
+          "authoredScale": 0.6,
+          "sharedSkeletonRoot": "/assets/primal-runtime/spine/spine_background",
+          "atlas": {
+            "relativePath": "mobile/spine/spine_background/spine_background_level2.atlas",
+            "publicUrl": "/assets/primal-runtime/mobile/spine/spine_background/spine_background_level2.atlas",
+            "bytes": 15103,
+            "sha256": "4d9020d415945ba3b81888e7384263ec92e76f12ae9839e610d73fd66b3e5337",
+            "source": {
+              "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/spine_background_level2.atlas",
+              "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/spine_background_level2.atlas",
+              "bytes": 15101,
+              "sha256": "beafd98d469e6d9dfe84dcd202ffb36b232a345597d59602e64855ee69916a07"
+            },
+            "transformations": [
+              "atlas-page-extension-to-avif"
+            ]
+          },
+          "pages": [
+            {
+              "name": "spine_background_level2_2.avif",
+              "relativePath": "mobile/spine/spine_background/spine_background_level2_2.avif",
+              "publicUrl": "/assets/primal-runtime/mobile/spine/spine_background/spine_background_level2_2.avif",
+              "bytes": 242228,
+              "sha256": "de9a965f6c1185a789c28a11529ddb75bd7976fd9bafc2f0af2d312206ba2123",
+              "source": {
+                "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/avif/spine_background_level2_2.avif",
+                "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/avif/spine_background_level2_2.avif",
+                "bytes": 242228,
+                "sha256": "de9a965f6c1185a789c28a11529ddb75bd7976fd9bafc2f0af2d312206ba2123"
+              }
+            },
+            {
+              "name": "spine_background_level2.avif",
+              "relativePath": "mobile/spine/spine_background/spine_background_level2.avif",
+              "publicUrl": "/assets/primal-runtime/mobile/spine/spine_background/spine_background_level2.avif",
+              "bytes": 248159,
+              "sha256": "534b00aa6d2dbbb287f0c8fa3c1db3bb7dc9a6e9b44839ccafac31cd7e42b082",
+              "source": {
+                "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/avif/spine_background_level2.avif",
+                "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/avif/spine_background_level2.avif",
+                "bytes": 248159,
+                "sha256": "534b00aa6d2dbbb287f0c8fa3c1db3bb7dc9a6e9b44839ccafac31cd7e42b082"
+              }
+            }
+          ]
+        },
+        {
+          "id": "spine_fps",
+          "textureLevel": 2,
+          "authoredScale": 0.6,
+          "sharedSkeletonRoot": "/assets/primal-runtime/spine/spine_fps",
+          "atlas": {
+            "relativePath": "mobile/spine/spine_fps/spine_fps_level2.atlas",
+            "publicUrl": "/assets/primal-runtime/mobile/spine/spine_fps/spine_fps_level2.atlas",
+            "bytes": 3596,
+            "sha256": "30a089eda88d3d4827c5b9b4026b91248e313cd2eb872043e34b424990836210",
+            "source": {
+              "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/spine_fps_level2.atlas",
+              "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/spine_fps_level2.atlas",
+              "bytes": 3594,
+              "sha256": "dd07df09682af38c817b51cf7e13233c932be3b5de9548f13a639fcd01d3ee8f"
+            },
+            "transformations": [
+              "atlas-page-extension-to-avif"
+            ]
+          },
+          "pages": [
+            {
+              "name": "spine_fps_level2_2.avif",
+              "relativePath": "mobile/spine/spine_fps/spine_fps_level2_2.avif",
+              "publicUrl": "/assets/primal-runtime/mobile/spine/spine_fps/spine_fps_level2_2.avif",
+              "bytes": 36317,
+              "sha256": "4d6bc3fccac8e3ad5e0342bc43edd0582aa04fabbda83d679918b3a013d4778a",
+              "source": {
+                "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/avif/spine_fps_level2_2.avif",
+                "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/avif/spine_fps_level2_2.avif",
+                "bytes": 36317,
+                "sha256": "4d6bc3fccac8e3ad5e0342bc43edd0582aa04fabbda83d679918b3a013d4778a"
+              }
+            },
+            {
+              "name": "spine_fps_level2.avif",
+              "relativePath": "mobile/spine/spine_fps/spine_fps_level2.avif",
+              "publicUrl": "/assets/primal-runtime/mobile/spine/spine_fps/spine_fps_level2.avif",
+              "bytes": 24719,
+              "sha256": "9826bd7467abaa0d6447778982df7bc0db499684b0063afcc500eeb0333f879f",
+              "source": {
+                "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/avif/spine_fps_level2.avif",
+                "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/avif/spine_fps_level2.avif",
+                "bytes": 24719,
+                "sha256": "9826bd7467abaa0d6447778982df7bc0db499684b0063afcc500eeb0333f879f"
+              }
+            }
+          ]
+        },
+        {
+          "id": "spine_symbols",
+          "textureLevel": 2,
+          "authoredScale": 0.6,
+          "sharedSkeletonRoot": "/assets/primal-runtime/spine/spine_symbols",
+          "atlas": {
+            "relativePath": "mobile/spine/spine_symbols/spine_symbols_level2.atlas",
+            "publicUrl": "/assets/primal-runtime/mobile/spine/spine_symbols/spine_symbols_level2.atlas",
+            "bytes": 94522,
+            "sha256": "f3d04e3868f26d9199c7dcdab9742cbbf9b2374681e319f4c2dc97d093011698",
+            "source": {
+              "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/spine_symbols_level2.atlas",
+              "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/spine_symbols_level2.atlas",
+              "bytes": 94520,
+              "sha256": "28a800c8979f3722b14445401356453688d364fa9f5d4407281084cfe344e27c"
+            },
+            "transformations": [
+              "atlas-page-extension-to-avif"
+            ]
+          },
+          "pages": [
+            {
+              "name": "spine_symbols_level2_2.avif",
+              "relativePath": "mobile/spine/spine_symbols/spine_symbols_level2_2.avif",
+              "publicUrl": "/assets/primal-runtime/mobile/spine/spine_symbols/spine_symbols_level2_2.avif",
+              "bytes": 636414,
+              "sha256": "e8c21513ef1af5a7231747c9c05abbcc3ac5521d5598cbbcc10dadda6e5a2830",
+              "source": {
+                "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/avif/spine_symbols_level2_2.avif",
+                "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/avif/spine_symbols_level2_2.avif",
+                "bytes": 636414,
+                "sha256": "e8c21513ef1af5a7231747c9c05abbcc3ac5521d5598cbbcc10dadda6e5a2830"
+              }
+            },
+            {
+              "name": "spine_symbols_level2.avif",
+              "relativePath": "mobile/spine/spine_symbols/spine_symbols_level2.avif",
+              "publicUrl": "/assets/primal-runtime/mobile/spine/spine_symbols/spine_symbols_level2.avif",
+              "bytes": 364962,
+              "sha256": "06c22370b7b78aad30359505335a56059f12ca821c32c9d56115c4175cdaf2b6",
+              "source": {
+                "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/avif/spine_symbols_level2.avif",
+                "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/avif/spine_symbols_level2.avif",
+                "bytes": 364962,
+                "sha256": "06c22370b7b78aad30359505335a56059f12ca821c32c9d56115c4175cdaf2b6"
+              }
+            }
+          ]
+        },
+        {
+          "id": "spine_ui",
+          "textureLevel": 2,
+          "authoredScale": 0.6,
+          "sharedSkeletonRoot": "/assets/primal-runtime/spine/spine_ui",
+          "atlas": {
+            "relativePath": "mobile/spine/spine_ui/spine_ui_level2.atlas",
+            "publicUrl": "/assets/primal-runtime/mobile/spine/spine_ui/spine_ui_level2.atlas",
+            "bytes": 56200,
+            "sha256": "f775deef9771303d7f2129c1015666e44c2bf970e9fb0ec308a7ad347f858da1",
+            "source": {
+              "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/spine_ui_level2.atlas",
+              "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/spine_ui_level2.atlas",
+              "bytes": 56198,
+              "sha256": "90ebab9ad32056193b7ed66d6ecf4ef5dc40cdc6fd16fbd6a1841a715d5a253f"
+            },
+            "transformations": [
+              "atlas-page-extension-to-avif"
+            ]
+          },
+          "pages": [
+            {
+              "name": "spine_ui_level2_2.avif",
+              "relativePath": "mobile/spine/spine_ui/spine_ui_level2_2.avif",
+              "publicUrl": "/assets/primal-runtime/mobile/spine/spine_ui/spine_ui_level2_2.avif",
+              "bytes": 617132,
+              "sha256": "523ee5a1e45fb382c3e5303f905775057368039731a0aa9e441dbeb9734c0f65",
+              "source": {
+                "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/avif/spine_ui_level2_2.avif",
+                "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/avif/spine_ui_level2_2.avif",
+                "bytes": 617132,
+                "sha256": "523ee5a1e45fb382c3e5303f905775057368039731a0aa9e441dbeb9734c0f65"
+              }
+            },
+            {
+              "name": "spine_ui_level2.avif",
+              "relativePath": "mobile/spine/spine_ui/spine_ui_level2.avif",
+              "publicUrl": "/assets/primal-runtime/mobile/spine/spine_ui/spine_ui_level2.avif",
+              "bytes": 332493,
+              "sha256": "9a87cb62f2426ea7590d0de1b97dfcc3be410c86e0fd33a5da88c9784dbe4586",
+              "source": {
+                "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/avif/spine_ui_level2.avif",
+                "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/avif/spine_ui_level2.avif",
+                "bytes": 332493,
+                "sha256": "9a87cb62f2426ea7590d0de1b97dfcc3be410c86e0fd33a5da88c9784dbe4586"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "audio": {
+      "spriteCount": 5,
+      "cueCount": 125,
+      "aggregateManifests": [
+        {
+          "id": "game",
+          "relativePath": "mobile/audio/sounds_mobile.json",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/sounds_mobile.json",
+          "bytes": 150,
+          "sha256": "5f839cd0f616d80db6b5e3068cf46379b9718514d0363e9d4419c84632f2bf3a",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile.json",
+            "bytes": 150,
+            "sha256": "5f839cd0f616d80db6b5e3068cf46379b9718514d0363e9d4419c84632f2bf3a"
+          }
+        },
+        {
+          "id": "delayed",
+          "relativePath": "mobile/audio/snd_delayed_mobile.json",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/snd_delayed_mobile.json",
+          "bytes": 98,
+          "sha256": "685928084f629288fc5200ccb1c7e9a04a05a57e0026e5e68aa9e6b4a4771d91",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/delayed_bundle_mobile.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/delayed_bundle_mobile.json",
+            "bytes": 1667,
+            "sha256": "968a5a813540f135bce9a6e36dd6fcc988fa870b9969d56fb62bf916c3192d63"
+          },
+          "transformations": [
+            "extract-embedded-delayed-aggregate"
+          ]
+        },
+        {
+          "id": "delayed-loader",
+          "relativePath": "mobile/audio/delayed_bundle_mobile.json",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/delayed_bundle_mobile.json",
+          "bytes": 123,
+          "sha256": "2aecd3e35f7a528a6eeb4e5af14d301f569b3d70f982ee9861bbdac4cab410a7",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/delayed_bundle_mobile.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/delayed_bundle_mobile.json",
+            "bytes": 1667,
+            "sha256": "968a5a813540f135bce9a6e36dd6fcc988fa870b9969d56fb62bf916c3192d63"
+          },
+          "transformations": [
+            "normalize-embedded-delayed-loader"
+          ]
+        },
+        {
+          "id": "common",
+          "cueCount": 4,
+          "relativePath": "mobile/audio/common_sounds_mobile.json",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/common_sounds_mobile.json",
+          "bytes": 648,
+          "sha256": "e0a27d6ee346d174b261b76c240f29b1f2abeeb147e4f3310c0bb51d96adaf36",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/sounds/common_sounds_mobile.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/sounds/common_sounds_mobile.json",
+            "bytes": 648,
+            "sha256": "e0a27d6ee346d174b261b76c240f29b1f2abeeb147e4f3310c0bb51d96adaf36"
+          }
+        }
+      ],
+      "spriteManifests": [
+        {
+          "id": "sounds_mobile_0",
+          "cueCount": 18,
+          "relativePath": "mobile/audio/sounds_mobile_0.json",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/sounds_mobile_0.json",
+          "bytes": 1529,
+          "sha256": "85b259478297a959e01b38cdf3a58ca6509fa14e776f500320518f4638abb772",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_0.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_0.json",
+            "bytes": 1529,
+            "sha256": "85b259478297a959e01b38cdf3a58ca6509fa14e776f500320518f4638abb772"
+          }
+        },
+        {
+          "id": "sounds_mobile_1",
+          "cueCount": 64,
+          "relativePath": "mobile/audio/sounds_mobile_1.json",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/sounds_mobile_1.json",
+          "bytes": 5378,
+          "sha256": "b90f5ed959bdee45f21bd25f7941fe2cdef525de30a7e988dca4f097e697b2d4",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_1.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_1.json",
+            "bytes": 5378,
+            "sha256": "b90f5ed959bdee45f21bd25f7941fe2cdef525de30a7e988dca4f097e697b2d4"
+          }
+        },
+        {
+          "id": "sounds_mobile_2",
+          "cueCount": 23,
+          "relativePath": "mobile/audio/sounds_mobile_2.json",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/sounds_mobile_2.json",
+          "bytes": 2012,
+          "sha256": "e5470585a8fe444ca2f7e4db6f829ff455a99cd82b801bc732da431f15ff0bde",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_2.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_2.json",
+            "bytes": 2012,
+            "sha256": "e5470585a8fe444ca2f7e4db6f829ff455a99cd82b801bc732da431f15ff0bde"
+          }
+        },
+        {
+          "id": "snd_delayed_mobile_0",
+          "cueCount": 16,
+          "relativePath": "mobile/audio/snd_delayed_mobile_0.json",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/snd_delayed_mobile_0.json",
+          "bytes": 2267,
+          "sha256": "8e3f37b7ac4ce15512f9273167e90a6ecd73bfaae4a00477c146858e28b79887",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/delayed_bundle_mobile.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/delayed_bundle_mobile.json",
+            "bytes": 1667,
+            "sha256": "968a5a813540f135bce9a6e36dd6fcc988fa870b9969d56fb62bf916c3192d63"
+          },
+          "transformations": [
+            "extract-embedded-delayed-sprite-manifest"
+          ]
+        }
+      ],
+      "sprites": [
+        {
+          "id": "sounds_0",
+          "codec": "audio/mp4",
+          "cueCount": 18,
+          "manifest": "/assets/primal-runtime/mobile/audio/sounds_mobile_0.json",
+          "relativePath": "mobile/audio/sounds_mobile_0.m4a",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/sounds_mobile_0.m4a",
+          "bytes": 2825590,
+          "sha256": "69732aee5bf21cce35a7bd362845becb07bb4f4a33ad0aad1566b447b0ebeb48",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_0.m4a",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_0.m4a",
+            "bytes": 2825590,
+            "sha256": "69732aee5bf21cce35a7bd362845becb07bb4f4a33ad0aad1566b447b0ebeb48"
+          }
+        },
+        {
+          "id": "sounds_1",
+          "codec": "audio/mp4",
+          "cueCount": 64,
+          "manifest": "/assets/primal-runtime/mobile/audio/sounds_mobile_1.json",
+          "relativePath": "mobile/audio/sounds_mobile_1.m4a",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/sounds_mobile_1.m4a",
+          "bytes": 2384637,
+          "sha256": "3f2012b1c62247864b34308e19afcb379725c0ccf57f0d92bcf209abbd55bded",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_1.m4a",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_1.m4a",
+            "bytes": 2384637,
+            "sha256": "3f2012b1c62247864b34308e19afcb379725c0ccf57f0d92bcf209abbd55bded"
+          }
+        },
+        {
+          "id": "sounds_2",
+          "codec": "audio/mp4",
+          "cueCount": 23,
+          "manifest": "/assets/primal-runtime/mobile/audio/sounds_mobile_2.json",
+          "relativePath": "mobile/audio/sounds_mobile_2.m4a",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/sounds_mobile_2.m4a",
+          "bytes": 1230234,
+          "sha256": "1fc36f81e05d9dc8ecc785030bd03e49ed9cd2cab07146f13e4204b7641b5ad5",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_2.m4a",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_2.m4a",
+            "bytes": 1230234,
+            "sha256": "1fc36f81e05d9dc8ecc785030bd03e49ed9cd2cab07146f13e4204b7641b5ad5"
+          }
+        },
+        {
+          "id": "snd_delayed_0",
+          "codec": "audio/mp4",
+          "cueCount": 16,
+          "manifest": "/assets/primal-runtime/mobile/audio/snd_delayed_mobile_0.json",
+          "relativePath": "mobile/audio/snd_delayed_mobile_0.m4a",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/snd_delayed_mobile_0.m4a",
+          "bytes": 193534,
+          "sha256": "de4f55f3955b9f3d965f34be723701a7d2dff8f9fdcb79c8c2cc76aa492c0f79",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds_delayed/snd_delayed_mobile_0.m4a",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds_delayed/snd_delayed_mobile_0.m4a",
+            "bytes": 193534,
+            "sha256": "de4f55f3955b9f3d965f34be723701a7d2dff8f9fdcb79c8c2cc76aa492c0f79"
+          }
+        },
+        {
+          "id": "common_sounds",
+          "codec": "audio/mpeg",
+          "cueCount": 4,
+          "manifest": "/assets/primal-runtime/mobile/audio/common_sounds_mobile.json",
+          "relativePath": "mobile/audio/common_sounds_mobile.mp3",
+          "publicUrl": "/assets/primal-runtime/mobile/audio/common_sounds_mobile.mp3",
+          "bytes": 12151,
+          "sha256": "1361a8a2c3195fe0f99051fa7147a19091f27c06d967903dd0aa46307b7b3e5f",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/sounds/common_sounds_mobile.mp3",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/sounds/common_sounds_mobile.mp3",
+            "bytes": 12151,
+            "sha256": "1361a8a2c3195fe0f99051fa7147a19091f27c06d967903dd0aa46307b7b3e5f"
+          }
+        }
+      ]
+    },
+    "configuration": {
+      "files": [
+        {
+          "id": "config_mobile",
+          "kind": "json",
+          "relativePath": "mobile/config/config_mobile.json",
+          "publicUrl": "/assets/primal-runtime/mobile/config/config_mobile.json",
+          "bytes": 57128,
+          "sha256": "2ad107d14c583d70796d8b80aa7ed92947026af42812ab97d5c346cd8180c78d",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/config_mobile.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/config_mobile.json",
+            "bytes": 57128,
+            "sha256": "2ad107d14c583d70796d8b80aa7ed92947026af42812ab97d5c346cd8180c78d"
+          }
+        },
+        {
+          "id": "excluded_bundle_mobile",
+          "kind": "json",
+          "relativePath": "mobile/config/excluded_bundle_mobile.json",
+          "publicUrl": "/assets/primal-runtime/mobile/config/excluded_bundle_mobile.json",
+          "bytes": 14,
+          "sha256": "9bcd3eabb8cd1a49f4ba0d4ea101fa13af7134555fc59d1fdfde63ce78ee56ea",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/excluded_bundle_mobile.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/excluded_bundle_mobile.json",
+            "bytes": 14,
+            "sha256": "9bcd3eabb8cd1a49f4ba0d4ea101fa13af7134555fc59d1fdfde63ce78ee56ea"
+          }
+        }
+      ]
+    },
+    "interface": {
+      "files": [
+        {
+          "id": "feature-preview",
+          "kind": "texture",
+          "relativePath": "mobile/interface/feature_preview/feature_preview_texture0_level2.avif",
+          "publicUrl": "/assets/primal-runtime/mobile/interface/feature_preview/feature_preview_texture0_level2.avif",
+          "bytes": 43469,
+          "sha256": "8e2f0764d3d32a4c52c2d698b3031298229a8a9fa17b5a8491e7c70de996a9db",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/feature_preview/avif/feature_preview_texture0_level2.avif",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/feature_preview/avif/feature_preview_texture0_level2.avif",
+            "bytes": 43469,
+            "sha256": "8e2f0764d3d32a4c52c2d698b3031298229a8a9fa17b5a8491e7c70de996a9db"
+          }
+        },
+        {
+          "id": "fps-ui",
+          "kind": "texture",
+          "relativePath": "mobile/interface/fps_ui/fps_ui_texture0_level2.avif",
+          "publicUrl": "/assets/primal-runtime/mobile/interface/fps_ui/fps_ui_texture0_level2.avif",
+          "bytes": 3521,
+          "sha256": "1ca50c0d179b46e912c594de8f2955c8579c0e69021d8b068e56110272236e99",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/ruf/fps_ui/avif/fps_ui_texture0_level2.avif",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/ruf/fps_ui/avif/fps_ui_texture0_level2.avif",
+            "bytes": 3521,
+            "sha256": "1ca50c0d179b46e912c594de8f2955c8579c0e69021d8b068e56110272236e99"
+          }
+        },
+        {
+          "id": "main",
+          "kind": "texture",
+          "relativePath": "mobile/interface/main/main_texture0_level2.avif",
+          "publicUrl": "/assets/primal-runtime/mobile/interface/main/main_texture0_level2.avif",
+          "bytes": 244733,
+          "sha256": "85fc531411f4578c1c73fa45b792c0b836ecb1c75ff4c53c91ada21dd3922908",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/main/avif/main_texture0_level2.avif",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/main/avif/main_texture0_level2.avif",
+            "bytes": 244733,
+            "sha256": "85fc531411f4578c1c73fa45b792c0b836ecb1c75ff4c53c91ada21dd3922908"
+          }
+        },
+        {
+          "id": "menu",
+          "kind": "texture",
+          "relativePath": "mobile/interface/menu/menu_texture1_level2.avif",
+          "publicUrl": "/assets/primal-runtime/mobile/interface/menu/menu_texture1_level2.avif",
+          "bytes": 1770,
+          "sha256": "58ff31eef94a5acd12278b615900bcd4e0a8ad4efaa2c80274118f514e894b44",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/gamelibs/videoslot/mobile/menu/avif/menu_texture1_level2.avif",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/gamelibs/videoslot/mobile/menu/avif/menu_texture1_level2.avif",
+            "bytes": 1770,
+            "sha256": "58ff31eef94a5acd12278b615900bcd4e0a8ad4efaa2c80274118f514e894b44"
+          }
+        },
+        {
+          "id": "ospt",
+          "kind": "texture",
+          "relativePath": "mobile/interface/ospt/ospt_texture0_level2.avif",
+          "publicUrl": "/assets/primal-runtime/mobile/interface/ospt/ospt_texture0_level2.avif",
+          "bytes": 2989,
+          "sha256": "953d6c0478dae4f04bcbf0d68c7cef5e42e0203c88b4b4909afc6ebe58c80213",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/ruf/ospt/avif/ospt_texture0_level2.avif",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/ruf/ospt/avif/ospt_texture0_level2.avif",
+            "bytes": 2989,
+            "sha256": "953d6c0478dae4f04bcbf0d68c7cef5e42e0203c88b4b4909afc6ebe58c80213"
+          }
+        },
+        {
+          "id": "paytable-mobile",
+          "kind": "texture",
+          "relativePath": "mobile/interface/paytable/paytable_mobile_texture0_level2.avif",
+          "publicUrl": "/assets/primal-runtime/mobile/interface/paytable/paytable_mobile_texture0_level2.avif",
+          "bytes": 205648,
+          "sha256": "766a8ed230f89d35e69fb9c66db6e196b5d048cc88a2af823b0d120330161273",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/paytable_mobile/avif/paytable_mobile_texture0_level2.avif",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/paytable_mobile/avif/paytable_mobile_texture0_level2.avif",
+            "bytes": 205648,
+            "sha256": "766a8ed230f89d35e69fb9c66db6e196b5d048cc88a2af823b0d120330161273"
+          }
+        },
+        {
+          "id": "ui-mobile-bundle",
+          "kind": "bundle",
+          "relativePath": "mobile/interface/ui_mobile_bundle.json",
+          "publicUrl": "/assets/primal-runtime/mobile/interface/ui_mobile_bundle.json",
+          "bytes": 14044,
+          "sha256": "9f6debb568401107baa0be8594b230fd8eaa974744a2f7818971df7c2ca7f80b",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/ui_mobile_bundle.json",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/ui_mobile_bundle.json",
+            "bytes": 14044,
+            "sha256": "9f6debb568401107baa0be8594b230fd8eaa974744a2f7818971df7c2ca7f80b"
+          }
+        },
+        {
+          "id": "wincounter",
+          "kind": "texture",
+          "relativePath": "mobile/interface/wincounter/wincounter_texture1_level2.avif",
+          "publicUrl": "/assets/primal-runtime/mobile/interface/wincounter/wincounter_texture1_level2.avif",
+          "bytes": 45469,
+          "sha256": "d7882e055bb29bc69c24cb141faa45e5161814950746988a0e6f959fa1a71a44",
+          "source": {
+            "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/gamelibs/videoslot/common/wincounter/avif/wincounter_texture1_level2.avif",
+            "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/gamelibs/videoslot/common/wincounter/avif/wincounter_texture1_level2.avif",
+            "bytes": 45469,
+            "sha256": "d7882e055bb29bc69c24cb141faa45e5161814950746988a0e6f959fa1a71a44"
+          }
+        }
+      ]
+    },
+    "sourceInventory": [
+      {
+        "category": "interface",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/ruf/fps_ui/avif/fps_ui_texture0_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/ruf/fps_ui/avif/fps_ui_texture0_level2.avif",
+        "bytes": 3521,
+        "sha256": "1ca50c0d179b46e912c594de8f2955c8579c0e69021d8b068e56110272236e99",
+        "outputs": [
+          "mobile/interface/fps_ui/fps_ui_texture0_level2.avif"
+        ]
+      },
+      {
+        "category": "interface",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/ruf/ospt/avif/ospt_texture0_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/ruf/ospt/avif/ospt_texture0_level2.avif",
+        "bytes": 2989,
+        "sha256": "953d6c0478dae4f04bcbf0d68c7cef5e42e0203c88b4b4909afc6ebe58c80213",
+        "outputs": [
+          "mobile/interface/ospt/ospt_texture0_level2.avif"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/sounds/common_sounds_mobile.json",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/sounds/common_sounds_mobile.json",
+        "bytes": 648,
+        "sha256": "e0a27d6ee346d174b261b76c240f29b1f2abeeb147e4f3310c0bb51d96adaf36",
+        "outputs": [
+          "mobile/audio/common_sounds_mobile.json"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/sounds/common_sounds_mobile.mp3",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/common/sounds/common_sounds_mobile.mp3",
+        "bytes": 12151,
+        "sha256": "1361a8a2c3195fe0f99051fa7147a19091f27c06d967903dd0aa46307b7b3e5f",
+        "outputs": [
+          "mobile/audio/common_sounds_mobile.mp3"
+        ]
+      },
+      {
+        "category": "interface",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/gamelibs/videoslot/common/wincounter/avif/wincounter_texture1_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/gamelibs/videoslot/common/wincounter/avif/wincounter_texture1_level2.avif",
+        "bytes": 45469,
+        "sha256": "d7882e055bb29bc69c24cb141faa45e5161814950746988a0e6f959fa1a71a44",
+        "outputs": [
+          "mobile/interface/wincounter/wincounter_texture1_level2.avif"
+        ]
+      },
+      {
+        "category": "interface",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/gamelibs/videoslot/mobile/menu/avif/menu_texture1_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/gamelibs/videoslot/mobile/menu/avif/menu_texture1_level2.avif",
+        "bytes": 1770,
+        "sha256": "58ff31eef94a5acd12278b615900bcd4e0a8ad4efaa2c80274118f514e894b44",
+        "outputs": [
+          "mobile/interface/menu/menu_texture1_level2.avif"
+        ]
+      },
+      {
+        "category": "configuration",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/config_mobile.json",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/config_mobile.json",
+        "bytes": 57128,
+        "sha256": "2ad107d14c583d70796d8b80aa7ed92947026af42812ab97d5c346cd8180c78d",
+        "outputs": [
+          "mobile/config/config_mobile.json"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/delayed_bundle_mobile.json",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/delayed_bundle_mobile.json",
+        "bytes": 1667,
+        "sha256": "968a5a813540f135bce9a6e36dd6fcc988fa870b9969d56fb62bf916c3192d63",
+        "outputs": [
+          "mobile/audio/delayed_bundle_mobile.json",
+          "mobile/audio/snd_delayed_mobile.json",
+          "mobile/audio/snd_delayed_mobile_0.json"
+        ]
+      },
+      {
+        "category": "configuration",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/excluded_bundle_mobile.json",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/excluded_bundle_mobile.json",
+        "bytes": 14,
+        "sha256": "9bcd3eabb8cd1a49f4ba0d4ea101fa13af7134555fc59d1fdfde63ce78ee56ea",
+        "outputs": [
+          "mobile/config/excluded_bundle_mobile.json"
+        ]
+      },
+      {
+        "category": "interface",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/feature_preview/avif/feature_preview_texture0_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/feature_preview/avif/feature_preview_texture0_level2.avif",
+        "bytes": 43469,
+        "sha256": "8e2f0764d3d32a4c52c2d698b3031298229a8a9fa17b5a8491e7c70de996a9db",
+        "outputs": [
+          "mobile/interface/feature_preview/feature_preview_texture0_level2.avif"
+        ]
+      },
+      {
+        "category": "interface",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/main/avif/main_texture0_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/main/avif/main_texture0_level2.avif",
+        "bytes": 244733,
+        "sha256": "85fc531411f4578c1c73fa45b792c0b836ecb1c75ff4c53c91ada21dd3922908",
+        "outputs": [
+          "mobile/interface/main/main_texture0_level2.avif"
+        ]
+      },
+      {
+        "category": "interface",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/paytable_mobile/avif/paytable_mobile_texture0_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/paytable_mobile/avif/paytable_mobile_texture0_level2.avif",
+        "bytes": 205648,
+        "sha256": "766a8ed230f89d35e69fb9c66db6e196b5d048cc88a2af823b0d120330161273",
+        "outputs": [
+          "mobile/interface/paytable/paytable_mobile_texture0_level2.avif"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds_delayed/snd_delayed_mobile_0.m4a",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds_delayed/snd_delayed_mobile_0.m4a",
+        "bytes": 193534,
+        "sha256": "de4f55f3955b9f3d965f34be723701a7d2dff8f9fdcb79c8c2cc76aa492c0f79",
+        "outputs": [
+          "mobile/audio/snd_delayed_mobile_0.m4a"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_0.json",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_0.json",
+        "bytes": 1529,
+        "sha256": "85b259478297a959e01b38cdf3a58ca6509fa14e776f500320518f4638abb772",
+        "outputs": [
+          "mobile/audio/sounds_mobile_0.json"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_0.m4a",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_0.m4a",
+        "bytes": 2825590,
+        "sha256": "69732aee5bf21cce35a7bd362845becb07bb4f4a33ad0aad1566b447b0ebeb48",
+        "outputs": [
+          "mobile/audio/sounds_mobile_0.m4a"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_1.json",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_1.json",
+        "bytes": 5378,
+        "sha256": "b90f5ed959bdee45f21bd25f7941fe2cdef525de30a7e988dca4f097e697b2d4",
+        "outputs": [
+          "mobile/audio/sounds_mobile_1.json"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_1.m4a",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_1.m4a",
+        "bytes": 2384637,
+        "sha256": "3f2012b1c62247864b34308e19afcb379725c0ccf57f0d92bcf209abbd55bded",
+        "outputs": [
+          "mobile/audio/sounds_mobile_1.m4a"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_2.json",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_2.json",
+        "bytes": 2012,
+        "sha256": "e5470585a8fe444ca2f7e4db6f829ff455a99cd82b801bc732da431f15ff0bde",
+        "outputs": [
+          "mobile/audio/sounds_mobile_2.json"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_2.m4a",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile_2.m4a",
+        "bytes": 1230234,
+        "sha256": "1fc36f81e05d9dc8ecc785030bd03e49ed9cd2cab07146f13e4204b7641b5ad5",
+        "outputs": [
+          "mobile/audio/sounds_mobile_2.m4a"
+        ]
+      },
+      {
+        "category": "audio",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile.json",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/sounds/sounds_mobile.json",
+        "bytes": 150,
+        "sha256": "5f839cd0f616d80db6b5e3068cf46379b9718514d0363e9d4419c84632f2bf3a",
+        "outputs": [
+          "mobile/audio/sounds_mobile.json"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/avif/spine_background_level2_2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/avif/spine_background_level2_2.avif",
+        "bytes": 242228,
+        "sha256": "de9a965f6c1185a789c28a11529ddb75bd7976fd9bafc2f0af2d312206ba2123",
+        "outputs": [
+          "mobile/spine/spine_background/spine_background_level2_2.avif"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/avif/spine_background_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/avif/spine_background_level2.avif",
+        "bytes": 248159,
+        "sha256": "534b00aa6d2dbbb287f0c8fa3c1db3bb7dc9a6e9b44839ccafac31cd7e42b082",
+        "outputs": [
+          "mobile/spine/spine_background/spine_background_level2.avif"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/spine_background_level2.atlas",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_background/spine_background_level2.atlas",
+        "bytes": 15101,
+        "sha256": "beafd98d469e6d9dfe84dcd202ffb36b232a345597d59602e64855ee69916a07",
+        "outputs": [
+          "mobile/spine/spine_background/spine_background_level2.atlas"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/avif/spine_fps_level2_2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/avif/spine_fps_level2_2.avif",
+        "bytes": 36317,
+        "sha256": "4d6bc3fccac8e3ad5e0342bc43edd0582aa04fabbda83d679918b3a013d4778a",
+        "outputs": [
+          "mobile/spine/spine_fps/spine_fps_level2_2.avif"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/avif/spine_fps_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/avif/spine_fps_level2.avif",
+        "bytes": 24719,
+        "sha256": "9826bd7467abaa0d6447778982df7bc0db499684b0063afcc500eeb0333f879f",
+        "outputs": [
+          "mobile/spine/spine_fps/spine_fps_level2.avif"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/spine_fps_level2.atlas",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_fps/spine_fps_level2.atlas",
+        "bytes": 3594,
+        "sha256": "dd07df09682af38c817b51cf7e13233c932be3b5de9548f13a639fcd01d3ee8f",
+        "outputs": [
+          "mobile/spine/spine_fps/spine_fps_level2.atlas"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/avif/spine_symbols_level2_2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/avif/spine_symbols_level2_2.avif",
+        "bytes": 636414,
+        "sha256": "e8c21513ef1af5a7231747c9c05abbcc3ac5521d5598cbbcc10dadda6e5a2830",
+        "outputs": [
+          "mobile/spine/spine_symbols/spine_symbols_level2_2.avif"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/avif/spine_symbols_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/avif/spine_symbols_level2.avif",
+        "bytes": 364962,
+        "sha256": "06c22370b7b78aad30359505335a56059f12ca821c32c9d56115c4175cdaf2b6",
+        "outputs": [
+          "mobile/spine/spine_symbols/spine_symbols_level2.avif"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/spine_symbols_level2.atlas",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_symbols/spine_symbols_level2.atlas",
+        "bytes": 94520,
+        "sha256": "28a800c8979f3722b14445401356453688d364fa9f5d4407281084cfe344e27c",
+        "outputs": [
+          "mobile/spine/spine_symbols/spine_symbols_level2.atlas"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/avif/spine_ui_level2_2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/avif/spine_ui_level2_2.avif",
+        "bytes": 617132,
+        "sha256": "523ee5a1e45fb382c3e5303f905775057368039731a0aa9e441dbeb9734c0f65",
+        "outputs": [
+          "mobile/spine/spine_ui/spine_ui_level2_2.avif"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/avif/spine_ui_level2.avif",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/avif/spine_ui_level2.avif",
+        "bytes": 332493,
+        "sha256": "9a87cb62f2426ea7590d0de1b97dfcc3be410c86e0fd33a5da88c9784dbe4586",
+        "outputs": [
+          "mobile/spine/spine_ui/spine_ui_level2.avif"
+        ]
+      },
+      {
+        "category": "spine",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/spine_ui_level2.atlas",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/spine_ui/spine_ui_level2.atlas",
+        "bytes": 56198,
+        "sha256": "90ebab9ad32056193b7ed66d6ecf4ef5dc40cdc6fd16fbd6a1841a715d5a253f",
+        "outputs": [
+          "mobile/spine/spine_ui/spine_ui_level2.atlas"
+        ]
+      },
+      {
+        "category": "interface",
+        "url": "https://cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/ui_mobile_bundle.json",
+        "archiveRelativePath": "cdn.playngonetwork.com/1.2.1-primalrampage.471/resources/games/videoslot/primalrampage/ui_mobile_bundle.json",
+        "bytes": 14044,
+        "sha256": "9f6debb568401107baa0be8594b230fd8eaa974744a2f7818971df7c2ca7f80b",
+        "outputs": [
+          "mobile/interface/ui_mobile_bundle.json"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,278 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs
+    slots-game.io/log-pipeline-provider: {{ .Values.externalControls.logPipelineProvider | quote }}
+spec:
+  replicas: {{ .Values.rgs.replicaCount }}
+  revisionHistoryLimit: 5
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "slots.selectorLabels" (dict "root" . "component" "rgs") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "slots.selectorLabels" (dict "root" . "component" "rgs") | nindent 8 }}
+        slots-game.io/log-pipeline-provider: {{ .Values.externalControls.logPipelineProvider | quote }}
+      annotations:
+        slots-game.io/runtime-secret-references: {{ toJson .Values.externalSecrets | sha256sum | quote }}
+        slots-game.io/global-rate-limit-provider: {{ .Values.externalControls.globalRateLimitProvider | quote }}
+        slots-game.io/tls-enforcement-provider: {{ .Values.externalControls.tlsEnforcementProvider | quote }}
+        slots-game.io/release-compatibility-class: {{ .Values.release.compatibilityClass | quote }}
+    spec:
+      serviceAccountName: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs") }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      shareProcessNamespace: false
+      terminationGracePeriodSeconds: {{ .Values.rgs.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.images.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          minDomains: {{ .Values.scheduling.zoneMinDomains }}
+          topologyKey: {{ .Values.scheduling.zoneTopologyKey }}
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "slots.selectorLabels" (dict "root" . "component" "rgs") | nindent 14 }}
+        - maxSkew: 1
+          topologyKey: {{ .Values.scheduling.hostnameTopologyKey }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "slots.selectorLabels" (dict "root" . "component" "rgs") | nindent 14 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: {{ .Values.scheduling.hostnameTopologyKey }}
+                labelSelector:
+                  matchLabels:
+                    {{- include "slots.selectorLabels" (dict "root" . "component" "rgs") | nindent 20 }}
+      {{- with .Values.scheduling.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduling.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: rgs
+          image: {{ include "slots.image" .Values.images.rgs | quote }}
+          imagePullPolicy: {{ .Values.images.rgs.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: operations
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: RGS_DATABASE_URL_FILE
+              value: {{ printf "/run/rgs/database/%s" .Values.externalSecrets.runtimeDatabase.urlKey | quote }}
+            - name: RGS_ENVIRONMENT
+              value: production
+            - name: RGS_HTTP_ADDR
+              value: :8080
+            - name: RGS_OPERATIONS_HTTP_ADDR
+              value: :8081
+            - name: RGS_PUBLIC_BASE_URL
+              value: {{ .Values.rgs.publicBaseURL | quote }}
+            - name: RGS_TLS_TERMINATED_UPSTREAM
+              value: "true"
+            - name: RGS_ALLOWED_ORIGINS
+              value: {{ join "," .Values.rgs.allowedOrigins | quote }}
+            - name: RGS_OPERATOR_CONFIG_FILE
+              value: /run/rgs/assets/operators.json
+            - name: RGS_DEFINITION_FILE
+              value: /run/rgs/assets/definition.json
+            - name: RGS_DEFINITION_APPROVAL_FILE
+              value: /run/rgs/assets/definition-approval.json
+            - name: RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE
+              value: /run/rgs/assets/definition-approval-public.pem
+            - name: RGS_LAUNCH_HMAC_KEY_FILE
+              value: /run/rgs/assets/launch-hmac.key
+            - name: RGS_OPERATIONS_BEARER_TOKEN_FILE
+              value: /run/rgs/operations/operations.token
+            - name: RGS_OUTBOX_ENDPOINT_URL
+              value: {{ .Values.audit.endpointURL | quote }}
+            - name: RGS_OUTBOX_HMAC_KEY_ID
+              value: {{ .Values.audit.hmacKeyID | quote }}
+            - name: RGS_OUTBOX_HMAC_KEY_FILE
+              value: /run/rgs/assets/outbox-hmac.key
+            - name: RGS_OUTBOX_BEARER_TOKEN_FILE
+              value: /run/rgs/assets/outbox-bearer.token
+            - name: RGS_OUTBOX_ROOT_CA_FILE
+              value: /run/rgs/assets/outbox-root-ca.pem
+            {{- if .Values.audit.mtls.enabled }}
+            - name: RGS_OUTBOX_CLIENT_CERT_FILE
+              value: /run/rgs/assets/outbox-client.pem
+            - name: RGS_OUTBOX_CLIENT_KEY_FILE
+              value: /run/rgs/assets/outbox-client-key.pem
+            {{- end }}
+            - name: RGS_OUTBOX_OWNER
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: RGS_SHUTDOWN_TIMEOUT
+              value: {{ printf "%ds" (int .Values.rgs.shutdownTimeoutSeconds) | quote }}
+            - name: RGS_DB_MAX_OPEN_CONNS
+              value: {{ .Values.rgs.runtime.databaseMaxOpenConnections | quote }}
+            - name: RGS_DB_MAX_IDLE_CONNS
+              value: {{ .Values.rgs.runtime.databaseMaxIdleConnections | quote }}
+            - name: RGS_MAX_IN_FLIGHT_REQUESTS
+              value: {{ .Values.rgs.runtime.maxInFlightRequests | quote }}
+            - name: RGS_MAX_CONNECTIONS_PER_LISTENER
+              value: {{ .Values.rgs.runtime.maxConnectionsPerListener | quote }}
+            - name: RGS_RATE_PER_SECOND
+              value: {{ .Values.rgs.runtime.ratePerSecondPerPod | quote }}
+            - name: RGS_RATE_BURST
+              value: {{ .Values.rgs.runtime.rateBurstPerPod | quote }}
+            - name: RGS_WALLET_TIMEOUT
+              value: {{ printf "%ds" (int .Values.rgs.runtime.walletTimeoutSeconds) | quote }}
+            - name: RGS_WALLET_MAX_ATTEMPTS
+              value: {{ .Values.rgs.runtime.walletMaxAttempts | quote }}
+            - name: RGS_OUTBOX_BATCH_SIZE
+              value: {{ .Values.rgs.runtime.outboxBatchSize | quote }}
+            - name: RGS_OUTBOX_MAX_PARALLEL
+              value: {{ .Values.rgs.runtime.outboxMaxParallel | quote }}
+            - name: RGS_OUTBOX_LEASE_DURATION
+              value: {{ printf "%ds" (int .Values.rgs.runtime.outboxLeaseSeconds) | quote }}
+            - name: RGS_OUTBOX_PUBLISH_TIMEOUT
+              value: {{ printf "%ds" (int .Values.rgs.runtime.outboxPublishTimeoutSeconds) | quote }}
+            - name: SSL_CERT_FILE
+              value: /run/rgs/assets/trust-bundle.pem
+            - name: PROBE_URL
+              value: http://127.0.0.1:8081/readyz
+            - name: PROBE_BEARER_FILE
+              value: /run/rgs/operations/operations.token
+          resources:
+            {{- toYaml .Values.rgs.resources | nindent 12 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.rgs.preStopSeconds }}
+          startupProbe:
+            exec:
+              command:
+                - /service-probe
+            periodSeconds: 5
+            timeoutSeconds: 4
+            failureThreshold: 36
+            successThreshold: 1
+          readinessProbe:
+            exec:
+              command:
+                - /service-probe
+            periodSeconds: 5
+            timeoutSeconds: 4
+            failureThreshold: 3
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+              scheme: HTTP
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+          volumeMounts:
+            - name: runtime-database
+              mountPath: /run/rgs/database
+              readOnly: true
+            - name: runtime-assets
+              mountPath: /run/rgs/assets
+              readOnly: true
+            - name: operations-bearer
+              mountPath: /run/rgs/operations
+              readOnly: true
+            - name: temporary
+              mountPath: /tmp
+      volumes:
+        - name: runtime-database
+          secret:
+            secretName: {{ .Values.externalSecrets.runtimeDatabase.name }}
+            defaultMode: 0440
+        - name: runtime-assets
+          secret:
+            secretName: {{ .Values.externalSecrets.runtimeAssets.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.externalSecrets.runtimeAssets.keys.operatorConfig }}
+                path: operators.json
+              - key: {{ .Values.externalSecrets.runtimeAssets.keys.definition }}
+                path: definition.json
+              - key: {{ .Values.externalSecrets.runtimeAssets.keys.definitionApproval }}
+                path: definition-approval.json
+              - key: {{ .Values.externalSecrets.runtimeAssets.keys.definitionApprovalPublicKey }}
+                path: definition-approval-public.pem
+              - key: {{ .Values.externalSecrets.runtimeAssets.keys.launchHMAC }}
+                path: launch-hmac.key
+              - key: {{ .Values.externalSecrets.runtimeAssets.keys.outboxHMAC }}
+                path: outbox-hmac.key
+              - key: {{ .Values.externalSecrets.runtimeAssets.keys.outboxBearerToken }}
+                path: outbox-bearer.token
+              - key: {{ .Values.externalSecrets.runtimeAssets.keys.outboxRootCA }}
+                path: outbox-root-ca.pem
+              - key: {{ .Values.externalSecrets.runtimeAssets.keys.trustBundle }}
+                path: trust-bundle.pem
+              {{- if .Values.audit.mtls.enabled }}
+              - key: {{ .Values.audit.mtls.clientCertKey }}
+                path: outbox-client.pem
+              - key: {{ .Values.audit.mtls.clientKeyKey }}
+                path: outbox-client-key.pem
+              {{- end }}
+              {{- range .Values.externalSecrets.runtimeAssets.additionalItems }}
+              - key: {{ .key }}
+                path: {{ .path }}
+              {{- end }}
+        - name: operations-bearer
+          secret:
+            secretName: {{ .Values.externalSecrets.operationsBearer.name }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.externalSecrets.operationsBearer.key }}
+                path: operations.token
+        - name: temporary
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi

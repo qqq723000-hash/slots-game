@@ -1,0 +1,15 @@
+{
+	"soundBufferId": "common_sounds",
+	"files": {
+		"ogg": { "url": "common_sounds_desktop.ogg", "size": 25039 },
+		"mp3": { "url": "common_sounds_desktop.mp3", "size": 34119 },
+		"fb": { "url": "common_sounds_desktop_fb.mp3", "size": 50990 }
+	},
+	"sounds":
+	{
+		"empty": { "start": 0, "end": 22050, "unique": false, "priority": 0 },
+		"wincounter_loop": { "start": 44100, "end": 92955, "unique": false, "loopStart": 51315, "loopEnd": 58530, "priority": 1 },
+		"btnClick": { "start": 137055, "end": 158624, "unique": false, "priority": 0 },
+		"GenericWinLessSnd": { "start": 202724, "end": 233837, "unique": false, "priority": 0 }
+	 }
+}

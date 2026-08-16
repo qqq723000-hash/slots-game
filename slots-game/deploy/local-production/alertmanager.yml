@@ -1,0 +1,31 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: local-production
+  group_by: [alertname, severity, service]
+  group_wait: 15s
+  group_interval: 2m
+  repeat_interval: 4h
+
+receivers:
+  - name: local-production
+    webhook_configs:
+      - url: https://wallet:8443/alerts
+        send_resolved: true
+        max_alerts: 256
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/alertmanager-webhook-secrets/alertmanager.token
+          tls_config:
+            ca_file: /run/alertmanager-webhook-secrets/local-production-root-ca.pem
+            server_name: wallet
+            min_version: TLS12
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: [alertname, service]

@@ -1,0 +1,144 @@
+/*
+ * 与 ContainerLauncher 兼容的加载界面。
+ *
+ * 以下几何、颜色和动画均复刻自官方 Hera 预加载器。唯一的定制增量是供应商品牌文字资源：PLAY'n -> G'm。该文件在 style.css 之后加载，
+ * 因此旧版游戏皮肤加载器声明无法更改启动框架。
+ */
+.launch-loading-host {
+  position: absolute;
+  inset: 0;
+  z-index: 900;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.launch-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  overflow: hidden;
+  color: transparent;
+  background: radial-gradient(#002448, #000e20);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.launch-loading[data-visible="true"] {
+  opacity: 1;
+}
+
+.launch-loading::before,
+.launch-loading::after {
+  content: none;
+}
+
+.launch-loading__mark {
+  position: absolute;
+  left: 50%;
+  bottom: 2%;
+  width: 10vh;
+  height: 3vh;
+  margin: 0;
+  transform: translateX(-50%);
+  transform-origin: center bottom;
+  filter: none;
+  animation: none;
+}
+
+.launch-loading__mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.launch-loading__brand,
+.launch-loading__status,
+.launch-loading__value {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.launch-loading__track {
+  position: absolute;
+  left: 50%;
+  bottom: 14%;
+  width: 26%;
+  height: 1vw;
+  margin: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 2px;
+  transform: translateX(-50%);
+  background: #000;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25) inset;
+}
+
+.launch-loading__track b {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: #0061a7 linear-gradient(to right, #3192d8 0, #0061a7 5vw, #0061a7 100%);
+  box-shadow: inset 0 0 0 2px #000;
+  transition: transform 500ms cubic-bezier(0.245, 0.435, 0.875, 0.66);
+}
+
+@media (orientation: portrait) {
+  .launch-loading__track {
+    width: 45%;
+    height: 2vw;
+  }
+}
+
+@media (orientation: landscape) {
+  .launch-loading__mark {
+    bottom: env(safe-area-inset-bottom, 3%);
+    width: 10vw;
+    max-width: 100%;
+    height: 3vw;
+  }
+}
+
+@media (min-width: 768px) {
+  .launch-loading__track {
+    bottom: 15%;
+    height: 0.7em;
+    opacity: 1;
+  }
+}
+
+@media (min-width: 768px) and (orientation: portrait) {
+  .launch-loading__mark {
+    width: 30vw;
+    height: calc(30vw * 0.4);
+  }
+}
+
+@media (min-width: 768px) and (orientation: landscape) {
+  .launch-loading__mark {
+    bottom: calc(1% + env(safe-area-inset-bottom, 0px));
+    width: calc(6.5vh * 3);
+    height: 6.5vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .launch-loading,
+  .launch-loading__track b {
+    transition: none;
+  }
+}

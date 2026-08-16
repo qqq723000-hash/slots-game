@@ -1,0 +1,225 @@
+package platform
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"slots-game/server/internal/outbox"
+)
+
+type metricsReadinessCheck struct {
+	check func(context.Context) error
+}
+
+func (metricsReadinessCheck) Name() string { return "dependency" }
+
+func (check metricsReadinessCheck) Check(ctx context.Context) error {
+	return check.check(ctx)
+}
+
+func TestMetricsHaveNoHighCardinalityLabels(t *testing.T) {
+	metrics := &Metrics{}
+	metrics.RoundsCommitted.Add(2)
+	metrics.HTTPServerFailures.Add(3)
+	metrics.CapacityRejected.Add(4)
+	var output bytes.Buffer
+	if err := metrics.WritePrometheus(&output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "rgs_rounds_committed_total 2") {
+		t.Fatalf("unexpected metrics output: %s", text)
+	}
+	if !strings.Contains(text, "rgs_http_server_failures_total 3") {
+		t.Fatalf("unexpected metrics output: %s", text)
+	}
+	if !strings.Contains(text, "# HELP rgs_capacity_rejected_total Public requests rejected by the process-wide in-flight capacity gate.") ||
+		!strings.Contains(text, "# TYPE rgs_capacity_rejected_total counter") ||
+		!strings.Contains(text, "rgs_capacity_rejected_total 4") {
+		t.Fatalf("capacity rejection counter missing from output: %s", text)
+	}
+	assertNoHighCardinalityMetricLabels(t, text)
+}
+
+func TestMetricsImplementBoundedBusinessObservers(t *testing.T) {
+	metrics := &Metrics{}
+	metrics.RoundPrepared()
+	metrics.RoundCommitted()
+	metrics.RoundReplayed()
+	metrics.IdempotencyConflict()
+	metrics.RoundManualReview()
+	metrics.RoundIntegrityQuarantined()
+	metrics.SessionIntegrityQuarantined()
+	metrics.WalletCall()
+	metrics.WalletUnknownOutcome()
+	metrics.ObserveOutboxDispatch(outbox.BatchResult{
+		Claimed: 5, Published: 2, Failed: 2, LeaseLost: 1,
+	})
+
+	if metrics.RoundsPrepared.Load() != 1 || metrics.RoundsCommitted.Load() != 1 ||
+		metrics.RoundReplays.Load() != 1 || metrics.IdempotencyConflicts.Load() != 1 ||
+		metrics.RoundsManualReview.Load() != 1 || metrics.WalletCalls.Load() != 1 ||
+		metrics.RoundIntegrityQuarantines.Load() != 1 ||
+		metrics.SessionIntegrityQuarantines.Load() != 1 ||
+		metrics.WalletUnknownOutcomes.Load() != 1 || metrics.OutboxClaimed.Load() != 5 ||
+		metrics.OutboxPublished.Load() != 2 || metrics.OutboxDeferred.Load() != 2 ||
+		metrics.OutboxLeaseLost.Load() != 1 {
+		t.Fatalf("business metrics were not observed exactly: %+v", metrics)
+	}
+
+	var output bytes.Buffer
+	if err := metrics.WritePrometheus(&output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, metric := range []string{
+		"rgs_rounds_manual_review_total 1",
+		"rgs_round_integrity_quarantines_total 1",
+		"rgs_session_integrity_quarantines_total 1",
+		"rgs_outbox_claimed_total 5",
+		"rgs_outbox_published_total 2",
+		"rgs_outbox_deferred_total 2",
+		"rgs_outbox_lease_lost_total 1",
+	} {
+		if !strings.Contains(text, metric) {
+			t.Fatalf("metrics output does not contain %q:\n%s", metric, text)
+		}
+	}
+	assertNoHighCardinalityMetricLabels(t, text)
+}
+
+func TestRequestTelemetryUsesFixedCumulativeBuckets(t *testing.T) {
+	metrics := &Metrics{}
+	metrics.HTTPActiveConnections.Store(7)
+	metrics.HTTPConnectionLimit.Store(1_024)
+	metrics.BeginHTTPRequest()
+	metrics.EndHTTPRequest(7 * time.Millisecond)
+	metrics.BeginHTTPRequest()
+	metrics.EndHTTPRequest(2 * time.Second)
+
+	var output bytes.Buffer
+	if err := metrics.WritePrometheus(&output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, metric := range []string{
+		"rgs_http_active_requests 0",
+		"rgs_http_active_connections 7",
+		"rgs_http_connection_limit 1024",
+		`rgs_http_request_duration_seconds_bucket{le="0.005"} 0`,
+		`rgs_http_request_duration_seconds_bucket{le="0.010"} 1`,
+		`rgs_http_request_duration_seconds_bucket{le="1.000"} 1`,
+		`rgs_http_request_duration_seconds_bucket{le="2.500"} 2`,
+		`rgs_http_request_duration_seconds_bucket{le="+Inf"} 2`,
+		"rgs_http_request_duration_seconds_count 2",
+	} {
+		if !strings.Contains(text, metric) {
+			t.Fatalf("metrics output does not contain %q:\n%s", metric, text)
+		}
+	}
+	assertNoHighCardinalityMetricLabels(t, text)
+}
+
+func TestMetricsExposeAttachedDatabasePoolGauges(t *testing.T) {
+	metrics := &Metrics{}
+	metrics.SetDatabasePool(&sql.DB{})
+
+	var output bytes.Buffer
+	if err := metrics.WritePrometheus(&output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, metric := range []string{
+		"rgs_db_pool_open_connections 0",
+		"rgs_db_pool_in_use_connections 0",
+		"rgs_db_pool_idle_connections 0",
+		"rgs_db_pool_max_open_connections 0",
+		"rgs_db_pool_wait_count_total 0",
+		"rgs_db_pool_wait_duration_seconds_total 0.000000000",
+	} {
+		if !strings.Contains(text, metric) {
+			t.Fatalf("metrics output does not contain %q:\n%s", metric, text)
+		}
+	}
+}
+
+func TestMetricsEndpointReportsBoundedReadinessWithoutChangingHTTPStatus(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		check     func(context.Context) error
+		wantReady string
+	}{
+		{
+			name:      "ready",
+			check:     func(context.Context) error { return nil },
+			wantReady: "rgs_ready 1",
+		},
+		{
+			name:      "dependency failure",
+			check:     func(context.Context) error { return errors.New("secret database detail") },
+			wantReady: "rgs_ready 0",
+		},
+		{
+			name: "total deadline",
+			check: func(ctx context.Context) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			wantReady: "rgs_ready 0",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			endpoint := MetricsEndpoint{
+				Metrics: &Metrics{},
+				Readiness: Readiness{
+					Checks: []DependencyCheck{metricsReadinessCheck{check: func(ctx context.Context) error {
+						calls++
+						return test.check(ctx)
+					}}},
+					Timeout: 20 * time.Millisecond,
+				},
+			}
+			recorder := httptest.NewRecorder()
+			started := time.Now()
+			endpoint.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+			elapsed := time.Since(started)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("metrics status = %d, want 200", recorder.Code)
+			}
+			if calls != 1 {
+				t.Fatalf("readiness calls = %d, want 1 per scrape", calls)
+			}
+			if body := recorder.Body.String(); !strings.Contains(body, test.wantReady) ||
+				strings.Contains(body, "secret database detail") ||
+				strings.Contains(body, "rgs_ready{") {
+				t.Fatalf("unsafe or incorrect readiness metric:\n%s", body)
+			}
+			if elapsed > 250*time.Millisecond {
+				t.Fatalf("readiness metric exceeded bounded scrape time: %s", elapsed)
+			}
+		})
+	}
+}
+
+func assertNoHighCardinalityMetricLabels(t *testing.T, text string) {
+	t.Helper()
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "{") && !strings.Contains(line, `rgs_http_request_duration_seconds_bucket{le="`) {
+			t.Fatalf("unexpected metric label set: %s", line)
+		}
+	}
+	for _, forbidden := range []string{"operator", "player", "session", "round", "transaction", "request_id"} {
+		if strings.Contains(text, forbidden+"=") {
+			t.Fatalf("high-cardinality label %q is exposed:\n%s", forbidden, text)
+		}
+	}
+}

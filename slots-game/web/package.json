@@ -1,0 +1,55 @@
+{
+  "name": "iron-colossus-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "assets:generate-streaming-packages": "node scripts/generate-streaming-package-manifests.mjs",
+    "assets:check-streaming-packages": "node scripts/generate-streaming-package-manifests.mjs --check",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && node scripts/finalize-production-assets.mjs && node scripts/verify-production-javascript-bundles.mjs",
+    "build:determinism-check": "node scripts/verify-deterministic-release-build.mjs",
+    "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",
+    "build:assets-check": "node scripts/finalize-production-assets.mjs --check",
+    "build:bundle-check": "node scripts/verify-production-javascript-bundles.mjs",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pixi-spine/base": "3.1.0",
+    "@pixi-spine/runtime-4.1": "3.1.0",
+    "pixi.js": "6.5.2"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "typescript": "5.6.3",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  },
+  "overrides": {
+    "@pixi/app": "6.5.2",
+    "@pixi/constants": "6.5.2",
+    "@pixi/core": "6.5.2",
+    "@pixi/display": "6.5.2",
+    "@pixi/extensions": "6.5.2",
+    "@pixi/graphics": "6.5.2",
+    "@pixi/loaders": "6.5.2",
+    "@pixi/math": "6.5.2",
+    "@pixi/mesh": "6.5.2",
+    "@pixi/mesh-extras": "6.5.2",
+    "@pixi/runner": "6.5.2",
+    "@pixi/settings": "6.5.2",
+    "@pixi/sprite": "6.5.2",
+    "@pixi/ticker": "6.5.2",
+    "@pixi/utils": "6.5.2",
+    "@pixi-spine/base": "3.1.0",
+    "@pixi-spine/loader-base": "3.1.0",
+    "@pixi-spine/loader-uni": "3.1.0",
+    "@pixi-spine/runtime-3.7": "3.1.0",
+    "@pixi-spine/runtime-3.8": "3.1.0",
+    "@pixi-spine/runtime-4.1": "3.1.0"
+  }
+}

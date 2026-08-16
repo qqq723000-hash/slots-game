@@ -1,0 +1,62 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs
+  annotations:
+    {{- $apiAnnotations := mergeOverwrite (deepCopy .Values.ingress.annotations) .Values.ingress.apiAnnotations }}
+    {{- $_ := set $apiAnnotations .Values.ingress.tlsRedirectAnnotationKey .Values.ingress.tlsRedirectAnnotationValue }}
+    {{- $_ := set $apiAnnotations "slots-game.io/global-rate-limit-provider" .Values.externalControls.globalRateLimitProvider }}
+    {{- $_ := set $apiAnnotations "slots-game.io/tls-enforcement-provider" .Values.externalControls.tlsEnforcementProvider }}
+    {{- toYaml $apiAnnotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.apiHost }}
+      secretName: {{ .Values.ingress.apiTLSSecretName }}
+  rules:
+    - host: {{ .Values.ingress.apiHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs") }}
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "web") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+    slots-game.io/web-version-isolation-provider: {{ .Values.externalControls.webVersionIsolationProvider | quote }}
+  annotations:
+    {{- $webAnnotations := mergeOverwrite (deepCopy .Values.ingress.annotations) .Values.ingress.webAnnotations }}
+    {{- $_ := set $webAnnotations .Values.ingress.tlsRedirectAnnotationKey .Values.ingress.tlsRedirectAnnotationValue }}
+    {{- $_ := set $webAnnotations "slots-game.io/tls-enforcement-provider" .Values.externalControls.tlsEnforcementProvider }}
+    {{- $_ := set $webAnnotations "slots-game.io/web-version-isolation-provider" .Values.externalControls.webVersionIsolationProvider }}
+    {{- toYaml $webAnnotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.webHost }}
+      secretName: {{ .Values.ingress.webTLSSecretName }}
+  rules:
+    - host: {{ .Values.ingress.webHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "slots.resourceName" (dict "root" . "suffix" "web") }}
+                port:
+                  name: http

@@ -1,0 +1,111 @@
+{
+  "soundBufferId": "snd_delayed_0",
+  "files": {
+    "mp3": {
+      "url": "snd_delayed_desktop_0.mp3",
+      "size": 336710
+    },
+    "m4a": {
+      "url": "snd_delayed_desktop_0.m4a",
+      "size": 316676
+    }
+  },
+  "sounds": {
+    "empty": {
+      "start": 0,
+      "end": 22050,
+      "unique": false,
+      "priority": 0
+    },
+    "BigWinCounterGenericNewLoop1": {
+      "start": 44100,
+      "end": 143290,
+      "unique": false,
+      "priority": 0
+    },
+    "BigWinCounterGenericNewStart1": {
+      "start": 198450,
+      "end": 267562,
+      "unique": false,
+      "priority": 0
+    },
+    "BigWinCounterGenericNewTail1": {
+      "start": 308700,
+      "end": 395858,
+      "unique": false,
+      "priority": 0
+    },
+    "BigWinCounterSweetener1": {
+      "start": 418950,
+      "end": 443306,
+      "unique": false,
+      "priority": 0
+    },
+    "BigWinCounterSweetener2": {
+      "start": 485100,
+      "end": 511250,
+      "unique": false,
+      "priority": 0
+    },
+    "BigWinCounterSweetener3": {
+      "start": 551250,
+      "end": 622888,
+      "unique": false,
+      "priority": 0
+    },
+    "BigWinCounterSweetener4": {
+      "start": 661500,
+      "end": 735531,
+      "unique": false,
+      "priority": 0
+    },
+    "BigWinCounterSweetener5": {
+      "start": 771750,
+      "end": 823279,
+      "unique": false,
+      "priority": 0
+    },
+    "WinCounterGenericNewLoop1": {
+      "start": 882000,
+      "end": 900148,
+      "unique": false,
+      "priority": 0
+    },
+    "WinCounterGenericNewStart1": {
+      "start": 948150,
+      "end": 1020832,
+      "unique": false,
+      "priority": 0
+    },
+    "WinCounterGenericNewTail1": {
+      "start": 1058400,
+      "end": 1135790,
+      "unique": false,
+      "priority": 0
+    },
+    "WinCounterSweetener1": {
+      "start": 1168650,
+      "end": 1191823,
+      "unique": false,
+      "priority": 0
+    },
+    "WinCounterSweetener2": {
+      "start": 1234800,
+      "end": 1260953,
+      "unique": false,
+      "priority": 0
+    },
+    "WinCounterSweetener3": {
+      "start": 1300950,
+      "end": 1326453,
+      "unique": false,
+      "priority": 0
+    },
+    "WinCounterSweetener4": {
+      "start": 1367100,
+      "end": 1380242,
+      "unique": false,
+      "priority": 0
+    }
+  }
+}

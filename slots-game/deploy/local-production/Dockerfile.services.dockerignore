@@ -1,0 +1,7 @@
+*
+!server/
+!server/**
+!deploy/
+!deploy/local-production/
+!deploy/local-production/secret-env.go
+!deploy/local-production/service-probe.go
