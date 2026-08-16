@@ -15,6 +15,7 @@
     "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",
     "build:assets-check": "node scripts/finalize-production-assets.mjs --check",
     "build:bundle-check": "node scripts/verify-production-javascript-bundles.mjs",
+    "build:browser-smoke": "node scripts/verify-production-browser-bootstrap.mjs",
     "test": "vitest",
     "typecheck": "tsc --noEmit"
   },

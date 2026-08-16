@@ -1,4 +1,4 @@
-.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-observability-contract test-observability-rendered-contract verify-observability-release verify-supply-chain-contract verify-chinese-comments verify-cluster-production verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
+.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract verify-observability-release verify-supply-chain-contract verify-chinese-comments verify-cluster-production verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
 
 bootstrap:
 	cd web && npm ci
@@ -55,6 +55,9 @@ build-web-release-image: verify-supply-chain-contract
 verify-web-container-contract: verify-supply-chain-contract
 	./deploy/web/verify-static-contract.sh
 
+verify-web-browser-bootstrap:
+	cd web && npm run build:browser-smoke
+
 verify-observability-contract:
 	./deploy/observability/verify-static-contract.sh
 	$(MAKE) test-observability-rendered-contract
@@ -107,3 +110,5 @@ verify-backend: verify-supply-chain-contract
 	cd server && go build ./...
 
 verify: verify-supply-chain-contract verify-chinese-comments test test-race vet build
+	# Node 模拟测试无法发现跨生产分块的浏览器求值错误，必须再执行真实 Chrome 门禁。
+	$(MAKE) verify-web-browser-bootstrap

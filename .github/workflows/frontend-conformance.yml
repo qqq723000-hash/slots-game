@@ -52,6 +52,9 @@ jobs:
       - name: Build production frontend
         run: npm run build
 
+      - name: Smoke production modules in a real browser
+        run: npm run build:browser-smoke
+
       - name: Rebuild and verify deterministic release bytes
         run: npm run build:determinism-check
 

@@ -1,20 +1,26 @@
 import { defineConfig } from "vitest/config";
 
-function productionChunkName(moduleID: string): string | undefined {
-  const id = moduleID.replaceAll("\\", "/");
+function normalizedModuleID(moduleID: string): string {
+  return moduleID.replaceAll("\\", "/");
+}
 
-  // 把体积较大且稳定的第三方渲染运行时拆成可独立缓存的块。启动壳必须先完成首屏，
-  // 后续 AppController 再按同一依赖边界加载这些模块。
-  if (id.includes("/node_modules/@pixi-spine/")) return "vendor-pixi-spine";
-  if (id.includes("/node_modules/@pixi/") || id.includes("/node_modules/pixi.js/")) {
-    return "vendor-pixi";
-  }
+function isPixiSpineModule(moduleID: string): boolean {
+  return normalizedModuleID(moduleID).includes("/node_modules/@pixi-spine/");
+}
+
+function isPixiModule(moduleID: string): boolean {
+  const id = normalizedModuleID(moduleID);
+  return id.includes("/node_modules/@pixi/") || id.includes("/node_modules/pixi.js/");
+}
+
+function isRenderingCycleModule(moduleID: string): boolean {
+  const id = normalizedModuleID(moduleID);
+  return id.includes("/src/renderer/") || id.includes("/src/reels/");
+}
+
+function boundedProductionChunkName(moduleID: string): string | undefined {
+  const id = normalizedModuleID(moduleID);
   if (id.includes("/node_modules/")) return "vendor";
-
-  // 给每个可独立交付的玩法区域设置确定下载/缓存边界；权威展示生命周期仍只由
-  // AppController 统一装配，不改变业务顺序或结算规则。
-  if (id.includes("/src/renderer/")) return "game-renderer";
-  if (id.includes("/src/reels/")) return "game-reels";
   if (id.includes("/src/audio/")) return "game-audio";
   if (id.includes("/src/protocol/")) return "game-protocol";
   if (id.includes("/src/startup/")) return "game-startup";
@@ -32,12 +38,35 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         codeSplitting: {
-          // Vite 8 使用 Rolldown 显式分组。禁止把全部静态依赖递归吸入第一个匹配组，
-          // 否则会重新形成该策略需要消除的 AppController 单体大包。
           includeDependenciesRecursively: false,
           groups: [
             {
-              name: productionChunkName,
+              // Pixi 与 Spine 都包含包内初始化顺序约束，必须按完整依赖族交付，
+              // 禁止再按字节上限把同一依赖族切成互相循环的浏览器模块。
+              name: "vendor-pixi-spine",
+              test: isPixiSpineModule,
+              includeDependenciesRecursively: false,
+              minSize: 1,
+              priority: 30,
+            },
+            {
+              name: "vendor-pixi",
+              test: isPixiModule,
+              includeDependenciesRecursively: false,
+              minSize: 1,
+              priority: 20,
+            },
+            {
+              // renderer 与 reels 互相引用展示状态，属于同一个模块强连通分量；
+              // 同块求值可保持 free-spin 等导出的原始初始化顺序。
+              name: "game-rendering",
+              test: isRenderingCycleModule,
+              includeDependenciesRecursively: false,
+              minSize: 1,
+              priority: 10,
+            },
+            {
+              name: boundedProductionChunkName,
               includeDependenciesRecursively: false,
               minSize: 1,
               maxSize: 450_000,
