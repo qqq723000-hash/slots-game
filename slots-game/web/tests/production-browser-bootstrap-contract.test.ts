@@ -86,5 +86,8 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).toContain('"--headless=new"');
     expect(smoke).toContain('send("Runtime.evaluate"');
     expect(smoke).toContain("await import(url)");
+    expect(smoke).toContain("await waitForProcessExit(browser, 2_000)");
+    expect(smoke).toContain("maxRetries: 10");
+    expect(smoke).toContain("retryDelay: 100");
   });
 });

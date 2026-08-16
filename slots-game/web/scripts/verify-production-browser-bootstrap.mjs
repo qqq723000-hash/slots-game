@@ -53,7 +53,14 @@ try {
   pageSocket?.close();
   await closeServer(server);
   await stopChrome(chrome.process);
-  await rm(profileDirectory, { recursive: true, force: true });
+  // Chrome 主进程退出后，Linux 上的短命子进程仍可能在极短时间内关闭配置文件。
+  // 使用有界重试清理专用临时目录，既避免 CI 的 ENOTEMPTY 竞态，也不遗留浏览器状态。
+  await rm(profileDirectory, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
 }
 
 function createDistributionServer() {
@@ -299,11 +306,27 @@ async function waitForDocumentReady(send) {
 async function stopChrome(browser) {
   if (browser.exitCode !== null || browser.signalCode !== null) return;
   browser.kill("SIGTERM");
-  const exited = await Promise.race([
-    new Promise((resolvePromise) => browser.once("exit", () => resolvePromise(true))),
-    delay(2_000).then(() => false),
-  ]);
-  if (!exited && browser.exitCode === null && browser.signalCode === null) browser.kill("SIGKILL");
+  if (await waitForProcessExit(browser, 2_000)) return;
+  if (browser.exitCode !== null || browser.signalCode !== null) return;
+  browser.kill("SIGKILL");
+  if (!await waitForProcessExit(browser, 2_000)) {
+    throw new Error("浏览器进程在强制终止后仍未退出");
+  }
+}
+
+function waitForProcessExit(browser, timeoutMs) {
+  if (browser.exitCode !== null || browser.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolvePromise) => {
+    const handleExit = () => {
+      clearTimeout(timer);
+      resolvePromise(true);
+    };
+    const timer = setTimeout(() => {
+      browser.off("exit", handleExit);
+      resolvePromise(false);
+    }, timeoutMs);
+    browser.once("exit", handleExit);
+  });
 }
 
 function delay(milliseconds) {
