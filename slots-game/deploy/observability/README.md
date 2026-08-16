@@ -149,9 +149,12 @@ Backend CI 在镜像构建后先运行 `make smoke-runtime-operations` 保留快
 再运行 `make smoke-runtime-production`。两者要求 Linux Docker host networking 及隔离的
 `RGS_POSTGRES_MIGRATOR_TEST_URL`/`RGS_POSTGRES_TEST_URL`；后者还接收 workflow service
 PostgreSQL container ID，只在短命 CI 容器内安装临时 TLS 证书，并要求 runtime 以
-`sslmode=verify-full` 连接。证书 reload 后先由 runner 使用同一 DML 角色和独立 CA 建立
-真实连接，并查询 `pg_stat_ssl.ssl=true`；该有界 barrier 未通过时不会进入后续负向 gate，
-避免把 TLS 尚未生效误判成预期的配置拒绝。
+`sslmode=verify-full` 连接。数据库证书使用专用短命 RSA-3072/SHA-256 CA，兼容 CI 的
+libpq/OpenSSL 客户端及 SCRAM channel binding，同时保留 `localhost` 与 `127.0.0.1` SAN
+主机名校验；门禁不使用 `channel_binding=disable` 绕过证书摘要校验。证书 reload 后先由
+runner 使用同一 DML 角色和该独立 CA 建立真实连接，并查询
+`pg_stat_ssl.ssl=true`；该有界 barrier 未通过时不会进入后续负向 gate，避免把 TLS 尚未
+生效误判成预期的配置拒绝。
 
 production-config smoke 使用显式标记 `CI_ONLY_NOT_RELEASE_EVIDENCE` 的 v2 approval、HTTPS
 wallet URL、临时 CA/本地 HTTPS audit sink 和 outbox HMAC；它验证缺 operations token、使用

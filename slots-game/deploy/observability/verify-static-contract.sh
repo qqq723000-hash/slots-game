@@ -295,13 +295,31 @@ require_fixed 'missing RGS scrape was accepted' "$rendered_test_file"
 require_fixed 'missing Vector scrape was accepted' "$rendered_test_file"
 require_fixed 'structurally invalid rule was accepted' "$rendered_test_file"
 require_fixed 'release gate accepted an untrusted promtool source' "$rendered_test_file"
+require_fixed 'incompatible PostgreSQL TLS algorithm was accepted' "$rendered_test_file"
 require_fixed 'RGS_CI_RUNTIME_FIXTURE_PROFILE=development' "$runtime_smoke_file"
 require_fixed 'RGS_CI_RUNTIME_FIXTURE_PROFILE=production' "$production_smoke_file"
 require_fixed 'CI_ONLY_NOT_RELEASE_EVIDENCE' "$production_smoke_file"
 require_fixed 'RGS_ENVIRONMENT=production' "$production_smoke_file"
 require_fixed 'sslmode=verify-full' "$production_smoke_file"
 # shellcheck disable=SC2016
-require_fixed 'PGSSLROOTCERT="$fixture_dir/ci-root-ca.pem"' "$production_smoke_file"
+require_fixed 'PGSSLROOTCERT="$fixture_dir/postgres-root-ca.pem"' "$production_smoke_file"
+require_fixed 'openssl req -new -x509 -newkey rsa:3072 -nodes -sha256 -days 2' "$production_smoke_file"
+require_fixed 'basicConstraints=critical,CA:TRUE,pathlen:0' "$production_smoke_file"
+require_fixed 'keyUsage=critical,digitalSignature,keyEncipherment' "$production_smoke_file"
+require_fixed 'extendedKeyUsage=serverAuth' "$production_smoke_file"
+require_fixed 'subjectAltName=DNS:localhost,IP:127.0.0.1' "$production_smoke_file"
+# shellcheck disable=SC2016
+require_fixed 'openssl verify -purpose sslserver -CAfile "$fixture_dir/postgres-root-ca.pem"' "$production_smoke_file"
+require_fixed 'Signature Algorithm: sha256WithRSAEncryption' "$production_smoke_file"
+require_fixed 'Public Key Algorithm: rsaEncryption' "$production_smoke_file"
+require_fixed 'TLS Web Server Authentication' "$production_smoke_file"
+require_fixed 'DNS:localhost, IP Address:127.0.0.1' "$production_smoke_file"
+require_fixed 'postgres_certificate_key_digest' "$production_smoke_file"
+require_fixed 'postgres_private_key_digest' "$production_smoke_file"
+require_fixed 'sslrootcert=/run/rgs-production-smoke/postgres-root-ca.pem' "$production_smoke_file"
+if grep -F 'channel_binding=disable' "$production_smoke_file" >/dev/null; then
+  fail 'production smoke must not disable PostgreSQL channel binding'
+fi
 require_fixed 'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()' "$production_smoke_file"
 require_fixed 'PostgreSQL verify-full TLS barrier timed out' "$production_smoke_file"
 # shellcheck disable=SC2016

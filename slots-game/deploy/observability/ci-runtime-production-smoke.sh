@@ -3,6 +3,7 @@
 # 该 smoke 只验证 production 配置分支能在 CI 中失败闭合并成功启动；所有审批引用、证书与
 # 密钥都是短命 CI-only 材料，明确不是生产/监管证据，也绝不进入上传 artifact。
 set -euo pipefail
+umask 077
 
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 repository_root="$(CDPATH='' cd -- "$script_dir/../.." && pwd)"
@@ -55,9 +56,72 @@ mkdir -p "$fixture_dir" "$development_fixture_dir"
 (cd "$server_root" && RGS_CI_RUNTIME_FIXTURE=1 RGS_CI_RUNTIME_FIXTURE_PROFILE=development \
   go run ./cmd/ci-runtime-fixture "$development_fixture_dir")
 
+command -v openssl >/dev/null 2>&1 || {
+  printf '%s\n' 'production smoke: openssl is required for the ephemeral TLS fixtures' >&2
+  exit 2
+}
+
+# Go 夹具使用 Ed25519 签发通用测试证书，但部分 libpq/OpenSSL 组合无法完成该证书的
+# TLS 握手。数据库链改用短命 RSA-3072/SHA-256 专用 CA；仍须通过 verify-full、SAN
+# 主机名校验和 pg_stat_ssl.ssl=true，不能回退为 require、verify-ca 或明文连接。
+generate_postgres_tls_fixture() {
+  local postgres_ca_key postgres_csr postgres_certificate_text
+  local postgres_certificate_key_digest postgres_private_key_digest
+  postgres_ca_key="$fixture_root/postgres-root-ca-key.pem"
+  postgres_csr="$fixture_root/postgres-server.csr"
+
+  openssl req -new -x509 -newkey rsa:3072 -nodes -sha256 -days 2 \
+    -subj '/CN=RGS CI Only PostgreSQL Root CA' \
+    -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' \
+    -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+    -keyout "$postgres_ca_key" -out "$fixture_dir/postgres-root-ca.pem"
+  openssl req -new -newkey rsa:3072 -nodes -sha256 \
+    -subj '/CN=localhost' \
+    -keyout "$fixture_dir/postgres-server-key.pem" -out "$postgres_csr"
+  openssl x509 -req -in "$postgres_csr" \
+    -CA "$fixture_dir/postgres-root-ca.pem" -CAkey "$postgres_ca_key" \
+    -set_serial 2 -days 2 -sha256 \
+    -extfile <(printf '%s\n' \
+      '[server]' \
+      'basicConstraints=critical,CA:FALSE' \
+      'keyUsage=critical,digitalSignature,keyEncipherment' \
+      'extendedKeyUsage=serverAuth' \
+      'subjectAltName=DNS:localhost,IP:127.0.0.1') \
+    -extensions server -out "$fixture_dir/postgres-server.pem"
+  chmod 0600 "$postgres_ca_key" "$fixture_dir/postgres-root-ca.pem" \
+    "$fixture_dir/postgres-server-key.pem" "$fixture_dir/postgres-server.pem"
+  openssl verify -purpose sslserver -CAfile "$fixture_dir/postgres-root-ca.pem" \
+    "$fixture_dir/postgres-server.pem"
+
+  postgres_certificate_text="$(openssl x509 -in "$fixture_dir/postgres-server.pem" -noout -text)"
+  printf '%s\n' "$postgres_certificate_text" | grep -F 'Signature Algorithm: sha256WithRSAEncryption' >/dev/null
+  printf '%s\n' "$postgres_certificate_text" | grep -F 'Public Key Algorithm: rsaEncryption' >/dev/null
+  printf '%s\n' "$postgres_certificate_text" | grep -F '(3072 bit)' >/dev/null
+  printf '%s\n' "$postgres_certificate_text" | grep -F 'TLS Web Server Authentication' >/dev/null
+  printf '%s\n' "$postgres_certificate_text" | grep -F 'DNS:localhost, IP Address:127.0.0.1' >/dev/null
+
+  postgres_certificate_key_digest="$(
+    openssl x509 -in "$fixture_dir/postgres-server.pem" -pubkey -noout |
+      openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256
+  )"
+  postgres_private_key_digest="$(
+    openssl pkey -in "$fixture_dir/postgres-server-key.pem" -pubout -outform DER 2>/dev/null |
+      openssl dgst -sha256
+  )"
+  test "$postgres_certificate_key_digest" = "$postgres_private_key_digest"
+}
+
+postgres_tls_generation_log="$fixture_root/postgres-tls-generation.raw.log"
+if ! generate_postgres_tls_fixture >"$postgres_tls_generation_log" 2>&1; then
+  printf '%s\n' 'production smoke: compatible PostgreSQL TLS fixture generation failed' >&2
+  tail -n 10 "$postgres_tls_generation_log" >&2 || true
+  exit 1
+fi
+
 for required_fixture in definition.json definition-approval.json definition-approval-public.pem \
   operators.json launch-hmac.key operations.token CI_ONLY_NOT_RELEASE_EVIDENCE ci-root-ca.pem \
-  audit-server.pem audit-server-key.pem postgres-server.pem postgres-server-key.pem outbox-hmac.key; do
+  audit-server.pem audit-server-key.pem postgres-root-ca.pem postgres-server.pem \
+  postgres-server-key.pem outbox-hmac.key; do
   test -s "$fixture_dir/$required_fixture" || {
     printf '%s\n' "production smoke: fixture generator omitted $required_fixture" >&2
     exit 1
@@ -83,10 +147,6 @@ command -v docker >/dev/null 2>&1 || {
 }
 command -v curl >/dev/null 2>&1 || {
   printf '%s\n' 'production smoke: curl is required' >&2
-  exit 2
-}
-command -v openssl >/dev/null 2>&1 || {
-  printf '%s\n' 'production smoke: openssl is required for the local HTTPS audit sink' >&2
   exit 2
 }
 command -v psql >/dev/null 2>&1 || {
@@ -152,12 +212,14 @@ docker exec --user postgres "$RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER" \
 # verify-full 和独立 CA 建立真实连接，并由 pg_stat_ssl 证明当前 backend 的 ssl=true；
 # 只有该 barrier 成功后才进入负向 gates，避免把数据库尚未生效误判成配置拒绝。
 runner_tls_database_url="${RGS_POSTGRES_TEST_URL/sslmode=disable/sslmode=verify-full}"
+postgres_tls_probe_log="$fixture_root/postgres-tls-barrier.raw.log"
 postgres_tls_ready=0
 for _attempt in $(seq 1 20); do
-  if PGSSLROOTCERT="$fixture_dir/ci-root-ca.pem" \
+  if PGSSLROOTCERT="$fixture_dir/postgres-root-ca.pem" \
     psql --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align \
       --dbname "$runner_tls_database_url" \
-      --command 'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()' 2>/dev/null | \
+      --command 'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()' \
+      2>"$postgres_tls_probe_log" | \
       grep -F -x 't' >/dev/null; then
     postgres_tls_ready=1
     break
@@ -166,12 +228,17 @@ for _attempt in $(seq 1 20); do
 done
 if [ "$postgres_tls_ready" != 1 ]; then
   printf '%s\n' 'production smoke: PostgreSQL verify-full TLS barrier timed out' >&2
+  if [ -s "$postgres_tls_probe_log" ]; then
+    # 只输出隐藏连接凭据后的最后一条错误；原始诊断随短命目录清除且不上传。
+    tail -n 1 "$postgres_tls_probe_log" | \
+      sed -E 's#(postgres(ql)?://)[^@[:space:]]+@#\1[credentials-redacted]@#g' >&2
+  fi
   docker logs --tail 80 "$RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER" >&2 || true
   exit 1
 fi
 
 production_database_url="${RGS_POSTGRES_TEST_URL/sslmode=disable/sslmode=verify-full}"
-production_database_url="${production_database_url}&sslrootcert=/run/rgs-production-smoke/ci-root-ca.pem"
+production_database_url="${production_database_url}&sslrootcert=/run/rgs-production-smoke/postgres-root-ca.pem"
 
 production_env=(
   -e RGS_ENVIRONMENT=production

@@ -97,5 +97,19 @@ if "$script_dir/verify-static-contract.sh" --rendered-dir "$good_bundle" >/dev/n
   exit 1
 fi
 
+incompatible_tls_contract="$test_root/incompatible-tls-contract"
+cp -R "$script_dir" "$incompatible_tls_contract"
+ruby -e '
+  path = ARGV.fetch(0)
+  value = File.read(path)
+  changed = value.sub("rsa:3072", "ed25519")
+  abort "TLS algorithm mutation did not apply" if changed == value
+  File.write(path, changed)
+' "$incompatible_tls_contract/ci-runtime-production-smoke.sh"
+if "$incompatible_tls_contract/verify-static-contract.sh" >/dev/null 2>&1; then
+  printf '%s\n' 'rendered contract test: incompatible PostgreSQL TLS algorithm was accepted' >&2
+  exit 1
+fi
+
 printf '%s\n' \
-  'observability rendered bundle regression: good accepted; missing RGS/Vector, invalid rules and untrusted promtool rejected'
+  'observability rendered bundle regression: good accepted; missing RGS/Vector, invalid rules, untrusted promtool and incompatible PostgreSQL TLS rejected'
