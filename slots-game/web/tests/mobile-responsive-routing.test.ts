@@ -98,11 +98,6 @@ describe("mobile renderer projection contracts", () => {
       viewport: [844, 390] as const,
       expected: { x: 285.4390625, y: 117.12065625, scale: 0.641447368421 },
     },
-    {
-      name: "1024x768 landscape tablet",
-      viewport: [1_024, 768] as const,
-      expected: { x: 288, y: 288.326425702811, scale: 1.05216186383 },
-    },
   ])("projects the cabinet at $name", ({ viewport: [width, height], expected }) => {
     const snapshot = computeResponsiveLayoutSnapshot(width, height, { channel: "mobile" });
     const profile = snapshot.mobileProfile;
@@ -114,6 +109,16 @@ describe("mobile renderer projection contracts", () => {
     expect(projection.y).toBeCloseTo(expected.y, 10);
     expect(projection.scale).toBeCloseTo(expected.scale, 10);
     expect(geometry.areaWidth * projection.scale).toBeGreaterThan(0);
+  });
+
+  it("keeps an arbitrary tablet viewport on the fixed 844x633 design projection", () => {
+    const resized = computeResponsiveLayoutSnapshot(1_024, 768, { channel: "mobile" });
+    const canonical = computeResponsiveLayoutSnapshot(844, 633, { channel: "mobile" });
+    expect(resized.surfaceProfile).toBe("tablet-ls");
+    expect(resized.viewportRegion).toEqual(canonical.viewportRegion);
+    expect(mobileReelProjection(resized.viewportRegion, resized.mobileProfile!)).toEqual(
+      mobileReelProjection(canonical.viewportRegion, canonical.mobileProfile!),
+    );
   });
 
   it("applies the captured portrait logo correction and tablet landscape shift", () => {
@@ -138,9 +143,11 @@ describe("mobile renderer projection contracts", () => {
       tablet.mobileTransforms!.logo,
       tablet.mobileProfile!,
     );
-    expect(tabletLogo.x).toBeCloseTo(-238.628571428571, 10);
-    expect(tabletLogo.y).toBeCloseTo(103.057142857143, 10);
-    expect(tabletLogo.scale).toBeCloseTo(0.731428571429, 10);
+    const canonicalTablet = computeResponsiveLayoutSnapshot(844, 633, { channel: "mobile" });
+    expect(tabletLogo).toEqual(logoGameMobileLayout(
+      canonicalTablet.mobileTransforms!.logo,
+      canonicalTablet.mobileProfile!,
+    ));
   });
 
   it.each([

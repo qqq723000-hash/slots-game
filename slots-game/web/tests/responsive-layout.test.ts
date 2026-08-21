@@ -80,12 +80,42 @@ function installRecordedResizeObservers(): Array<{
   return records;
 }
 
+function createManualFrameScheduler(): {
+  readonly requestFrame: ReturnType<typeof vi.fn<(callback: FrameRequestCallback) => number>>;
+  readonly cancelFrame: ReturnType<typeof vi.fn<(handle: number) => void>>;
+  readonly pending: () => number;
+  readonly flush: () => void;
+} {
+  let nextHandle = 1;
+  const callbacks = new Map<number, FrameRequestCallback>();
+  const requestFrame = vi.fn((callback: FrameRequestCallback): number => {
+    const handle = nextHandle;
+    nextHandle += 1;
+    callbacks.set(handle, callback);
+    return handle;
+  });
+  const cancelFrame = vi.fn((handle: number): void => {
+    callbacks.delete(handle);
+  });
+  return {
+    requestFrame,
+    cancelFrame,
+    pending: () => callbacks.size,
+    flush: () => {
+      const scheduled = [...callbacks.values()];
+      callbacks.clear();
+      for (const callback of scheduled) callback(0);
+    },
+  };
+}
+
 describe("responsive game viewport", () => {
   it("starts idempotently without applying twice or installing a second observer", () => {
     const observers = installRecordedResizeObservers();
     const fixture = responsiveLayoutLifecycleFixture();
+    const frames = createManualFrameScheduler();
     try {
-      const layout = new ResponsiveLayout(fixture.viewport, fixture.frame, fixture.onLayout);
+      const layout = new ResponsiveLayout(fixture.viewport, fixture.frame, fixture.onLayout, frames);
 
       layout.start();
       layout.start();
@@ -105,14 +135,20 @@ describe("responsive game viewport", () => {
   it("invalidates a saved or already-queued ResizeObserver callback when stopped", () => {
     const observers = installRecordedResizeObservers();
     const fixture = responsiveLayoutLifecycleFixture();
+    const frames = createManualFrameScheduler();
     try {
-      const layout = new ResponsiveLayout(fixture.viewport, fixture.frame, fixture.onLayout);
+      const layout = new ResponsiveLayout(fixture.viewport, fixture.frame, fixture.onLayout, frames);
       layout.start();
       const firstObserver = observers[0];
       expect(firstObserver).toBeDefined();
 
+      Object.assign(fixture.viewport, { clientWidth: 390, clientHeight: 844 });
+      firstObserver?.callback([], firstObserver as unknown as ResizeObserver);
+      expect(frames.pending()).toBe(1);
+
       layout.stop();
       expect(firstObserver?.disconnect).toHaveBeenCalledOnce();
+      expect(frames.cancelFrame).toHaveBeenCalledOnce();
       fixture.onLayout.mockClear();
       fixture.styleSetProperty.mockClear();
       const frameState = JSON.stringify({
@@ -128,6 +164,7 @@ describe("responsive game viewport", () => {
 
       Object.assign(fixture.viewport, { clientWidth: 390, clientHeight: 844 });
       firstObserver?.callback([], firstObserver as unknown as ResizeObserver);
+      frames.flush();
 
       expect(fixture.onLayout).not.toHaveBeenCalled();
       expect(fixture.styleSetProperty).not.toHaveBeenCalled();
@@ -149,8 +186,9 @@ describe("responsive game viewport", () => {
   it("creates a fresh observer when restarted and keeps the previous generation stale", () => {
     const observers = installRecordedResizeObservers();
     const fixture = responsiveLayoutLifecycleFixture();
+    const frames = createManualFrameScheduler();
     try {
-      const layout = new ResponsiveLayout(fixture.viewport, fixture.frame, fixture.onLayout);
+      const layout = new ResponsiveLayout(fixture.viewport, fixture.frame, fixture.onLayout, frames);
       layout.start();
       const firstObserver = observers[0];
       layout.stop();
@@ -164,15 +202,25 @@ describe("responsive game viewport", () => {
       expect(fixture.onLayout).toHaveBeenCalledTimes(2);
 
       firstObserver?.callback([], firstObserver as unknown as ResizeObserver);
+      frames.flush();
       expect(fixture.onLayout).toHaveBeenCalledTimes(2);
 
+      Object.assign(fixture.viewport, { clientWidth: 390, clientHeight: 844 });
       secondObserver?.callback([], secondObserver as unknown as ResizeObserver);
+      expect(fixture.onLayout).toHaveBeenCalledTimes(2);
+      frames.flush();
       expect(fixture.onLayout).toHaveBeenCalledTimes(3);
       expect(fixture.onLayout.mock.calls.at(-1)?.[0].viewportRegion).toEqual({
         left: 0,
         top: 0,
-        width: 844,
-        height: 390,
+        width: 1_280,
+        height: 720,
+      });
+      expect(fixture.onLayout.mock.calls.at(-1)?.[0].physicalViewportRegion).toEqual({
+        left: 0,
+        top: 0,
+        width: 390,
+        height: 844,
       });
       layout.stop();
     } finally {
@@ -189,28 +237,122 @@ describe("responsive game viewport", () => {
     const removeEventListener = vi.fn();
     vi.stubGlobal("ResizeObserver", undefined);
     vi.stubGlobal("window", { addEventListener, removeEventListener });
+    const frames = createManualFrameScheduler();
     try {
-      const layout = new ResponsiveLayout(fixture.viewport, fixture.frame, fixture.onLayout);
+      const layout = new ResponsiveLayout(fixture.viewport, fixture.frame, fixture.onLayout, frames);
       layout.start();
       layout.start();
       expect(addEventListener).toHaveBeenCalledOnce();
       expect(resizeHandlers).toHaveLength(1);
+      expect(fixture.onLayout).toHaveBeenCalledOnce();
+
+      Object.assign(fixture.viewport, { clientWidth: 844, clientHeight: 390 });
+      resizeHandlers[0]?.();
+      resizeHandlers[0]?.();
+      expect(frames.pending()).toBe(1);
+      expect(fixture.onLayout).toHaveBeenCalledOnce();
+      frames.flush();
+      expect(fixture.onLayout).toHaveBeenCalledTimes(2);
 
       const staleResize = resizeHandlers[0];
       layout.stop();
       expect(removeEventListener).toHaveBeenCalledWith("resize", staleResize);
-      fixture.onLayout.mockClear();
       staleResize?.();
-      expect(fixture.onLayout).not.toHaveBeenCalled();
+      frames.flush();
+      expect(fixture.onLayout).toHaveBeenCalledTimes(2);
 
       layout.start();
       expect(addEventListener).toHaveBeenCalledTimes(2);
       expect(resizeHandlers).toHaveLength(2);
+      expect(fixture.onLayout).toHaveBeenCalledTimes(3);
       staleResize?.();
-      expect(fixture.onLayout).toHaveBeenCalledOnce();
+      frames.flush();
+      expect(fixture.onLayout).toHaveBeenCalledTimes(3);
+      Object.assign(fixture.viewport, { clientWidth: 390, clientHeight: 844 });
       resizeHandlers[1]?.();
-      expect(fixture.onLayout).toHaveBeenCalledTimes(2);
+      frames.flush();
+      expect(fixture.onLayout).toHaveBeenCalledTimes(4);
       layout.stop();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("coalesces ResizeObserver, window, and visualViewport events and preserves a zero-size snapshot", () => {
+    const fixture = responsiveLayoutLifecycleFixture();
+    const frames = createManualFrameScheduler();
+    let observerCallback: ResizeObserverCallback = () => undefined;
+    class TestResizeObserver {
+      readonly observe = vi.fn();
+      readonly disconnect = vi.fn();
+      constructor(callback: ResizeObserverCallback) { observerCallback = callback; }
+    }
+    const windowResize = vi.fn<(event?: Event) => void>();
+    const visualResize = vi.fn<(event?: Event) => void>();
+    const addEventListener = vi.fn((type: string, handler: (event?: Event) => void) => {
+      if (type === "resize") windowResize.mockImplementation(handler);
+    });
+    const removeEventListener = vi.fn();
+    const visualViewport = {
+      addEventListener: vi.fn((type: string, handler: (event?: Event) => void) => {
+        if (type === "resize") visualResize.mockImplementation(handler);
+      }),
+      removeEventListener: vi.fn(),
+    };
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    vi.stubGlobal("window", { addEventListener, removeEventListener, visualViewport });
+    try {
+      const layout = new ResponsiveLayout(
+        fixture.viewport,
+        fixture.frame,
+        fixture.onLayout,
+        {
+          channel: "mobile",
+          requestFrame: frames.requestFrame,
+          cancelFrame: frames.cancelFrame,
+        },
+      );
+      layout.start();
+      const stableFrame = JSON.stringify({
+        dataset: fixture.frame.dataset,
+        width: fixture.frame.style.width,
+        height: fixture.frame.style.height,
+        left: fixture.frame.style.left,
+        top: fixture.frame.style.top,
+        transform: fixture.frame.style.transform,
+      });
+
+      Object.assign(fixture.viewport, { clientWidth: 0, clientHeight: 844 });
+      observerCallback([], {} as ResizeObserver);
+      windowResize();
+      visualResize();
+      expect(frames.pending()).toBe(1);
+      frames.flush();
+      expect(fixture.onLayout).toHaveBeenCalledOnce();
+      expect(JSON.stringify({
+        dataset: fixture.frame.dataset,
+        width: fixture.frame.style.width,
+        height: fixture.frame.style.height,
+        left: fixture.frame.style.left,
+        top: fixture.frame.style.top,
+        transform: fixture.frame.style.transform,
+      })).toBe(stableFrame);
+
+      Object.assign(fixture.viewport, { clientWidth: 633, clientHeight: 844 });
+      observerCallback([], {} as ResizeObserver);
+      windowResize();
+      visualResize();
+      expect(frames.pending()).toBe(1);
+      frames.flush();
+      expect(fixture.onLayout).toHaveBeenCalledTimes(2);
+      expect(fixture.onLayout.mock.calls.at(-1)?.[0].surfaceProfile).toBe("tablet-pt");
+
+      layout.stop();
+      expect(removeEventListener).toHaveBeenCalledWith("resize", expect.any(Function));
+      expect(visualViewport.removeEventListener).toHaveBeenCalledWith(
+        "resize",
+        expect.any(Function),
+      );
     } finally {
       vi.unstubAllGlobals();
     }
@@ -257,25 +399,35 @@ describe("responsive game viewport", () => {
       removeEventListener: vi.fn(),
     });
     const snapshots: Array<ReturnType<typeof computeResponsiveLayoutSnapshot>> = [];
+    const frames = createManualFrameScheduler();
     try {
-      const layout = new ResponsiveLayout(viewport, frame, (snapshot) => snapshots.push(snapshot));
+      const layout = new ResponsiveLayout(
+        viewport,
+        frame,
+        (snapshot) => snapshots.push(snapshot),
+        frames,
+      );
       layout.start();
       expect(snapshots.at(-1)?.channel).toBe("desktop");
 
       coarsePointer = true;
       Object.assign(viewport, { clientWidth: 390, clientHeight: 844 });
       resize();
+      frames.flush();
       expect(snapshots.at(-1)?.channel).toBe("desktop");
       expect(frame.dataset.channel).toBe("desktop");
       expect(style.width).toBe("1280px");
       expect(style.height).toBe("720px");
-      expect(style.left).toBe("-65px");
-      expect(style.top).toBe("275.75px");
+      expect(style.left).toBe("0px");
+      expect(style.top).toBe("312.3125px");
+      expect(style.transform).toBe("scale(0.3046875)");
 
       coarsePointer = false;
       Object.assign(viewport, { clientWidth: 1_280, clientHeight: 720 });
       resize();
       resize();
+      expect(frames.pending()).toBe(1);
+      frames.flush();
       expect(snapshots.at(-1)?.channel).toBe("desktop");
       expect(frame.dataset.channel).toBe("desktop");
       expect(style.left).toBe("0px");
@@ -287,55 +439,61 @@ describe("responsive game viewport", () => {
       vi.unstubAllGlobals();
     }
   });
-  it("fills a 1440×900 desktop viewport and crops the renderer symmetrically", () => {
+  it("contains a 1440×900 desktop surface with horizontal letterbox bars", () => {
     expect(computeResponsiveFrameGeometry(1_440, 900)).toEqual({
-      x: -80,
-      y: 0,
-      width: 1_600,
-      height: 900,
-      scale: 1.25,
-      visibleInsetX: 64,
+      x: 0,
+      y: 45,
+      width: 1_440,
+      height: 810,
+      scale: 1.125,
+      designWidth: 1_280,
+      designHeight: 720,
+      visibleInsetX: 0,
     });
   });
 
   it("centres a 768×576 game surface in a 768×900 tablet viewport", () => {
     expect(computeResponsiveFrameGeometry(768, 900)).toEqual({
-      x: -128,
-      y: 162,
-      width: 1_024,
-      height: 576,
-      scale: 0.8,
-      visibleInsetX: 160,
+      x: 0,
+      y: 234,
+      width: 768,
+      height: 432,
+      scale: 0.6,
+      designWidth: 1_280,
+      designHeight: 720,
+      visibleInsetX: 0,
     });
   });
 
   it("centres the 292.5px game surface in a 390×844 phone viewport", () => {
     const geometry = computeResponsiveFrameGeometry(390, 844);
     expect(geometry).toEqual({
-      x: -65,
-      y: 275.75,
-      width: 520,
-      height: 292.5,
-      scale: 0.40625,
-      visibleInsetX: 160,
+      x: 0,
+      y: 312.3125,
+      width: 390,
+      height: 219.375,
+      scale: 0.3046875,
+      designWidth: 1_280,
+      designHeight: 720,
+      visibleInsetX: 0,
     });
     expect(responsiveFrameStyles(geometry)).toEqual({
-      left: "-65px",
-      top: "275.75px",
-      transform: "scale(0.40625)",
+      left: "0px",
+      top: "312.3125px",
+      transform: "scale(0.3046875)",
       transformOrigin: "top left",
     });
-    expect(responsiveCompositionScale(geometry)).toBeCloseTo(960 / 1_100, 10);
+    expect(responsiveCompositionScale(geometry)).toBe(1.05);
   });
 
-  it("covers the exact tablet and mobile-landscape regression viewports", () => {
+  it("contains the exact tablet and mobile-landscape regression viewports", () => {
     const tablet = computeResponsiveFrameGeometry(1_024, 768);
-    expect(tablet.x).toBeCloseTo(-170.6666666667, 10);
-    expect(tablet.y).toBe(0);
-    expect(tablet.width).toBeCloseTo(1_365.3333333333, 10);
-    expect(tablet.height).toBe(768);
-    expect(tablet.scale).toBeCloseTo(1.0666666667, 10);
-    expect(tablet.visibleInsetX).toBeCloseTo(160, 10);
+    expect(tablet.x).toBe(0);
+    expect(tablet.y).toBe(96);
+    expect(tablet.width).toBe(1_024);
+    expect(tablet.height).toBe(576);
+    expect(tablet.scale).toBe(0.8);
+    expect(tablet.visibleInsetX).toBe(0);
 
     const landscape = computeResponsiveFrameGeometry(844, 390);
     expect(landscape.x).toBeCloseTo(75.3333333333, 10);
@@ -349,10 +507,10 @@ describe("responsive game viewport", () => {
   it("adapts the central composition to the visible logical width", () => {
     expect(responsiveCompositionScale(
       computeResponsiveFrameGeometry(1_440, 900),
-    )).toBeCloseTo(1_152 / 1_100, 10);
+    )).toBe(1.05);
     expect(responsiveCompositionScale(
       computeResponsiveFrameGeometry(768, 900),
-    )).toBeCloseTo(960 / 1_100, 10);
+    )).toBe(1.05);
   });
 
   it("collapses safely when dimensions are invalid", () => {
@@ -362,6 +520,8 @@ describe("responsive game viewport", () => {
       width: 0,
       height: 0,
       scale: 0,
+      designWidth: 1_280,
+      designHeight: 720,
       visibleInsetX: 0,
     });
   });
@@ -412,14 +572,16 @@ describe("responsive game viewport", () => {
     expect(landscape.spinHitLogicalSize).toBeCloseTo(158.9316923077, 10);
   });
 
-  it("keeps the channel-aware snapshot on the existing desktop projection by default", () => {
+  it("keeps desktop gameplay in canonical coordinates while letterboxing the physical viewport", () => {
     const snapshot = computeResponsiveLayoutSnapshot(390, 844);
 
     expect(snapshot.channel).toBe("desktop");
     expect(snapshot.handMode).toBe("right");
     expect(snapshot.desktopFrame).toEqual(computeResponsiveFrameGeometry(390, 844));
-    expect(snapshot.gameplayRegion).toEqual({ left: 0, top: 0, width: 390, height: 844 });
-    expect(snapshot.statusRegion).toEqual({ left: 0, top: 844, width: 390, height: 0 });
+    expect(snapshot.physicalViewportRegion).toEqual({ left: 0, top: 0, width: 390, height: 844 });
+    expect(snapshot.viewportRegion).toEqual({ left: 0, top: 0, width: 1_280, height: 720 });
+    expect(snapshot.gameplayRegion).toEqual({ left: 0, top: 0, width: 1_280, height: 720 });
+    expect(snapshot.statusRegion).toEqual({ left: 0, top: 720, width: 1_280, height: 0 });
     expect(snapshot.mobileProfile).toBeNull();
     expect(snapshot.fpsProfile).toBeNull();
     expect(snapshot.mobileTransforms).toBeNull();
@@ -481,8 +643,10 @@ describe("responsive game viewport", () => {
 
     const tablet = computeResponsiveLayoutSnapshot(1_024, 768, { channel: "mobile" });
     expect(tablet.mobileProfile).toBe("ls");
-    expect(tablet.gameplayRegion).toEqual({ left: 0, top: 0, width: 1_024, height: 732 });
-    expect(tablet.statusRegion).toEqual({ left: 0, top: 732, width: 1_024, height: 36 });
+    expect(tablet.surfaceProfile).toBe("tablet-ls");
+    expect(tablet.viewportRegion).toEqual({ left: 0, top: 0, width: 844, height: 633 });
+    expect(tablet.gameplayRegion).toEqual({ left: 0, top: 0, width: 844, height: 603 });
+    expect(tablet.statusRegion).toEqual({ left: 0, top: 603, width: 844, height: 30 });
   });
 
   it("supports explicit mobile and FPS profile overrides for deterministic hosts", () => {
@@ -496,6 +660,6 @@ describe("responsive game viewport", () => {
     expect(snapshot.fpsProfile).toBe("iPad_ls");
     expect(snapshot.mobileLayouts).toBe(MOBILE_BASE_LAYOUTS.iPad_pt);
     expect(snapshot.fpsLayouts).toBe(MOBILE_FPS_LAYOUTS.iPad_ls);
-    expect(snapshot.statusRegion.height).toBe(77);
+    expect(snapshot.statusRegion.height).toBe(63);
   });
 });

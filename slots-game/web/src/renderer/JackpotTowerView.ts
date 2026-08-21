@@ -235,7 +235,12 @@ export const JACKPOT_AUTHORED_TIME_SCALE = 1;
 async function waitForJackpotFont(signal?: AbortSignal): Promise<void> {
   if (typeof document === "undefined" || !document.fonts?.load) return;
   if (signal?.aborted) return;
-  await document.fonts.load(JACKPOT_FONT_DESCRIPTOR, "GRAND 1000.00");
+  const loaded = await document.fonts.load(JACKPOT_FONT_DESCRIPTOR, "GRAND 1000.00");
+  if (signal?.aborted) return;
+  if (loaded.length === 0
+    || (document.fonts.check?.(JACKPOT_FONT_DESCRIPTOR, "GRAND 1000.00") === false)) {
+    throw new Error(`Required jackpot font failed to become ready: ${JACKPOT_FONT_FAMILY}`);
+  }
 }
 
 function jackpotTextStyle(fontSize: number): TextStyle {
@@ -254,7 +259,9 @@ function jackpotTextStyle(fontSize: number): TextStyle {
     // 在重命名的系列下请求 700 可以在错过匹配面孔的浏览器上合成第二个权重。
     fontFamily: `'${JACKPOT_FONT_FAMILY}', 'Primal Kanit', Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif`,
     fontSize,
+    fontStyle: "normal",
     fontWeight: "normal",
+    letterSpacing: 0,
     lineJoin: "miter",
     stroke: "#22140e",
     strokeThickness: 6,

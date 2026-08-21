@@ -140,6 +140,7 @@ function installWinningCompositeStub(symbol: InstanceType<typeof SymbolView>) {
       hasAnimation: vi.fn((animation: string) => (
         animation === "stop"
           || animation === "win"
+          || animation === "idle"
           || animation === "collect"
           || animation === "hide"
           || animation === "x50"
@@ -423,7 +424,7 @@ describe("Primal official reel composite contract", () => {
     { name: "phone rotated 844x390", viewport: [844, 390] as const, channel: "mobile" as const },
     { name: "tablet 633x844", viewport: [633, 844] as const, channel: "mobile" as const },
     { name: "tablet rotated 844x633", viewport: [844, 633] as const, channel: "mobile" as const },
-  ])("keeps Helmet/Radio/Tank/Jet NORMAL and ADD world matrices aligned at $name", ({
+  ])("keeps Helmet/Radio/Tank/Jet idle NORMAL and ADD world matrices aligned at $name", ({
     viewport: [width, height],
     channel,
   }) => {
@@ -457,7 +458,8 @@ describe("Primal official reel composite contract", () => {
     ];
     winners.forEach(({ symbol }) => installWinningCompositeStub(symbol));
 
-    view.highlight(winners.map(({ address }) => address));
+    for (const { symbol } of winners) expect(symbol.playIdleAnimation()).toBe(true);
+    view.update(16);
 
     const corners = [
       new PixiPoint(-90, -56),

@@ -484,26 +484,42 @@ describe("captured Primal symbol skeleton mapping", () => {
     },
   );
 
-  it("routes Wild idle ADD outside the reel Filter and freezes its second clock", () => {
-    const { view, normal, additive, winningAdditiveRoot } = winningCompositeHarness("WILD");
+  it.each([
+    ["Helmet", "PULSE"],
+    ["Radio", "NOVA"],
+    ["Tank", "TANK"],
+    ["Jet", "CIRCUIT"],
+    ["Wild", "WILD"],
+  ] as const)(
+    "routes %s idle NORMAL+ADD outside the reel Filter and freezes its second clock",
+    (_label, symbol) => {
+      const { view, normal, additive, winningAdditiveRoot } = winningCompositeHarness(symbol);
 
-    expect(view.playIdleAnimation()).toBe(true);
-    expect(normal.spine.state.getCurrent(0)?.animation.name).toBe("idle");
-    expect(additive.spine.state.getCurrent(0)?.animation.name).toBe("idle");
-    expect(normal.slots.map((slot) => slot.currentSprite.renderable)).toEqual([
-      true,
-      false,
-      false,
-    ]);
-    expect(winningAdditiveRoot.visible).toBe(true);
+      expect(view.playIdleAnimation()).toBe(true);
+      expect(normal.spine.state.getCurrent(0)?.animation.name).toBe("idle");
+      expect(additive.spine.state.getCurrent(0)?.animation.name).toBe("idle");
+      expect(normal.slots.map((slot) => slot.currentSprite.renderable)).toEqual([
+        true,
+        false,
+        false,
+      ]);
+      expect(additive.slots.map((slot) => slot.currentSprite.renderable)).toEqual([
+        false,
+        true,
+        true,
+      ]);
+      expect(winningAdditiveRoot.visible).toBe(true);
+      expect(winningAdditiveRoot.renderable).toBe(true);
 
-    view.update(100);
-    expect((view as unknown as { additivePlaybackRunning: boolean }).additivePlaybackRunning)
-      .toBe(false);
-    const updatesAtCompletion = additive.spine.update.mock.calls.length;
-    view.update(16);
-    expect(additive.spine.update).toHaveBeenCalledTimes(updatesAtCompletion);
-  });
+      view.update(100);
+      expect(normal.spine.update.mock.calls).toEqual(additive.spine.update.mock.calls);
+      expect((view as unknown as { additivePlaybackRunning: boolean }).additivePlaybackRunning)
+        .toBe(false);
+      const updatesAtCompletion = additive.spine.update.mock.calls.length;
+      view.update(16);
+      expect(additive.spine.update).toHaveBeenCalledTimes(updatesAtCompletion);
+    },
+  );
 
   it.each(["PRISM", "ORBIT"] as const)(
     "%s explosion starts the dynamic composite even though WIN is a zero-ADD control",

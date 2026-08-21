@@ -39,13 +39,14 @@ describe("Pass 95 official PC loading-blue contract", () => {
     expect(declaration).not.toMatch(/rgba\(|linear-gradient|#19140f|#060605/i);
   });
 
-  it("locks the browser chrome and startup fallback surfaces to the outer blue", () => {
+  it("keeps blue browser chrome for startup while permanent letterbox bars are black", () => {
     expect(indexHtml).toMatch(
       /<meta\s+name=["']theme-color["']\s+content=["']#000e20["']\s*\/>/i,
     );
-    expect(lastRuleBody("html,\nbody,\n#app")).toContain("background: #000e20;");
-    expect(lastRuleBody("body")).toContain("background: #000e20;");
-    expect(lastRuleBody(".viewport")).toContain("background: #000e20;");
+    expect(lastRuleBody("html,\nbody,\n#app")).toContain("background: #000;");
+    expect(lastRuleBody("body")).toContain("background: #000;");
+    expect(lastRuleBody(".viewport")).toContain("background: #000;");
+    expect(lastRuleBody(".game-safe-area")).toContain("background: #000;");
     expect(lastRuleBody(".game-frame")).toContain("background: #15100c;");
   });
 

@@ -88,20 +88,17 @@ describe("native base-game logo", () => {
     view.destroy({ children: true });
   });
 
-  it("reprojects the official logo host at tablet and portrait widths", () => {
-    const cases = [
-      { viewport: [1_024, 768] as const, x: 113.778, y: 184.076, scale: 0.812698 },
-      { viewport: [390, 844] as const, x: 43.333, y: 345.857, scale: 0.309524 },
-    ];
+  it("keeps the official logo host canonical before root letterboxing", () => {
+    const cases = [[1_024, 768], [390, 844]] as const;
 
-    for (const { viewport: [width, height], x, y, scale } of cases) {
+    for (const [width, height] of cases) {
       const frame = computeResponsiveFrameGeometry(width, height);
       const layout = logoGameResponsiveLayout(frame.visibleInsetX);
       expect(frame.x + (layout.x + LOGO_GAME_SPINE_HOST.x * layout.scale) * frame.scale)
-        .toBeCloseTo(x, 3);
+        .toBeCloseTo(frame.x + 248 * frame.scale, 6);
       expect(frame.y + (layout.y + LOGO_GAME_SPINE_HOST.y * layout.scale) * frame.scale)
-        .toBeCloseTo(y, 3);
-      expect(layout.scale * frame.scale).toBeCloseTo(scale, 6);
+        .toBeCloseTo(frame.y + 163.2 * frame.scale, 6);
+      expect(layout.scale * frame.scale).toBeCloseTo(0.8 * frame.scale, 10);
     }
   });
 

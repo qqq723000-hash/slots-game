@@ -1,8 +1,5 @@
 import { LOGICAL_HEIGHT, LOGICAL_WIDTH } from "./theme";
 
-const AUTHORED_WIDTH = 1_200;
-const AUTHORED_HEIGHT = 900;
-const AUTHORED_TO_RENDERER_SCALE = LOGICAL_HEIGHT / AUTHORED_HEIGHT;
 const RESPONSIVE_COMPOSITION_BASE_WIDTH = 1_100;
 const MIN_RESPONSIVE_COMPOSITION_SCALE = 0.87;
 const MAX_RESPONSIVE_COMPOSITION_SCALE = 1.05;
@@ -24,9 +21,14 @@ const FEATURE_PREVIEW_UI_TABLET_EDGE = 768;
 export interface ResponsiveFrameGeometry {
   readonly x: number;
   readonly y: number;
+  /** 经过唯一根缩放后占用的外层 CSS 宽度。 */
   readonly width: number;
+  /** 经过唯一根缩放后占用的外层 CSS 高度。 */
   readonly height: number;
   readonly scale: number;
+  readonly designWidth: number;
+  readonly designHeight: number;
+  /** Letterbox 从不裁切设计表面；保留该字段仅兼容现有官方节点投影。 */
   readonly visibleInsetX: number;
 }
 
@@ -67,6 +69,12 @@ export interface ResponsiveControlGeometry {
 }
 
 export type ResponsiveChannel = "desktop" | "mobile";
+export type ResponsiveSurfaceProfile =
+  | "desktop"
+  | "phone-pt"
+  | "phone-ls"
+  | "tablet-pt"
+  | "tablet-ls";
 export type MobileLayoutProfile = "pt" | "iPad_pt" | "ls";
 export type MobileFpsLayoutProfile = "pt" | "iPad_pt" | "iPad_ls" | "ls";
 export type MobileHandMode = "left" | "right";
@@ -92,6 +100,10 @@ export interface ResponsiveLayoutSnapshotOptions {
   readonly mobileProfile?: MobileLayoutProfile;
   /** Feature Preview 有一套单独的官方长宽比规则。 */
   readonly fpsProfile?: MobileFpsLayoutProfile;
+  /** 确定性主机覆盖；生产环境始终由物理视口选择固定设计表面。 */
+  readonly surfaceProfile?: ResponsiveSurfaceProfile;
+  /** 只控制 backing resolution，绝不进入逻辑几何。 */
+  readonly pixelRatio?: number;
 }
 
 export interface ResponsiveChannelEnvironment {
@@ -104,18 +116,28 @@ export interface ResponsiveLayoutRuntimeOptions {
    * 冻结发射器通道。运行时视口/指针更改会调整此合成的大小，但绝不能交换其已加载的资源系列。
    */
   readonly channel?: ResponsiveChannel;
+  /** 确定性生命周期测试接缝；生产环境使用 requestAnimationFrame。 */
+  readonly requestFrame?: (callback: FrameRequestCallback) => number;
+  readonly cancelFrame?: (handle: number) => void;
 }
 
 export interface ResponsiveLayoutSnapshot {
   readonly channel: ResponsiveChannel;
   readonly handMode: MobileHandMode;
+  readonly surfaceProfile: ResponsiveSurfaceProfile;
+  /** 外层可用区域，单位为未缩放的浏览器 CSS 像素。 */
+  readonly physicalViewportRegion: ResponsiveRendererRegion;
+  /** Pixi、DOM 与点击区共用的固定设计坐标域。 */
   readonly viewportRegion: ResponsiveRendererRegion;
-  /** Pixi 内容可用的物理区域，不包括移动状态栏。 */
+  /** Pixi 内容可用的设计区域，不包括移动状态栏。 */
   readonly gameplayRegion: ResponsiveRendererRegion;
-  /** 物理移动状态栏区域。桌面将其保持在零高度。 */
+  /** 设计坐标中的移动状态栏区域。桌面将其保持在零高度。 */
   readonly statusRegion: ResponsiveRendererRegion;
-  /** 现有的固定表面投影。移动渲染器应调整大小为 gameplayRegion。 */
+  /** 每个通道都只使用一次的等比根投影。 */
+  readonly frame: ResponsiveFrameGeometry;
+  /** 兼容桌面消费者；移动端使用 frame。 */
   readonly desktopFrame: ResponsiveFrameGeometry | null;
+  readonly pixelRatio: number;
   readonly mobileProfile: MobileLayoutProfile | null;
   readonly fpsProfile: MobileFpsLayoutProfile | null;
   readonly mobileLayouts: MobileBaseLayout | null;
@@ -126,6 +148,23 @@ export interface ResponsiveLayoutSnapshot {
 
 const MOBILE_PORTRAIT_STATUS_HEIGHT_RATIO = 0.1;
 const MOBILE_LANDSCAPE_STATUS_HEIGHT_RATIO = 3 / 64;
+const TABLET_SHORT_EDGE_MIN = 600;
+
+interface ResponsiveDesignSurface {
+  readonly width: number;
+  readonly height: number;
+  readonly mobileProfile: MobileLayoutProfile | null;
+}
+
+export const RESPONSIVE_DESIGN_SURFACES: Readonly<
+  Record<ResponsiveSurfaceProfile, ResponsiveDesignSurface>
+> = Object.freeze({
+  desktop: Object.freeze({ width: LOGICAL_WIDTH, height: LOGICAL_HEIGHT, mobileProfile: null }),
+  "phone-pt": Object.freeze({ width: 390, height: 844, mobileProfile: "pt" }),
+  "phone-ls": Object.freeze({ width: 844, height: 390, mobileProfile: "ls" }),
+  "tablet-pt": Object.freeze({ width: 633, height: 844, mobileProfile: "iPad_pt" }),
+  "tablet-ls": Object.freeze({ width: 844, height: 633, mobileProfile: "ls" }),
+});
 
 function nodeLayout(
   left: number,
@@ -217,6 +256,21 @@ export function mobileFpsLayoutProfile(
   return "ls";
 }
 
+/** 资产通道保持冻结；该函数只在通道内部选择固定的设计表面。 */
+export function responsiveSurfaceProfile(
+  viewportWidth: number,
+  viewportHeight: number,
+  channel: ResponsiveChannel,
+): ResponsiveSurfaceProfile {
+  if (channel === "desktop") return "desktop";
+  const width = finiteDimension(viewportWidth);
+  const height = finiteDimension(viewportHeight);
+  const portrait = height >= width;
+  const tablet = Math.min(width, height) >= TABLET_SHORT_EDGE_MIN;
+  if (portrait) return tablet ? "tablet-pt" : "phone-pt";
+  return tablet ? "tablet-ls" : "phone-ls";
+}
+
 /**
  * 用于下一个渲染器/UI 集成通道的纯通道感知接口。
  *
@@ -227,20 +281,45 @@ export function computeResponsiveLayoutSnapshot(
   viewportHeight: number,
   options: ResponsiveLayoutSnapshotOptions = {},
 ): ResponsiveLayoutSnapshot {
-  const width = finiteDimension(viewportWidth);
-  const height = finiteDimension(viewportHeight);
+  const physicalWidth = finiteDimension(viewportWidth);
+  const physicalHeight = finiteDimension(viewportHeight);
   const channel = options.channel ?? "desktop";
   const handMode = options.handMode ?? "right";
+  const requestedSurface = options.surfaceProfile;
+  const surfaceProfile = requestedSurface
+    && (channel === "desktop") === (requestedSurface === "desktop")
+    ? requestedSurface
+    : responsiveSurfaceProfile(physicalWidth, physicalHeight, channel);
+  const surface = RESPONSIVE_DESIGN_SURFACES[surfaceProfile];
+  const width = surface.width;
+  const height = surface.height;
+  const physicalViewportRegion = Object.freeze({
+    left: 0,
+    top: 0,
+    width: physicalWidth,
+    height: physicalHeight,
+  });
   const viewportRegion = Object.freeze({ left: 0, top: 0, width, height });
+  const frame = computeResponsiveFrameGeometry(
+    physicalWidth,
+    physicalHeight,
+    width,
+    height,
+  );
+  const pixelRatio = finitePixelRatio(options.pixelRatio ?? globalThis.devicePixelRatio);
 
   if (channel === "desktop") {
     return Object.freeze({
       channel,
       handMode,
+      surfaceProfile,
+      physicalViewportRegion,
       viewportRegion,
       gameplayRegion: viewportRegion,
       statusRegion: Object.freeze({ left: 0, top: height, width, height: 0 }),
-      desktopFrame: computeResponsiveFrameGeometry(width, height),
+      frame,
+      desktopFrame: frame,
+      pixelRatio,
       mobileProfile: null,
       fpsProfile: null,
       mobileLayouts: null,
@@ -250,7 +329,9 @@ export function computeResponsiveLayoutSnapshot(
     });
   }
 
-  const baseProfile = options.mobileProfile ?? mobileLayoutProfile(width, height);
+  const baseProfile = options.mobileProfile
+    ?? surface.mobileProfile
+    ?? mobileLayoutProfile(width, height);
   const fpsProfile = options.fpsProfile ?? mobileFpsLayoutProfile(width, height);
   const statusHeight = Math.min(
     height,
@@ -279,10 +360,14 @@ export function computeResponsiveLayoutSnapshot(
   return Object.freeze({
     channel,
     handMode,
+    surfaceProfile,
+    physicalViewportRegion,
     viewportRegion,
     gameplayRegion,
     statusRegion,
+    frame,
     desktopFrame: null,
+    pixelRatio,
     mobileProfile: baseProfile,
     fpsProfile,
     mobileLayouts,
@@ -303,31 +388,49 @@ export function responsiveChannelFromEnvironment(
   return environment.coarsePointer ? "mobile" : "desktop";
 }
 
-/**
- * 将捕获的 1200×900 合成适合视口。
- *
- * 渲染器仍以 1280×720 分辨率创作。其 1200×900 源合成已在该表面内缩放至 80%，因此外框必须相对于传统的 16:9 包含配合进行放大。然后，
- * 视口在窄屏幕上对称地裁剪额外的渲染器宽度。
- */
+/** 将固定设计表面以一次等比 contain 缩放居中，绝不 cover、裁切或分别拉伸坐标轴。 */
 export function computeResponsiveFrameGeometry(
   viewportWidth: number,
   viewportHeight: number,
+  designWidth: number = LOGICAL_WIDTH,
+  designHeight: number = LOGICAL_HEIGHT,
 ): ResponsiveFrameGeometry {
   const width = finiteDimension(viewportWidth);
   const height = finiteDimension(viewportHeight);
-  const gameHeight = Math.min(height, width * (AUTHORED_HEIGHT / AUTHORED_WIDTH));
-  const scale = gameHeight / (AUTHORED_HEIGHT * AUTHORED_TO_RENDERER_SCALE);
-  const frameWidth = LOGICAL_WIDTH * scale;
-  const x = (width - frameWidth) / 2;
+  const canonicalWidth = finiteDimension(designWidth);
+  const canonicalHeight = finiteDimension(designHeight);
+  const scale = width > 0 && height > 0 && canonicalWidth > 0 && canonicalHeight > 0
+    ? Math.min(width / canonicalWidth, height / canonicalHeight)
+    : 0;
+  const frameWidth = canonicalWidth * scale;
+  const frameHeight = canonicalHeight * scale;
+  const offsetX = (width - frameWidth) / 2;
+  const offsetY = (height - frameHeight) / 2;
 
   return {
-    x,
-    y: (height - gameHeight) / 2,
+    x: Math.abs(offsetX) < 1e-9 ? 0 : offsetX,
+    y: Math.abs(offsetY) < 1e-9 ? 0 : offsetY,
     width: frameWidth,
-    height: gameHeight,
+    height: frameHeight,
     scale,
-    visibleInsetX: scale > 0 ? Math.max(0, -x / scale) : 0,
+    designWidth: canonicalWidth,
+    designHeight: canonicalHeight,
+    visibleInsetX: 0,
   };
+}
+
+/** 黑边返回 null；设计表面内的点统一映射到 Pixi/DOM 坐标。 */
+export function responsiveDesignPoint(
+  geometry: ResponsiveFrameGeometry,
+  viewportX: number,
+  viewportY: number,
+): Readonly<{ x: number; y: number }> | null {
+  if (!Number.isFinite(viewportX) || !Number.isFinite(viewportY)
+    || !Number.isFinite(geometry.scale) || geometry.scale <= 0) return null;
+  const x = (viewportX - geometry.x) / geometry.scale;
+  const y = (viewportY - geometry.y) / geometry.scale;
+  if (x < 0 || y < 0 || x > geometry.designWidth || y > geometry.designHeight) return null;
+  return Object.freeze({ x, y });
 }
 
 export function responsiveFrameStyles(
@@ -419,7 +522,7 @@ export function responsiveControlGeometry(
   const scale = Number.isFinite(frameScale) && frameScale > 0 ? frameScale : 0;
   const utilityVisiblePhysicalSize = DESKTOP_UTILITY_VISIBLE_SIZE * scale;
   const spinVisiblePhysicalSize = DESKTOP_SPIN_VISIBLE_SIZE * scale;
-  const mobile = width > 0 && height > 0 && Math.min(width, height) <= MOBILE_MAX_SHORT_EDGE;
+  const mobile = width > 0 && height > 0 && Math.min(width, height) < MOBILE_MAX_SHORT_EDGE;
 
   let utilityHitPhysicalSize = utilityVisiblePhysicalSize;
   let spinHitPhysicalSize = spinVisiblePhysicalSize;
@@ -472,6 +575,10 @@ function finiteDimension(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+function finitePixelRatio(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 1;
+}
+
 export class ResponsiveLayout {
   private observer: ResizeObserver | null = null;
   private running = false;
@@ -480,7 +587,12 @@ export class ResponsiveLayout {
    */
   private lifecycleGeneration = 0;
   private windowResizeHandler: (() => void) | null = null;
+  private visualViewport: VisualViewport | null = null;
+  private scheduledFrame: number | null = null;
+  private lastCommitKey: string | null = null;
   private readonly channel: ResponsiveChannel;
+  private readonly requestFrame: (callback: FrameRequestCallback) => number;
+  private readonly cancelFrame: (handle: number) => void;
 
   constructor(
     private readonly viewport: HTMLElement,
@@ -494,52 +606,99 @@ export class ResponsiveLayout {
       search: globalThis.location?.search,
       coarsePointer: globalThis.matchMedia?.("(pointer: coarse)").matches ?? false,
     });
+    this.requestFrame = options.requestFrame ?? ((callback) => {
+      if (typeof globalThis.requestAnimationFrame === "function") {
+        return globalThis.requestAnimationFrame(callback);
+      }
+      return globalThis.setTimeout(() => callback(performance.now()), 16) as unknown as number;
+    });
+    this.cancelFrame = options.cancelFrame ?? ((handle) => {
+      if (typeof globalThis.cancelAnimationFrame === "function") {
+        globalThis.cancelAnimationFrame(handle);
+        return;
+      }
+      globalThis.clearTimeout(handle);
+    });
   }
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.lastCommitKey = null;
     const generation = ++this.lifecycleGeneration;
-    const applyIfCurrent = (): void => {
+    const applyNowIfCurrent = (): void => {
       if (!this.running || generation !== this.lifecycleGeneration) return;
       this.apply();
     };
-    applyIfCurrent();
+    const scheduleIfCurrent = (): void => {
+      if (!this.running || generation !== this.lifecycleGeneration
+        || this.scheduledFrame !== null) return;
+      this.scheduledFrame = this.requestFrame(() => {
+        this.scheduledFrame = null;
+        applyNowIfCurrent();
+      });
+    };
+    applyNowIfCurrent();
     // `onLayout` 是应用程序代码，可以在初始发布期间同步拆除该实例。
     if (!this.running || generation !== this.lifecycleGeneration) return;
     if (typeof ResizeObserver !== "undefined") {
-      this.observer = new ResizeObserver(applyIfCurrent);
+      this.observer = new ResizeObserver(scheduleIfCurrent);
       this.observer.observe(this.viewport);
-    } else {
-      this.windowResizeHandler = applyIfCurrent;
-      window.addEventListener("resize", applyIfCurrent);
     }
+    this.windowResizeHandler = scheduleIfCurrent;
+    window.addEventListener("resize", scheduleIfCurrent);
+    this.visualViewport = window.visualViewport ?? null;
+    this.visualViewport?.addEventListener("resize", scheduleIfCurrent);
   }
 
   stop(): void {
     if (!this.running) return;
     this.running = false;
     this.lifecycleGeneration += 1;
+    if (this.scheduledFrame !== null) {
+      this.cancelFrame(this.scheduledFrame);
+      this.scheduledFrame = null;
+    }
     this.observer?.disconnect();
     this.observer = null;
     if (this.windowResizeHandler) {
       window.removeEventListener("resize", this.windowResizeHandler);
+      this.visualViewport?.removeEventListener("resize", this.windowResizeHandler);
       this.windowResizeHandler = null;
     }
+    this.visualViewport = null;
+    this.lastCommitKey = null;
   }
 
   private readonly apply = (): void => {
     const width = this.viewport.clientWidth;
     const height = this.viewport.clientHeight;
+    // DevTools 和旋转会短暂发布 0×N/N×0；保留上一稳定表面，不得压缩到 1×1。
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
     const snapshot = computeResponsiveLayoutSnapshot(
       width,
       height,
-      { channel: this.channel },
+      { channel: this.channel, pixelRatio: globalThis.devicePixelRatio },
     );
-    const geometry = snapshot.desktopFrame;
+    const geometry = snapshot.frame;
+    const commitKey = [
+      width,
+      height,
+      snapshot.surfaceProfile,
+      snapshot.pixelRatio,
+      geometry.scale,
+    ].join(":");
+    if (commitKey === this.lastCommitKey) return;
+    this.lastCommitKey = commitKey;
 
     this.frame.dataset.channel = snapshot.channel;
     this.frame.dataset.handMode = snapshot.handMode;
+    this.frame.dataset.surfaceProfile = snapshot.surfaceProfile;
+    this.frame.dataset.designWidth = String(geometry.designWidth);
+    this.frame.dataset.designHeight = String(geometry.designHeight);
+    this.frame.dataset.frameScale = String(geometry.scale);
+    this.frame.dataset.frameX = String(geometry.x);
+    this.frame.dataset.frameY = String(geometry.y);
     if (snapshot.mobileProfile) this.frame.dataset.mobileLayout = snapshot.mobileProfile;
     else delete this.frame.dataset.mobileLayout;
     if (snapshot.fpsProfile) this.frame.dataset.fpsLayout = snapshot.fpsProfile;
@@ -549,28 +708,29 @@ export class ResponsiveLayout {
     this.frame.style.setProperty("--status-height", `${snapshot.statusRegion.height}px`);
     this.applyMobileStatusVariables(snapshot);
     this.applyFeaturePreviewVariables(snapshot);
-
-    if (geometry) {
-      this.applyDesktopFrame(geometry);
-    } else {
-      this.applyMobileFrame(width, height);
-    }
+    this.applyFrame(snapshot);
 
     // 捕获的游戏在纵向下仍可玩； DOM 中保留本地旋转提示符只是为了与现有 shell 兼容。
-    this.viewport.dataset.orientationLock = "false";
+    const outerViewport = this.frame.closest?.<HTMLElement>('[data-role="viewport"]')
+      ?? this.viewport;
+    outerViewport.dataset.orientationLock = "false";
     this.frame.inert = false;
-    const prompt = this.viewport.querySelector<HTMLElement>(".orientation-lock");
+    const prompt = outerViewport.querySelector<HTMLElement>(".orientation-lock");
     prompt?.setAttribute("aria-hidden", "true");
     this.onLayout(snapshot);
   };
 
-  private applyDesktopFrame(geometry: ResponsiveFrameGeometry): void {
-    this.frame.style.width = `${LOGICAL_WIDTH}px`;
-    this.frame.style.height = `${LOGICAL_HEIGHT}px`;
-    this.frame.style.setProperty("--visible-inset-x", `${geometry.visibleInsetX}px`);
+  private applyFrame(snapshot: ResponsiveLayoutSnapshot): void {
+    const geometry = snapshot.frame;
+    this.frame.style.width = `${geometry.designWidth}px`;
+    this.frame.style.height = `${geometry.designHeight}px`;
+    this.frame.style.setProperty("--design-width", `${geometry.designWidth}px`);
+    this.frame.style.setProperty("--design-height", `${geometry.designHeight}px`);
+    this.frame.style.setProperty("--frame-scale", `${geometry.scale}`);
+    this.frame.style.setProperty("--visible-inset-x", "0px");
     const controls = responsiveControlGeometry(
-      this.viewport.clientWidth,
-      this.viewport.clientHeight,
+      snapshot.physicalViewportRegion.width,
+      snapshot.physicalViewportRegion.height,
       geometry.scale,
     );
     this.frame.style.setProperty("--utility-hit-size", `${controls.utilityHitLogicalSize}px`);
@@ -580,23 +740,6 @@ export class ResponsiveLayout {
     this.frame.style.top = styles.top;
     this.frame.style.transformOrigin = styles.transformOrigin;
     this.frame.style.transform = styles.transform;
-  }
-
-  private applyMobileFrame(width: number, height: number): void {
-    this.frame.style.width = `${Math.max(0, width)}px`;
-    this.frame.style.height = `${Math.max(0, height)}px`;
-    this.frame.style.setProperty("--visible-inset-x", "0px");
-    const controls = responsiveControlGeometry(
-      width,
-      height,
-      1,
-    );
-    this.frame.style.setProperty("--utility-hit-size", `${controls.utilityHitLogicalSize}px`);
-    this.frame.style.setProperty("--spin-hit-size", `${controls.spinHitLogicalSize}px`);
-    this.frame.style.left = "0px";
-    this.frame.style.top = "0px";
-    this.frame.style.transformOrigin = "top left";
-    this.frame.style.transform = "none";
   }
 
   /**

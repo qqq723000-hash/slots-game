@@ -1130,7 +1130,7 @@ describe("captured desktop HUD geometry", () => {
       /\.game-frame\[data-channel="mobile"\]\[data-mobile-layout="ls"\] \.status-metric--win\s*\{[^}]*right:\s*var\(--mobile-status-win-right, 8\.5%\);/,
     );
     expect(finalCascade).toMatch(
-      /\.game-frame\[data-channel="mobile"\]:not\(\[data-mobile-layout="ls"\]\) \.status-metric--win\s*\{[^}]*right:\s*max\(env\(safe-area-inset-right, 0px\), 12px\);/,
+      /\.game-frame\[data-channel="mobile"\]:not\(\[data-mobile-layout="ls"\]\) \.status-metric--win\s*\{[^}]*right:\s*12px;/,
     );
     expect(finalCascade).not.toMatch(
       /\.status-panel\[data-zero-win="true"\] \.status-panel__game/,

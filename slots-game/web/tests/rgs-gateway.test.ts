@@ -1562,28 +1562,62 @@ describe("RgsGateway", () => {
     expect(observed.log.errors).toHaveLength(1);
   });
 
-  it("blocks wagering and preserves the pending round when the one 401 refresh fails", async () => {
+  it.each([401, 403, 410, 423])(
+    "terminates for operator relaunch and preserves pending recovery when refresh returns %i",
+    async (refreshStatus) => {
     const requests: SeenRequest[] = [];
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
     const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
       const request = seenRequest(url, init);
       requests.push(request);
       if (request.url.endsWith("/sessions/exchange")) {
         return response(exchangeEnvelope(requestId(init)));
       }
+      if (request.url.endsWith("/sessions/refresh")) {
+        return response(errorEnvelope(requestId(init), "SESSION_AUTHORIZATION_LOST"), refreshStatus);
+      }
       return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
     });
-    const gateway = new RgsGateway(config(fetchImplementation));
+    const gateway = new RgsGateway(config(fetchImplementation, { ledgerStorage: storage }));
     const observed = callbacks();
-    gateway.setCallbacks(observed.callbacks);
+    const operatorRecovery = vi.fn();
+    const callbackOrder: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onStatus: (status) => {
+        observed.callbacks.onStatus(status);
+        callbackOrder.push(`status:${status}`);
+      },
+      onError: (error) => {
+        observed.callbacks.onError(error);
+        callbackOrder.push("error");
+      },
+      onOperatorSessionRequired: (error) => {
+        operatorRecovery(error);
+        callbackOrder.push("operator");
+      },
+    });
     gateway.connect();
     await waitForSession(observed.log);
     expect(gateway.requestSpin("round-a", "100")).toBe(true);
-    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
 
     expect(requests.filter(({ url }) => url.endsWith("/sessions/refresh"))).toHaveLength(1);
     expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.errors).toHaveLength(1);
+    expect(observed.log.errors[0]).toMatchObject({
+      type: "error",
+      code: "SESSION_AUTHORIZATION_LOST",
+      retryable: false,
+    });
+    expect(operatorRecovery).toHaveBeenCalledWith(observed.log.errors[0]);
+    expect(callbackOrder.slice(-3)).toEqual(["status:offline", "error", "operator"]);
     expect(gateway.hasPendingSpin).toBe(true);
+    expect(storage.clear).not.toHaveBeenCalled();
     expect(gateway.requestSpin("round-b", "100")).toBe(false);
+    gateway.connect();
+    await Promise.resolve();
+    expect(requests.filter(({ url }) => url.endsWith("/sessions/exchange"))).toHaveLength(1);
   });
 
   it("uses compact-token expiry only as a proactive refresh scheduling hint", async () => {
@@ -1650,7 +1684,7 @@ describe("RgsGateway", () => {
     gateway.close();
   });
 
-  it("fails closed when a proactive refresh returns a non-retryable response", async () => {
+  it("hands a non-retryable proactive refresh failure to the operator", async () => {
     vi.useFakeTimers();
     const hintedToken = schedulingToken(100, 200);
     const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
@@ -1660,17 +1694,65 @@ describe("RgsGateway", () => {
     ));
     const gateway = new RgsGateway(config(fetchImplementation, { now: () => 100_000 }));
     const observed = callbacks();
-    gateway.setCallbacks(observed.callbacks);
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({ ...observed.callbacks, onOperatorSessionRequired: operatorRecovery });
     gateway.connect();
     await vi.runAllTicks();
     await waitForSession(observed.log);
 
     await vi.advanceTimersByTimeAsync(70_000);
-    await vi.waitFor(() => expect(observed.log.statuses.at(-1)).toBe("offline"));
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
 
     expect(gateway.requestSpin("round-a", "100")).toBe(false);
     expect(observed.log.errors).toHaveLength(1);
+    expect(operatorRecovery).toHaveBeenCalledWith(observed.log.errors[0]);
     gateway.close();
+  });
+
+  it("retries 5xx while the token is valid, then requests an operator relaunch at hard expiry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const hintedToken = schedulingToken(100, 140);
+    let refreshCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init), {}, hintedToken));
+      }
+      refreshCalls += 1;
+      return response(errorEnvelope(requestId(init), "TEMPORARY_UNAVAILABLE"), 503);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { now: () => Date.now() }));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({ ...observed.callbacks, onOperatorSessionRequired: operatorRecovery });
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(refreshCalls).toBe(1);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(refreshCalls).toBe(2);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(refreshCalls).toBe(3);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(refreshCalls).toBe(4);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(8_000);
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
+    expect(refreshCalls).toBe(5);
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.errors.at(-1)).toMatchObject({
+      name: "RgsProtocolError",
+      message: "RGS access token could not be refreshed before expiry; operator relaunch is required",
+    });
+    expect(gateway.requestSpin("round-a", "100")).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(refreshCalls).toBe(5);
   });
 
   it("fails closed on malformed or foreign exchange envelopes", async () => {

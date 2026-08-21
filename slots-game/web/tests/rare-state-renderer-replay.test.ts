@@ -1829,8 +1829,6 @@ describe("rare-state renderer replay", () => {
   it("resynchronizes authored Wheel geometry and layout during spin, landing, summary, and outro", async () => {
     const clock = new ManualAnimationFrameClock();
     clock.install();
-    const viewport = { innerWidth: 1_280, innerHeight: 720 };
-    vi.stubGlobal("window", viewport);
     const milestones: string[] = [];
     const firstSpine = spineRecorder.instances.length;
     const { effects, reels } = createEffects({
@@ -1860,23 +1858,20 @@ describe("rare-state renderer replay", () => {
     const spinStartedAt = clock.now;
     clock.frameAt(spinStartedAt);
     await flushAsync();
-    viewport.innerWidth = 390;
-    viewport.innerHeight = 844;
+    effects.setResponsiveLayoutTrack("layout/vertical");
     clock.frameAt(spinStartedAt + 2_600);
     await flushAsync();
     expect(animations(wheelSpine, "layout/vertical")).toHaveLength(1);
     expect(reels.alpha).toBe(0);
 
-    viewport.innerWidth = 844;
-    viewport.innerHeight = 390;
+    effects.setResponsiveLayoutTrack("layout/horizontal");
     clock.frameAt(spinStartedAt + PRIMAL_WHEEL_TIMELINE_MS.landing + 0.001);
     await flushAsync();
     expect(milestones).toEqual(["spin-finish"]);
     expect(animations(wheelSpine, "layout/horizontal")).toHaveLength(2);
     expect(reels.alpha).toBe(0);
 
-    viewport.innerWidth = 390;
-    viewport.innerHeight = 844;
+    effects.setResponsiveLayoutTrack("layout/vertical");
     clock.frameAt(spinStartedAt + PRIMAL_WHEEL_TIMELINE_MS.summaryShowAt + 0.001);
     await flushAsync();
     expect(milestones).toEqual(["spin-finish", "summary-ready"]);
@@ -1887,8 +1882,7 @@ describe("rare-state renderer replay", () => {
     await flushAsync();
 
     const outroStartedAt = clock.now;
-    viewport.innerWidth = 1_280;
-    viewport.innerHeight = 720;
+    effects.setResponsiveLayoutTrack("layout/horizontal");
     clock.frameAt(outroStartedAt);
     await flushAsync();
     expect(animations(wheelSpine, "layout/horizontal")).toHaveLength(3);

@@ -66,6 +66,14 @@ describe("startup shell contract", () => {
     expect(controllerSource).not.toContain("shell.overlayHost.appendChild(serverLoader)");
   });
 
+  it("measures a safe-area outer shell and keeps the authored frame as its only scaled child", () => {
+    expect(controllerSource).toContain('class="game-safe-area" data-role="safe-area"');
+    expect(controllerSource).toContain('safeArea: requireRole("safe-area")');
+    expect(controllerSource).toContain("new ResponsiveLayout(shell.safeArea ?? shell.viewport");
+    expect(controllerSource).not.toContain("|| window.innerWidth");
+    expect(controllerSource).not.toContain("|| window.innerHeight");
+  });
+
   it("keeps true 100% visible through a painted frame before launch", () => {
     const preload = controllerSource.indexOf("await this.preload.run");
     const complete = controllerSource.indexOf(

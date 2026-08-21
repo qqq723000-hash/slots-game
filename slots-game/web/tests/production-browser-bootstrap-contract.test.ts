@@ -127,6 +127,27 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).toContain('send("Network.enable")');
     expect(smoke).toContain('send("Fetch.enable", {');
     expect(smoke).toContain('send("Fetch.fulfillRequest", {');
+    expect(smoke).toContain("const CONTINUOUS_VIEWPORTS = Object.freeze([");
+    for (const [width, height] of [
+      [1_280, 720],
+      [1_440, 900],
+      [390, 844],
+      [633, 844],
+      [844, 390],
+      [844, 633],
+      [1_024, 768],
+    ] as const) {
+      expect(smoke).toContain(`Object.freeze({ width: ${width.toLocaleString("en-US")
+        .replaceAll(",", "_")}, height: ${height} })`);
+    }
+    expect(smoke).toContain('send("Emulation.setDeviceMetricsOverride", {');
+    expect(smoke).toContain("verifyContinuousViewportTransitions");
+    expect(smoke).toContain("blackBorderClickCount");
+    expect(smoke).toContain("frame.dataset.reelRoundId");
+    expect(smoke).toContain("channel=desktop");
+    expect(smoke).toContain("channel=mobile");
+    expect(smoke).toContain("viewportEvidence");
+    expect(smoke).toContain("mobileSessionEvidence.spinCount !== 0");
     expect(smoke).toContain("createControlledRgsTransactionFixture");
     expect(transactionFixture).toContain("sessions/exchange");
     expect(transactionFixture).toContain("client/v1/spins");

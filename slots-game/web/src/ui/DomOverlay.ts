@@ -20,10 +20,15 @@ import {
   type MinorUnitFormatter,
 } from "../protocol/moneyFormatter";
 import {
+  PRIMAL_HELP_AUTHORING,
+  PRIMAL_HELP_LOCALE_BUNDLES,
   PRIMAL_HELP_SECTIONS,
   PRIMAL_PRESENTATION_RULES,
   PRIMAL_WAY_WINS_COPY,
+  applyPrimalHelpLocaleBundle,
   bindPrimalPresentationRules,
+  requestedPrimalHelpLocale,
+  resolvePrimalHelpLocale,
   type PresentationRulesBindingResult,
 } from "./presentationRules";
 
@@ -669,16 +674,90 @@ const POWERED_BY_GM_GO = publicAssetUrl("assets/brand/powered-by-gm-go.png");
 const STATUSBAR_GM_GO = publicAssetUrl("assets/brand/statusbar-gm-go.png");
 
 function officialHelpArtworkMarkup(
-  artwork: readonly { readonly asset: string; readonly alt: string }[],
+  artwork: readonly {
+    readonly asset: string;
+    readonly alt: string;
+    readonly authoredWidthPx: number;
+    readonly authoredHeightPx: number;
+  }[],
 ): string {
   if (artwork.length === 0) return "";
   return `
     <div class="official-help__artwork" aria-label="Feature artwork">
-      ${artwork.map(({ asset, alt }) => `
-        <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${alt}" />
+      ${artwork.map(({ asset, alt, authoredWidthPx, authoredHeightPx }) => `
+        <img
+          src="${PRIMAL_REFERENCE_ROOT}/${asset}"
+          alt="${alt}"
+          style="--official-help-art-width: ${authoredWidthPx}px; --official-help-art-height: ${authoredHeightPx}px"
+        />
       `).join("")}
     </div>
   `;
+}
+
+function officialHelpCopyMarkup(
+  section: typeof PRIMAL_HELP_SECTIONS[number],
+  paragraphIndexes: readonly number[],
+): string {
+  return `
+    <div class="official-help__copy">
+      ${paragraphIndexes.map((index) => `
+        <p
+          data-locale-key="${section.paragraphKeys[index]}"
+          style="--official-help-line-box-height: ${section.paragraphBoxHeightsPx[index]}px"
+        >${section.paragraphs[index]}</p>
+      `).join("")}
+    </div>
+  `;
+}
+
+function officialHelpSectionContentMarkup(
+  section: typeof PRIMAL_HELP_SECTIONS[number],
+): string {
+  const allParagraphs = section.paragraphs.map((_, index) => index);
+  if (section.id === "wild") {
+    return `
+      <div class="wild-paytable" aria-label="Wild multiplier artwork">
+        ${PAYTABLE_WILD_ENTRIES.map(({ label, asset }) => `
+          <figure class="wild-paytable__item">
+            <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} wild symbol" />
+            <figcaption>${label}</figcaption>
+          </figure>
+        `).join("")}
+      </div>
+      ${officialHelpCopyMarkup(section, allParagraphs)}
+    `;
+  }
+  if (section.id === "vault") {
+    return [
+      officialHelpArtworkMarkup(section.artwork.slice(0, 1)),
+      officialHelpCopyMarkup(section, [0, 1]),
+      officialHelpArtworkMarkup(section.artwork.slice(1)),
+      officialHelpCopyMarkup(section, [2]),
+    ].join("");
+  }
+  if (section.id === "kong-quest") {
+    return [
+      officialHelpArtworkMarkup(section.artwork.slice(0, 1)),
+      officialHelpCopyMarkup(section, [0, 1, 2, 3]),
+      officialHelpArtworkMarkup(section.artwork.slice(1, 2)),
+      officialHelpCopyMarkup(section, [4, 5]),
+      officialHelpArtworkMarkup(section.artwork.slice(2)),
+    ].join("");
+  }
+  if (section.id === "king-spin") {
+    return [
+      officialHelpArtworkMarkup(section.artwork.slice(0, 1)),
+      officialHelpCopyMarkup(section, [0, 1, 2]),
+      officialHelpArtworkMarkup(section.artwork.slice(1, 2)),
+      officialHelpCopyMarkup(section, [3, 4]),
+      officialHelpArtworkMarkup(section.artwork.slice(2)),
+    ].join("");
+  }
+  return `${officialHelpArtworkMarkup(section.artwork)}${officialHelpCopyMarkup(
+    section,
+    allParagraphs,
+  )}`;
 }
 
 function officialHelpSectionsMarkup(): string {
@@ -688,20 +767,8 @@ function officialHelpSectionsMarkup(): string {
       data-help-section="${section.id}"
       aria-labelledby="official-help-${section.id}"
     >
-      <h4 id="official-help-${section.id}">${section.title}</h4>
-      ${section.id === "wild" ? `
-        <div class="wild-paytable" aria-label="Wild multiplier artwork">
-          ${PAYTABLE_WILD_ENTRIES.map(({ label, asset }) => `
-            <figure class="wild-paytable__item">
-              <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} wild symbol" />
-              <figcaption>${label}</figcaption>
-            </figure>
-          `).join("")}
-        </div>
-      ` : officialHelpArtworkMarkup(section.artwork)}
-      <div class="official-help__copy">
-        ${section.paragraphs.map((paragraph) => `<p>${paragraph}</p>`).join("")}
-      </div>
+      <h4 id="official-help-${section.id}" data-locale-key="${section.titleKey}">${section.title}</h4>
+      ${officialHelpSectionContentMarkup(section)}
     </article>
   `).join("");
 
@@ -712,7 +779,7 @@ function officialHelpSectionsMarkup(): string {
       data-help-section="paying-symbols"
       aria-labelledby="base-paytable-title"
     >
-      <h4 id="base-paytable-title">PAYING SYMBOLS</h4>
+      <h4 id="base-paytable-title" data-locale-key="IDS_PAYINGSYMBOLS_UC">${PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PAYINGSYMBOLS_UC}</h4>
       <div class="base-paytable__grid">
         ${BASE_PAYTABLE_ENTRIES.map(({ label, multiplier, asset }) => `
           <figure class="base-paytable__item">
@@ -727,10 +794,45 @@ function officialHelpSectionsMarkup(): string {
       data-help-section="way-wins"
       aria-labelledby="official-help-way-wins"
     >
-      <h4 id="official-help-way-wins">WAY WINS</h4>
-      <div class="official-help__copy"><p>${PRIMAL_WAY_WINS_COPY}</p></div>
+      <h4 id="official-help-way-wins" data-locale-key="IDS_PR_PAYWAYS">${PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PR_PAYWAYS}</h4>
+      <div class="official-help__copy"><p data-locale-key="IDS_PR_WW_LR" style="--official-help-line-box-height: 120px">${PRIMAL_WAY_WINS_COPY}</p></div>
     </article>
   `;
+}
+
+export interface OfficialHelpProjectionGeometry {
+  readonly authoredWidthPx: number;
+  readonly authoredHeightPx: number;
+  readonly availableWidthPx: number;
+  readonly scaleX: number;
+  readonly scaleY: number;
+  readonly projectedWidthPx: number;
+  readonly projectedHeightPx: number;
+  /** 投影槽只占缩放后的宽度，因此不会制造水平滚动范围。 */
+  readonly scrollWidthPx: number;
+}
+
+/**
+ * 750px 作者坐标只在这一层做一次各向同性投影。字体、换行盒和网格始终保留作者尺寸。
+ */
+export function officialHelpProjectionGeometry(
+  availableWidthPx: number,
+  authoredHeightPx: number,
+): OfficialHelpProjectionGeometry {
+  const available = Number.isFinite(availableWidthPx) ? Math.max(0, availableWidthPx) : 0;
+  const authoredHeight = Number.isFinite(authoredHeightPx) ? Math.max(0, authoredHeightPx) : 0;
+  const scale = Math.min(1, available / PRIMAL_HELP_AUTHORING.logicalWidthPx);
+  const projectedWidth = PRIMAL_HELP_AUTHORING.logicalWidthPx * scale;
+  return Object.freeze({
+    authoredWidthPx: PRIMAL_HELP_AUTHORING.logicalWidthPx,
+    authoredHeightPx: authoredHeight,
+    availableWidthPx: available,
+    scaleX: scale,
+    scaleY: scale,
+    projectedWidthPx: projectedWidth,
+    projectedHeightPx: authoredHeight * scale,
+    scrollWidthPx: projectedWidth,
+  });
 }
 
 /**
@@ -1064,6 +1166,9 @@ export class DomOverlay {
   private readonly paytableButton: HTMLButtonElement;
   private readonly sound: HTMLButtonElement;
   private readonly gameMenu: HTMLElement;
+  private readonly officialHelpViewport: HTMLElement;
+  private readonly officialHelpProjection: HTMLElement;
+  private readonly officialHelpAuthoredSurface: HTMLElement;
   private readonly gameMenuClose: HTMLButtonElement;
   private readonly gameMenuTabs: readonly HTMLButtonElement[];
   private readonly gameMenuPanels: readonly HTMLElement[];
@@ -1096,6 +1201,8 @@ export class DomOverlay {
   private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
   /** 首次观察到的玩法表现绑定保持冻结；同会话任何字段漂移都会关闭固定文案。 */
   private presentationRulesBinding: Readonly<PresentationRulesBindingResult> | null = null;
+  /** 页面启动时冻结的运营商语言请求；同一会话不得随 DOM 或 URL 漂移。 */
+  private readonly requestedHelpLocale: string;
   private betOptions: MoneyMinor[] = [];
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private winCounterAnimation: {
@@ -1148,9 +1255,15 @@ export class DomOverlay {
   private previewContinueHandler: PreviewContinueHandler = () => undefined;
   private soundToggleHandler: SoundToggleHandler = () => undefined;
   private fastPlayHandler: FastPlayHandler = () => undefined;
+  private officialHelpResizeObserver: ResizeObserver | null = null;
+  private readonly handleOfficialHelpResize = (): void => this.syncOfficialHelpProjection();
 
   constructor(host: HTMLElement) {
     this.host = host;
+    this.requestedHelpLocale = requestedPrimalHelpLocale({
+      search: window.location.search,
+      documentLanguage: document.documentElement.lang,
+    });
     host.innerHTML = `
       <div class="launch-loading" data-role="launch-loading" aria-live="polite">
         <div class="launch-loading__mark" aria-hidden="true">
@@ -1344,15 +1457,21 @@ export class DomOverlay {
             <p class="game-menu__eyebrow">Official feature guide</p>
             <h3>Primal Rampage</h3>
             <div
-              class="official-help"
+              class="official-help-viewport"
               data-role="presentation-rules-content"
               data-presentation-rules-version="${PRIMAL_PRESENTATION_RULES.version}"
+              data-help-locale="${PRIMAL_PRESENTATION_RULES.locale}"
+              data-advertised-locales="${PRIMAL_PRESENTATION_RULES.advertisedLocales.join(",")}"
               hidden
             >
-              ${officialHelpSectionsMarkup()}
-              <p class="presentation-rules-meta">
-                ${PRIMAL_PRESENTATION_RULES.version} · exact session definition binding required
-              </p>
+              <div class="official-help-projection" data-role="official-help-projection">
+                <div class="official-help" data-role="official-help-authored-surface">
+                  ${officialHelpSectionsMarkup()}
+                  <p class="presentation-rules-meta">
+                    ${PRIMAL_PRESENTATION_RULES.version} · exact session definition binding required
+                  </p>
+                </div>
+              </div>
             </div>
             <div class="presentation-rules-unavailable" data-role="presentation-rules-unavailable">
               <strong>Feature guide unavailable</strong>
@@ -1664,15 +1783,15 @@ export class DomOverlay {
           draggable="false"
         />
         <div class="status-metric status-metric--balance">
-          <span>Balance:</span>
+          <span class="status-metric__label">Balance:&#32;</span>
           <strong data-role="balance">—</strong>
         </div>
         <div class="status-metric status-metric--bet">
-          <span>Bet:</span>
+          <span class="status-metric__label">Bet:&#32;</span>
           <strong data-role="bet-status">—</strong>
         </div>
         <div class="status-metric status-metric--win">
-          <span>Win:</span>
+          <span class="status-metric__label">Win:&#32;</span>
           <strong data-role="last-win" data-zero="true">0.00</strong>
         </div>
         <span class="status-panel__game">Primal Rampage</span>
@@ -1740,6 +1859,9 @@ export class DomOverlay {
     this.paytableButton = this.require(host, "paytable") as HTMLButtonElement;
     this.sound = this.require(host, "sound") as HTMLButtonElement;
     this.gameMenu = this.require(host, "game-menu");
+    this.officialHelpViewport = this.require(host, "presentation-rules-content");
+    this.officialHelpProjection = this.require(host, "official-help-projection");
+    this.officialHelpAuthoredSurface = this.require(host, "official-help-authored-surface");
     this.gameMenuClose = this.require(host, "game-menu-close") as HTMLButtonElement;
     this.gameMenuTabs = [...host.querySelectorAll<HTMLButtonElement>("[data-menu-tab]")];
     this.gameMenuPanels = [...host.querySelectorAll<HTMLElement>("[data-menu-panel]")];
@@ -1842,6 +1964,12 @@ export class DomOverlay {
       this.previewContinueHandler();
     });
     document.addEventListener("keydown", this.handleKeyDown);
+    if (typeof ResizeObserver === "function") {
+      this.officialHelpResizeObserver = new ResizeObserver(this.handleOfficialHelpResize);
+      this.officialHelpResizeObserver.observe(this.officialHelpViewport);
+      this.officialHelpResizeObserver.observe(this.officialHelpAuthoredSurface);
+    }
+    window.addEventListener("resize", this.handleOfficialHelpResize);
     this.setHudReveal(0);
   }
 
@@ -2162,15 +2290,45 @@ export class DomOverlay {
     this.statusPanel.dataset.currencyExponent = String(formatter.currencyExponent);
   }
 
+  private syncOfficialHelpProjection(): void {
+    if (this.officialHelpViewport.hidden) return;
+    const availableWidth = this.officialHelpViewport.clientWidth;
+    const authoredHeight = this.officialHelpAuthoredSurface.scrollHeight;
+    if (availableWidth <= 0 || authoredHeight <= 0) return;
+    const geometry = officialHelpProjectionGeometry(availableWidth, authoredHeight);
+    const scale = geometry.scaleX.toFixed(8);
+    this.officialHelpProjection.style.width = `${geometry.projectedWidthPx}px`;
+    this.officialHelpProjection.style.height = `${geometry.projectedHeightPx}px`;
+    this.officialHelpProjection.style.setProperty("--official-help-scale", scale);
+    this.officialHelpProjection.dataset.scaleX = scale;
+    this.officialHelpProjection.dataset.scaleY = scale;
+    this.officialHelpProjection.dataset.authoredWidth = String(geometry.authoredWidthPx);
+    this.officialHelpViewport.dataset.horizontalOverflow = String(
+      geometry.scrollWidthPx > geometry.availableWidthPx,
+    );
+  }
+
   private bindSessionPresentationRules(session: SessionOpened): void {
     this.presentationRulesBinding = bindPrimalPresentationRules(
       this.presentationRulesBinding ?? null,
       session,
+      this.requestedHelpLocale,
     );
     const menu = (this as unknown as { gameMenu?: HTMLElement }).gameMenu;
     if (!menu || typeof menu.querySelector !== "function") return;
 
-    const bound = this.presentationRulesBinding.status === "bound";
+    let localeDomReady = false;
+    if (this.presentationRulesBinding.status === "bound") {
+      try {
+        const resolution = resolvePrimalHelpLocale(this.requestedHelpLocale);
+        applyPrimalHelpLocaleBundle(this.officialHelpAuthoredSurface, resolution);
+        this.officialHelpViewport.dataset.helpLocale = resolution.locale;
+        localeDomReady = true;
+      } catch {
+        // 缺 bundle、字体或 DOM key 时保持帮助页关闭，绝不展示半更新文案。
+      }
+    }
+    const bound = this.presentationRulesBinding.status === "bound" && localeDomReady;
     const setHidden = (role: string, hidden: boolean): void => {
       const element = menu.querySelector<HTMLElement>(`[data-role="${role}"]`);
       if (element) element.hidden = hidden;
@@ -2179,8 +2337,14 @@ export class DomOverlay {
     setHidden("presentation-rules-summary", !bound);
     setHidden("presentation-rules-unavailable", bound);
     setHidden("presentation-rules-unavailable-rules", bound);
-    menu.dataset.presentationRulesStatus = this.presentationRulesBinding.status;
+    menu.dataset.presentationRulesStatus = this.presentationRulesBinding.status === "bound"
+      && !localeDomReady
+      ? "locale-unavailable"
+      : this.presentationRulesBinding.status;
     menu.dataset.presentationRulesVersion = PRIMAL_PRESENTATION_RULES.version;
+    menu.dataset.presentationRulesLocale = this.presentationRulesBinding.record.locale;
+    menu.dataset.presentationRulesRequestedLocale = this.presentationRulesBinding.record.requestedLocale;
+    if (bound) queueMicrotask(() => this.syncOfficialHelpProjection());
   }
 
   private bindSessionMoneyFormatter(session: SessionOpened): void {
@@ -2525,6 +2689,9 @@ export class DomOverlay {
     this.autoplayOptions.removeEventListener("keydown", this.handleAutoplayOptionKeyDown);
     this.autoplayStopToggle.removeEventListener("click", this.handleAutoplayStopToggle);
     this.autoplayStopConditions.removeEventListener("change", this.handleAutoplayStopConditionChange);
+    this.officialHelpResizeObserver?.disconnect();
+    this.officialHelpResizeObserver = null;
+    window.removeEventListener("resize", this.handleOfficialHelpResize);
     if (this.toastTimer) clearTimeout(this.toastTimer);
   }
 
@@ -2809,6 +2976,7 @@ export class DomOverlay {
       this.panelLifecycle.setVisible(previousTab, false);
       this.panelLifecycle.setVisible(tab, true);
     }
+    if (tab === "paytable") queueMicrotask(() => this.syncOfficialHelpProjection());
   }
 
   private setGameMenuOpen(open: boolean, tab = this.activeMenuTab, restoreFocus = true): void {

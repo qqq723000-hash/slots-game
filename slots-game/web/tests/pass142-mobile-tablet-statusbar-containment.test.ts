@@ -10,16 +10,16 @@ const logo = readFileSync(
 );
 
 const targets = [
-  { width: 390, height: 844, profile: "pt", top: 760, statusHeight: 84 },
-  { width: 844, height: 390, profile: "ls", top: 372, statusHeight: 18 },
-  { width: 768, height: 1_024, profile: "iPad_pt", top: 922, statusHeight: 102 },
-  { width: 1_024, height: 768, profile: "ls", top: 732, statusHeight: 36 },
+  { width: 390, height: 844, designWidth: 390, designHeight: 844, profile: "pt", top: 760, statusHeight: 84 },
+  { width: 844, height: 390, designWidth: 844, designHeight: 390, profile: "ls", top: 372, statusHeight: 18 },
+  { width: 768, height: 1_024, designWidth: 633, designHeight: 844, profile: "iPad_pt", top: 760, statusHeight: 84 },
+  { width: 1_024, height: 768, designWidth: 844, designHeight: 633, profile: "ls", top: 603, statusHeight: 30 },
 ] as const;
 
 describe("Pass 142 mobile/tablet status-bar containment", () => {
   it.each(targets)(
     "keeps the authored $width x $height status region inside the viewport",
-    ({ width, height, profile, top, statusHeight }) => {
+    ({ width, height, designWidth, designHeight, profile, top, statusHeight }) => {
       const snapshot = computeResponsiveLayoutSnapshot(width, height, {
         channel: "mobile",
       });
@@ -27,10 +27,10 @@ describe("Pass 142 mobile/tablet status-bar containment", () => {
       expect(snapshot.statusRegion).toEqual({
         left: 0,
         top,
-        width,
+        width: designWidth,
         height: statusHeight,
       });
-      expect(snapshot.statusRegion.top + snapshot.statusRegion.height).toBe(height);
+      expect(snapshot.statusRegion.top + snapshot.statusRegion.height).toBe(designHeight);
     },
   );
 
@@ -44,10 +44,10 @@ describe("Pass 142 mobile/tablet status-bar containment", () => {
 
   it.each(targets.filter(({ profile }) => profile === "ls"))(
     "keeps the scaled landscape provider clear of Balance at $width x $height",
-    ({ width, statusHeight }) => {
+    ({ designWidth, statusHeight }) => {
       const scale = statusHeight / 25.7142857143;
       const provider = {
-        left: width * 0.004,
+        left: designWidth * 0.004,
         width: 68 * scale,
         height: 20 * scale,
       };
@@ -55,7 +55,7 @@ describe("Pass 142 mobile/tablet status-bar containment", () => {
       expect(provider.left).toBeGreaterThanOrEqual(0);
       expect(provider.height).toBeLessThanOrEqual(statusHeight);
       expect(provider.left + provider.width).toBeLessThan(balanceLeft);
-      expect(balanceLeft).toBeLessThan(width);
+      expect(balanceLeft).toBeLessThan(designWidth);
     },
   );
 

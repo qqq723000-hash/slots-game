@@ -23,6 +23,29 @@ const bootstrapFailureText = "The game could not start. Please try again.";
 const startupTimeoutMs = 30_000;
 const transactionTimeoutMs = 25_000;
 const commandTimeoutMs = Math.max(startupTimeoutMs, transactionTimeoutMs) + 5_000;
+const CONTINUOUS_VIEWPORTS = Object.freeze([
+  Object.freeze({ width: 1_280, height: 720 }),
+  Object.freeze({ width: 1_440, height: 900 }),
+  Object.freeze({ width: 390, height: 844 }),
+  Object.freeze({ width: 633, height: 844 }),
+  Object.freeze({ width: 844, height: 390 }),
+  Object.freeze({ width: 844, height: 633 }),
+  Object.freeze({ width: 1_024, height: 768 }),
+]);
+const DESKTOP_VIEWPORT_SURFACE = Object.freeze({
+  profile: "desktop",
+  designWidth: 1_280,
+  designHeight: 720,
+});
+const MOBILE_VIEWPORT_SURFACES = Object.freeze({
+  "1280x720": Object.freeze({ profile: "tablet-ls", designWidth: 844, designHeight: 633 }),
+  "1440x900": Object.freeze({ profile: "tablet-ls", designWidth: 844, designHeight: 633 }),
+  "390x844": Object.freeze({ profile: "phone-pt", designWidth: 390, designHeight: 844 }),
+  "633x844": Object.freeze({ profile: "tablet-pt", designWidth: 633, designHeight: 844 }),
+  "844x390": Object.freeze({ profile: "phone-ls", designWidth: 844, designHeight: 390 }),
+  "844x633": Object.freeze({ profile: "tablet-ls", designWidth: 844, designHeight: 633 }),
+  "1024x768": Object.freeze({ profile: "tablet-ls", designWidth: 844, designHeight: 633 }),
+});
 validateReleaseRgsBuildEnvironment(process.env);
 const browserRgsBaseUrl = process.env.VITE_RGS_BASE_URL;
 const browserHostOrigin = process.env.VITE_RGS_HOST_ORIGIN;
@@ -122,7 +145,8 @@ try {
   const launchCode = `lc_${"b".repeat(43)}`;
   const operatorId = "browser-smoke";
   const sessionId = "browser-smoke";
-  const pageUrl = `http://127.0.0.1:${address.port}/#${new URLSearchParams({
+  const pageOrigin = `http://127.0.0.1:${address.port}`;
+  const pageUrl = `${pageOrigin}/?channel=desktop#${new URLSearchParams({
     rgsLaunchCode: launchCode,
     rgsOperatorId: operatorId,
     rgsSessionId: sessionId,
@@ -137,10 +161,35 @@ try {
     betMinor: browserBetMinor,
     finalBalanceMinor,
   });
+  const mobileLaunchCode = `lc_${"m".repeat(43)}`;
+  const mobileOperatorId = "browser-smoke-mobile";
+  const mobileSessionId = "browser-smoke-mobile";
+  const mobilePageUrl = `${pageOrigin}/?channel=mobile#${new URLSearchParams({
+    rgsLaunchCode: mobileLaunchCode,
+    rgsOperatorId: mobileOperatorId,
+    rgsSessionId: mobileSessionId,
+  })}`;
+  const mobileLayoutFixture = createControlledRgsTransactionFixture({
+    baseUrl: browserRgsBaseUrl,
+    pageOrigin,
+    launchCode: mobileLaunchCode,
+    operatorId: mobileOperatorId,
+    sessionId: mobileSessionId,
+    initialBalanceMinor,
+    betMinor: browserBetMinor,
+    finalBalanceMinor,
+  });
   const debuggingPort = await chrome.debuggingPort;
   const target = await waitForPageTarget(debuggingPort);
   pageSocket = await connectDevTools(target.webSocketDebuggerUrl);
-  const result = await verifyBootstrap(pageSocket, pageUrl, modulePaths, transactionFixture);
+  const result = await verifyBootstrap(
+    pageSocket,
+    pageUrl,
+    modulePaths,
+    transactionFixture,
+    mobilePageUrl,
+    mobileLayoutFixture,
+  );
   if (!Array.isArray(result.cspViolations)) {
     throw new Error("生产浏览器 CSP 违规探针未返回可信结果");
   }
@@ -231,6 +280,16 @@ try {
     ]).size !== 3) {
     throw new Error(`生产浏览器事务缺少真实 WebGL 画面变化证据：${JSON.stringify(visualEvidence)}`);
   }
+  validateContinuousViewportEvidence(result.viewportEvidence);
+  const mobileSessionEvidence = result.mobileSessionEvidence;
+  if (!mobileSessionEvidence
+    || mobileSessionEvidence.exchangeCount !== 1
+    || mobileSessionEvidence.spinCount !== 0
+    || mobileSessionEvidence.acknowledgementCount !== 0
+    || mobileSessionEvidence.committedRoundObserved
+    || JSON.stringify(mobileSessionEvidence.order) !== JSON.stringify(["session-exchange"])) {
+    throw new Error(`移动布局会话被黑边点击或视口切换污染：${JSON.stringify(mobileSessionEvidence)}`);
+  }
   verifiedEntryPath = basename(result.entryPath);
 } finally {
   await cleanupBrowserResources({
@@ -242,7 +301,7 @@ try {
 }
 
 process.stdout.write(
-  `生产浏览器事务门禁通过：${verifiedEntryPath} 已在精确 CSP 下完成会话交换、旋转、结果解码与表现、余额更新及结果 ACK。\n`,
+  `生产浏览器事务门禁通过：${verifiedEntryPath} 已在精确 CSP 下完成桌面/移动连续视口等比黑边门禁，以及会话交换、旋转、结果解码与表现、余额更新及结果 ACK。\n`,
 );
 
 function createDistributionServer() {
@@ -485,18 +544,25 @@ function connectDevTools(url) {
   });
 }
 
-async function verifyBootstrap(socket, pageUrl, productionModules, transactionFixture) {
+async function verifyBootstrap(
+  socket,
+  pageUrl,
+  productionModules,
+  transactionFixture,
+  mobilePageUrl,
+  mobileLayoutFixture,
+) {
   let identifier = 0;
   let documentContentSecurityPolicy;
   let transportFailure = null;
-  const documentUrl = new URL(pageUrl);
-  documentUrl.hash = "";
+  let activeTransactionFixture = transactionFixture;
+  let expectedDocumentUrl = documentUrlWithoutHash(pageUrl);
   const pending = new Map();
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
     if (message.method === "Network.responseReceived") {
       const response = message.params?.response;
-      if (message.params?.type === "Document" && response?.url === documentUrl.href) {
+      if (message.params?.type === "Document" && response?.url === expectedDocumentUrl.href) {
         const policyHeader = Object.entries(response.headers ?? {})
           .find(([name]) => name.toLowerCase() === "content-security-policy");
         documentContentSecurityPolicy = policyHeader ? String(policyHeader[1]) : undefined;
@@ -537,7 +603,7 @@ async function verifyBootstrap(socket, pageUrl, productionModules, transactionFi
 
   async function fulfillControlledRgsRequest(parameters) {
     try {
-      const fulfillment = transactionFixture.responseForPausedRequest(parameters);
+      const fulfillment = activeTransactionFixture.responseForPausedRequest(parameters);
       await send("Fetch.fulfillRequest", {
         requestId: parameters.requestId,
         responseCode: fulfillment.responseCode,
@@ -673,6 +739,15 @@ async function verifyBootstrap(socket, pageUrl, productionModules, transactionFi
   if (!bootstrap.reducedMotion) {
     throw new Error("生产浏览器事务夹具没有启用系统级减少动态效果配置");
   }
+  const desktopViewportEvidence = await verifyContinuousViewportTransitions(
+    send,
+    transactionFixture,
+    {
+      channel: "desktop",
+      surfaceForViewport: () => DESKTOP_VIEWPORT_SURFACE,
+      transportFailure: () => transportFailure,
+    },
+  );
   await armTransactionObservation(send);
   const baselineCapture = await captureGameCanvas(send);
   await clickPrimarySpin(send);
@@ -688,7 +763,7 @@ async function verifyBootstrap(socket, pageUrl, productionModules, transactionFi
     () => transportFailure,
   );
   const finalCapture = await captureGameCanvas(send);
-  return completeBrowserResult(
+  const transactionResult = completeBrowserResult(
     bootstrap,
     browserState,
     transactionFixture.snapshot(),
@@ -702,6 +777,481 @@ async function verifyBootstrap(socket, pageUrl, productionModules, transactionFi
       finalDigest: finalCapture.digest,
     },
   );
+
+  // 通道在 ResponsiveLayout 构造时冻结。移动四表面必须使用新的、独立的受控会话，
+  // 不能靠同一文档中改查询参数或伪造 pointer media 结果来绕过该生产契约。
+  activeTransactionFixture = mobileLayoutFixture;
+  transportFailure = null;
+  documentContentSecurityPolicy = undefined;
+  expectedDocumentUrl = documentUrlWithoutHash(mobilePageUrl);
+  await send("Page.navigate", { url: mobilePageUrl });
+  await waitForDocumentReady(send);
+  if (documentContentSecurityPolicy !== browserContentSecurityPolicy) {
+    throw new Error("移动布局生产主文档未收到共享的精确发布 CSP");
+  }
+  const mobileBrowserState = await waitForApplicationReady(send, () => transportFailure);
+  if (!mobileBrowserState.ready || mobileBrowserState.explicitFailure) {
+    throw new Error(`移动布局生产会话没有进入可下注状态：${JSON.stringify({
+      finalState: mobileBrowserState.finalState,
+      diagnostics: mobileBrowserState.diagnostics,
+      playerErrors: mobileBrowserState.playerErrors,
+      runtimeErrors: mobileBrowserState.runtimeErrors,
+      unhandledRejections: mobileBrowserState.unhandledRejections,
+      cspViolations: mobileBrowserState.cspViolations,
+    })}`);
+  }
+  const mobileViewportEvidence = await verifyContinuousViewportTransitions(
+    send,
+    mobileLayoutFixture,
+    {
+      channel: "mobile",
+      surfaceForViewport: ({ width, height }) => (
+        MOBILE_VIEWPORT_SURFACES[`${width}x${height}`]
+      ),
+      transportFailure: () => transportFailure,
+    },
+  );
+  const mobilePostViewportState = await readBrowserState(send);
+  if (!mobilePostViewportState.ready || mobilePostViewportState.explicitFailure) {
+    throw new Error(`移动布局连续视口切换后出现运行时失败：${JSON.stringify({
+      finalState: mobilePostViewportState.finalState,
+      playerErrors: mobilePostViewportState.playerErrors,
+      runtimeErrors: mobilePostViewportState.runtimeErrors,
+      unhandledRejections: mobilePostViewportState.unhandledRejections,
+      cspViolations: mobilePostViewportState.cspViolations,
+    })}`);
+  }
+  return Object.freeze({
+    ...transactionResult,
+    mobileFinalState: mobilePostViewportState.finalState,
+    mobileSessionEvidence: mobileLayoutFixture.snapshot(),
+    viewportEvidence: Object.freeze({
+      desktop: desktopViewportEvidence,
+      mobile: mobileViewportEvidence,
+    }),
+  });
+}
+
+async function verifyContinuousViewportTransitions(send, fixture, options) {
+  const initialSnapshot = await readViewportLayout(send);
+  if (!initialSnapshot || initialSnapshot.frameCount !== 1 || !initialSnapshot.nodeIdentityPreserved) {
+    throw new Error(`连续视口门禁无法建立唯一游戏框架身份：${JSON.stringify(initialSnapshot)}`);
+  }
+  const initialState = initialSnapshot.state;
+  const steps = [];
+  let blackBorderClickCount = 0;
+
+  for (const viewport of CONTINUOUS_VIEWPORTS) {
+    const transportError = options.transportFailure?.();
+    if (transportError) throw transportError;
+    const surface = options.surfaceForViewport(viewport);
+    if (!surface) {
+      throw new Error(`连续视口缺少设计表面：${viewport.width}x${viewport.height}`);
+    }
+    await send("Emulation.setDeviceMetricsOverride", {
+      width: viewport.width,
+      height: viewport.height,
+      deviceScaleFactor: 1,
+      mobile: false,
+      screenWidth: viewport.width,
+      screenHeight: viewport.height,
+    });
+    const snapshot = await waitForStableViewportLayout(
+      send,
+      viewport,
+      surface,
+      options.channel,
+      options.transportFailure,
+    );
+    assertViewportGeometry(snapshot, viewport, surface, options.channel);
+    assertViewportStatePreserved(initialState, snapshot.state, viewport, options.channel);
+
+    const borderPoint = blackBorderPoint(snapshot);
+    let blackBorderClicked = false;
+    if (borderPoint !== null) {
+      const beforeTransaction = fixture.snapshot();
+      await dispatchMouseClick(send, borderPoint);
+      await delay(100);
+      const clickTransportError = options.transportFailure?.();
+      if (clickTransportError) throw clickTransportError;
+      const afterTransaction = fixture.snapshot();
+      const afterClick = await readViewportLayout(send);
+      if (JSON.stringify(afterTransaction) !== JSON.stringify(beforeTransaction)) {
+        throw new Error(`黑边点击触发了 RGS 事务：${JSON.stringify({
+          viewport,
+          beforeTransaction,
+          afterTransaction,
+        })}`);
+      }
+      assertViewportStatePreserved(initialState, afterClick.state, viewport, options.channel);
+      if (!afterClick.nodeIdentityPreserved) {
+        throw new Error(`黑边点击替换了游戏框架节点：${viewport.width}x${viewport.height}`);
+      }
+      blackBorderClickCount += 1;
+      blackBorderClicked = true;
+    }
+
+    steps.push(Object.freeze({
+      width: viewport.width,
+      height: viewport.height,
+      channel: snapshot.channel,
+      profile: snapshot.profile,
+      designWidth: snapshot.designWidth,
+      designHeight: snapshot.designHeight,
+      scale: snapshot.datasetScale,
+      x: snapshot.frameRect.left,
+      y: snapshot.frameRect.top,
+      balance: snapshot.state.balance,
+      reelState: snapshot.state.reelState,
+      roundId: snapshot.state.roundId,
+      nodeIdentityPreserved: snapshot.nodeIdentityPreserved,
+      statePreserved: true,
+      blackBorderClicked,
+    }));
+  }
+
+  return Object.freeze({
+    blackBorderClickCount,
+    channel: options.channel,
+    steps: Object.freeze(steps),
+  });
+}
+
+async function waitForStableViewportLayout(
+  send,
+  viewport,
+  surface,
+  channel,
+  transportFailure,
+) {
+  const deadline = Date.now() + 5_000;
+  let previousKey = null;
+  let stableReads = 0;
+  let snapshot = null;
+  while (Date.now() < deadline) {
+    const transportError = transportFailure?.();
+    if (transportError) throw transportError;
+    snapshot = await readViewportLayout(send);
+    const expectedScale = Math.min(
+      viewport.width / surface.designWidth,
+      viewport.height / surface.designHeight,
+    );
+    const expectedWidth = surface.designWidth * expectedScale;
+    const expectedHeight = surface.designHeight * expectedScale;
+    const eligible = snapshot?.viewportWidth === viewport.width
+      && snapshot?.viewportHeight === viewport.height
+      && snapshot?.frameCount === 1
+      && snapshot?.channel === channel
+      && snapshot?.profile === surface.profile
+      && snapshot?.designWidth === surface.designWidth
+      && snapshot?.designHeight === surface.designHeight
+      && Math.abs(snapshot.datasetScale - expectedScale) <= 0.000_001
+      && Math.abs(snapshot.frameRect.width - expectedWidth) <= 0.75
+      && Math.abs(snapshot.frameRect.height - expectedHeight) <= 0.75;
+    if (eligible) {
+      const stabilityKey = JSON.stringify([
+        snapshot.viewportWidth,
+        snapshot.viewportHeight,
+        snapshot.channel,
+        snapshot.profile,
+        snapshot.designWidth,
+        snapshot.designHeight,
+        rounded(snapshot.datasetScale),
+        rounded(snapshot.frameRect.left),
+        rounded(snapshot.frameRect.top),
+        rounded(snapshot.frameRect.width),
+        rounded(snapshot.frameRect.height),
+      ]);
+      stableReads = stabilityKey === previousKey ? stableReads + 1 : 1;
+      previousKey = stabilityKey;
+      if (stableReads >= 2) return snapshot;
+    } else {
+      previousKey = null;
+      stableReads = 0;
+    }
+    await delay(50);
+  }
+  throw new Error(`生产布局未稳定到目标视口：${JSON.stringify({
+    viewport,
+    surface,
+    channel,
+    snapshot,
+  })}`);
+}
+
+async function readViewportLayout(send) {
+  return evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const probe = globalThis.__slotsProductionTransactionProbe;
+        const root = document.querySelector('#app');
+        const viewport = root?.querySelector('[data-role="viewport"]');
+        const safeArea = root?.querySelector('[data-role="safe-area"]');
+        const frames = root?.querySelectorAll('[data-role="frame"]') ?? [];
+        const frame = frames.item(0);
+        const spin = root?.querySelector('[data-role="spin"]');
+        const balance = root?.querySelector('[data-role="balance"]');
+        const bet = root?.querySelector('[data-role="bet"]');
+        const lastWin = root?.querySelector('[data-role="last-win"]');
+        const overlay = root?.querySelector('[data-role="overlay"]');
+        if (!probe || !(root instanceof HTMLElement) || !(viewport instanceof HTMLElement)
+          || !(safeArea instanceof HTMLElement) || !(frame instanceof HTMLElement)) {
+          return {
+            frameCount: frames.length,
+            nodeIdentityPreserved: false,
+            probeMissing: !probe,
+            viewportWidth: innerWidth,
+            viewportHeight: innerHeight,
+          };
+        }
+        if (!probe.viewportIdentity) {
+          probe.viewportIdentity = { root, viewport, safeArea, frame, spin, balance, bet, lastWin };
+        }
+        const identity = probe.viewportIdentity;
+        const frameStyle = getComputedStyle(frame);
+        const frameRect = frame.getBoundingClientRect();
+        const safeAreaRect = safeArea.getBoundingClientRect();
+        let matrix = null;
+        try {
+          const parsed = new DOMMatrixReadOnly(frameStyle.transform === 'none'
+            ? undefined
+            : frameStyle.transform);
+          matrix = {
+            a: parsed.a,
+            b: parsed.b,
+            c: parsed.c,
+            d: parsed.d,
+            e: parsed.e,
+            f: parsed.f,
+            is2D: parsed.is2D,
+          };
+        } catch {
+          matrix = null;
+        }
+        return {
+          backgroundColors: {
+            html: getComputedStyle(document.documentElement).backgroundColor,
+            body: getComputedStyle(document.body).backgroundColor,
+            root: getComputedStyle(root).backgroundColor,
+            viewport: getComputedStyle(viewport).backgroundColor,
+            safeArea: getComputedStyle(safeArea).backgroundColor,
+          },
+          channel: frame.dataset.channel ?? null,
+          computedHeight: frameStyle.height,
+          computedLeft: frameStyle.left,
+          computedTop: frameStyle.top,
+          computedWidth: frameStyle.width,
+          datasetScale: Number(frame.dataset.frameScale),
+          datasetX: Number(frame.dataset.frameX),
+          datasetY: Number(frame.dataset.frameY),
+          designHeight: Number(frame.dataset.designHeight),
+          designWidth: Number(frame.dataset.designWidth),
+          frameCount: frames.length,
+          frameRect: {
+            bottom: frameRect.bottom,
+            height: frameRect.height,
+            left: frameRect.left,
+            right: frameRect.right,
+            top: frameRect.top,
+            width: frameRect.width,
+          },
+          matrix,
+          nodeIdentityPreserved: identity.root === root
+            && identity.viewport === viewport
+            && identity.safeArea === safeArea
+            && identity.frame === frame
+            && identity.spin === spin
+            && identity.balance === balance
+            && identity.bet === bet
+            && identity.lastWin === lastWin,
+          profile: frame.dataset.surfaceProfile ?? null,
+          safeAreaRect: {
+            bottom: safeAreaRect.bottom,
+            height: safeAreaRect.height,
+            left: safeAreaRect.left,
+            right: safeAreaRect.right,
+            top: safeAreaRect.top,
+            width: safeAreaRect.width,
+          },
+          state: {
+            balance: balance?.textContent ?? null,
+            bet: bet?.textContent ?? null,
+            lastWin: lastWin?.textContent ?? null,
+            launchPhase: overlay?.dataset.launch ?? null,
+            reelState: frame.dataset.reelState ?? null,
+            roundId: frame.dataset.reelRoundId ?? null,
+            rgsSession: root.dataset.rgsSession ?? null,
+            spinAction: spin?.dataset.action ?? null,
+            spinDisabled: !(spin instanceof HTMLButtonElement) || spin.disabled,
+            spinMode: spin?.dataset.mode ?? null,
+          },
+          transformOrigin: frameStyle.transformOrigin,
+          viewportHeight: innerHeight,
+          viewportWidth: innerWidth,
+        };
+      })()
+    `,
+  });
+}
+
+function assertViewportGeometry(snapshot, viewport, surface, channel) {
+  const expectedScale = Math.min(
+    viewport.width / surface.designWidth,
+    viewport.height / surface.designHeight,
+  );
+  const expectedWidth = surface.designWidth * expectedScale;
+  const expectedHeight = surface.designHeight * expectedScale;
+  const expectedX = (viewport.width - expectedWidth) / 2;
+  const expectedY = (viewport.height - expectedHeight) / 2;
+  const detail = () => JSON.stringify({ viewport, surface, snapshot });
+  if (snapshot.frameCount !== 1 || !snapshot.nodeIdentityPreserved
+    || snapshot.channel !== channel || snapshot.profile !== surface.profile
+    || snapshot.designWidth !== surface.designWidth
+    || snapshot.designHeight !== surface.designHeight) {
+    throw new Error(`生产布局没有唯一且冻结通道的设计框架：${detail()}`);
+  }
+  requireNear(snapshot.datasetScale, expectedScale, 0.000_001, "数据 scale", detail);
+  requireNear(snapshot.datasetX, expectedX, 0.000_001, "数据 x", detail);
+  requireNear(snapshot.datasetY, expectedY, 0.000_001, "数据 y", detail);
+  requireNear(snapshot.frameRect.width, expectedWidth, 0.75, "框架宽度", detail);
+  requireNear(snapshot.frameRect.height, expectedHeight, 0.75, "框架高度", detail);
+  requireNear(snapshot.frameRect.left, expectedX, 0.75, "左黑边", detail);
+  requireNear(snapshot.frameRect.top, expectedY, 0.75, "上黑边", detail);
+  requireNear(viewport.width - snapshot.frameRect.right, expectedX, 0.75, "右黑边", detail);
+  requireNear(viewport.height - snapshot.frameRect.bottom, expectedY, 0.75, "下黑边", detail);
+  requireNear(snapshot.safeAreaRect.left, 0, 0.25, "安全区左边", detail);
+  requireNear(snapshot.safeAreaRect.top, 0, 0.25, "安全区上边", detail);
+  requireNear(snapshot.safeAreaRect.width, viewport.width, 0.25, "安全区宽度", detail);
+  requireNear(snapshot.safeAreaRect.height, viewport.height, 0.25, "安全区高度", detail);
+  if (snapshot.frameRect.left < -0.75 || snapshot.frameRect.top < -0.75
+    || snapshot.frameRect.right > viewport.width + 0.75
+    || snapshot.frameRect.bottom > viewport.height + 0.75) {
+    throw new Error(`生产布局发生视口裁切：${detail()}`);
+  }
+  const matrix = snapshot.matrix;
+  if (!matrix || matrix.is2D !== true) {
+    throw new Error(`生产布局没有唯一二维缩放矩阵：${detail()}`);
+  }
+  requireNear(matrix.a, expectedScale, 0.000_001, "矩阵 scaleX", detail);
+  requireNear(matrix.d, expectedScale, 0.000_001, "矩阵 scaleY", detail);
+  requireNear(matrix.b, 0, 0.000_001, "矩阵 skewY", detail);
+  requireNear(matrix.c, 0, 0.000_001, "矩阵 skewX", detail);
+  requireNear(matrix.e, 0, 0.000_001, "矩阵 translateX", detail);
+  requireNear(matrix.f, 0, 0.000_001, "矩阵 translateY", detail);
+  if (!snapshot.transformOrigin.startsWith("0px 0px")) {
+    throw new Error(`生产布局缩放原点不是左上角：${detail()}`);
+  }
+  for (const [name, color] of Object.entries(snapshot.backgroundColors ?? {})) {
+    if (color !== "rgb(0, 0, 0)" && color !== "rgba(0, 0, 0, 1)") {
+      throw new Error(`生产布局 ${name} 黑边背景不是纯黑：${detail()}`);
+    }
+  }
+  if (Object.keys(snapshot.backgroundColors ?? {}).length !== 5) {
+    throw new Error(`生产布局黑边背景证据不完整：${detail()}`);
+  }
+}
+
+function assertViewportStatePreserved(expected, actual, viewport, channel) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`连续视口切换重置了状态、余额或 roundId：${JSON.stringify({
+      channel,
+      viewport,
+      expected,
+      actual,
+    })}`);
+  }
+}
+
+function blackBorderPoint(snapshot) {
+  const margin = 1;
+  const rectangle = snapshot.frameRect;
+  if (rectangle.left > margin) {
+    return Object.freeze({ x: rectangle.left / 2, y: snapshot.viewportHeight / 2 });
+  }
+  if (snapshot.viewportWidth - rectangle.right > margin) {
+    return Object.freeze({
+      x: (rectangle.right + snapshot.viewportWidth) / 2,
+      y: snapshot.viewportHeight / 2,
+    });
+  }
+  if (rectangle.top > margin) {
+    return Object.freeze({ x: snapshot.viewportWidth / 2, y: rectangle.top / 2 });
+  }
+  if (snapshot.viewportHeight - rectangle.bottom > margin) {
+    return Object.freeze({
+      x: snapshot.viewportWidth / 2,
+      y: (rectangle.bottom + snapshot.viewportHeight) / 2,
+    });
+  }
+  return null;
+}
+
+async function dispatchMouseClick(send, point) {
+  await send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: point.x,
+    y: point.y,
+    button: "left",
+    clickCount: 1,
+  });
+}
+
+function requireNear(actual, expected, tolerance, label, detail) {
+  if (!Number.isFinite(actual) || Math.abs(actual - expected) > tolerance) {
+    throw new Error(`生产布局 ${label} 不符合等比居中契约：${detail()}`);
+  }
+}
+
+function rounded(value) {
+  return Number.isFinite(value) ? Math.round(value * 1_000_000) / 1_000_000 : null;
+}
+
+function validateContinuousViewportEvidence(viewportEvidence) {
+  const desktop = viewportEvidence?.desktop;
+  const mobile = viewportEvidence?.mobile;
+  if (!desktop || !mobile
+    || desktop.channel !== "desktop" || mobile.channel !== "mobile"
+    || desktop.steps?.length !== CONTINUOUS_VIEWPORTS.length
+    || mobile.steps?.length !== CONTINUOUS_VIEWPORTS.length
+    || desktop.blackBorderClickCount !== 6
+    || mobile.blackBorderClickCount !== 2) {
+    throw new Error(`生产浏览器连续视口证据不完整：${JSON.stringify(viewportEvidence)}`);
+  }
+  for (let index = 0; index < CONTINUOUS_VIEWPORTS.length; index += 1) {
+    const expected = CONTINUOUS_VIEWPORTS[index];
+    for (const evidence of [desktop, mobile]) {
+      const step = evidence.steps[index];
+      if (step.width !== expected.width || step.height !== expected.height
+        || !step.nodeIdentityPreserved || !step.statePreserved) {
+        throw new Error(`生产浏览器连续视口顺序或状态证据失真：${JSON.stringify({
+          expected,
+          step,
+        })}`);
+      }
+    }
+  }
+  const observedProfiles = [...new Set([
+    ...desktop.steps.map((step) => step.profile),
+    ...mobile.steps.map((step) => step.profile),
+  ])].sort();
+  const expectedProfiles = ["desktop", "phone-ls", "phone-pt", "tablet-ls", "tablet-pt"];
+  if (JSON.stringify(observedProfiles) !== JSON.stringify(expectedProfiles)) {
+    throw new Error(`生产浏览器没有覆盖五个设计表面：${JSON.stringify(observedProfiles)}`);
+  }
+}
+
+function documentUrlWithoutHash(url) {
+  const documentUrl = new URL(url);
+  documentUrl.hash = "";
+  return documentUrl;
 }
 
 function completeBrowserResult(bootstrap, browserState, transactionEvidence, visualEvidence = null) {

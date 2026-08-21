@@ -1208,11 +1208,23 @@ export class PixiRenderer {
   /** 将一个不可变的桌面/移动快照路由到每个独立布局的 Z 层。 */
   setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
     this.featurePreview.setResponsiveLayout(snapshot);
+    this.resizeRenderer(
+      snapshot.viewportRegion.width,
+      snapshot.viewportRegion.height,
+      snapshot.pixelRatio,
+    );
+    this.camera.setViewportSize(
+      snapshot.viewportRegion.width,
+      snapshot.viewportRegion.height,
+    );
+    this.featureEffects.setResponsiveLayoutTrack(
+      snapshot.viewportRegion.width > snapshot.viewportRegion.height
+        ? "layout/horizontal"
+        : "layout/vertical",
+    );
     if (snapshot.channel === "desktop") {
       const frame = snapshot.desktopFrame;
       if (!frame) return;
-      this.resizeRenderer(LOGICAL_WIDTH, LOGICAL_HEIGHT);
-      this.camera.setViewportSize(LOGICAL_WIDTH, LOGICAL_HEIGHT);
       this.featureEffects.setWheelOverlayRegion({
         left: 0,
         top: 0,
@@ -1234,11 +1246,6 @@ export class PixiRenderer {
     const transforms = snapshot.mobileTransforms;
     const profile = snapshot.mobileProfile;
     if (!transforms || !profile) return;
-    this.resizeRenderer(snapshot.viewportRegion.width, snapshot.viewportRegion.height);
-    this.camera.setViewportSize(
-      snapshot.viewportRegion.width,
-      snapshot.viewportRegion.height,
-    );
     this.featureEffects.setWheelOverlayRegion(snapshot.gameplayRegion);
     this.bigWin.setResponsiveLayout(snapshot.gameplayRegion);
     this.backdrop.setResponsiveNodeTransform(transforms.background);
@@ -1256,11 +1263,22 @@ export class PixiRenderer {
     this.syncAnticipationComposition();
   }
 
-  private resizeRenderer(width: number, height: number): void {
+  private resizeRenderer(width: number, height: number, pixelRatio: number): void {
     const safeWidth = Math.max(1, Math.round(width));
     const safeHeight = Math.max(1, Math.round(height));
+    const resolution = Math.max(1, Math.min(
+      2,
+      Number.isFinite(pixelRatio) ? pixelRatio : 1,
+    ));
+    const resolutionChanged = Math.abs(this.app.renderer.resolution - resolution) > 1e-9;
     if (this.app.renderer.screen.width === safeWidth
-      && this.app.renderer.screen.height === safeHeight) return;
+      && this.app.renderer.screen.height === safeHeight
+      && !resolutionChanged) return;
+    if (resolutionChanged) {
+      this.app.renderer.resolution = resolution;
+      this.reels.setPerspectiveCoordinateScale(resolution);
+      this.anticipation.setPerspectiveCoordinateScale(resolution);
+    }
     this.app.renderer.resize(safeWidth, safeHeight);
   }
 

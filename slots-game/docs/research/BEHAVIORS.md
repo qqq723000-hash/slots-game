@@ -8,6 +8,13 @@
 - 手机：390×844 竖屏为主，844×390 横屏用于旋转回归。
 - 平板：633×844 竖屏为主，844×633 横屏用于旋转回归。
 
+## 视口与黑边
+
+- PC、手机、平板分别使用固定设计表面；外层浏览器尺寸只决定统一缩放倍数与居中偏移。
+- 缩放固定为 `min(viewportWidth / designWidth, viewportHeight / designHeight)`，禁止 X/Y 独立拉伸、cover 裁切或把盘面弹性铺满。
+- 多余区域统一为纯黑 letterbox/pillarbox；画布、DOM、点击区域和帮助页共享同一设计坐标系。
+- `ResizeObserver`、`window.resize` 与 `visualViewport.resize` 的重复通知合并到同一动画帧；切换开发者设备和旋转不得重载资源或改变游戏状态。
+
 ## Jackpot 左侧边框
 
 - 交互模型：时间驱动。

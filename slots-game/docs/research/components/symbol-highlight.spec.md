@@ -14,7 +14,7 @@
 
 ## States and behavior
 
-- Idle: ADD hidden.
+- Idle: Helmet/Radio/Tank/Jet run their authored NORMAL idle and matching ADD idle together. The ADD layer is the official glow/highlight; do not replace it with an approximate CSS brightness/drop-shadow filter.
 - Normal win: every winning Helmet/Radio/Tank/Jet cell activates authored win + ADD tracks.
 - Big Win: the same winning cells remain highlighted; Big Win overlay does not suppress ADD ownership.
 - Highlight cleanup occurs only after the result presentation completes.
@@ -23,4 +23,5 @@
 
 - PC 1280×720, phone 390×844, tablet 633×844 use the same authored animation.
 - NORMAL and ADD world transforms and four corners must be equal after layout and after orientation change.
-- Screenshot checkpoints: 0, 100, 200, 500, 750ms; DPR 1 and 2.
+- Screenshot checkpoints: idle plus 0, 100, 200, 500, 750ms win presentation; DPR 1 and 2.
+- Idle tests must cover all four low symbols, not only Wild, and must prove NORMAL/ADD world matrices, visibility and track ownership remain paired across PC, phone and tablet layouts.

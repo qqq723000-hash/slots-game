@@ -276,16 +276,16 @@ describe("authored jackpot tower", () => {
     ]);
   });
 
-  it("reprojects every official jackpot minBound at tablet and portrait widths", () => {
-    const cases = [
-      { viewport: [1_024, 768] as const, x: 109.714, miniY: 609.055 },
-      { viewport: [390, 844] as const, x: 41.786, miniY: 507.714 },
-    ];
+  it("keeps every official jackpot transform canonical before root letterboxing", () => {
+    const cases = [[1_024, 768], [390, 844]] as const;
 
-    for (const { viewport: [width, height], x, miniY } of cases) {
+    for (const [width, height] of cases) {
       const frame = computeResponsiveFrameGeometry(width, height);
       const projected = JACKPOT_TIER_LAYOUTS.map((layout) => {
         const transform = jackpotTierResponsiveLayout(layout, frame.visibleInsetX);
+        expect(transform.x).toBeCloseTo(layout.x, 10);
+        expect(transform.y).toBeCloseTo(layout.y, 6);
+        expect(transform.scale).toBeCloseTo(layout.scale, 10);
         return {
           key: layout.key,
           x: frame.x + transform.x * frame.scale,
@@ -294,11 +294,17 @@ describe("authored jackpot tower", () => {
         };
       });
 
-      for (const panel of projected) expect(panel.x).toBeCloseTo(x, 3);
-      expect(projected.at(-1)?.y).toBeCloseTo(miniY, 3);
+      for (const panel of projected) {
+        expect(panel.x).toBeCloseTo(frame.x + 244 * frame.scale, 6);
+      }
+      expect(projected.at(-1)?.y).toBeCloseTo(
+        frame.y + JACKPOT_TIER_LAYOUTS.at(-1)!.y * frame.scale,
+        6,
+      );
       for (let index = 0; index < projected.length; index += 1) {
-        expect(projected[index]?.scale).toBeLessThanOrEqual(
+        expect(projected[index]?.scale).toBeCloseTo(
           JACKPOT_TIER_LAYOUTS[index]!.scale * frame.scale,
+          10,
         );
       }
     }
@@ -405,7 +411,9 @@ describe("authored jackpot tower", () => {
 
     for (const field of fields) {
       expect(field.style.fontFamily).toContain(JACKPOT_FONT_FAMILY);
+      expect(field.style.fontStyle).toBe("normal");
       expect(field.style.fontWeight).toBe("normal");
+      expect(field.style.letterSpacing).toBe(0);
       expect(field.style.stroke).toBe("#22140e");
       expect(field.style.strokeThickness).toBe(6);
       expect(field.style.dropShadow).toBe(true);
@@ -438,6 +446,16 @@ describe("authored jackpot tower", () => {
     releaseFont([JACKPOT_FONT_FAMILY]);
     await loading;
     expect(jackpotTowerSpines.create).toHaveBeenCalledTimes(5);
+  });
+
+  it("fails closed before rasterization when KANIT_BOLD cannot be loaded", async () => {
+    fontLoad.mockResolvedValueOnce([]);
+    const tower = new JackpotTowerView();
+
+    await expect(tower.loadArtwork()).rejects.toThrow(
+      `Required jackpot font failed to become ready: ${JACKPOT_FONT_FAMILY}`,
+    );
+    expect(jackpotTowerSpines.create).not.toHaveBeenCalled();
   });
 
   it("locks every Jackpot Spine to the source timeScale", async () => {

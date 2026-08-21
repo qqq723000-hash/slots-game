@@ -442,6 +442,7 @@ export interface AppControllerCreateOptions {
 
 interface ApplicationShell {
   readonly viewport: HTMLElement;
+  readonly safeArea: HTMLElement;
   readonly frame: HTMLElement;
   readonly canvasHost: HTMLElement;
   readonly overlayHost: HTMLElement;
@@ -487,9 +488,11 @@ export function mapPreloadToVisibleProgress(
 
 const APPLICATION_SHELL_HTML = `
   <main class="viewport" data-role="viewport">
-    <div class="game-frame" data-role="frame">
-      <div class="canvas-host" data-role="canvas"></div>
-      <div class="dom-overlay" data-role="overlay"></div>
+    <div class="game-safe-area" data-role="safe-area">
+      <div class="game-frame" data-role="frame">
+        <div class="canvas-host" data-role="canvas"></div>
+        <div class="dom-overlay" data-role="overlay"></div>
+      </div>
     </div>
     <div class="launch-loading-host" data-role="launch-host"></div>
     <section class="orientation-lock" role="status" aria-hidden="true" aria-label="Landscape orientation required">
@@ -512,6 +515,7 @@ function mountApplicationShell(root: HTMLElement): ApplicationShell {
   };
   const shell = {
     viewport: requireRole("viewport"),
+    safeArea: requireRole("safe-area"),
     frame: requireRole("frame"),
     canvasHost: requireRole("canvas"),
     overlayHost: requireRole("overlay"),
@@ -726,8 +730,12 @@ export class AppController {
         },
       );
 
-      const viewportWidth = shell.viewport.clientWidth || window.innerWidth || 1;
-      const viewportHeight = shell.viewport.clientHeight || window.innerHeight || 1;
+      const viewportWidth = shell.safeArea.clientWidth
+        || shell.viewport.clientWidth
+        || 1;
+      const viewportHeight = shell.safeArea.clientHeight
+        || shell.viewport.clientHeight
+        || 1;
       const initialLayout = computeResponsiveLayoutSnapshot(
         viewportWidth,
         viewportHeight,
@@ -736,12 +744,10 @@ export class AppController {
       const rendererOptions = {
         characterCollectRandomSource: dependencies.characterCollectRandomSource,
         rageCascadeCellOrderSource: dependencies.rageCascadeCellOrderSource,
-        initialSize: initialLayout.channel === "mobile"
-          ? {
-              width: initialLayout.viewportRegion.width,
-              height: initialLayout.viewportRegion.height,
-            }
-          : undefined,
+        initialSize: {
+          width: initialLayout.viewportRegion.width,
+          height: initialLayout.viewportRegion.height,
+        },
       };
       // 每个重量级最终负责人都在各自的已绘制帧边界上构造。PixiRenderer 采用这些确切实例；
       // 不会丢弃预检图，也不会向输入暴露部分构建的渲染器。
@@ -793,7 +799,6 @@ export class AppController {
     this.vaultUnlockCaptureEnabled = dependencies.vaultUnlockCaptureEnabled === true;
     this.startupFrameRequest = preparedView?.startupFrameRequest;
     const shell = preparedView ?? mountApplicationShell(root);
-    const viewport = shell.viewport;
     const frame = shell.frame;
     const assetChannel = preparedView?.assetChannel ?? responsiveChannelFromEnvironment({
       search: window.location.search,
@@ -820,7 +825,8 @@ export class AppController {
     this.renderer.attachFeaturePreviewCanvasHost(this.ui.getFeaturePreviewCanvasHost());
     this.audio = dependencies.audioManager ?? new AudioManager({ assetChannel });
     this.audio.bindUserGestures(root);
-    this.layout = new ResponsiveLayout(viewport, frame, (snapshot) => {
+    // 测试/嵌入式宿主可能仍只提供旧 viewport；生产 shell 始终优先观察安全区外框。
+    this.layout = new ResponsiveLayout(shell.safeArea ?? shell.viewport, frame, (snapshot) => {
       this.renderer.setResponsiveLayout(snapshot);
     }, { channel: assetChannel });
     this.stops = new StopSequencer(this.renderer.reels, {}, {

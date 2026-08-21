@@ -93,6 +93,7 @@ interface FakeRoot {
 function createRoot(): HTMLElement {
   const roles: Record<string, unknown> = {
     '[data-role="viewport"]': { clientWidth: 1_200, clientHeight: 900 },
+    '[data-role="safe-area"]': { clientWidth: 1_200, clientHeight: 900 },
     '[data-role="frame"]': { dataset: {} },
     '[data-role="canvas"]': {},
     '[data-role="overlay"]': { appendChild: vi.fn() },

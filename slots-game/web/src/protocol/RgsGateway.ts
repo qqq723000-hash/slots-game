@@ -811,6 +811,11 @@ function retryableHttp(error: RgsHttpError): boolean {
   return error.status === 202 || error.status === 429 || error.status >= 500;
 }
 
+function unrecoverableRefreshAuthorization(error: RgsHttpError): boolean {
+  return error.status === 401 || error.status === 403
+    || error.status === 410 || error.status === 423;
+}
+
 function serverError(
   error: RgsHttpError,
   sessionId?: string,
@@ -1667,8 +1672,16 @@ export class RgsGateway implements GameGateway {
         }
         this.validateRefreshedSession(exchange.session);
       } catch (error) {
-        if (error instanceof RgsProtocolError && this.isCurrent(generation)) {
-          this.terminateForOperatorRelaunch(error);
+        if (this.isCurrent(generation)) {
+          if (error instanceof RgsProtocolError) {
+            this.terminateForOperatorRelaunch(error);
+          } else if (error instanceof RgsHttpError && unrecoverableRefreshAuthorization(error)) {
+            this.terminateForOperatorRelaunch(serverError(
+              error,
+              this.session?.binding.sessionId,
+              this.pending?.ledger.roundId,
+            ));
+          }
         }
         throw error;
       }
@@ -1731,7 +1744,6 @@ export class RgsGateway implements GameGateway {
       this.refreshTimer = null;
       void this.refreshAccessToken().catch((error: unknown) => {
         if (this.closed) return;
-        this.reportError(error, this.pending ?? undefined);
         if (error instanceof RgsNetworkError
           || (error instanceof RgsHttpError && retryableHttp(error))) {
           const lifetime = compactTokenLifetime(token);
@@ -1740,6 +1752,7 @@ export class RgsGateway implements GameGateway {
           const backoff = Math.min(30_000, 1_000 * 2 ** Math.min(this.proactiveRefreshAttempt, 5));
           this.proactiveRefreshAttempt += 1;
           if (remaining > backoff + 1_000) {
+            this.reportError(error, this.pending ?? undefined);
             this.scheduleProactiveRefreshAttempt(token, backoff);
             return;
           }
@@ -1751,19 +1764,12 @@ export class RgsGateway implements GameGateway {
 
   private failClosedAfterRefresh(error: unknown): void {
     if (this.closed) return;
-    const notifyOffline = this.connected;
-    this.wageringBlocked = true;
-    this.connected = false;
-    this.accessToken = null;
-    this.clearRefreshTimer();
-    if (notifyOffline) this.callbacks.onStatus("offline");
-    if (!(error instanceof RgsHttpError)) {
-      // 此 HTTP 故障已在上方标准化并上报；该标记说明原本可重试的传输故障
-      // 为何转为终止状态。
-      this.callbacks.onError(new RgsProtocolError(
+    const terminal = error instanceof RgsHttpError && !retryableHttp(error)
+      ? serverError(error, this.session?.binding.sessionId, this.pending?.ledger.roundId)
+      : new RgsProtocolError(
         "RGS access token could not be refreshed before expiry; operator relaunch is required",
-      ));
-    }
+      );
+    this.terminateForOperatorRelaunch(terminal);
   }
 
   private async getPendingResult(
