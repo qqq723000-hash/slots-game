@@ -27,6 +27,7 @@ import {
   VISUAL_FIXTURE_SCENARIOS,
   type VisualFixtureScenarioName,
 } from "../src/testing/VisualFixtureGateway";
+import { bindPrimalPresentationRules } from "../src/ui/presentationRules";
 
 interface GatewayLog {
   readonly statuses: GatewayStatus[];
@@ -165,6 +166,15 @@ describe("VisualFixtureGateway", () => {
     expect(sessions[0]?.requestId).toMatch(/^fixture-open-/);
     expect(Object.isFrozen(sessions[0])).toBe(true);
     expect(Object.isFrozen(sessions[0]?.featureState)).toBe(true);
+  });
+
+  it("binds its synthetic session to the approved presentationRules fixture identity", () => {
+    const { log } = connectFixture("big-win");
+    const opened = log.sessions[0];
+    if (!opened) throw new Error("fixture session was not emitted");
+
+    expect(bindPrimalPresentationRules(null, opened).status).toBe("bound");
+    expect(Object.isFrozen(opened.definitionBinding)).toBe(true);
   });
 
   it("emits the immutable Tank-Wild-x100 Big Win and settles the charged balance", () => {

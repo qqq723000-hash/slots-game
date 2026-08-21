@@ -855,6 +855,37 @@ export class LaunchScene {
     this.applyPersistentPresentation();
   }
 
+  /**
+   * 仅供最终特性退出屏障调用。正常状态变化仍走 150 毫秒混合；这里先撤销全部旧特性
+   * TrackEntry，再从设置姿势无混合地重放已提交的 Base 持久表现，保证退出 Promise 的首帧干净。
+   */
+  settleFeatureExit(): void {
+    const monster = this.authoredMonster;
+    if (!monster) return;
+    this.cancelWheelChestPoundReentry();
+    for (const track of [
+      PRIMAL_CHARACTER_TRACK.overlay,
+      PRIMAL_CHARACTER_TRACK.body,
+      PRIMAL_CHARACTER_TRACK.aura,
+      PRIMAL_CHARACTER_TRACK.particles,
+      PRIMAL_CHARACTER_TRACK.palette,
+    ]) {
+      monster.state.clearTrack(track);
+    }
+    monster.skeleton.setToSetupPose();
+    this.applyPersistentPresentation();
+    for (const track of [
+      PRIMAL_CHARACTER_TRACK.body,
+      PRIMAL_CHARACTER_TRACK.aura,
+      PRIMAL_CHARACTER_TRACK.particles,
+      PRIMAL_CHARACTER_TRACK.palette,
+    ]) {
+      const entry = monster.state.getCurrent(track);
+      if (entry) entry.mixDuration = 0;
+    }
+    monster.update(0);
+  }
+
   setCharacterBodyContinuation(body: CharacterBodyContinuation, restart = true): void {
     if (body !== "feature") this.cancelWheelChestPoundReentry();
     if (this.persistentPresentation.body === "feature"

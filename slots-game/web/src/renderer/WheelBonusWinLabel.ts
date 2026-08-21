@@ -1,6 +1,10 @@
 import { Vector2 } from "@pixi-spine/base";
 import { Container, Point, Text, type TextStyle } from "pixi.js";
 import type { MoneyMinor } from "../app/state/types";
+import {
+  DEFAULT_MINOR_UNIT_FORMATTER,
+  type MinorUnitFormatter,
+} from "../protocol/moneyFormatter";
 import type { ReelSetView } from "../reels/ReelSetView";
 import { createSpineView, type Spine, type SpineData } from "./spine/SpineAdapter";
 import { loadPrimalSpineSet } from "./spine/PrimalSpineAssets";
@@ -88,10 +92,11 @@ export class WheelBonusWinLabelLifecycle {
 /** `paywaysWon === -1` 映射到捕获的客户端中的 IDS_PR_BONUSWON。 */
 export function wheelBonusWinLabelText(
   amountMinor: MoneyMinor | undefined,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): WinLabelTextFacts | null {
   if (amountMinor === undefined || !CANONICAL_MONEY_MINOR.test(amountMinor)) return null;
   return Object.freeze({
-    winLabelValue: winLabelValue(amountMinor),
+    winLabelValue: winLabelValue(amountMinor, formatter),
     winLabelInfo: "BONUS won!",
     winLabelMultiplier: null,
   });
@@ -143,6 +148,7 @@ export class WheelBonusWinLabel {
   private active: ActiveWheelBonusLabel | null = null;
   private generation = 0;
   private destroyed = false;
+  private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
 
   constructor(
     private readonly hostLayer: Container,
@@ -153,6 +159,10 @@ export class WheelBonusWinLabel {
 
   get artworkLoaded(): boolean {
     return this.data !== null;
+  }
+
+  setMoneyFormatter(formatter: MinorUnitFormatter): void {
+    this.moneyFormatter = formatter;
   }
 
   loadArtwork(signal?: AbortSignal): Promise<void> {
@@ -170,7 +180,7 @@ export class WheelBonusWinLabel {
   }
 
   async show(amountMinor: MoneyMinor | undefined, reducedMotion = false): Promise<boolean> {
-    const facts = wheelBonusWinLabelText(amountMinor);
+    const facts = wheelBonusWinLabelText(amountMinor, this.moneyFormatter);
     if (!facts || this.destroyed) return false;
     const generation = ++this.generation;
     this.lifecycle.cancel();

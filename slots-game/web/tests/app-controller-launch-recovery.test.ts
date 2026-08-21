@@ -7,13 +7,17 @@ import {
   PLAYER_ERROR_DIAGNOSTIC_EVENT,
 } from "../src/app/AppController";
 import type { SessionOpened } from "../src/app/state/types";
+import type { GatewayStatus } from "../src/protocol/GameGateway";
+import { GameStateMachine } from "../src/app/state/GameStateMachine";
 import { PLAYER_FACING_ERROR_CODES } from "../src/app/playerFacingError";
+import { ReelRoundStateMachine } from "../src/reels/ReelRoundStateMachine";
 import { LaunchStateMachine } from "../src/startup/LaunchStateMachine";
 
 interface RgsRecoveryProbe {
   armInitialRgsSessionTimeout(): void;
   handleError(error: Error | { readonly type: "error"; readonly retryable: boolean }): void;
   handleOperatorSessionRequired(error: Error): void;
+  handleStatus(status: GatewayStatus): void;
   handleSession(session: SessionOpened): void;
 }
 
@@ -46,6 +50,8 @@ function createRgsRecoveryProbe(): {
   const controller = Object.create(AppController.prototype) as RgsRecoveryProbe;
   const launch = new LaunchStateMachine();
   launch.transition({ type: "START_PRELOAD" });
+  const machine = new GameStateMachine();
+  machine.transition({ type: "START" });
   const close = vi.fn();
   const showError = vi.fn();
   const abort = vi.fn();
@@ -62,6 +68,7 @@ function createRgsRecoveryProbe(): {
       hasPendingSpin: false,
       close,
     },
+    machine,
     launch,
     ui: { showError, applySession },
     renderer: {},
@@ -144,6 +151,8 @@ describe("AppController initial RGS session recovery", () => {
         protocolVersion: 1,
         requestId: "late-session",
         sessionId: "session-1",
+        currency: "EUR",
+        currencyExponent: 2,
         balanceMinor: "10000",
         betOptionsMinor: ["100"],
         defaultBetMinor: "100",
@@ -226,5 +235,71 @@ describe("AppController initial RGS session recovery", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("retires an in-flight requesting/Spinning round before handing refresh recovery to the operator", () => {
+    const probe = createRgsRecoveryProbe();
+    const machine = new GameStateMachine();
+    machine.transition({ type: "START" });
+    machine.transition({ type: "SESSION_OPENED" });
+    machine.transition({ type: "SPIN_REQUESTED" });
+    const reelRound = new ReelRoundStateMachine();
+    reelRound.transition({ type: "SPIN_ACCEPTED", roundId: "round-refresh-drift" });
+    reelRound.transition({ type: "REELS_STARTED" });
+    const cancelSpinPresentation = vi.fn();
+    const rollbackAcceptedPaidAutoplaySpin = vi.fn();
+    const stopRoundAudio = vi.fn();
+    const requestSpin = vi.fn();
+    Object.assign(probe.controller, {
+      hasOpenedSession: true,
+      machine,
+      reelRound,
+      roundOriginFeatureState: {
+        mode: "BASE",
+        freeSpinsRemaining: 0,
+        rageLevel: 1,
+        rageCollected: 0,
+      },
+      gateway: {
+        initialSessionRecoveryMode: "operator-session",
+        operatorHostOrigin: "https://operator.example",
+        hasPendingSpin: true,
+        close: probe.gateway.close,
+        requestSpin,
+      },
+      renderer: { cancelSpinPresentation },
+      ui: {
+        showError: probe.showError,
+        rollbackAcceptedPaidAutoplaySpin,
+        setConnection: vi.fn(),
+      },
+      stopRoundAudio,
+    });
+    const error = Object.assign(new Error("refresh protocol drift"), {
+      requestId: "refresh-correlation-3",
+    });
+
+    // RgsGateway 的 terminal 顺序固定为 offline -> diagnostic -> operator recovery。
+    probe.controller.handleStatus("offline");
+    probe.controller.handleError(error);
+    expect(machine.phase).toBe("requesting");
+    expect(reelRound.state).toBe("Spinning");
+    probe.controller.handleOperatorSessionRequired(error);
+    // 重复通知必须保持幂等，不能再次推进状态机或再次发起宿主接管。
+    probe.controller.handleOperatorSessionRequired(error);
+
+    expect(machine.phase).toBe("ready");
+    expect(reelRound.state).toBe("Idle");
+    expect(cancelSpinPresentation).toHaveBeenCalledOnce();
+    expect(rollbackAcceptedPaidAutoplaySpin).toHaveBeenCalledOnce();
+    expect(stopRoundAudio).toHaveBeenCalledOnce();
+    expect(requestSpin).not.toHaveBeenCalled();
+    expect(probe.gateway.close).not.toHaveBeenCalled();
+    expect(probe.requestNewSession).toHaveBeenCalledOnce();
+    expect(probe.requestNewSession).toHaveBeenCalledWith({
+      reason: "committed-result-recovery-required",
+      code: PLAYER_FACING_ERROR_CODES.OPERATOR_SESSION_REQUIRED,
+      correlationId: "refresh-correlation-3",
+    });
   });
 });

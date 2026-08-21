@@ -12,6 +12,20 @@ import { publicAssetUrl } from "../assets/publicAssetUrl";
 import type { GatewayStatus } from "../protocol/GameGateway";
 import type { LaunchPhase } from "../startup/LaunchStateMachine";
 import type { PreloadProgress } from "../startup/PreloadGate";
+import {
+  DEFAULT_MINOR_UNIT_FORMATTER,
+  MoneyDisplayBindingError,
+  createMinorUnitFormatter,
+  sameMoneyDisplayBinding,
+  type MinorUnitFormatter,
+} from "../protocol/moneyFormatter";
+import {
+  PRIMAL_HELP_SECTIONS,
+  PRIMAL_PRESENTATION_RULES,
+  PRIMAL_WAY_WINS_COPY,
+  bindPrimalPresentationRules,
+  type PresentationRulesBindingResult,
+} from "./presentationRules";
 
 type SpinHandler = () => void;
 type FastStopHandler = () => void;
@@ -654,6 +668,71 @@ const PRIMAL_REFERENCE_ROOT = publicAssetUrl("assets/primal-reference");
 const POWERED_BY_GM_GO = publicAssetUrl("assets/brand/powered-by-gm-go.png");
 const STATUSBAR_GM_GO = publicAssetUrl("assets/brand/statusbar-gm-go.png");
 
+function officialHelpArtworkMarkup(
+  artwork: readonly { readonly asset: string; readonly alt: string }[],
+): string {
+  if (artwork.length === 0) return "";
+  return `
+    <div class="official-help__artwork" aria-label="Feature artwork">
+      ${artwork.map(({ asset, alt }) => `
+        <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${alt}" />
+      `).join("")}
+    </div>
+  `;
+}
+
+function officialHelpSectionsMarkup(): string {
+  const features = PRIMAL_HELP_SECTIONS.map((section) => `
+    <article
+      class="official-help__section official-help__section--${section.id}"
+      data-help-section="${section.id}"
+      aria-labelledby="official-help-${section.id}"
+    >
+      <h4 id="official-help-${section.id}">${section.title}</h4>
+      ${section.id === "wild" ? `
+        <div class="wild-paytable" aria-label="Wild multiplier artwork">
+          ${PAYTABLE_WILD_ENTRIES.map(({ label, asset }) => `
+            <figure class="wild-paytable__item">
+              <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} wild symbol" />
+              <figcaption>${label}</figcaption>
+            </figure>
+          `).join("")}
+        </div>
+      ` : officialHelpArtworkMarkup(section.artwork)}
+      <div class="official-help__copy">
+        ${section.paragraphs.map((paragraph) => `<p>${paragraph}</p>`).join("")}
+      </div>
+    </article>
+  `).join("");
+
+  return `
+    ${features}
+    <section
+      class="base-paytable official-help__section official-help__section--paying-symbols"
+      data-help-section="paying-symbols"
+      aria-labelledby="base-paytable-title"
+    >
+      <h4 id="base-paytable-title">PAYING SYMBOLS</h4>
+      <div class="base-paytable__grid">
+        ${BASE_PAYTABLE_ENTRIES.map(({ label, multiplier, asset }) => `
+          <figure class="base-paytable__item">
+            <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} symbol" />
+            <figcaption><strong>${label}</strong><span>${multiplier}× total bet</span></figcaption>
+          </figure>
+        `).join("")}
+      </div>
+    </section>
+    <article
+      class="official-help__section official-help__section--way-wins"
+      data-help-section="way-wins"
+      aria-labelledby="official-help-way-wins"
+    >
+      <h4 id="official-help-way-wins">WAY WINS</h4>
+      <div class="official-help__copy"><p>${PRIMAL_WAY_WINS_COPY}</p></div>
+    </article>
+  `;
+}
+
 /**
  * 将抓取到的原版 1600×900 闪光灯坐标按 0.8 比例投影到本项目 1280×720 舞台。
  */
@@ -661,9 +740,9 @@ export const PRIMAL_DESKTOP_UI_GEOMETRY = Object.freeze({
   stageScale: 0.8,
   statusbar: Object.freeze({
     sourceHeight: 30,
-    height: 16,
+    height: 24,
     sourceFontSize: 18,
-    fontSize: 12.8,
+    fontSize: 14.4,
     gameNameSourceFontSize: 16,
     gameNameFontSize: 8,
     atlasWidth: 1_865,
@@ -794,11 +873,12 @@ export function ordinaryWinInformationPresentation(
   state: OrdinaryWinInformationState,
   currentMinor: MoneyMinor,
   totalMinor: MoneyMinor,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): RoundStatePresentation | null {
   if (!/^(0|[1-9]\d*)$/.test(currentMinor) || !/^[1-9]\d*$/.test(totalMinor)) return null;
   if (BigInt(currentMinor) > BigInt(totalMinor)) return null;
   const visibleMinor = state === "settled" ? totalMinor : currentMinor;
-  const amount = formatMinor(visibleMinor);
+  const amount = formatter.format(visibleMinor);
   if (state === "counting") {
     return {
       visualText: `WIN: ${amount}`,
@@ -827,8 +907,9 @@ export function bigWinCongratulationsPresentation(): RoundStatePresentation {
  */
 export function wheelBonusRoundSummaryPresentation(
   totalWinMinor: MoneyMinor,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): RoundStatePresentation {
-  const total = formatMinor(totalWinMinor);
+  const total = formatter.format(totalWinMinor);
   return {
     visualText: `WIN: ${total}`,
     visualSecondaryText: "Congratulations!",
@@ -840,6 +921,7 @@ export function wheelBonusRoundSummaryPresentation(
 /** 主信息行显示官方无摘要 Free Spins 结果副本。 */
 export function freeSpinConclusionPresentation(
   cumulativeWinMinor: MoneyMinor,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): RoundStatePresentation {
   const hasWin = /^(0|[1-9]\d*)$/.test(cumulativeWinMinor)
     && BigInt(cumulativeWinMinor) > 0n;
@@ -848,7 +930,7 @@ export function freeSpinConclusionPresentation(
       ? "FREE SPINS CONCLUDED"
       : "NO WIN, FREE SPINS CONCLUDED",
     accessibleText: hasWin
-      ? `Free Spins concluded. ${formatMinor(cumulativeWinMinor)} won.`
+      ? `Free Spins concluded. ${formatter.format(cumulativeWinMinor)} won.`
       : "No win. Free Spins concluded.",
   };
 }
@@ -883,18 +965,6 @@ export function roundStatePresentation(
   };
 }
 
-function formatMinor(value: MoneyMinor): string {
-  const normalized = value.padStart(3, "0");
-  const whole = normalized.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${whole}.${normalized.slice(-2)}`;
-}
-
-/** 捕获的 16px 状态条从不插入千位分隔符。 */
-function formatStatusMinor(value: MoneyMinor): string {
-  const normalized = value.padStart(3, "0");
-  return `${normalized.slice(0, -2)}.${normalized.slice(-2)}`;
-}
-
 /** 奖池金额是权威投注的显示预测。 */
 export function jackpotValuesForBet(betMinor: MoneyMinor): MoneyMinor[] {
   if (!/^(0|[1-9]\d*)$/.test(betMinor)) return JACKPOT_TIERS.map(() => "0");
@@ -912,7 +982,10 @@ export function betTickerWindow(
   return options.slice(Math.max(0, selectedIndex - 1), selectedIndex + 2);
 }
 
-function eventTitle(event: FeatureEvent): string {
+function eventTitle(
+  event: FeatureEvent,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
+): string {
   switch (event.type) {
     case "surge.collected":
       if (event.guaranteed) return `Core lock · ${event.count}/3 · wheel guaranteed`;
@@ -950,7 +1023,7 @@ function eventTitle(event: FeatureEvent): string {
     case "free_spin.cap_reached":
       return "Free Spin limit reached";
     case "free_spins.completed":
-      return `${event.mode} complete · ${formatMinor(event.cumulativeWinMinor)} won`;
+      return `${event.mode} complete · ${formatter.format(event.cumulativeWinMinor)} won`;
   }
 }
 
@@ -1018,6 +1091,11 @@ export class DomOverlay {
   private readonly hudElements: readonly HTMLElement[];
   /** 交互式 HUD 区域在打开的对话框后面必须不可用。 */
   private readonly modalBackground: readonly HTMLElement[];
+  /** 与当前 sessionId 一起锁定；同一会话不得热切换金额解释。 */
+  private moneySessionId: string | null = null;
+  private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
+  /** 首次观察到的玩法表现绑定保持冻结；同会话任何字段漂移都会关闭固定文案。 */
+  private presentationRulesBinding: Readonly<PresentationRulesBindingResult> | null = null;
   private betOptions: MoneyMinor[] = [];
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private winCounterAnimation: {
@@ -1188,6 +1266,8 @@ export class DomOverlay {
         class="game-menu"
         data-role="game-menu"
         data-open="false"
+        data-presentation-rules-status="missing-binding"
+        data-presentation-rules-version="${PRIMAL_PRESENTATION_RULES.version}"
         role="dialog"
         aria-modal="true"
         aria-labelledby="game-menu-title"
@@ -1261,32 +1341,22 @@ export class DomOverlay {
             aria-label="Paytable"
             hidden
           >
-            <p class="game-menu__eyebrow">Multiplier wilds</p>
-            <h3>Win up to 2500x your bet!</h3>
-            <section class="base-paytable" aria-labelledby="base-paytable-title">
-              <h4 id="base-paytable-title">Base game · 27 ways</h4>
-              <p>Three matching symbols on adjacent reels from left to right pay the amount shown for every winning way.</p>
-              <div class="base-paytable__grid">
-                ${BASE_PAYTABLE_ENTRIES.map(({ label, multiplier, asset }) => `
-                  <figure class="base-paytable__item">
-                    <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} symbol" />
-                    <figcaption><strong>${label}</strong><span>${multiplier}× total bet</span></figcaption>
-                  </figure>
-                `).join("")}
-              </div>
-            </section>
-            <h4 class="wild-paytable__title">Wild</h4>
-            <div class="wild-paytable" aria-label="Wild multiplier artwork">
-              ${PAYTABLE_WILD_ENTRIES.map(({ label, asset }) => `
-                <figure class="wild-paytable__item">
-                  <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} wild symbol" />
-                  <figcaption>${label}</figcaption>
-                </figure>
-              `).join("")}
+            <p class="game-menu__eyebrow">Official feature guide</p>
+            <h3>Primal Rampage</h3>
+            <div
+              class="official-help"
+              data-role="presentation-rules-content"
+              data-presentation-rules-version="${PRIMAL_PRESENTATION_RULES.version}"
+              hidden
+            >
+              ${officialHelpSectionsMarkup()}
+              <p class="presentation-rules-meta">
+                ${PRIMAL_PRESENTATION_RULES.version} · exact session definition binding required
+              </p>
             </div>
-            <div class="paytable-notes">
-              <article><strong>Primal Wheel</strong><p>The wheel presentation is shown only when the authoritative server result includes a wheel event.</p></article>
-              <article><strong>Expanding Reels</strong><p>Free-spin reel expansion follows the feature state supplied with the server result.</p></article>
+            <div class="presentation-rules-unavailable" data-role="presentation-rules-unavailable">
+              <strong>Feature guide unavailable</strong>
+              <p>This fixed guide is shown only for a session definition explicitly approved by this client build.</p>
             </div>
           </section>
           <section
@@ -1297,13 +1367,17 @@ export class DomOverlay {
             aria-label="Game rules"
             hidden
           >
-            <p class="game-menu__eyebrow">Authoritative server rules</p>
+            <p class="game-menu__eyebrow">Session-bound presentation</p>
             <h3>Game rules</h3>
-            <div class="rules-card">
+            <div class="rules-card" data-role="presentation-rules-summary" hidden>
               <p>Round outcomes, balances, available bets and feature events are supplied by the authoritative RGS and validated before presentation.</p>
-              <p>The 3×3 base grid evaluates all 27 left-to-right Ways. Three matching paying symbols on adjacent reels award the displayed per-way multiplier; there is no fixed single payline.</p>
-              <p>RTP, volatility, reel weights, limits and operator terms are bound to the approved server definition and operator session for this deployment.</p>
-              <p>Use Spin to request a round. Any displayed Wild multiplier or feature sequence reflects the result received from the server; this menu never creates outcomes.</p>
+              <p>This feature guide is fixed to ${PRIMAL_PRESENTATION_RULES.version} and is enabled only when the game, definition version and complete SHA-256 identity match its explicit allow-list.</p>
+              <p>A changed mathematical definition requires a reviewed presentationRules revision; this client never assumes that another definition is compatible.</p>
+              <p>Use Spin to request a round. The menu presents rules but never creates or changes an outcome.</p>
+            </div>
+            <div class="rules-card presentation-rules-unavailable" data-role="presentation-rules-unavailable-rules">
+              <strong>Game rules unavailable</strong>
+              <p>The current session has not matched this client build's fixed presentationRules identity.</p>
             </div>
           </section>
         </div>
@@ -2077,15 +2151,76 @@ export class DomOverlay {
     this.roundState.style.setProperty("--launch-shift-y", `${(1 - soft) * 18}px`);
   }
 
+  private activeMoneyFormatter(): MinorUnitFormatter {
+    // 部分纯表现单元测试通过 Object.create 构造原型夹具；该回退只服务于尚未绑定会话的壳。
+    return this.moneyFormatter ?? DEFAULT_MINOR_UNIT_FORMATTER;
+  }
+
+  private publishMoneyBinding(formatter: MinorUnitFormatter): void {
+    if (!this.statusPanel?.dataset) return;
+    this.statusPanel.dataset.currency = formatter.currency;
+    this.statusPanel.dataset.currencyExponent = String(formatter.currencyExponent);
+  }
+
+  private bindSessionPresentationRules(session: SessionOpened): void {
+    this.presentationRulesBinding = bindPrimalPresentationRules(
+      this.presentationRulesBinding ?? null,
+      session,
+    );
+    const menu = (this as unknown as { gameMenu?: HTMLElement }).gameMenu;
+    if (!menu || typeof menu.querySelector !== "function") return;
+
+    const bound = this.presentationRulesBinding.status === "bound";
+    const setHidden = (role: string, hidden: boolean): void => {
+      const element = menu.querySelector<HTMLElement>(`[data-role="${role}"]`);
+      if (element) element.hidden = hidden;
+    };
+    setHidden("presentation-rules-content", !bound);
+    setHidden("presentation-rules-summary", !bound);
+    setHidden("presentation-rules-unavailable", bound);
+    setHidden("presentation-rules-unavailable-rules", bound);
+    menu.dataset.presentationRulesStatus = this.presentationRulesBinding.status;
+    menu.dataset.presentationRulesVersion = PRIMAL_PRESENTATION_RULES.version;
+  }
+
+  private bindSessionMoneyFormatter(session: SessionOpened): void {
+    const next = createMinorUnitFormatter(session);
+    const currentSessionId = this.moneySessionId;
+    if (typeof currentSessionId === "string"
+      && currentSessionId === session.sessionId
+      && !sameMoneyDisplayBinding(this.activeMoneyFormatter(), next)) {
+      // 先抛错、后写入：任何调用者即使捕获异常，也看不到半更新的 Balance/Bet/Win。
+      throw new MoneyDisplayBindingError("session money display binding changed");
+    }
+    this.moneySessionId = session.sessionId;
+    this.moneyFormatter = next;
+    this.publishMoneyBinding(next);
+  }
+
+  private assertSnapshotMoneyBinding(snapshot: GameSnapshot): void {
+    const next = createMinorUnitFormatter(snapshot);
+    if (typeof this.moneySessionId !== "string") {
+      this.moneyFormatter = next;
+      this.publishMoneyBinding(next);
+      return;
+    }
+    if (!sameMoneyDisplayBinding(this.activeMoneyFormatter(), next)) {
+      throw new MoneyDisplayBindingError("snapshot money display binding does not match its session");
+    }
+  }
+
   applySession(session: SessionOpened): void {
+    this.bindSessionMoneyFormatter(session);
+    this.bindSessionPresentationRules(session);
+    const formatter = this.activeMoneyFormatter();
     if (this.autoplayStopSessionId !== session.sessionId) {
       this.resetAutoplayStopSession(session.sessionId);
     }
-    this.balance.textContent = formatStatusMinor(session.balanceMinor);
+    this.balance.textContent = formatter.format(session.balanceMinor, false);
     this.bet.replaceChildren(...session.betOptionsMinor.map((value) => {
       const option = document.createElement("option");
       option.value = value;
-      option.textContent = formatMinor(value);
+      option.textContent = formatter.format(value);
       option.selected = value === session.defaultBetMinor;
       return option;
     }));
@@ -2095,7 +2230,8 @@ export class DomOverlay {
   }
 
   applySnapshot(snapshot: GameSnapshot): void {
-    this.balance.textContent = formatStatusMinor(snapshot.balanceMinor);
+    this.assertSnapshotMoneyBinding(snapshot);
+    this.balance.textContent = this.activeMoneyFormatter().format(snapshot.balanceMinor, false);
     this.setLastWin(snapshot.lastWinMinor);
     this.bet.value = snapshot.selectedBetMinor;
     this.syncBetChoices();
@@ -2105,7 +2241,7 @@ export class DomOverlay {
   applyResult(result: SpinResult): void {
     this.armAutoplayStopRound(result);
     this.cancelWinCounter();
-    this.balance.textContent = formatStatusMinor(result.balanceMinor);
+    this.balance.textContent = this.activeMoneyFormatter().format(result.balanceMinor, false);
     this.setLastWin(visibleWinMinorForResult(result));
     this.showFeatureState(result.featureState);
   }
@@ -2183,8 +2319,8 @@ export class DomOverlay {
   }
 
   private setLastWin(amountMinor: MoneyMinor): void {
-    const formatted = formatStatusMinor(amountMinor);
-    const zero = formatted === "0.00";
+    const formatted = this.activeMoneyFormatter().format(amountMinor, false);
+    const zero = amountMinor === "0";
     this.lastWin.textContent = formatted;
     if (this.lastWin.dataset) {
       this.lastWin.dataset.zero = String(zero);
@@ -2273,7 +2409,10 @@ export class DomOverlay {
   /** 通过以下就绪刷新保存返回的网格主赢副本。 */
   showWheelBonusRoundSummary(totalWinMinor: MoneyMinor): void {
     this.heldOrdinaryWinRoundState = null;
-    this.heldWheelBonusRoundState = wheelBonusRoundSummaryPresentation(totalWinMinor);
+    this.heldWheelBonusRoundState = wheelBonusRoundSummaryPresentation(
+      totalWinMinor,
+      this.activeMoneyFormatter(),
+    );
     this.applyRoundState(this.heldWheelBonusRoundState);
   }
 
@@ -2286,7 +2425,10 @@ export class DomOverlay {
   /** 替换就绪提示，直到下一轮状态转换。 */
   showFreeSpinConclusion(cumulativeWinMinor: MoneyMinor): void {
     this.heldOrdinaryWinRoundState = null;
-    this.applyRoundState(freeSpinConclusionPresentation(cumulativeWinMinor));
+    this.applyRoundState(freeSpinConclusionPresentation(
+      cumulativeWinMinor,
+      this.activeMoneyFormatter(),
+    ));
   }
 
   /** 在 Base 退出之前将活动区域与接受的终端事件对齐。 */
@@ -2296,7 +2438,7 @@ export class DomOverlay {
       event.mode,
       `${event.awarded}/${event.awarded} complete`,
       "0 remaining",
-      `${formatMinor(event.cumulativeWinMinor)} won`,
+      `${this.activeMoneyFormatter().format(event.cumulativeWinMinor)} won`,
     ].join(" · ");
     this.feature.dataset.visible = "true";
   }
@@ -2355,7 +2497,7 @@ export class DomOverlay {
   }
 
   async announceEvent(event: FeatureEvent, durationMs = 620): Promise<void> {
-    this.feature.textContent = eventTitle(event);
+    this.feature.textContent = eventTitle(event, this.activeMoneyFormatter());
     this.feature.dataset.visible = "true";
     await new Promise((resolve) => setTimeout(resolve, durationMs));
     this.feature.dataset.visible = "false";
@@ -2417,7 +2559,12 @@ export class DomOverlay {
     currentMinor: MoneyMinor,
     totalMinor: MoneyMinor,
   ): void {
-    const presentation = ordinaryWinInformationPresentation(state, currentMinor, totalMinor);
+    const presentation = ordinaryWinInformationPresentation(
+      state,
+      currentMinor,
+      totalMinor,
+      this.activeMoneyFormatter(),
+    );
     if (!presentation) return;
     this.heldOrdinaryWinRoundState = presentation;
     this.resultPresentationSuppressesSpinCopy = true;
@@ -2887,10 +3034,10 @@ export class DomOverlay {
       choice.className = "bet-choice";
       choice.classList.toggle("is-selected", selected);
       choice.dataset.value = value;
-      choice.textContent = formatMinor(value);
+      choice.textContent = this.activeMoneyFormatter().format(value);
       choice.disabled = !this.canChangeBet;
       choice.setAttribute("role", "radio");
-      choice.setAttribute("aria-label", `Bet ${formatMinor(value)}`);
+      choice.setAttribute("aria-label", `Bet ${this.activeMoneyFormatter().format(value)}`);
       choice.setAttribute("aria-checked", String(selected));
       choice.tabIndex = selected ? 0 : -1;
       return choice;
@@ -2913,10 +3060,14 @@ export class DomOverlay {
   }
 
   private syncBetChoices(): void {
-    const formatted = this.bet.value ? formatMinor(this.bet.value) : "—";
+    const formatted = this.bet.value
+      ? this.activeMoneyFormatter().format(this.bet.value)
+      : "—";
     this.betTriggerValue.textContent = formatted;
     this.betTrigger.setAttribute("aria-label", `Total bet ${formatted}`);
-    this.betStatus.textContent = this.bet.value ? formatStatusMinor(this.bet.value) : "—";
+    this.betStatus.textContent = this.bet.value
+      ? this.activeMoneyFormatter().format(this.bet.value, false)
+      : "—";
     this.renderBetTicker();
     const selectedIndex = this.betOptions.indexOf(this.bet.value);
     this.betDecrease.disabled = !this.canChangeBet || selectedIndex <= 0;
@@ -2924,7 +3075,9 @@ export class DomOverlay {
     const jackpotValues = jackpotValuesForBet(this.bet.value || "0");
     this.host.querySelectorAll<HTMLElement>('[data-role="jackpot-value"]').forEach((element, index) => {
       const value = jackpotValues[index];
-      element.textContent = value === undefined ? "—" : formatMinor(value);
+      element.textContent = value === undefined
+        ? "—"
+        : this.activeMoneyFormatter().format(value);
     });
   }
 
@@ -2993,7 +3146,9 @@ export class DomOverlay {
     const played = state.freeSpinsPlayed ?? 0;
     const total = played + state.freeSpinsRemaining;
     this.feature.dataset.mode = state.mode.toLowerCase();
-    const win = state.freeSpinsWinMinor === undefined ? "" : ` · ${formatMinor(state.freeSpinsWinMinor)} won`;
+    const win = state.freeSpinsWinMinor === undefined
+      ? ""
+      : ` · ${this.activeMoneyFormatter().format(state.freeSpinsWinMinor)} won`;
     this.feature.textContent = `${state.mode} · ${played}/${total} complete · ${state.freeSpinsRemaining} remaining${win}`;
     this.feature.dataset.visible = "true";
   }

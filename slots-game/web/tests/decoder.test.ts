@@ -1434,6 +1434,8 @@ describe("decodeServerMessage", () => {
       engineRulesVersion: ENGINE_RULES_VERSION,
       requestId: "request-2",
       sessionId: "session-1",
+      currency: "EUR",
+      currencyExponent: 2,
       balanceMinor: "10000",
       betOptionsMinor: ["100", "100"],
       defaultBetMinor: "100",
@@ -1464,5 +1466,46 @@ describe("decodeServerMessage", () => {
         cells: Array.from({ length: 257 }, () => ({ reel: 0, row: 0 })),
       }],
     })).toThrow(/1-256 entries/);
+  });
+
+  it.each([0, 2, 3])(
+    "projects a strict session money binding with currencyExponent=%i",
+    (currencyExponent) => {
+      const decoded = decodeServerMessage({
+        type: "session.opened",
+        protocolVersion: 1,
+        engineRulesVersion: ENGINE_RULES_VERSION,
+        requestId: `request-exponent-${currencyExponent}`,
+        sessionId: "session-money-binding",
+        currency: "EUR",
+        currencyExponent,
+        balanceMinor: "1234",
+        betOptionsMinor: ["5", "100"],
+        defaultBetMinor: "5",
+        featureState: { mode: "BASE", freeSpinsRemaining: 0 },
+      });
+      expect(decoded).toMatchObject({ currency: "EUR", currencyExponent });
+    },
+  );
+
+  it("rejects a missing or malformed session money binding", () => {
+    const opened = {
+      type: "session.opened",
+      protocolVersion: 1,
+      engineRulesVersion: ENGINE_RULES_VERSION,
+      requestId: "request-money-binding",
+      sessionId: "session-money-binding",
+      currency: "EUR",
+      currencyExponent: 2,
+      balanceMinor: "1234",
+      betOptionsMinor: ["100"],
+      defaultBetMinor: "100",
+      featureState: { mode: "BASE", freeSpinsRemaining: 0 },
+    };
+    const { currency: _currency, ...withoutCurrency } = opened;
+    expect(() => decodeServerMessage(withoutCurrency)).toThrow(/currency/);
+    expect(() => decodeServerMessage({ ...opened, currency: "eur" })).toThrow(/currency/);
+    expect(() => decodeServerMessage({ ...opened, currencyExponent: 7 }))
+      .toThrow(/currencyExponent/);
   });
 });

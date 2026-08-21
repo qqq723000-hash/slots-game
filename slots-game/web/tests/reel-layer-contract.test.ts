@@ -84,6 +84,7 @@ const {
 const { reelPresentationCellCount } = await import("../src/reels/reelMotion");
 const { SymbolView } = await import("../src/reels/SymbolView");
 const { PixiRenderer } = await import("../src/renderer/PixiRenderer");
+const { computeResponsiveLayoutSnapshot } = await import("../src/renderer/ResponsiveLayout");
 
 afterAll(() => {
   for (const key of shimKeys) {
@@ -414,6 +415,76 @@ describe("Primal official reel composite contract", () => {
     expect(wild.winningAdditiveDisplay.parent).toBe(additiveOwner);
     expect(internals.activatedSymbolLayer.children).toHaveLength(0);
     expect(internals.winningSymbolAdditiveActivatedLayer.children).toHaveLength(0);
+  });
+
+  it.each([
+    { name: "PC 1280x720", viewport: [1_280, 720] as const, channel: "desktop" as const },
+    { name: "phone 390x844", viewport: [390, 844] as const, channel: "mobile" as const },
+    { name: "phone rotated 844x390", viewport: [844, 390] as const, channel: "mobile" as const },
+    { name: "tablet 633x844", viewport: [633, 844] as const, channel: "mobile" as const },
+    { name: "tablet rotated 844x633", viewport: [844, 633] as const, channel: "mobile" as const },
+  ])("keeps Helmet/Radio/Tank/Jet NORMAL and ADD world matrices aligned at $name", ({
+    viewport: [width, height],
+    channel,
+  }) => {
+    const stage = new PixiContainer();
+    const view = new ReelSetView();
+    stage.addChild(
+      view,
+      view.additiveFrameOverlay,
+      view.winningSymbolAdditiveOverlay,
+    );
+    const snapshot = computeResponsiveLayoutSnapshot(width, height, { channel });
+    if (channel === "mobile") {
+      if (!snapshot.mobileProfile) throw new Error("Expected mobile layout profile");
+      view.setMobileLayout(snapshot.viewportRegion, snapshot.mobileProfile);
+    } else {
+      view.setResponsiveComposition(1);
+    }
+    view.setGrid([
+      [{ symbol: "PULSE" }, { symbol: "NOVA" }, { symbol: "TANK" }],
+      [{ symbol: "CIRCUIT" }, { symbol: "PRISM" }, { symbol: "ORBIT" }],
+      [{ symbol: "PRISM" }, { symbol: "ORBIT" }, { symbol: "PRISM" }],
+    ]);
+    const internals = view as unknown as {
+      reels: Array<{ symbolViews: Array<InstanceType<typeof SymbolView>> }>;
+    };
+    const winners = [
+      { address: { reel: 0, row: 0 }, symbol: internals.reels[0]!.symbolViews[0]! },
+      { address: { reel: 0, row: 1 }, symbol: internals.reels[0]!.symbolViews[1]! },
+      { address: { reel: 0, row: 2 }, symbol: internals.reels[0]!.symbolViews[2]! },
+      { address: { reel: 1, row: 0 }, symbol: internals.reels[1]!.symbolViews[0]! },
+    ];
+    winners.forEach(({ symbol }) => installWinningCompositeStub(symbol));
+
+    view.highlight(winners.map(({ address }) => address));
+
+    const corners = [
+      new PixiPoint(-90, -56),
+      new PixiPoint(90, -56),
+      new PixiPoint(90, 56),
+      new PixiPoint(-90, 56),
+    ];
+    for (const { symbol } of winners) {
+      expect(symbol.winningAdditiveDisplay.visible).toBe(true);
+      expect(symbol.mask).toBeNull();
+      expect(symbol.winningAdditiveDisplay.mask).toBeNull();
+      corners.forEach((corner) => {
+        const normal = symbol.toGlobal(corner);
+        const additive = symbol.winningAdditiveDisplay.toGlobal(corner);
+        expect(additive.x).toBeCloseTo(normal.x, 6);
+        expect(additive.y).toBeCloseTo(normal.y, 6);
+      });
+      const normalMatrix = symbol.worldTransform;
+      const additiveMatrix = symbol.winningAdditiveDisplay.worldTransform;
+      for (const key of ["a", "b", "c", "d", "tx", "ty"] as const) {
+        expect(additiveMatrix[key]).toBeCloseTo(normalMatrix[key], 6);
+      }
+    }
+    expect(view.winningSymbolAdditiveOverlay.mask).toBeNull();
+    expect(view.winningSymbolAdditiveOverlay.filters?.[0]?.autoFit).toBe(true);
+
+    view.destroy({ children: true });
   });
 
   it("moves and restores collected Rage through matching NORMAL and ADD owners", () => {

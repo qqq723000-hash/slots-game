@@ -20,6 +20,15 @@ function lastRuleBody(selector: string): string {
 }
 
 describe("Pass 95 official PC loading-blue contract", () => {
+  it("releases the transparent fallback barrier while preserving the visible startup gate", () => {
+    expect(ruleBodies(".launch-loading")).toContainEqual(
+      expect.stringContaining("pointer-events: none;"),
+    );
+    expect(lastRuleBody('.launch-loading[data-visible="true"]')).toContain(
+      "pointer-events: auto;",
+    );
+  });
+
   it("uses the frozen ContainerLauncher radial gradient as the final loader background", () => {
     const loader = lastRuleBody(".launch-loading");
     const declaration = loader.match(/background\s*:\s*([^;]+);/)?.[1]

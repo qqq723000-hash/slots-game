@@ -16,6 +16,7 @@ import type {
   FreeSpinAwardedEvent,
   FreeSpinCapReachedEvent,
   InstantWheelAwardedEvent,
+  MoneyDisplayBinding,
   MoneyMinor,
   VaultAwardedEvent,
   VaultUnlockedEvent,
@@ -23,6 +24,7 @@ import type {
   WheelAwardedEvent,
   Win,
 } from "../app/state/types";
+import { createMinorUnitFormatter } from "../protocol/moneyFormatter";
 import {
   ReelSetView,
 } from "../reels/ReelSetView";
@@ -1270,6 +1272,16 @@ export class PixiRenderer {
     this.jackpotTower.setBet(betMinor);
   }
 
+  /** 将一次会话交换的同一不可变格式器同步给所有 Pixi 金额表面。 */
+  setMoneyDisplayBinding(binding: Readonly<MoneyDisplayBinding>): void {
+    const formatter = createMinorUnitFormatter(binding);
+    this.jackpotTower.setMoneyFormatter(formatter);
+    this.bigWin.setMoneyFormatter(formatter);
+    this.winCelebration.setMoneyFormatter(formatter);
+    this.wheelBonusWinLabel.setMoneyFormatter(formatter);
+    this.featureEffects.setMoneyFormatter(formatter);
+  }
+
   restoreFeatureState(state: FeatureState): void {
     this.featureMode = state.mode;
     this.reels.setVisualStripMode(state.mode);
@@ -1953,8 +1965,26 @@ export class PixiRenderer {
   async exitFeatureMode(state: FeatureState, reducedMotion = false): Promise<void> {
     this.beginFeatureExitAtSummaryHide(state, reducedMotion);
     const pending = this.pendingFeatureExit;
-    if (pending) await pending;
-    if (this.pendingFeatureExit === pending) this.pendingFeatureExit = null;
+    const failures: unknown[] = [];
+    try {
+      if (pending) await pending;
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      try {
+        this.backdrop.settleFeatureExit();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        this.launchScene.settleFeatureExit();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (this.pendingFeatureExit === pending) this.pendingFeatureExit = null;
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "Feature exit cleanup failed");
   }
 
   /** FREESPIN_END 在摘要隐藏处触发，因此所有退出分支一起启动。 */
@@ -2236,10 +2266,7 @@ function createEagerPixiRendererOwners(options: PixiRendererOptions): PixiRender
     onCapClose: (reason) => freeSpinCallbacks.onCapClose(reason),
     onCapInputReadyCheckpoint: () => freeSpinCallbacks.onCapInputReadyCheckpoint(),
   });
-  const bigWin = new BigWinView({
-    formatAmount: formatMinorAmount,
-    visualTelemetry,
-  });
+  const bigWin = new BigWinView({ visualTelemetry });
   const anticipation = new AnticipationView();
   const backdrop = new CityBackdrop();
   const winCelebration = new WinCelebration(camera.fxLayer, reels, visualTelemetry);
@@ -2405,7 +2432,6 @@ function pixiRendererOwnerConstructionStages(
       id: "big-win-overlay",
       build: () => {
         const bigWin = new BigWinView({
-          formatAmount: formatMinorAmount,
           visualTelemetry: requiredOwner(state, "visualTelemetry"),
         });
         state.bigWin = bigWin;
@@ -2729,9 +2755,4 @@ function exposeForOffscreenWarmup(root: Container): () => void {
       state.view.visible = state.visible;
     }
   };
-}
-
-function formatMinorAmount(amount: bigint): string {
-  const digits = amount.toString().padStart(3, "0");
-  return `${digits.slice(0, -2)}.${digits.slice(-2)}`;
 }

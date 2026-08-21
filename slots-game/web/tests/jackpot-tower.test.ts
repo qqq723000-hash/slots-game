@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { TextureAtlas } from "@pixi-spine/base";
+import { TextureAtlas, Vector2 } from "@pixi-spine/base";
 import {
   AnimationState,
   AnimationStateData,
@@ -48,6 +48,7 @@ vi.mock("../src/renderer/spine/SpineAdapter", async (importOriginal) => ({
 
 import {
   JACKPOT_AUTHORED_TIME_SCALE,
+  JACKPOT_COMPACT_LANDSCAPE_SCALE_X,
   JACKPOT_COLLECTION_REACTION_STEP_MS,
   JACKPOT_FONT_DESCRIPTOR,
   JACKPOT_FONT_FAMILY,
@@ -55,11 +56,15 @@ import {
   JackpotTowerView,
   jackpotCollectionReactionPlan,
   jackpotDisplayValue,
+  jackpotTierMobileDisplayLayout,
   jackpotTierResponsiveLayout,
   jackpotTierFromAward,
 } from "../src/renderer/JackpotTowerView";
 import { readableSpineTextTransform } from "../src/renderer/PrimalPanelText";
-import { computeResponsiveFrameGeometry } from "../src/renderer/ResponsiveLayout";
+import {
+  computeResponsiveFrameGeometry,
+  computeResponsiveLayoutSnapshot,
+} from "../src/renderer/ResponsiveLayout";
 
 const JACKPOT_SPINE_DIRECTORY = resolve(
   process.cwd(),
@@ -307,6 +312,72 @@ describe("authored jackpot tower", () => {
     }
   });
 
+  it("locks the official 844x390 five-panel rig bbox without changing Y geometry", async () => {
+    expect(JACKPOT_COMPACT_LANDSCAPE_SCALE_X).toBe(1.12);
+    const snapshot = computeResponsiveLayoutSnapshot(844, 390, { channel: "mobile" });
+    expect(snapshot.mobileProfile).toBe("ls");
+    expect(snapshot.gameplayRegion).toEqual({ left: 0, top: 0, width: 844, height: 372 });
+    const expected = {
+      grand: { left: 21.124865, right: 180.215423, top: 100.947244, bottom: 159.684225 },
+      mega: { left: 28.312378, right: 171.49388, top: 150.37252, bottom: 203.235802 },
+      major: { left: 34.193071, right: 164.358073, top: 194.1932, bottom: 242.250729 },
+      minor: { left: 39.093648, right: 158.411567, top: 233.810433, bottom: 277.863169 },
+      mini: { left: 43.240291, right: 153.379908, top: 270.194246, bottom: 310.858309 },
+    } as const;
+
+    const atlasBytes = readFileSync(resolve(JACKPOT_SPINE_DIRECTORY, "spine_ui.atlas"));
+    const atlas = await loadAtlas(atlasBytes.toString("utf8"));
+    try {
+      for (const tier of ["grand", "mega", "major", "minor", "mini"] as const) {
+        const bytes = readFileSync(resolve(JACKPOT_SPINE_DIRECTORY, `${tier}_jackpot.skel`));
+        const data = new SkeletonBinary(new AtlasAttachmentLoader(atlas))
+          .readSkeletonData(new Uint8Array(bytes));
+        const skeleton = new Skeleton(data);
+        const state = new AnimationState(new AnimationStateData(data));
+        state.setAnimation(0, "idle", true);
+        state.apply(skeleton);
+        skeleton.updateWorldTransform({ x: 0, y: 0 });
+        const offset = new Vector2();
+        const size = new Vector2();
+        skeleton.getBounds(offset, size, []);
+        const layout = jackpotTierMobileDisplayLayout(
+          tier,
+          "ls",
+          "right",
+          snapshot.gameplayRegion,
+        );
+        const bbox = {
+          left: layout.x + offset.x * layout.scaleX,
+          right: layout.x + (offset.x + size.x) * layout.scaleX,
+          top: layout.y + offset.y * layout.scaleY,
+          bottom: layout.y + (offset.y + size.y) * layout.scaleY,
+        };
+
+        expect(bbox.left).toBeCloseTo(expected[tier].left, 5);
+        expect(bbox.right).toBeCloseTo(expected[tier].right, 5);
+        expect(bbox.top).toBeCloseTo(expected[tier].top, 5);
+        expect(bbox.bottom).toBeCloseTo(expected[tier].bottom, 5);
+      }
+    } finally {
+      atlas.dispose();
+    }
+  });
+
+  it("applies compact X projection at the panel parent and removes it on tablet rotation", async () => {
+    const tower = await loadTower();
+    const phone = computeResponsiveLayoutSnapshot(844, 390, { channel: "mobile" });
+    tower.setMobileLayout("ls", "right", phone.gameplayRegion);
+    for (const panel of tower.children) {
+      expect(panel.scale.x / panel.scale.y).toBeCloseTo(1.12, 10);
+    }
+
+    const tablet = computeResponsiveLayoutSnapshot(844, 633, { channel: "mobile" });
+    tower.setMobileLayout("ls", "right", tablet.gameplayRegion);
+    for (const panel of tower.children) {
+      expect(panel.scale.x).toBeCloseTo(panel.scale.y, 10);
+    }
+  });
+
   it("projects wager values using integer minor units", () => {
     expect(jackpotDisplayValue("100", 1_000n)).toBe("1000.00");
     expect(jackpotDisplayValue("100", 250n)).toBe("250.00");
@@ -439,6 +510,42 @@ describe("authored jackpot tower", () => {
       { tier: "mega", atMs: 600 },
       { tier: "grand", atMs: 800 },
     ]);
+  });
+
+  it("uses uncapped wall-clock time for collection semantics while capping Spine pose steps", async () => {
+    const tower = await loadTower();
+    const [grand, mega, major, minor, mini] = [
+      panelSpine("grand"),
+      panelSpine("mega"),
+      panelSpine("major"),
+      panelSpine("minor"),
+      panelSpine("mini"),
+    ];
+
+    tower.setHudReveal(1);
+    tower.reactToCollection();
+    tower.update(250);
+
+    expect(animationNames(mini)).toContain("trail_reaction");
+    expect(animationNames(minor)).toContain("trail_reaction");
+    expect(animationNames(major)).not.toContain("trail_reaction");
+    expect(animationNames(mega)).not.toContain("trail_reaction");
+    expect(animationNames(grand)).not.toContain("trail_reaction");
+    expect(loadedSpines.every((spine) => spine.update.mock.calls.some(
+      ([deltaSeconds]) => deltaSeconds === 0.064,
+    ))).toBe(true);
+
+    tower.update(549);
+
+    expect(animationNames(major)).toContain("trail_reaction");
+    expect(animationNames(mega)).toContain("trail_reaction");
+    expect(animationNames(grand)).not.toContain("trail_reaction");
+
+    tower.update(1);
+
+    for (const spine of [mini, minor, major, mega, grand]) {
+      expect(animationNames(spine)).toContain("trail_reaction");
+    }
   });
 
   it("locks all five 74-slot Jackpot rigs and their authored animation durations", async () => {

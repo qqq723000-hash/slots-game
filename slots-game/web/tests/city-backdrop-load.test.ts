@@ -14,6 +14,8 @@ const loaders = vi.hoisted(() => ({
   loadParticles: vi.fn(),
   loadSpines: vi.fn(),
   createSpine: vi.fn(),
+  setParticlePalette: vi.fn(),
+  killParticles: vi.fn(),
 }));
 
 vi.mock("../src/renderer/PrimalBackgroundParticles", async () => {
@@ -24,10 +26,14 @@ vi.mock("../src/renderer/PrimalBackgroundParticles", async () => {
         return loaders.loadParticles(options);
       }
 
-      setPalette(): void {}
+      setPalette(palette: unknown): void {
+        loaders.setParticlePalette(palette);
+      }
       setReducedMotion(): void {}
       update(): void {}
-      killAll(): void {}
+      killAll(): void {
+        loaders.killParticles();
+      }
     },
   };
 });
@@ -162,6 +168,8 @@ beforeEach(() => {
     backgroundFront: { id: "background-front" },
   });
   loaders.createSpine.mockReset();
+  loaders.setParticlePalette.mockReset();
+  loaders.killParticles.mockReset();
 });
 
 afterEach(() => {
@@ -319,4 +327,61 @@ describe("CityBackdrop authored palette retirement", () => {
 
     backdrop.destroy({ children: true, texture: false, baseTexture: false });
   });
+
+  it.each([
+    ["EXPANSION", "fire"],
+    ["OVERDRIVE", "snow"],
+  ] as const)(
+    "atomically settles %s camera, authored palette and particles before the exit promise resolves",
+    (_mode, palette) => {
+      const backdrop = new CityBackdrop();
+      const background = createMockSpine("background", true);
+      const foreground = createMockSpine("foreground", true);
+      attachAuthoredSpines(backdrop, background, foreground);
+      backdrop.restoreAuthoredPalette(palette);
+
+      const internals = backdrop as unknown as {
+        rows: number;
+        currentTrackY: number;
+        targetTrackY: number;
+        readonly daylight: { y: number };
+        readonly destroyedPlate: { y: number };
+      };
+      internals.rows = 8;
+      internals.currentTrackY = 576;
+      internals.targetTrackY = 576;
+      background.state.clearTrack.mockClear();
+      foreground.state.clearTrack.mockClear();
+      background.state.setEmptyAnimation.mockClear();
+      foreground.state.setEmptyAnimation.mockClear();
+      loaders.setParticlePalette.mockClear();
+      loaders.killParticles.mockClear();
+
+      backdrop.settleFeatureExit();
+
+      expect(internals.rows).toBe(3);
+      expect(internals.currentTrackY).toBe(internals.targetTrackY);
+      expect(internals.daylight.y).toBe(internals.targetTrackY);
+      expect(internals.destroyedPlate.y).toBe(internals.targetTrackY);
+      expect(background.state.setEmptyAnimation).not.toHaveBeenCalled();
+      expect(foreground.state.setEmptyAnimation).not.toHaveBeenCalled();
+      expect(background.state.clearTrack).toHaveBeenCalledWith(
+        PRIMAL_BACKGROUND_TRACK.transition,
+      );
+      expect(foreground.state.clearTrack).toHaveBeenCalledWith(
+        PRIMAL_BACKGROUND_TRACK.transition,
+      );
+      expect(loaders.setParticlePalette).toHaveBeenLastCalledWith("main");
+      expect(loaders.killParticles).toHaveBeenCalledOnce();
+
+      const settledY = internals.currentTrackY;
+      for (const deltaMs of [64, 64, 64, 8]) backdrop.update(deltaMs);
+      expect(internals.currentTrackY).toBe(settledY);
+      expect(internals.targetTrackY).toBe(settledY);
+      expect(internals.daylight.y).toBe(settledY);
+      expect(internals.destroyedPlate.y).toBe(settledY);
+
+      backdrop.destroy({ children: true, texture: false, baseTexture: false });
+    },
+  );
 });

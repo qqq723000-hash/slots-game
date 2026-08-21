@@ -219,11 +219,29 @@ export type FeatureEvent =
   | FreeSpinCapReachedEvent
   | FreeSpinsCompletedEvent;
 
-export interface SessionOpened {
+/**
+ * 金额的小单位解释属于会话经济绑定。`currencyExponent` 表示一个主单位包含
+ * 10^exponent 个小单位；它在同一 sessionId 内不得改变。
+ */
+export interface MoneyDisplayBinding {
+  readonly currency: string;
+  readonly currencyExponent: number;
+}
+
+/** 固定玩法文案绑定到这组完整数学定义身份，不从版本名或哈希前缀猜测兼容性。 */
+export interface GameDefinitionBinding {
+  readonly gameId: string;
+  readonly definitionVersion: string;
+  readonly definitionHash: string;
+}
+
+export interface SessionOpened extends MoneyDisplayBinding {
   type: "session.opened";
   protocolVersion: 1;
   /** 历史协议兼容字段；生产 RGS 会话以获批定义的版本和哈希为准。 */
   engineRulesVersion?: "slots-game-ways3-features-v4";
+  /** RGS 投影总是提供；非 RGS 测试替身省略时，固定玩法文案必须保持关闭。 */
+  definitionBinding?: Readonly<GameDefinitionBinding>;
   requestId: string;
   sessionId: string;
   balanceMinor: MoneyMinor;
@@ -263,6 +281,8 @@ export interface ServerError {
 export type ServerMessage = SessionOpened | SpinResult | ServerError;
 
 export interface GameSnapshot {
+  currency: string;
+  currencyExponent: number;
   balanceMinor: MoneyMinor;
   selectedBetMinor: MoneyMinor;
   betOptionsMinor: MoneyMinor[];

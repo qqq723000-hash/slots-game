@@ -2958,6 +2958,7 @@ describe("AppController feature orchestration seams", () => {
     const restoreFeatureState = vi.fn();
     const applySession = vi.fn();
     const syncGameMusic = vi.fn();
+    const setMoneyDisplayBinding = vi.fn();
     const machine = { phase: "recovering", transition: vi.fn() };
     Object.assign(controller, {
       snapshot: {
@@ -2974,7 +2975,7 @@ describe("AppController feature orchestration seams", () => {
       visibleBalanceMinor: "10000",
       gateway: { hasPendingSpin: true },
       machine,
-      renderer: { reels: { setGrid: vi.fn() }, restoreFeatureState },
+      renderer: { reels: { setGrid: vi.fn() }, restoreFeatureState, setMoneyDisplayBinding },
       ui: { applySession },
       launch: { canEnterGame: true, transition: vi.fn() },
       syncGameMusic,
@@ -2986,6 +2987,8 @@ describe("AppController feature orchestration seams", () => {
       protocolVersion: 1,
       requestId: "reconnect-1",
       sessionId: "session-1",
+      currency: "EUR",
+      currencyExponent: 2,
       balanceMinor: "9900",
       betOptionsMinor: ["100", "200"],
       defaultBetMinor: "200",
@@ -2998,11 +3001,75 @@ describe("AppController feature orchestration seams", () => {
     expect((controller as unknown as { snapshot: GameSnapshot }).snapshot.featureState).toEqual(origin);
     expect(restoreFeatureState).not.toHaveBeenCalled();
     expect(syncGameMusic).not.toHaveBeenCalled();
+    expect(setMoneyDisplayBinding).toHaveBeenCalledWith(expect.objectContaining({
+      currency: "EUR",
+      currencyExponent: 2,
+    }));
     expect(applySession).toHaveBeenCalledWith(expect.objectContaining({
       balanceMinor: "10000",
       featureState: origin,
     }));
     expect(root.dataset).toEqual({ rgsSession: "online" });
+  });
+
+  it("fails closed before snapshot or renderer writes when a session money binding drifts", () => {
+    const controller = prototypeHarness();
+    const close = vi.fn();
+    const setMoneyDisplayBinding = vi.fn();
+    const applySession = vi.fn();
+    const machine = { phase: "ready", transition: vi.fn() };
+    const launch = { transition: vi.fn() };
+    const snapshot: GameSnapshot = {
+      currency: "EUR",
+      currencyExponent: 2,
+      balanceMinor: "10000",
+      selectedBetMinor: "100",
+      betOptionsMinor: ["100"],
+      featureState: BASE_FEATURE,
+      lastWinMinor: "0",
+      currentGrid: BASE_GRID,
+    };
+    const root = { dataset: { rgsSession: "online" } as Record<string, string> };
+    Object.assign(controller, {
+      root,
+      snapshot,
+      sessionMoneyBinding: {
+        sessionId: "session-money",
+        currency: "EUR",
+        currencyExponent: 2,
+      },
+      hasOpenedSession: true,
+      destroyed: false,
+      gateway: { hasPendingSpin: false, close },
+      machine,
+      launch,
+      renderer: { setMoneyDisplayBinding },
+      ui: { applySession },
+      syncLaunchUi: vi.fn(),
+      presentPlayerFacingError: vi.fn(),
+      refreshUi: vi.fn(),
+    });
+
+    controller.handleSession({
+      type: "session.opened",
+      protocolVersion: 1,
+      requestId: "request-money-drift",
+      sessionId: "session-money",
+      currency: "EUR",
+      currencyExponent: 3,
+      balanceMinor: "10000",
+      betOptionsMinor: ["100"],
+      defaultBetMinor: "100",
+      featureState: BASE_FEATURE,
+    });
+
+    expect(machine.transition).toHaveBeenCalledWith({ type: "FATAL_ERROR" });
+    expect(close).toHaveBeenCalledOnce();
+    expect(launch.transition).toHaveBeenCalledWith({ type: "FAIL" });
+    expect(root.dataset).not.toHaveProperty("rgsSession");
+    expect(setMoneyDisplayBinding).not.toHaveBeenCalled();
+    expect(applySession).not.toHaveBeenCalled();
+    expect((controller as unknown as { snapshot: GameSnapshot }).snapshot).toBe(snapshot);
   });
 
   it("restores an initial Base level-two PPS state once without replaying EVOLVE or level-up audio", () => {
@@ -3047,6 +3114,8 @@ describe("AppController feature orchestration seams", () => {
       protocolVersion: 1,
       requestId: "base-level-two-session",
       sessionId: "session-1",
+      currency: "EUR",
+      currencyExponent: 2,
       balanceMinor: "10000",
       betOptionsMinor: ["100"],
       defaultBetMinor: "100",
@@ -3183,6 +3252,8 @@ describe("AppController feature orchestration seams", () => {
       protocolVersion: 1,
       requestId: "recover-session",
       sessionId: "session-1",
+      currency: "EUR",
+      currencyExponent: 2,
       balanceMinor: "99900",
       betOptionsMinor: ["100"],
       defaultBetMinor: "100",
@@ -3214,6 +3285,8 @@ describe("AppController feature orchestration seams", () => {
       protocolVersion: 1,
       requestId: "recover-session-refresh",
       sessionId: "session-1",
+      currency: "EUR",
+      currencyExponent: 2,
       balanceMinor: "99900",
       betOptionsMinor: ["100"],
       defaultBetMinor: "100",
@@ -5293,6 +5366,8 @@ describe("AppController round ordering", () => {
       protocolVersion: 1,
       requestId: "reconnect-during-presentation",
       sessionId: "session-1",
+      currency: "EUR",
+      currencyExponent: 2,
       balanceMinor: "9950",
       betOptionsMinor: ["100"],
       defaultBetMinor: "100",
@@ -5777,8 +5852,15 @@ describe("AppController round ordering", () => {
 
     const renderer = controller.renderer as {
       bigWin: { present: ReturnType<typeof vi.fn> };
+      reels: { highlight: ReturnType<typeof vi.fn> };
     };
     expect(renderer.bigWin.present).toHaveBeenCalledTimes(1);
+    expect(renderer.reels.highlight).toHaveBeenCalledOnce();
+    expect(renderer.reels.highlight).toHaveBeenCalledWith([
+      { reel: 0, row: 0 },
+      { reel: 1, row: 0 },
+      { reel: 2, row: 0 },
+    ]);
     expect(controller.audio.playPayoutWin).not.toHaveBeenCalled();
     expect(controller.audio.playSymbolWin).toHaveBeenCalledTimes(2);
     expect(controller.audio.beginNormalWinCounter).not.toHaveBeenCalled();

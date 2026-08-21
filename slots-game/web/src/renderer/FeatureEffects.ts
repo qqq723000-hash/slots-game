@@ -17,6 +17,10 @@ import type {
   WheelAwardedEvent,
 } from "../app/state/types";
 import {
+  DEFAULT_MINOR_UNIT_FORMATTER,
+  type MinorUnitFormatter,
+} from "../protocol/moneyFormatter";
+import {
   PRIMAL_CHARACTER_ANIMATION_MS,
   PRIMAL_EXPANSION_TIMING_MS,
   PRIMAL_FEATURE_ANIMATION_MS,
@@ -385,11 +389,12 @@ export function shouldPresentFreeSpinSummary(
 /** 将文本注入到预设的 fs_summary 插槽中，无需重新计算资金。 */
 export function freeSpinSummaryTextBindings(
   event: FreeSpinsCompletedEvent,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): readonly PrimalPanelTextField[] {
   if (!CANONICAL_MONEY_MINOR.test(event.cumulativeWinMinor)) {
     throw new Error("Authoritative Free Spins summary must use canonical minor units");
   }
-  const fields = freeSpinSummaryTextFields(event);
+  const fields = freeSpinSummaryTextFields(event, formatter);
   if (event.cumulativeWinMinor !== "0") return fields;
   return Object.freeze(fields.map((field) => Object.freeze({
     ...field,
@@ -848,7 +853,10 @@ export function createFeaturePresentationPlan(
   };
 }
 
-export function featureEffectLabel(event: FeatureEvent): string {
+export function featureEffectLabel(
+  event: FeatureEvent,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
+): string {
   switch (event.type) {
     case "grid.expanded":
       return `${event.rows} ROWS // ${event.ways} WAYS`;
@@ -886,7 +894,7 @@ export function featureEffectLabel(event: FeatureEvent): string {
     case "free_spin.cap_reached":
       return "FREE SPIN LIMIT REACHED";
     case "free_spins.completed":
-      return `FREE SPINS COMPLETE // ${event.cumulativeWinMinor}`;
+      return `FREE SPINS COMPLETE // ${formatter.format(event.cumulativeWinMinor, false)}`;
   }
 }
 
@@ -1706,6 +1714,7 @@ export class FeatureEffects {
   private presentationGeneration = 0;
   private presentationAbortController = new AbortController();
   private destroyed = false;
+  private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
 
   constructor(
     private readonly hostLayer: Container,
@@ -1719,6 +1728,11 @@ export class FeatureEffects {
   ) {
     this.reelAlphaLayers = new ReelAlphaLayers(this.reels);
     this.hostLayer.addChild(this.view);
+  }
+
+  /** 会话金额格式器只改变文字投影，不参与任何奖励或余额计算。 */
+  setMoneyFormatter(formatter: MinorUnitFormatter): void {
+    this.moneyFormatter = formatter;
   }
 
   /** 可选捕捉观察者；在正常的制作播放中不存在。 */
@@ -2729,7 +2743,11 @@ export class FeatureEffects {
     shockwave.position.copyFrom(source);
     shockwave.alpha = 0;
 
-    const banner = createBanner(featureEffectLabel(event), event.triggered ? 0xff6230 : 0xb66c38, 610);
+    const banner = createBanner(
+      featureEffectLabel(event, this.moneyFormatter),
+      event.triggered ? 0xff6230 : 0xb66c38,
+      610,
+    );
     banner.position.set(LOGICAL_WIDTH / 2, 178);
     banner.alpha = 0;
     scene.addChild(dim, beams, energy, core, count, shockwave, banner);
@@ -3445,7 +3463,7 @@ export class FeatureEffects {
     const dim = new Graphics();
     dim.beginFill(0x020303, 1).drawRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT).endFill();
     dim.alpha = 0;
-    const summaryTextFields = freeSpinSummaryTextBindings(event);
+    const summaryTextFields = freeSpinSummaryTextBindings(event, this.moneyFormatter);
     const authoredSummary = createAuthoredPanel(
       authoredFeatureData.freeSpinSummary,
       PRIMAL_PANEL_LAYOUT.freeSpinSummary,
@@ -3656,7 +3674,7 @@ export class FeatureEffects {
     const summary = createAuthoredPanel(
       summaryData,
       PRIMAL_PANEL_LAYOUT.wheelSummary,
-      wheelSummaryTextFields(event, freeSpinSummary),
+      wheelSummaryTextFields(event, freeSpinSummary, this.moneyFormatter),
     );
     if (!authoredPlayback || !popup || !summary) {
       authoredPlayback?.view.destroy({ children: true });
@@ -3719,7 +3737,7 @@ export class FeatureEffects {
     resultReadout.addChild(resultPlate, resultText);
     resultReadout.alpha = 0;
 
-    const banner = createBanner(featureEffectLabel(event), 0xff8b34, 600);
+    const banner = createBanner(featureEffectLabel(event, this.moneyFormatter), 0xff8b34, 600);
     banner.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 + 220);
 
     // 源按钮是制作成近似正圆的 600x600 多边形。视觉按钮继续与普通 Spin 控件共用，
@@ -4406,7 +4424,7 @@ export class FeatureEffects {
     pulse.lineStyle(7, color, 0.86).drawCircle(0, 0, 86);
     pulse.lineStyle(2, 0xffe6ad, 0.62).drawCircle(0, 0, 121);
     pulse.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 - 8);
-    const banner = createBanner(featureEffectLabel(event), color);
+    const banner = createBanner(featureEffectLabel(event, this.moneyFormatter), color);
     banner.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 - 8);
     const extraSpin = event.type === "free_spin.awarded"
       ? new Sprite(authoredTexture(PRIMAL_ASSETS.features.vaultExtraSpin))

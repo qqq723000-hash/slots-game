@@ -619,6 +619,8 @@ export class AppController {
   private readonly reducedMotion: boolean;
   private readonly reducedMotionMedia: MediaQueryList | null;
   private snapshot: GameSnapshot = {
+    currency: "XXX",
+    currencyExponent: 2,
     balanceMinor: "0",
     selectedBetMinor: "100",
     betOptionsMinor: ["100"],
@@ -628,6 +630,12 @@ export class AppController {
   };
   /** 最后实际绘制的余额；已接受/恢复的经济状态可能更新。 */
   private visibleBalanceMinor: MoneyMinor = "0";
+  /** 同一 sessionId 的币种和小数指数只能由首个已解码会话确定一次。 */
+  private sessionMoneyBinding: Readonly<{
+    sessionId: string;
+    currency: string;
+    currencyExponent: number;
+  }> | null = null;
   /** 从收到已接受结果起，到收集动作使结算可见前为 true。 */
   private balanceVisibilityBlocked = false;
   private lastRoundId: string | null = null;
@@ -1358,6 +1366,9 @@ export class AppController {
   private handleSession(session: SessionOpened): void {
     // 一次性 RGS code 已进入“向宿主索取新会话”状态时，迟到回调不得复活旧会话。
     if (this.initialSessionFailure && this.requiresOperatorSessionRecovery()) return;
+    if (!this.acceptSessionMoneyBinding(session)) return;
+    // 测试替身可省略该纯显示端口；生产 PixiRenderer 会把同一个冻结格式器下发到全部金额表面。
+    this.renderer.setMoneyDisplayBinding?.(session);
     this.clearInitialRgsSessionTimeout();
     // RGS 在调用已提交结果回调前清除网络待处理标记。该权威结果在启动流程之后等待期间，
     // 仍拥有轮次前特性和可见余额投影。
@@ -1382,6 +1393,8 @@ export class AppController {
       : session.featureState;
     this.snapshot = {
       ...this.snapshot,
+      currency: session.currency,
+      currencyExponent: session.currencyExponent,
       balanceMinor: session.balanceMinor,
       betOptionsMinor: session.betOptionsMinor,
       selectedBetMinor,
@@ -1416,6 +1429,27 @@ export class AppController {
     if (this.featurePreviewActive) this.ui.setFeaturePreviewEnabled(true);
     this.syncLaunchUi();
     this.refreshUi();
+  }
+
+  private acceptSessionMoneyBinding(session: SessionOpened): boolean {
+    const current = this.sessionMoneyBinding;
+    if (current !== null && current !== undefined
+      && current.sessionId === session.sessionId
+      && (current.currency !== session.currency
+        || current.currencyExponent !== session.currencyExponent)) {
+      // 在更新 snapshot、余额或任一 DOM 文本之前关闭传输与输入，禁止同一金额被重新解释。
+      const error = new Error("Session money display binding changed");
+      this.machine.transition({ type: "FATAL_ERROR" });
+      this.gateway.close();
+      this.completeLaunchFailure(playerFacingErrorFor(error, "launch"));
+      return false;
+    }
+    this.sessionMoneyBinding = Object.freeze({
+      sessionId: session.sessionId,
+      currency: session.currency,
+      currencyExponent: session.currencyExponent,
+    });
+    return true;
   }
 
   private handleSpinResult(
@@ -1818,7 +1852,7 @@ export class AppController {
                 recordHoldDurationMs,
                 (milestone, record, resident) => {
                   if (milestone === "visible") {
-                    if (!bigWinMode) this.renderer.reels.highlight([...win.cells]);
+                    this.renderer.reels.highlight([...win.cells]);
                     // 每条无路径记录都从通用 ScatterWin 开始。随后 Rage/Vault/未知符号
                     // 解析到静默 LpWin 回退路径，而不是重复 MP2。
                     this.audio.playSymbolWin("scatter-win", {
@@ -2573,6 +2607,34 @@ export class AppController {
 
   private handleOperatorSessionRequired(cause: ServerError | Error): void {
     if (this.destroyed) return;
+    // refresh 协议终止可能发生在服务器已收到 Spin、浏览器尚未取得结果的窗口。
+    // 只撤销本页未完成的表现状态；RGS 仍保留 pending/ledger，由新运营商会话恢复同一轮次。
+    if (this.machine.phase === "requesting") {
+      try {
+        this.ui.rollbackAcceptedPaidAutoplaySpin?.();
+      } catch {
+        // 自动播放计数是表现状态；清理失败不能阻止运营商恢复通知。
+      }
+      this.roundOriginFeatureState = null;
+      try {
+        this.stopRoundAudio(35);
+      } catch {
+        // 音频清理旁路不拥有恢复流程。
+      }
+      try {
+        this.renderer.cancelSpinPresentation();
+      } catch {
+        // 下方状态机仍必须离开 Spinning。
+      }
+      try {
+        this.reelRound.reset("operator-session-required");
+      } catch {
+        // RESET 正常不抛错；保持故障关闭并继续宿主通知。
+      }
+      if (this.machine.phase === "requesting") {
+        this.machine.transition({ type: "SPIN_FAILED" });
+      }
+    }
     const error = playerFacingError(
       PLAYER_FACING_ERROR_CODES.OPERATOR_SESSION_REQUIRED,
       cause,

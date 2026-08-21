@@ -392,13 +392,23 @@ export function rgsSessionOpened(
     engineRulesVersion: ENGINE_RULES_VERSION,
     requestId: exchange.requestId,
     sessionId: exchange.session.binding.sessionId,
+    currency: exchange.session.binding.currency,
+    currencyExponent: exchange.session.binding.currencyExponent,
     balanceMinor: exchange.session.balanceMinor,
     betOptionsMinor: [...betOptionsMinor],
     defaultBetMinor,
     featureState: exchange.session.featureState,
   });
   if (decoded.type !== "session.opened") throw new RgsProtocolError("invalid session projection");
-  return decoded;
+  // 通用消息解码器只负责共享玩法协议；RGS 在其已验证的完整绑定上追加表现规则身份。
+  return {
+    ...decoded,
+    definitionBinding: Object.freeze({
+      gameId: exchange.session.binding.gameId,
+      definitionVersion: exchange.session.binding.definitionVersion,
+      definitionHash: exchange.session.binding.definitionHash,
+    }),
+  };
 }
 
 function position(value: unknown, path: string): { reel: number; row: number } {

@@ -1107,9 +1107,6 @@ export class RgsGateway implements GameGateway {
     pending.acknowledgementExhausted = true;
     pending.acknowledgementInFlight = false;
     pending.blocked = true;
-    this.wageringBlocked = true;
-    this.clearAcknowledgementRetryTimer();
-    this.clearAcknowledgementDeadlineTimer();
     const requestId = cause instanceof RgsHttpError || cause instanceof RgsNetworkError
       ? cause.requestId
       : undefined;
@@ -1123,24 +1120,47 @@ export class RgsGateway implements GameGateway {
       message: "Committed result acknowledgement requires an operator relaunch",
       retryable: false,
     };
+    this.terminateForOperatorRelaunch(terminal);
+  }
+
+  /**
+   * 终止一个无法在当前页安全恢复的授权上下文。此边界故意保留 pending 与持久账本，
+   * 让运营商新会话仍能按同一经济身份查询/交付可能已经提交的结果。
+   */
+  private terminateForOperatorRelaunch(cause: ServerError | Error): void {
+    if (this.closed) return;
     const notifyOffline = this.connected || this.connecting;
-    // 达到页内硬上限后等价于终止旧传输：取消 ACK/刷新/其他在途请求并
-    // 失效当前代次，但绝不清除待处理项或持久账本。新宿主会话仍会
-    // 从服务端唯一游标取回同一结果。
+    if (this.pending) {
+      this.pending.blocked = true;
+      this.pending.acknowledgementInFlight = false;
+    }
+    this.wageringBlocked = true;
     this.closed = true;
     this.connected = false;
     this.connecting = false;
     this.generation += 1;
     this.clearPollTimer();
+    this.clearAcknowledgementRetryTimer();
+    this.clearAcknowledgementDeadlineTimer();
     this.clearRefreshTimer();
     for (const controller of this.activeRequests) controller.abort();
     this.activeRequests.clear();
     this.accessToken = null;
     this.launchCode = null;
-    if (notifyOffline) this.callbacks.onStatus("offline");
-    this.callbacks.onError(terminal);
+    if (notifyOffline) {
+      try {
+        this.callbacks.onStatus("offline");
+      } catch {
+        // 状态观察者不拥有终止流程；即使 UI 状态回调故障，也必须继续通知诊断与宿主恢复。
+      }
+    }
     try {
-      this.callbacks.onOperatorSessionRequired?.(terminal);
+      this.callbacks.onError(cause);
+    } catch {
+      // 诊断观察者与宿主接管相互隔离，禁止前者异常吞掉唯一的恢复通知。
+    }
+    try {
+      this.callbacks.onOperatorSessionRequired?.(cause);
     } catch {
       // 宿主接管通知是旁路；回调异常不能复活旧令牌或解除结果交付栅栏。
     }
@@ -1625,25 +1645,33 @@ export class RgsGateway implements GameGateway {
     if (this.refreshPromise) return this.refreshPromise;
     const generation = this.generation;
     const refresh = (async (): Promise<void> => {
-      const sessionBefore = this.requireSession();
-      const requestId = this.nextRequestId();
-      const raw = await this.post(
-        this.config.refreshUrl,
-        bindingPayload(sessionBefore.binding),
-        requestId,
-        this.requireAccessToken(),
-      );
-      const exchange = decodeRgsExchange(
-        raw,
-        requestId,
-        sessionBefore.binding.operatorId,
-        sessionBefore.binding.sessionId,
-      );
-      if (exchange.session.status !== "ACTIVE"
-        || !sameCompleteBinding(exchange.session.binding, sessionBefore.binding)) {
-        throw new RgsProtocolError("RGS refresh changed the immutable session binding or status");
+      let exchange: DecodedRgsExchange;
+      try {
+        const sessionBefore = this.requireSession();
+        const requestId = this.nextRequestId();
+        const raw = await this.post(
+          this.config.refreshUrl,
+          bindingPayload(sessionBefore.binding),
+          requestId,
+          this.requireAccessToken(),
+        );
+        exchange = decodeRgsExchange(
+          raw,
+          requestId,
+          sessionBefore.binding.operatorId,
+          sessionBefore.binding.sessionId,
+        );
+        if (exchange.session.status !== "ACTIVE"
+          || !sameCompleteBinding(exchange.session.binding, sessionBefore.binding)) {
+          throw new RgsProtocolError("RGS refresh changed the immutable session binding or status");
+        }
+        this.validateRefreshedSession(exchange.session);
+      } catch (error) {
+        if (error instanceof RgsProtocolError && this.isCurrent(generation)) {
+          this.terminateForOperatorRelaunch(error);
+        }
+        throw error;
       }
-      this.validateRefreshedSession(exchange.session);
       if (!this.isCurrent(generation)) return;
       this.accessToken = exchange.accessToken;
       this.session = exchange.session;
@@ -1672,10 +1700,20 @@ export class RgsGateway implements GameGateway {
       }
       return;
     }
-    const start = BigInt(this.pending.ledger.startRevision);
-    const revision = BigInt(refreshed.revision);
-    if (revision < start || revision > start + 1n) {
-      throw new RgsProtocolError("refreshed RGS session is outside the pending round revision window");
+    const startRevision = BigInt(this.pending.ledger.startRevision);
+    const currentRevision = BigInt(current.revision);
+    const refreshedRevision = BigInt(refreshed.revision);
+    const revisionDelta = refreshedRevision - currentRevision;
+    // pending 轮次至多提交一次：refresh 可以保持当前游标，或同时推进 revision/sequence 一步。
+    // 已观察到提交后的当前游标绝不能倒退回 startRevision。
+    if (refreshedRevision < startRevision
+      || refreshedRevision > startRevision + 1n
+      || revisionDelta < 0n
+      || revisionDelta > 1n
+      || refreshed.sequence !== current.sequence + Number(revisionDelta)) {
+      throw new RgsProtocolError(
+        "refreshed RGS session is outside the pending round revision/sequence window",
+      );
     }
   }
 

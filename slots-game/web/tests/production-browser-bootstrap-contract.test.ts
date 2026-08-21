@@ -116,6 +116,7 @@ describe("production browser bootstrap contract", () => {
     expect(workflow).toContain("VITE_RGS_BASE_URL: https://rgs.ci.invalid");
     expect(workflow).not.toContain("https://rgs.ci.invalid/client/v1");
     expect(smoke).toContain('"--headless=new"');
+    expect(smoke).toContain('"--disable-breakpad"');
     expect(smoke).toContain('send("Runtime.evaluate"');
     expect(smoke).toContain("await import(url)");
     expect(smoke).toContain('from "../../deploy/web/content-security-policy.mjs"');
@@ -148,6 +149,11 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).toContain("result.rendererReady");
     expect(smoke).toContain("canvas.getContext('webgl2')");
     expect(smoke).toContain("static-uniform-sync");
+    expect(smoke).toContain("const startupTimeoutMs = 30_000;");
+    expect(smoke).toContain(
+      "const commandTimeoutMs = Math.max(startupTimeoutMs, transactionTimeoutMs) + 5_000;",
+    );
+    expect(smoke).toContain("diagnostics: state?.diagnostics ?? null");
     expect(smoke).not.toContain('"--disable-gpu"');
     expect(smoke).toContain('process.platform === "linux"');
     expect(smoke).toContain('"--enable-unsafe-swiftshader"');
@@ -155,6 +161,11 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).not.toContain("'unsafe-eval'");
     expect(sharedPolicy).not.toContain("'unsafe-eval'");
     expect(smoke).toContain("await waitForProcessExit(browser, 2_000)");
+    expect(smoke).toContain("await cleanupBrowserResources({");
+    expect(smoke).toContain("browser.stderr?.destroy()");
+    expect(smoke).toContain("serverValue.closeAllConnections?.()");
+    expect(smoke.indexOf("await cleanupBrowserResources({"))
+      .toBeLessThan(smoke.indexOf("生产浏览器事务门禁通过"));
     expect(smoke).toContain("maxRetries: 10");
     expect(smoke).toContain("retryDelay: 100");
   });

@@ -439,6 +439,8 @@ describe("RgsGateway", () => {
     expect(observed.log.sessions[0]).toMatchObject({
       sessionId: "session-a",
       engineRulesVersion: "slots-game-ways3-features-v4",
+      currency: "EUR",
+      currencyExponent: 2,
       balanceMinor: "1000",
       betOptionsMinor: ["50", "100", "200"],
       defaultBetMinor: "100",
@@ -1381,6 +1383,183 @@ describe("RgsGateway", () => {
     expect(spins.map(({ body }) => body.roundId)).toEqual(["round-a", "round-a"]);
     expect(spins[0]?.headers.get("Authorization")).toBe(`Bearer ${TOKEN_ONE}`);
     expect(spins[1]?.headers.get("Authorization")).toBe(`Bearer ${TOKEN_TWO}`);
+  });
+
+  it.each([
+    {
+      name: "currencyExponent",
+      refreshOverrides: { currencyExponent: 3 },
+    },
+    {
+      name: "session status",
+      refreshOverrides: { status: "BLOCKED" },
+    },
+  ])("terminates the browser transport and requests an operator relaunch when refresh drifts $name", async ({
+    refreshOverrides,
+  }) => {
+    const requests: SeenRequest[] = [];
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      requests.push(request);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/sessions/refresh")) {
+        return response(exchangeEnvelope(
+          requestId(init),
+          refreshOverrides,
+          TOKEN_TWO,
+        ));
+      }
+      return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { ledgerStorage: storage }));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    const callbackOrder: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onStatus: (status) => {
+        observed.callbacks.onStatus(status);
+        callbackOrder.push(`status:${status}`);
+      },
+      onError: (error) => {
+        observed.callbacks.onError(error);
+        callbackOrder.push("error");
+      },
+      onOperatorSessionRequired: (error) => {
+        operatorRecovery(error);
+        callbackOrder.push("operator");
+      },
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.sessions).toHaveLength(1);
+    expect(observed.log.results).toEqual([]);
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.errors[0]).toMatchObject({
+      name: "RgsProtocolError",
+      message: "RGS refresh changed the immutable session binding or status",
+    });
+    expect(requests.filter(({ url }) => url.endsWith("/spins"))).toHaveLength(1);
+    expect(gateway.hasPendingSpin).toBe(true);
+    expect(storage.clear).not.toHaveBeenCalled();
+    expect(gateway.requestSpin("round-b", "100")).toBe(false);
+    expect(operatorRecovery).toHaveBeenCalledOnce();
+    expect(operatorRecovery).toHaveBeenCalledWith(observed.log.errors[0]);
+    expect(callbackOrder.slice(-3)).toEqual(["status:offline", "error", "operator"]);
+
+    // 一次性 launch code 已消费；terminal refresh failure 必须使旧网关不可再次 connect。
+    gateway.connect();
+    await Promise.resolve();
+    expect(observed.log.errors).toHaveLength(1);
+    expect(requests.filter(({ url }) => url.endsWith("/sessions/exchange"))).toHaveLength(1);
+  });
+
+  it("isolates terminal status/error observers so operator recovery always runs", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (String(url).endsWith("/sessions/refresh")) {
+        return response(exchangeEnvelope(
+          requestId(init),
+          { currencyExponent: 3 },
+          TOKEN_TWO,
+        ));
+      }
+      return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const statuses: GatewayStatus[] = [];
+    const diagnosticObserver = vi.fn(() => {
+      throw new Error("diagnostic observer failed");
+    });
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      onStatus: (status) => {
+        statuses.push(status);
+        if (status === "offline") throw new Error("status observer failed");
+      },
+      onSession: vi.fn(),
+      onSpinResult: vi.fn(),
+      onError: diagnosticObserver,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await vi.waitFor(() => expect(statuses).toContain("online"));
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
+    expect(statuses.at(-1)).toBe("offline");
+    expect(diagnosticObserver).toHaveBeenCalledOnce();
+    expect(gateway.hasPendingSpin).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "revision",
+      refreshOverrides: { revision: "2", sequence: "2" },
+    },
+    {
+      name: "sequence",
+      // revision 只允许与对应的一次 sequence 递增同步前进。
+      refreshOverrides: { revision: "1", sequence: "9" },
+    },
+  ])("terminates and retains the pending ledger when refresh advances outside its $name window", async ({
+    refreshOverrides,
+  }) => {
+    const requests: SeenRequest[] = [];
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      requests.push(request);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/sessions/refresh")) {
+        return response(exchangeEnvelope(
+          requestId(init),
+          refreshOverrides,
+          TOKEN_TWO,
+        ));
+      }
+      return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { ledgerStorage: storage }));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.errors[0]).toMatchObject({
+      name: "RgsProtocolError",
+      message: "refreshed RGS session is outside the pending round revision/sequence window",
+    });
+    expect(operatorRecovery).toHaveBeenCalledOnce();
+    expect(operatorRecovery).toHaveBeenCalledWith(observed.log.errors[0]);
+    expect(requests.filter(({ url }) => url.endsWith("/spins"))).toHaveLength(1);
+    expect(gateway.hasPendingSpin).toBe(true);
+    expect(storage.clear).not.toHaveBeenCalled();
+    expect(gateway.requestSpin("round-b", "100")).toBe(false);
+
+    gateway.connect();
+    await Promise.resolve();
+    expect(observed.log.errors).toHaveLength(1);
   });
 
   it("blocks wagering and preserves the pending round when the one 401 refresh fails", async () => {

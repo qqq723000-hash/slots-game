@@ -20,6 +20,7 @@
   z-index: 1;
   display: block;
   overflow: hidden;
+  pointer-events: none;
   color: transparent;
   background: radial-gradient(#002448, #000e20);
   opacity: 0;
@@ -27,6 +28,7 @@
 }
 
 .launch-loading[data-visible="true"] {
+  pointer-events: auto;
   opacity: 1;
 }
 

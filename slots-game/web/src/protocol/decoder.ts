@@ -48,6 +48,7 @@ export type SpinResultProjectionDecodeStage =
 type SpinResultProjectionStageObserver = (stage: SpinResultProjectionDecodeStage) => void;
 
 const MONEY_PATTERN = /^(0|[1-9]\d*)$/;
+const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 const MAX_SIGNED_INT64 = 9_223_372_036_854_775_807n;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const symbolSet = new Set<string>(SYMBOL_IDS);
@@ -1133,6 +1134,8 @@ export function decodeServerMessage(
         "engineRulesVersion",
         "requestId",
         "sessionId",
+        "currency",
+        "currencyExponent",
         "balanceMinor",
         "betOptionsMinor",
         "defaultBetMinor",
@@ -1155,12 +1158,18 @@ export function decodeServerMessage(
           `engineRulesVersion must equal ${ENGINE_RULES_VERSION}`,
         );
       }
+      const currency = string(message.currency, "currency");
+      if (!CURRENCY_PATTERN.test(currency)) {
+        throw new ProtocolDecodeError("currency must be a three-letter uppercase code");
+      }
       return {
         type,
         protocolVersion: protocolVersion(message.protocolVersion),
         engineRulesVersion: ENGINE_RULES_VERSION,
         requestId: identifier(message.requestId, "requestId"),
         sessionId: identifier(message.sessionId, "sessionId"),
+        currency,
+        currencyExponent: boundedInteger(message.currencyExponent, "currencyExponent", 0, 6),
         balanceMinor: money(message.balanceMinor, "balanceMinor"),
         betOptionsMinor,
         defaultBetMinor,

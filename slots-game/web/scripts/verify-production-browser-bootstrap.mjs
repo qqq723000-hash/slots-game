@@ -18,9 +18,11 @@ import { validateReleaseRgsBuildEnvironment } from "../src/validateReleaseRgsBui
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distributionRoot = distributionRootFromArguments(process.argv.slice(2));
 const bootstrapFailureText = "The game could not start. Please try again.";
-const startupTimeoutMs = 15_000;
+// 该时限覆盖隔离 Chrome 的首次资产解析、WebGL 装配和 200ms 减少动态介绍；
+// 它不是线上启动性能预算。冷缓存机器仍必须在 30 秒内完成，否则门禁失败。
+const startupTimeoutMs = 30_000;
 const transactionTimeoutMs = 25_000;
-const commandTimeoutMs = transactionTimeoutMs + 5_000;
+const commandTimeoutMs = Math.max(startupTimeoutMs, transactionTimeoutMs) + 5_000;
 validateReleaseRgsBuildEnvironment(process.env);
 const browserRgsBaseUrl = process.env.VITE_RGS_BASE_URL;
 const browserHostOrigin = process.env.VITE_RGS_HOST_ORIGIN;
@@ -113,6 +115,7 @@ const profileDirectory = await mkdtemp(join(tmpdir(), "slots-production-browser-
 const server = createDistributionServer();
 const chrome = await launchChrome(chromeExecutable, profileDirectory);
 let pageSocket;
+let verifiedEntryPath;
 
 try {
   const address = await listenOnLoopback(server);
@@ -228,22 +231,19 @@ try {
     ]).size !== 3) {
     throw new Error(`生产浏览器事务缺少真实 WebGL 画面变化证据：${JSON.stringify(visualEvidence)}`);
   }
-  process.stdout.write(
-    `生产浏览器事务门禁通过：${basename(result.entryPath)} 已在精确 CSP 下完成会话交换、旋转、结果解码与表现、余额更新及结果 ACK。\n`,
-  );
+  verifiedEntryPath = basename(result.entryPath);
 } finally {
-  pageSocket?.close();
-  await closeServer(server);
-  await stopChrome(chrome.process);
-  // Chrome 主进程退出后，Linux 上的短命子进程仍可能在极短时间内关闭配置文件。
-  // 使用有界重试清理专用临时目录，既避免 CI 的 ENOTEMPTY 竞态，也不遗留浏览器状态。
-  await rm(profileDirectory, {
-    recursive: true,
-    force: true,
-    maxRetries: 10,
-    retryDelay: 100,
+  await cleanupBrowserResources({
+    browser: chrome.process,
+    pageSocket,
+    profileDirectory,
+    server,
   });
 }
+
+process.stdout.write(
+  `生产浏览器事务门禁通过：${verifiedEntryPath} 已在精确 CSP 下完成会话交换、旋转、结果解码与表现、余额更新及结果 ACK。\n`,
+);
 
 function createDistributionServer() {
   return createServer(async (request, response) => {
@@ -320,8 +320,73 @@ function listenOnLoopback(serverValue) {
   });
 }
 
-function closeServer(serverValue) {
-  return new Promise((resolvePromise) => serverValue.close(() => resolvePromise()));
+function closeServer(serverValue, timeoutMs = 2_000) {
+  if (!serverValue.listening) return Promise.resolve();
+  return new Promise((resolvePromise, rejectPromise) => {
+    let settled = false;
+    let forceTimer;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadlineTimer);
+      clearTimeout(forceTimer);
+      if (error) rejectPromise(error);
+      else resolvePromise();
+    };
+    const deadlineTimer = setTimeout(() => {
+      serverValue.closeAllConnections?.();
+      forceTimer = setTimeout(() => {
+        finish(new Error("生产浏览器静态服务器在强制关闭连接后仍未退出"));
+      }, 500);
+    }, timeoutMs);
+    serverValue.close((error) => finish(error));
+    serverValue.closeIdleConnections?.();
+  });
+}
+
+async function cleanupBrowserResources({ browser, pageSocket: socket, profileDirectory: profile, server: serverValue }) {
+  const cleanupErrors = [];
+  const capture = (error) => {
+    cleanupErrors.push(error instanceof Error ? error : new Error("生产浏览器资源清理失败"));
+  };
+
+  try {
+    socket?.close();
+  } catch (error) {
+    capture(error);
+  }
+  // 先终止 Chrome 释放其 HTTP/CDP 连接，再关闭本地静态服务器；各步骤独立失败闭合。
+  try {
+    await stopChrome(browser);
+  } catch (error) {
+    capture(error);
+  } finally {
+    // Crashpad 可能在 Chrome 主进程退出后继续继承 stderr 写端；主动销毁本门禁的读端，
+    // 避免孤儿 crashpad 让 Node 的事件循环永久等待管道 EOF。
+    browser.stderr?.destroy();
+  }
+  try {
+    await closeServer(serverValue);
+  } catch (error) {
+    capture(error);
+  }
+  try {
+    // Chrome 主进程退出后，Linux 上的短命子进程仍可能在极短时间内关闭配置文件。
+    // 使用有界重试清理专用临时目录，既避免 CI 的 ENOTEMPTY 竞态，也不遗留浏览器状态。
+    await rm(profile, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
+  } catch (error) {
+    capture(error);
+  }
+
+  if (cleanupErrors.length === 1) throw cleanupErrors[0];
+  if (cleanupErrors.length > 1) {
+    throw new AggregateError(cleanupErrors, "生产浏览器资源清理发生多个错误");
+  }
 }
 
 function findChromeExecutable() {
@@ -351,6 +416,7 @@ function launchChrome(executable, profileDirectoryValue) {
   const browser = spawn(executable, [
     "--headless=new",
     "--disable-background-networking",
+    "--disable-breakpad",
     "--disable-component-update",
     "--disable-default-apps",
     "--disable-extensions",
@@ -764,7 +830,16 @@ async function waitForApplicationReady(send, transportFailure) {
     if (state.ready || state.explicitFailure) return state;
     await delay(50);
   }
-  throw new Error(`生产应用没有进入可下注状态：${JSON.stringify(state?.finalState ?? null)}`);
+  throw new Error(`生产应用没有进入可下注状态：${JSON.stringify({
+    finalState: state?.finalState ?? null,
+    diagnostics: state?.diagnostics ?? null,
+    status: state?.status ?? null,
+    runtimeErrors: state?.runtimeErrors ?? [],
+    unhandledRejections: state?.unhandledRejections ?? [],
+    playerErrors: state?.playerErrors ?? [],
+    operatorSessionRequests: state?.operatorSessionRequests ?? [],
+    cspViolations: state?.cspViolations ?? [],
+  })}`);
 }
 
 async function armTransactionObservation(send) {
