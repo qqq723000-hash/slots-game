@@ -205,7 +205,7 @@ require_fixed 'AWS_HMAC_QUIESCE_CANCELLATION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_C
 require_fixed 'AWS_HMAC_QUIESCE_COMPLETION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_COMPLETION_PREFIX }}' \
   "$hmac_workflow"
 for workflow in "$infrastructure_workflow" "$application_workflow" "$hmac_workflow"; do
-  require_fixed 'group: slots-aws-environment-mutation-${{ inputs.target_environment || github.ref }}' "$workflow"
+  require_fixed "group: \${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}" "$workflow"
   require_fixed 'cancel-in-progress: false' "$workflow"
 done
 

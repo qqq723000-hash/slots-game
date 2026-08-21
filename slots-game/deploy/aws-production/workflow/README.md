@@ -1,6 +1,8 @@
 # AWS 工作流交付边界
 
-本目录由三个 GitHub Actions 工作流调用，三者按目标环境共享同一个不可取消 concurrency group：
+本目录由三个 GitHub Actions 工作流调用。只有人工 `workflow_dispatch` 按目标环境共享同一个不可取消
+concurrency group；PR 与 push 的无凭据静态 run 使用“workflow identity + ref”独立分组，避免 GitHub 在同组
+已有 running 与 pending 时用新的 pending 替换并取消另一条 workflow 的 required check：
 
 - `aws-infrastructure.yml`：所有 PR 与 `main` 分支受控路径 push 只执行无凭据静态门禁；人工 dispatch 后，
   计划角色生成二进制 Terraform plan，独立 apply Environment 审批后只下载并应用该次 job 返回的
@@ -192,8 +194,8 @@ VersionId/SHA、活动槽、旧 Secret 版本、旧 HMAC fingerprint、目标 `v
 证据上传后、lock 提交前的任何失败必须先写该证据的 cancellation marker，再恢复旧 HPA/API 并删除 lock；
 若 marker 写入失败则保持 API 零副本与 lock，禁止恢复旧 Pod。显式 `resume` 也先写 cancellation marker，且仅在
 最新 delivery 仍逐字等于证据观察到的旧 `steady` 时恢复；一旦进入 `hmac-maintenance` 或发布 target 新
-`steady`，只能继续 maintenance-complete。三个 AWS workflow 的共享环境级 concurrency group 消除检查与使用
-之间的跨工作流竞态。
+`steady`，只能继续 maintenance-complete。三个 AWS workflow 的人工 dispatch 共享环境级 concurrency group，
+消除检查与使用之间的跨工作流竞态；PR 与 push 静态门禁则按 workflow identity 和 ref 隔离，不互相取消。
 
 原停机证据的 60 分钟 TTL 只约束 Terraform `steady → hmac-maintenance` 的 plan/apply，绝不放宽。如果
 Terraform 已发布 target 新 `steady` 后原证据到期，application 私网 runner 可以读取其不可变历史内容，但必须

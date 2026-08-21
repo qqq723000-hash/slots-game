@@ -510,10 +510,22 @@ replace_once "      - \${{ 'slots-aws-private-hmac-quiescer' }}" \
 expect_rejected 'HMAC 停机证据 runner 标签可被 Environment 动态替换'
 
 reset_fixture
-replace_once 'group: slots-aws-environment-mutation-${{ inputs.target_environment || github.ref }}' \
-  'group: slots-hmac-only-${{ inputs.target_environment || github.ref }}' \
+replace_once "group: \${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}" \
+  'group: slots-aws-environment-mutation-${{ inputs.target_environment || github.ref }}' \
   "$fixture_root/.github/workflows/aws-hmac-quiesce-evidence.yml"
-expect_rejected 'HMAC 工作流脱离跨工作流环境级互斥锁'
+expect_rejected 'PR 静态工作流错误进入跨工作流环境级互斥锁'
+
+reset_fixture
+replace_once "format('slots-aws-static-{0}-{1}', github.workflow, github.ref)" \
+  "format('slots-aws-static-{0}', github.ref)" \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected 'PR 静态 concurrency group 缺少 workflow identity'
+
+reset_fixture
+replace_once "format('slots-aws-static-{0}-{1}', github.workflow, github.ref)" \
+  "format('slots-aws-static-{0}-{1}', github.workflow, github.sha)" \
+  "$fixture_root/.github/workflows/aws-infrastructure.yml"
+expect_rejected 'PR 静态 concurrency group 未绑定 ref'
 
 reset_fixture
 replace_once "trap 'exit 143' TERM" 'trap cleanup TERM' \

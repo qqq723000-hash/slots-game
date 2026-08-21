@@ -42,7 +42,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: slots-aws-environment-mutation-${{ inputs.target_environment || github.ref }}
+  group: ${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: false
 
 jobs:
