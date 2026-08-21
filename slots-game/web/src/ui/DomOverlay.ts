@@ -1410,10 +1410,40 @@ export class DomOverlay {
   private soundToggleHandler: SoundToggleHandler = () => undefined;
   private fastPlayHandler: FastPlayHandler = () => undefined;
   private officialHelpResizeObserver: ResizeObserver | null = null;
+  private officialHelpResizeFrameHandle: number | null = null;
+  private officialHelpResizeGeneration = 0;
+  private destroyed = false;
   private readonly handleOfficialHelpResize = (): void => {
-    this.syncMobileDomLayout();
-    this.syncOfficialHelpProjection();
+    this.scheduleObservedLayoutSync();
   };
+
+  /**
+   * ResizeObserver 回调内同步修改 host/帮助视口会重新触发布局观察。把 observer
+   * 和 window.resize 的兜底通知收敛到同一动画帧，显式 ResponsiveLayout 提交
+   * 则继续走同步的 setResponsiveLayout 路径。
+   */
+  private scheduleObservedLayoutSync(): void {
+    if (this.destroyed || this.officialHelpResizeFrameHandle !== null) return;
+    const generation = this.officialHelpResizeGeneration;
+    this.officialHelpResizeFrameHandle = requestAnimationFrame(() => {
+      if (this.destroyed || generation !== this.officialHelpResizeGeneration) return;
+      try {
+        this.syncMobileDomLayout();
+        this.syncOfficialHelpProjection();
+      } finally {
+        if (generation === this.officialHelpResizeGeneration) {
+          this.officialHelpResizeFrameHandle = null;
+        }
+      }
+    });
+  }
+
+  private cancelObservedLayoutSync(): void {
+    const handle = this.officialHelpResizeFrameHandle;
+    this.officialHelpResizeFrameHandle = null;
+    this.officialHelpResizeGeneration += 1;
+    if (handle !== null) cancelAnimationFrame(handle);
+  }
 
   constructor(host: HTMLElement) {
     this.host = host;
@@ -2484,6 +2514,7 @@ export class DomOverlay {
 
   /** ResponsiveLayout 的同一提交直接驱动 HUD；ResizeObserver 只保留为内容变化兜底。 */
   setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
+    if (this.destroyed) return;
     this.syncMobileDomLayout(snapshot);
     this.syncOfficialHelpProjection();
   }
@@ -2930,6 +2961,9 @@ export class DomOverlay {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.cancelObservedLayoutSync();
     this.cancelWinCounter();
     this.clearAutoplayTimer();
     this.wheelHyperspinEffect.destroy();
@@ -3228,7 +3262,9 @@ export class DomOverlay {
       this.panelLifecycle.setVisible(previousTab, false);
       this.panelLifecycle.setVisible(tab, true);
     }
-    if (tab === "paytable") queueMicrotask(() => this.syncOfficialHelpProjection());
+    // 菜单从 inert/隐藏切为可见后，纵向滚动条才拥有最终宽度；下一帧按最终
+    // clientWidth 重算作者面，避免沿用打开前的宽投影而裁掉右缘。
+    if (tab === "paytable") this.scheduleObservedLayoutSync();
   }
 
   private setGameMenuOpen(open: boolean, tab = this.activeMenuTab, restoreFocus = true): void {

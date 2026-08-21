@@ -13,6 +13,10 @@ import {
   verifyReleaseContentSecurityPolicy,
 } from "../../deploy/web/content-security-policy.mjs";
 import { createControlledRgsTransactionFixture } from "./production-browser-transaction-fixture.mjs";
+import {
+  BROWSER_RUNTIME_PHASES,
+  BROWSER_TRANSACTION_PROBE_SOURCE,
+} from "./production-browser-runtime-probe.mjs";
 import { validateReleaseRgsBuildEnvironment } from "../src/validateReleaseRgsBuildConfig.mjs";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -91,44 +95,6 @@ verifyReleaseContentSecurityPolicy(browserContentSecurityPolicy, {
   rgsBaseUrl: browserRgsBaseUrl,
   hostOrigin: browserHostOrigin,
 });
-
-const BROWSER_TRANSACTION_PROBE_SOURCE = `
-  (() => {
-    const probe = {
-      operatorSessionRequests: [],
-      playerErrors: [],
-      runtimeErrors: [],
-      unhandledRejections: [],
-      transaction: null,
-    };
-    Object.defineProperty(globalThis, "__slotsProductionTransactionProbe", {
-      configurable: false,
-      enumerable: false,
-      value: probe,
-      writable: false,
-    });
-    addEventListener("slots-game:operator-session-required", (event) => {
-      probe.operatorSessionRequests.push({
-        code: String(event?.detail?.code ?? "unknown").slice(0, 64),
-        reason: String(event?.detail?.reason ?? "unknown").slice(0, 64),
-      });
-    });
-    addEventListener("slots-game:player-error", (event) => {
-      probe.playerErrors.push(String(event?.detail?.code ?? "unknown").slice(0, 64));
-    });
-    addEventListener("error", (event) => {
-      probe.runtimeErrors.push(String(event?.error?.name ?? "Error").slice(0, 64));
-    });
-    addEventListener("unhandledrejection", (event) => {
-      probe.unhandledRejections.push(String(event?.reason?.name ?? "UnhandledRejection").slice(0, 64));
-    });
-    try {
-      localStorage.setItem("primal-rampage.feature-preview.dismissed.v1", "1");
-    } catch {
-      probe.runtimeErrors.push("FeaturePreviewStorageUnavailable");
-    }
-  })();
-`;
 
 const contentTypes = Object.freeze({
   ".atlas": "text/plain; charset=utf-8",
@@ -233,8 +199,10 @@ try {
       transactionEvidence: result.transactionEvidence,
     })}`);
   }
-  if (result.runtimeErrors.length > 0 || result.unhandledRejections.length > 0) {
-    throw new Error("生产浏览器事务发生未处理的运行时异常");
+  if (result.runtimeDiagnostics.fatalCount > 0) {
+    throw new Error(
+      `生产浏览器事务发生未处理的运行时异常：${JSON.stringify(result.runtimeDiagnostics)}`,
+    );
   }
   const transactionEvidence = result.transactionEvidence;
   if (transactionEvidence.exchangeCount !== 1
@@ -719,6 +687,7 @@ async function verifyBootstrap(
   });
   await send("Page.navigate", { url: pageUrl });
   await waitForDocumentReady(send);
+  await setBrowserProbePhase(send, "bootstrap");
   if (documentContentSecurityPolicy !== browserContentSecurityPolicy) {
     throw new Error("生产浏览器主文档未收到共享的精确发布 CSP");
   }
@@ -806,9 +775,11 @@ async function verifyBootstrap(
       })()
     `,
   });
+  await setBrowserProbePhase(send, "opening-overlay");
   const openingOverlayEvidence = bootstrap.rendererReady && bootstrap.moduleFailures.length === 0
     ? await verifyOpeningOverlayLayout(send, transactionFixture, () => transportFailure)
     : null;
+  await setBrowserProbePhase(send, "ready");
   let browserState = await waitForApplicationReady(send, () => transportFailure);
   if (!browserState.ready) {
     return completeBrowserResult(bootstrap, browserState, transactionFixture.snapshot());
@@ -831,6 +802,7 @@ async function verifyBootstrap(
   const preTransitionTransaction = transactionFixture.snapshot();
   const preTransitionDocumentIdentity = preTransitionLayout.documentIdentityToken;
 
+  await setBrowserProbePhase(send, "mobile-matrix");
   await setTouchLayoutCapability(send, true);
   const mobileViewportEvidence = await verifyContinuousViewportTransitions(
     send,
@@ -845,6 +817,7 @@ async function verifyBootstrap(
       viewports: CONTINUOUS_VIEWPORTS,
     },
   );
+  await setBrowserProbePhase(send, "help-matrix");
   const helpViewportEvidence = await verifyOfficialHelpLayout(
     send,
     transactionFixture,
@@ -856,6 +829,7 @@ async function verifyBootstrap(
     },
   );
 
+  await setBrowserProbePhase(send, "desktop-matrix");
   await setTouchLayoutCapability(send, false);
   const desktopViewportEvidence = await verifyContinuousViewportTransitions(
     send,
@@ -904,6 +878,7 @@ async function verifyBootstrap(
       === JSON.stringify(preTransitionTransaction),
   });
 
+  await setBrowserProbePhase(send, "transaction-active");
   await armTransactionObservation(send);
   const baselineCapture = await captureGameCanvas(send);
   await clickPrimarySpin(send);
@@ -913,6 +888,7 @@ async function verifyBootstrap(
     () => transportFailure,
   );
   const activeCapture = await captureGameCanvas(send);
+  await setBrowserProbePhase(send, "transaction-settle");
   browserState = await waitForTransactionCompletion(
     send,
     transactionFixture,
@@ -1106,6 +1082,22 @@ async function setTouchLayoutCapability(send, enabled) {
   // CDP 会触发 pointer media-query change；给应用一帧机会同步布局通道，首个
   // setDeviceMetricsOverride 随后仍会等待两次稳定采样，不依赖这个短延迟判绿。
   await delay(50);
+}
+
+async function setBrowserProbePhase(send, phase) {
+  if (!BROWSER_RUNTIME_PHASES.includes(phase)) {
+    throw new Error("生产浏览器运行时探针阶段不受支持");
+  }
+  const accepted = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `(() => {
+      const probe = globalThis.__slotsProductionTransactionProbe;
+      if (!probe || typeof probe.setPhase !== 'function') return false;
+      probe.setPhase(${JSON.stringify(phase)});
+      return probe.phase === ${JSON.stringify(phase)};
+    })()`,
+  });
+  if (!accepted) throw new Error("生产浏览器运行时探针无法提交阶段");
 }
 
 async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
@@ -1329,7 +1321,8 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
       help = await readOfficialHelpLayout(send);
       if (help?.menuOpen && help?.presentationRulesStatus === "bound"
         && !help?.viewportHidden && Number.isFinite(help?.scaleX)
-        && Number.isFinite(help?.scaleY)) break;
+        && Number.isFinite(help?.scaleY)
+        && officialHelpProjectionSettled(help)) break;
       await delay(50);
     }
     const detail = () => JSON.stringify({ viewport, surface, help });
@@ -1346,6 +1339,9 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
     // 只把玩家实际可滚动的 viewport 当作溢出边界，不能把内部作者坐标误判成滚动。
     if (help.viewportScrollWidth > help.viewportClientWidth + 1) {
       throw new Error(`正式浏览器帮助页发生水平滚动溢出：${detail()}`);
+    }
+    if (help.projectionScrollWidth > help.projectionClientWidth + 1) {
+      throw new Error(`正式浏览器帮助页投影宽度没有按最终滚动条收敛：${detail()}`);
     }
     if (!help.viewportRect || !help.projectionRect || !help.authoredRect
       || help.projectionRect.left < help.viewportRect.left - 0.75
@@ -1389,6 +1385,16 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
     await waitForElementDataset(send, '[data-role="game-menu"]', "open", "false");
   }
   return Object.freeze({ steps: Object.freeze(steps) });
+}
+
+function officialHelpProjectionSettled(help) {
+  if (!help?.viewportRect || !help?.projectionRect || !help?.authoredRect) return false;
+  return help.projectionScrollWidth <= help.projectionClientWidth + 1
+    && Math.abs(help.authoredRect.width - help.projectionRect.width) <= 0.75
+    && help.projectionRect.left >= help.viewportRect.left - 0.75
+    && help.projectionRect.right <= help.viewportRect.right + 0.75
+    && help.authoredRect.left >= help.viewportRect.left - 0.75
+    && help.authoredRect.right <= help.viewportRect.right + 0.75;
 }
 
 async function readOfficialHelpLayout(send) {
@@ -2088,8 +2094,7 @@ function completeBrowserResult(bootstrap, browserState, transactionEvidence, vis
     cspViolations: browserState.cspViolations,
     operatorSessionRequests: browserState.operatorSessionRequests,
     playerErrors: browserState.playerErrors,
-    runtimeErrors: browserState.runtimeErrors,
-    unhandledRejections: browserState.unhandledRejections,
+    runtimeDiagnostics: browserState.runtimeDiagnostics,
     deliveryStages: observed.deliveryStages ?? [],
     reelStates: observed.reelStates ?? [],
     spinModes: observed.spinModes ?? [],
@@ -2130,12 +2135,19 @@ async function readBrowserState(send) {
         const playerErrors = Array.isArray(probe?.playerErrors)
           ? probe.playerErrors.slice(0, 16)
           : ["probe-missing"];
-        const runtimeErrors = Array.isArray(probe?.runtimeErrors)
-          ? probe.runtimeErrors.slice(0, 16)
-          : ["probe-missing"];
-        const unhandledRejections = Array.isArray(probe?.unhandledRejections)
-          ? probe.unhandledRejections.slice(0, 16)
-          : ["probe-missing"];
+        const runtimeDiagnostics = probe?.runtimeDiagnostics ?? {
+          schema: 1,
+          fatalCount: 1,
+          warningCount: 0,
+          droppedCount: 0,
+          events: [{
+            kind: "window-error",
+            code: "UNKNOWN_RUNTIME_ERROR",
+            phase: "document-start",
+            severity: "fatal",
+            count: 1,
+          }],
+        };
         const transaction = probe?.transaction;
         const cspViolations = Array.isArray(cspSnapshot)
           ? cspSnapshot.slice(0, 16).map((violation) => ({
@@ -2173,15 +2185,13 @@ async function readBrowserState(send) {
             || finalState.launchPhase === 'failed'
             || operatorSessionRequests.length > 0
             || playerErrors.length > 0
-            || runtimeErrors.length > 0
-            || unhandledRejections.length > 0
+            || runtimeDiagnostics.fatalCount > 0
             || cspViolations.length > 0,
           status: document.querySelector('.launch-loading__status')?.textContent ?? null,
           cspViolations,
           operatorSessionRequests,
           playerErrors,
-          runtimeErrors,
-          unhandledRejections,
+          runtimeDiagnostics,
           transaction: transaction ? {
             balanceValues: transaction.balanceValues.slice(0, 32),
             deliveryStages: transaction.deliveryStages.slice(0, 64),
@@ -2210,8 +2220,7 @@ async function waitForApplicationReady(send, transportFailure) {
     finalState: state?.finalState ?? null,
     diagnostics: state?.diagnostics ?? null,
     status: state?.status ?? null,
-    runtimeErrors: state?.runtimeErrors ?? [],
-    unhandledRejections: state?.unhandledRejections ?? [],
+    runtimeDiagnostics: state?.runtimeDiagnostics ?? null,
     playerErrors: state?.playerErrors ?? [],
     operatorSessionRequests: state?.operatorSessionRequests ?? [],
     cspViolations: state?.cspViolations ?? [],

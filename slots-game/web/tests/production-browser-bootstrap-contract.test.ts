@@ -101,6 +101,10 @@ describe("production browser bootstrap contract", () => {
       new URL("../scripts/production-browser-transaction-fixture.mjs", import.meta.url),
       "utf8",
     );
+    const runtimeProbe = readFileSync(
+      new URL("../scripts/production-browser-runtime-probe.mjs", import.meta.url),
+      "utf8",
+    );
     const main = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
     const sharedPolicy = readFileSync(
       new URL("../../deploy/web/content-security-policy.mjs", import.meta.url),
@@ -124,6 +128,14 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).toContain("CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE");
     expect(sharedPolicy).toContain("securitypolicyviolation");
     expect(smoke).toContain("result.cspViolations.length > 0");
+    expect(smoke).toContain("result.runtimeDiagnostics.fatalCount > 0");
+    expect(smoke).toContain("await setBrowserProbePhase(send, \"mobile-matrix\")");
+    expect(smoke).toContain("await setBrowserProbePhase(send, \"transaction-settle\")");
+    expect(runtimeProbe).toContain("RESIZE_OBSERVER_LOOP");
+    expect(runtimeProbe).toContain("FEATURE_PREVIEW_STORAGE_UNAVAILABLE");
+    expect(runtimeProbe).toContain("droppedCount");
+    expect(runtimeProbe).not.toContain("event.error.stack");
+    expect(runtimeProbe).not.toContain("event.reason.message");
     expect(smoke).toContain('send("Network.enable")');
     expect(smoke).toContain('send("Fetch.enable", {');
     expect(smoke).toContain('send("Fetch.fulfillRequest", {');

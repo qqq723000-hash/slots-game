@@ -41,6 +41,103 @@ describe("fluid mobile DOM layout", () => {
     expect(syncOfficialHelpProjection).toHaveBeenCalledTimes(1);
   });
 
+  it("coalesces observed and window resize notifications without writing in the callback", () => {
+    const queuedFrames: FrameRequestCallback[] = [];
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      queuedFrames.push(callback);
+      return 41;
+    });
+    const syncMobileDomLayout = vi.fn();
+    const syncOfficialHelpProjection = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", requestFrame);
+    try {
+      const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+      Object.assign(overlay as unknown as Record<string, unknown>, {
+        destroyed: false,
+        officialHelpResizeFrameHandle: null,
+        officialHelpResizeGeneration: 0,
+        syncMobileDomLayout,
+        syncOfficialHelpProjection,
+      });
+      const schedule = (overlay as unknown as {
+        scheduleObservedLayoutSync: () => void;
+      }).scheduleObservedLayoutSync.bind(overlay);
+
+      // ResizeObserver 与 window.resize 共用此路径；两种通知都不能在回调中
+      // 同步修改任一被观察的布局表面。
+      schedule();
+      schedule();
+
+      expect(requestFrame).toHaveBeenCalledTimes(1);
+      expect(syncMobileDomLayout).not.toHaveBeenCalled();
+      expect(syncOfficialHelpProjection).not.toHaveBeenCalled();
+
+      const frame = queuedFrames[0];
+      if (!frame) throw new Error("Expected one queued layout frame");
+      frame(16);
+
+      expect(syncMobileDomLayout).toHaveBeenCalledTimes(1);
+      expect(syncOfficialHelpProjection).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("cancels the queued resize frame on destroy and makes a late callback inert", () => {
+    const queuedFrames: FrameRequestCallback[] = [];
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      queuedFrames.push(callback);
+      return 73;
+    });
+    const cancelFrame = vi.fn();
+    const syncMobileDomLayout = vi.fn();
+    const syncOfficialHelpProjection = vi.fn();
+    const removeEventListener = vi.fn();
+    const eventTarget = { removeEventListener };
+    vi.stubGlobal("requestAnimationFrame", requestFrame);
+    vi.stubGlobal("cancelAnimationFrame", cancelFrame);
+    vi.stubGlobal("document", { removeEventListener: vi.fn() });
+    vi.stubGlobal("window", { removeEventListener: vi.fn() });
+    try {
+      const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+      Object.assign(overlay as unknown as Record<string, unknown>, {
+        destroyed: false,
+        officialHelpResizeFrameHandle: null,
+        officialHelpResizeGeneration: 0,
+        syncMobileDomLayout,
+        syncOfficialHelpProjection,
+        cancelWinCounter: vi.fn(),
+        clearAutoplayTimer: vi.fn(),
+        wheelHyperspinEffect: { destroy: vi.fn() },
+        betChoices: eventTarget,
+        gameMenu: eventTarget,
+        autoplayOptions: eventTarget,
+        autoplayStopToggle: eventTarget,
+        autoplayStopConditions: eventTarget,
+        officialHelpResizeObserver: { disconnect: vi.fn() },
+        toastTimer: null,
+      });
+      const schedule = (overlay as unknown as {
+        scheduleObservedLayoutSync: () => void;
+      }).scheduleObservedLayoutSync.bind(overlay);
+
+      schedule();
+      const staleFrame = queuedFrames[0];
+      if (!staleFrame) throw new Error("Expected one queued layout frame");
+
+      overlay.destroy();
+
+      expect(cancelFrame).toHaveBeenCalledExactlyOnceWith(73);
+      staleFrame(32);
+      schedule();
+      expect(requestFrame).toHaveBeenCalledTimes(1);
+      expect(syncMobileDomLayout).not.toHaveBeenCalled();
+      expect(syncOfficialHelpProjection).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each(MOBILE_VIEWPORTS)(
     "keeps HUD controls inside the gameplay region without overlap at %sx%s",
     (physicalWidth, physicalHeight) => {
