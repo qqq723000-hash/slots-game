@@ -100,7 +100,7 @@ export interface ResponsiveLayoutSnapshotOptions {
   readonly mobileProfile?: MobileLayoutProfile;
   /** Feature Preview 有一套单独的官方长宽比规则。 */
   readonly fpsProfile?: MobileFpsLayoutProfile;
-  /** 确定性主机覆盖；生产环境始终由物理视口选择固定设计表面。 */
+  /** 确定性主机覆盖；只覆盖参考档位标签，绝不把连续设计域锁回预设尺寸。 */
   readonly surfaceProfile?: ResponsiveSurfaceProfile;
   /** 只控制 backing resolution，绝不进入逻辑几何。 */
   readonly pixelRatio?: number;
@@ -109,11 +109,14 @@ export interface ResponsiveLayoutSnapshotOptions {
 export interface ResponsiveChannelEnvironment {
   readonly search?: string;
   readonly coarsePointer?: boolean;
+  readonly finePointer?: boolean;
+  readonly touchPoints?: number;
 }
 
 export interface ResponsiveLayoutRuntimeOptions {
   /**
-   * 冻结发射器通道。运行时视口/指针更改会调整此合成的大小，但绝不能交换其已加载的资源系列。
+   * 显式布局通道覆盖，仅供确定性宿主/测试使用。省略时每次提交都会重新解析
+   * 视口与输入能力；资源通道由 AppController 独立冻结，不能从这里推断。
    */
   readonly channel?: ResponsiveChannel;
   /** 确定性生命周期测试接缝；生产环境使用 requestAnimationFrame。 */
@@ -150,14 +153,17 @@ const MOBILE_PORTRAIT_STATUS_HEIGHT_RATIO = 0.1;
 const MOBILE_LANDSCAPE_STATUS_HEIGHT_RATIO = 3 / 64;
 const TABLET_SHORT_EDGE_MIN = 600;
 
-interface ResponsiveDesignSurface {
+export interface ResponsiveDesignSurface {
   readonly width: number;
   readonly height: number;
+}
+
+interface ResponsiveReferenceSurface extends ResponsiveDesignSurface {
   readonly mobileProfile: MobileLayoutProfile | null;
 }
 
 export const RESPONSIVE_DESIGN_SURFACES: Readonly<
-  Record<ResponsiveSurfaceProfile, ResponsiveDesignSurface>
+  Record<ResponsiveSurfaceProfile, ResponsiveReferenceSurface>
 > = Object.freeze({
   desktop: Object.freeze({ width: LOGICAL_WIDTH, height: LOGICAL_HEIGHT, mobileProfile: null }),
   "phone-pt": Object.freeze({ width: 390, height: 844, mobileProfile: "pt" }),
@@ -165,6 +171,14 @@ export const RESPONSIVE_DESIGN_SURFACES: Readonly<
   "tablet-pt": Object.freeze({ width: 633, height: 844, mobileProfile: "iPad_pt" }),
   "tablet-ls": Object.freeze({ width: 844, height: 633, mobileProfile: "ls" }),
 });
+
+/**
+ * 捕获尺寸只标定逻辑长边，不构成设备白名单。常见手机、折叠屏和平板长宽比
+ * 都连续映射；只有超出 9:22/22:9 的病态视口才钳制并由根投影留黑边。
+ */
+const MOBILE_DESIGN_LONG_EDGE = 844;
+const MOBILE_MIN_DESIGN_ASPECT = 9 / 22;
+const MOBILE_MAX_DESIGN_ASPECT = 22 / 9;
 
 function nodeLayout(
   left: number,
@@ -272,9 +286,40 @@ export function responsiveSurfaceProfile(
 }
 
 /**
+ * 将物理长宽比连续转换为移动逻辑设计域。返回值只改变逻辑坐标密度，最终到
+ * 物理视口仍由 `computeResponsiveFrameGeometry` 执行唯一一次等比根缩放。
+ */
+export function responsiveDesignSurface(
+  viewportWidth: number,
+  viewportHeight: number,
+  channel: ResponsiveChannel,
+): ResponsiveDesignSurface {
+  if (channel === "desktop") {
+    return Object.freeze({
+      width: RESPONSIVE_DESIGN_SURFACES.desktop.width,
+      height: RESPONSIVE_DESIGN_SURFACES.desktop.height,
+    });
+  }
+
+  const physicalWidth = finiteDimension(viewportWidth);
+  const physicalHeight = finiteDimension(viewportHeight);
+  const rawAspect = physicalHeight > 0
+    ? physicalWidth / physicalHeight
+    : MOBILE_MAX_DESIGN_ASPECT;
+  const aspect = Math.max(
+    MOBILE_MIN_DESIGN_ASPECT,
+    Math.min(MOBILE_MAX_DESIGN_ASPECT, rawAspect),
+  );
+  return aspect <= 1
+    ? Object.freeze({ width: MOBILE_DESIGN_LONG_EDGE * aspect, height: MOBILE_DESIGN_LONG_EDGE })
+    : Object.freeze({ width: MOBILE_DESIGN_LONG_EDGE, height: MOBILE_DESIGN_LONG_EDGE / aspect });
+}
+
+/**
  * 用于下一个渲染器/UI 集成通道的纯通道感知接口。
  *
- * Desktop 有意返回未更改的固定 1280x720 投影。移动设备返回物理游戏/状态区域以及已经解析的节点转换，因此消费者不需要复制捕获的布局数学。
+ * Desktop 有意返回未更改的固定 1280x720 投影。移动设备按当前物理长宽比
+ * 连续生成逻辑设计域及节点转换，因此消费者不需要复制捕获的布局数学。
  */
 export function computeResponsiveLayoutSnapshot(
   viewportWidth: number,
@@ -290,7 +335,7 @@ export function computeResponsiveLayoutSnapshot(
     && (channel === "desktop") === (requestedSurface === "desktop")
     ? requestedSurface
     : responsiveSurfaceProfile(physicalWidth, physicalHeight, channel);
-  const surface = RESPONSIVE_DESIGN_SURFACES[surfaceProfile];
+  const surface = responsiveDesignSurface(physicalWidth, physicalHeight, channel);
   const width = surface.width;
   const height = surface.height;
   const physicalViewportRegion = Object.freeze({
@@ -329,10 +374,11 @@ export function computeResponsiveLayoutSnapshot(
     });
   }
 
+  // Profile 是按长宽比选择的内容规则，而不是固定画布。每次 resize 都重新路由。
   const baseProfile = options.mobileProfile
-    ?? surface.mobileProfile
-    ?? mobileLayoutProfile(width, height);
-  const fpsProfile = options.fpsProfile ?? mobileFpsLayoutProfile(width, height);
+    ?? mobileLayoutProfile(physicalWidth, physicalHeight);
+  const fpsProfile = options.fpsProfile
+    ?? mobileFpsLayoutProfile(physicalWidth, physicalHeight);
   const statusHeight = Math.min(
     height,
     Math.round(height * (
@@ -388,7 +434,36 @@ export function responsiveChannelFromEnvironment(
   return environment.coarsePointer ? "mobile" : "desktop";
 }
 
-/** 将固定设计表面以一次等比 contain 缩放居中，绝不 cover、裁切或分别拉伸坐标轴。 */
+/**
+ * 解析当前构图通道，不读取资产用的 `channel=` 参数。桌面小窗口仍保持 PC
+ * 构图；只有触控/粗指针设备、显式 `layout=` 或典型手机短边才进入移动构图。
+ */
+export function responsiveLayoutChannel(
+  viewportWidth: number,
+  viewportHeight: number,
+  environment: ResponsiveChannelEnvironment = {},
+): ResponsiveChannel {
+  const params = new URLSearchParams(environment.search ?? "");
+  const explicit = params.get("layout")?.toLowerCase();
+  if (explicit === "mobile" || explicit === "desktop") return explicit;
+
+  const width = finiteDimension(viewportWidth);
+  const height = finiteDimension(viewportHeight);
+  if (width <= 0 || height <= 0) return "desktop";
+  if (environment.coarsePointer) return "mobile";
+  // 触控笔记本通常同时暴露 maxTouchPoints 与精细主指针，仍应保持 PC 构图。
+  if (environment.finePointer) return "desktop";
+  const compactTouchDevice = Number.isFinite(environment.touchPoints)
+    && (environment.touchPoints ?? 0) > 0
+    && Math.min(width, height) <= 768
+    && Math.max(width, height) <= 1_366;
+  if (compactTouchDevice) return "mobile";
+  return height >= width
+    ? (width <= 600 ? "mobile" : "desktop")
+    : (height <= 480 ? "mobile" : "desktop");
+}
+
+/** 将设计表面以一次等比 contain 缩放居中，绝不 cover、裁切或分别拉伸坐标轴。 */
 export function computeResponsiveFrameGeometry(
   viewportWidth: number,
   viewportHeight: number,
@@ -590,7 +665,7 @@ export class ResponsiveLayout {
   private visualViewport: VisualViewport | null = null;
   private scheduledFrame: number | null = null;
   private lastCommitKey: string | null = null;
-  private readonly channel: ResponsiveChannel;
+  private readonly channelOverride: ResponsiveChannel | null;
   private readonly requestFrame: (callback: FrameRequestCallback) => number;
   private readonly cancelFrame: (handle: number) => void;
 
@@ -602,10 +677,7 @@ export class ResponsiveLayout {
     ) => void = () => undefined,
     options: ResponsiveLayoutRuntimeOptions = {},
   ) {
-    this.channel = options.channel ?? responsiveChannelFromEnvironment({
-      search: globalThis.location?.search,
-      coarsePointer: globalThis.matchMedia?.("(pointer: coarse)").matches ?? false,
-    });
+    this.channelOverride = options.channel ?? null;
     this.requestFrame = options.requestFrame ?? ((callback) => {
       if (typeof globalThis.requestAnimationFrame === "function") {
         return globalThis.requestAnimationFrame(callback);
@@ -678,7 +750,15 @@ export class ResponsiveLayout {
     const snapshot = computeResponsiveLayoutSnapshot(
       width,
       height,
-      { channel: this.channel, pixelRatio: globalThis.devicePixelRatio },
+      {
+        channel: this.channelOverride ?? responsiveLayoutChannel(width, height, {
+          search: globalThis.location?.search,
+          coarsePointer: globalThis.matchMedia?.("(pointer: coarse)").matches ?? false,
+          finePointer: globalThis.matchMedia?.("(pointer: fine)").matches ?? false,
+          touchPoints: globalThis.navigator?.maxTouchPoints,
+        }),
+        pixelRatio: globalThis.devicePixelRatio,
+      },
     );
     const geometry = snapshot.frame;
     const commitKey = [

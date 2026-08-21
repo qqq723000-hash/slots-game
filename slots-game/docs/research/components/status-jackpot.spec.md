@@ -16,13 +16,13 @@
 - labels and values: 同一文本基线，无人为 flex gap
 - jackpot font: `KANIT_BOLD`; title 45px; value 48px; stroke `#22140e` 6px
 
-### Phone 390×844
+### Phone reference 390×844
 
 - status font: `ROBOTO_CONDENSED_BOLD`
 - size and region: 由 `ResponsiveLayout` 的移动变量投影
 - jackpot layout: canonical `pt`
 
-### Tablet 633×844
+### Tablet reference 633×844
 
 - status font: `ROBOTO_CONDENSED_BOLD`
 - size and region: 由 `ResponsiveLayout` 的平板变量投影
@@ -39,9 +39,10 @@
 
 - MINI, MINOR, MAJOR, MEGA, GRAND.
 - Balance, Bet, Win with session-bound currency/exponent.
+- Maximum int64 display values remain complete: portrait uses three rows and landscape uses three columns rather than ellipsis.
 
 ## Responsive behavior
 
 - PC: vertical left rail and no mobile Balance/Bet backplates.
-- Phone: dedicated mobile composition and single compact status region.
-- Tablet: dedicated `iPad_pt` composition, not scaled phone layout.
+- Phone: a continuous mobile composition and compact status region; 390×844 is a regression point, not a fixed canvas.
+- Tablet: continuous dimensions with the dedicated `iPad_pt` authored layout in portrait, not a scaled phone screenshot.

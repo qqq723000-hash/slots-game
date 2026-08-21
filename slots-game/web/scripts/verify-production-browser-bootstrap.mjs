@@ -23,28 +23,57 @@ const bootstrapFailureText = "The game could not start. Please try again.";
 const startupTimeoutMs = 30_000;
 const transactionTimeoutMs = 25_000;
 const commandTimeoutMs = Math.max(startupTimeoutMs, transactionTimeoutMs) + 5_000;
+// 真实设备尺寸不是白名单。前十三项覆盖主流手机/平板纵横态，末两项专门证明
+// 超出 9:22/22:9 的病态视口只会产生等比黑边，不会拉伸设计域。
 const CONTINUOUS_VIEWPORTS = Object.freeze([
-  Object.freeze({ width: 1_280, height: 720 }),
-  Object.freeze({ width: 1_440, height: 900 }),
+  Object.freeze({ width: 360, height: 640 }),
+  Object.freeze({ width: 375, height: 812 }),
   Object.freeze({ width: 390, height: 844 }),
+  Object.freeze({ width: 393, height: 852 }),
+  Object.freeze({ width: 412, height: 915 }),
+  Object.freeze({ width: 600, height: 960 }),
   Object.freeze({ width: 633, height: 844 }),
+  Object.freeze({ width: 768, height: 1_024 }),
+  Object.freeze({ width: 800, height: 1_280 }),
   Object.freeze({ width: 844, height: 390 }),
-  Object.freeze({ width: 844, height: 633 }),
+  Object.freeze({ width: 1_024, height: 600 }),
   Object.freeze({ width: 1_024, height: 768 }),
+  Object.freeze({ width: 1_366, height: 1_024 }),
+  Object.freeze({ width: 320, height: 1_000 }),
+  Object.freeze({ width: 1_200, height: 300 }),
+]);
+const DESKTOP_TRANSITION_VIEWPORTS = Object.freeze([
+  Object.freeze({ width: 1_024, height: 768 }),
+  Object.freeze({ width: 1_366, height: 1_024 }),
+  Object.freeze({ width: 1_440, height: 900 }),
+  // 事务截图最终回到原始桌面设计面，避免响应式门禁改变表现截图的基准。
+  Object.freeze({ width: 1_280, height: 720 }),
+]);
+const OFFICIAL_HELP_VIEWPORTS = Object.freeze([
+  Object.freeze({ width: 360, height: 640 }),
+  Object.freeze({ width: 768, height: 1_024 }),
+  Object.freeze({ width: 844, height: 390 }),
 ]);
 const DESKTOP_VIEWPORT_SURFACE = Object.freeze({
   profile: "desktop",
   designWidth: 1_280,
   designHeight: 720,
 });
-const MOBILE_VIEWPORT_SURFACES = Object.freeze({
-  "1280x720": Object.freeze({ profile: "tablet-ls", designWidth: 844, designHeight: 633 }),
-  "1440x900": Object.freeze({ profile: "tablet-ls", designWidth: 844, designHeight: 633 }),
-  "390x844": Object.freeze({ profile: "phone-pt", designWidth: 390, designHeight: 844 }),
-  "633x844": Object.freeze({ profile: "tablet-pt", designWidth: 633, designHeight: 844 }),
-  "844x390": Object.freeze({ profile: "phone-ls", designWidth: 844, designHeight: 390 }),
-  "844x633": Object.freeze({ profile: "tablet-ls", designWidth: 844, designHeight: 633 }),
-  "1024x768": Object.freeze({ profile: "tablet-ls", designWidth: 844, designHeight: 633 }),
+const MOBILE_DESIGN_LONG_EDGE = 844;
+const MOBILE_MIN_DESIGN_ASPECT = 9 / 22;
+const MOBILE_MAX_DESIGN_ASPECT = 22 / 9;
+const TABLET_SHORT_EDGE_MIN = 600;
+// currencyExponent=2 下 int64 最大 minor value 的真实玩家显示值。
+const MAXIMUM_STATUS_VALUE = "92233720368547758.07";
+const PRESENTATION_APPROVED_BINDING = Object.freeze({
+  gameId: "iron-colossus",
+  definitionVersion: "local-production-2026-08-16.1",
+  definitionHash: "96caac1ea4f82292ba96e0e0397459687638d6ff904471a8363e69f6e824d35d",
+});
+const TRANSACTION_FIXTURE_BINDING = Object.freeze({
+  gameId: "primal-rampage",
+  definitionVersion: "browser-gate-v1",
+  definitionHash: "a".repeat(64),
 });
 validateReleaseRgsBuildEnvironment(process.env);
 const browserRgsBaseUrl = process.env.VITE_RGS_BASE_URL;
@@ -146,12 +175,13 @@ try {
   const operatorId = "browser-smoke";
   const sessionId = "browser-smoke";
   const pageOrigin = `http://127.0.0.1:${address.port}`;
-  const pageUrl = `${pageOrigin}/?channel=desktop#${new URLSearchParams({
+  const pageUrl = `${pageOrigin}/?channel=desktop&featurePreview=force#${new URLSearchParams({
     rgsLaunchCode: launchCode,
     rgsOperatorId: operatorId,
     rgsSessionId: sessionId,
   })}`;
-  const transactionFixture = createControlledRgsTransactionFixture({
+  const transactionFixture = createPresentationApprovedFixture(
+    createControlledRgsTransactionFixture({
     baseUrl: browserRgsBaseUrl,
     pageOrigin: new URL(pageUrl).origin,
     launchCode,
@@ -160,25 +190,8 @@ try {
     initialBalanceMinor,
     betMinor: browserBetMinor,
     finalBalanceMinor,
-  });
-  const mobileLaunchCode = `lc_${"m".repeat(43)}`;
-  const mobileOperatorId = "browser-smoke-mobile";
-  const mobileSessionId = "browser-smoke-mobile";
-  const mobilePageUrl = `${pageOrigin}/?channel=mobile#${new URLSearchParams({
-    rgsLaunchCode: mobileLaunchCode,
-    rgsOperatorId: mobileOperatorId,
-    rgsSessionId: mobileSessionId,
-  })}`;
-  const mobileLayoutFixture = createControlledRgsTransactionFixture({
-    baseUrl: browserRgsBaseUrl,
-    pageOrigin,
-    launchCode: mobileLaunchCode,
-    operatorId: mobileOperatorId,
-    sessionId: mobileSessionId,
-    initialBalanceMinor,
-    betMinor: browserBetMinor,
-    finalBalanceMinor,
-  });
+    }),
+  );
   const debuggingPort = await chrome.debuggingPort;
   const target = await waitForPageTarget(debuggingPort);
   pageSocket = await connectDevTools(target.webSocketDebuggerUrl);
@@ -187,8 +200,6 @@ try {
     pageUrl,
     modulePaths,
     transactionFixture,
-    mobilePageUrl,
-    mobileLayoutFixture,
   );
   if (!Array.isArray(result.cspViolations)) {
     throw new Error("生产浏览器 CSP 违规探针未返回可信结果");
@@ -281,14 +292,12 @@ try {
     throw new Error(`生产浏览器事务缺少真实 WebGL 画面变化证据：${JSON.stringify(visualEvidence)}`);
   }
   validateContinuousViewportEvidence(result.viewportEvidence);
-  const mobileSessionEvidence = result.mobileSessionEvidence;
-  if (!mobileSessionEvidence
-    || mobileSessionEvidence.exchangeCount !== 1
-    || mobileSessionEvidence.spinCount !== 0
-    || mobileSessionEvidence.acknowledgementCount !== 0
-    || mobileSessionEvidence.committedRoundObserved
-    || JSON.stringify(mobileSessionEvidence.order) !== JSON.stringify(["session-exchange"])) {
-    throw new Error(`移动布局会话被黑边点击或视口切换污染：${JSON.stringify(mobileSessionEvidence)}`);
+  const layoutTransitionEvidence = result.layoutTransitionEvidence;
+  if (!layoutTransitionEvidence?.mobileToDesktopWithoutReload
+    || !layoutTransitionEvidence?.nodeIdentityPreserved
+    || !layoutTransitionEvidence?.statePreserved
+    || !layoutTransitionEvidence?.transactionStatePreserved) {
+    throw new Error(`同文档布局通道迁移证据不完整：${JSON.stringify(layoutTransitionEvidence)}`);
   }
   verifiedEntryPath = basename(result.entryPath);
 } finally {
@@ -301,8 +310,75 @@ try {
 }
 
 process.stdout.write(
-  `生产浏览器事务门禁通过：${verifiedEntryPath} 已在精确 CSP 下完成桌面/移动连续视口等比黑边门禁，以及会话交换、旋转、结果解码与表现、余额更新及结果 ACK。\n`,
+  `生产浏览器事务门禁通过：${verifiedEntryPath} 已在精确 CSP 下完成同文档桌面资产会话的连续移动/桌面布局迁移、等比黑边与控件排版门禁，以及会话交换、旋转、结果解码与表现、余额更新及结果 ACK。\n`,
 );
+
+/**
+ * 浏览器门禁使用一份经批准的真实帮助绑定，同时保留受控事务夹具对其内部
+ * browser-gate 绑定的严格断言。双向翻译只发生在隔离 CDP 传输边界；玩家页
+ * 看到的 exchange/spin 始终是同一份批准绑定，完整 Spin/ACK 顺序仍由原夹具核验。
+ */
+function createPresentationApprovedFixture(fixture) {
+  const translateRequest = (parameters) => {
+    const request = parameters?.request;
+    if (!request || typeof request.postData !== "string") return parameters;
+    let payload;
+    try {
+      payload = JSON.parse(request.postData);
+    } catch {
+      return parameters;
+    }
+    if (!rewriteExactBinding(
+      payload,
+      PRESENTATION_APPROVED_BINDING,
+      TRANSACTION_FIXTURE_BINDING,
+    )) return parameters;
+    return {
+      ...parameters,
+      request: {
+        ...request,
+        postData: JSON.stringify(payload),
+      },
+    };
+  };
+
+  const translateResponse = (response) => {
+    if (typeof response.body !== "string") return response;
+    let payload;
+    try {
+      payload = JSON.parse(response.body);
+    } catch {
+      return response;
+    }
+    const translated = rewriteExactBinding(
+      payload?.data?.session,
+      TRANSACTION_FIXTURE_BINDING,
+      PRESENTATION_APPROVED_BINDING,
+    ) || rewriteExactBinding(
+      payload?.data,
+      TRANSACTION_FIXTURE_BINDING,
+      PRESENTATION_APPROVED_BINDING,
+    );
+    return translated
+      ? Object.freeze({ ...response, body: JSON.stringify(payload) })
+      : response;
+  };
+
+  return Object.freeze({
+    interceptedOriginPattern: fixture.interceptedOriginPattern,
+    responseForPausedRequest: (parameters) => translateResponse(
+      fixture.responseForPausedRequest(translateRequest(parameters)),
+    ),
+    snapshot: () => fixture.snapshot(),
+  });
+}
+
+function rewriteExactBinding(target, from, to) {
+  if (target === null || typeof target !== "object" || Array.isArray(target)) return false;
+  if (!Object.entries(from).every(([name, value]) => target[name] === value)) return false;
+  for (const [name, value] of Object.entries(to)) target[name] = value;
+  return true;
+}
 
 function createDistributionServer() {
   return createServer(async (request, response) => {
@@ -549,8 +625,6 @@ async function verifyBootstrap(
   pageUrl,
   productionModules,
   transactionFixture,
-  mobilePageUrl,
-  mobileLayoutFixture,
 ) {
   let identifier = 0;
   let documentContentSecurityPolicy;
@@ -732,6 +806,9 @@ async function verifyBootstrap(
       })()
     `,
   });
+  const openingOverlayEvidence = bootstrap.rendererReady && bootstrap.moduleFailures.length === 0
+    ? await verifyOpeningOverlayLayout(send, transactionFixture, () => transportFailure)
+    : null;
   let browserState = await waitForApplicationReady(send, () => transportFailure);
   if (!browserState.ready) {
     return completeBrowserResult(bootstrap, browserState, transactionFixture.snapshot());
@@ -739,15 +816,94 @@ async function verifyBootstrap(
   if (!bootstrap.reducedMotion) {
     throw new Error("生产浏览器事务夹具没有启用系统级减少动态效果配置");
   }
+
+  // 资产会话固定为 desktop，布局通道则必须随着当前输入能力与视口在同一文档中重算。
+  // 先建立节点/玩家状态/RGS 三重基线，再用 CDP 的真实 touch capability 迁移布局；
+  // 期间不导航、不刷新，也不允许预先消费 Spin/ACK 事务。
+  const preTransitionLayout = await readViewportLayout(send);
+  if (!preTransitionLayout || preTransitionLayout.frameCount !== 1
+    || !preTransitionLayout.nodeIdentityPreserved
+    || typeof preTransitionLayout.documentIdentityToken !== "string"
+    || preTransitionLayout.documentIdentityToken === "") {
+    throw new Error(`同文档布局迁移无法建立初始框架身份：${JSON.stringify(preTransitionLayout)}`);
+  }
+  const preTransitionState = preTransitionLayout.state;
+  const preTransitionTransaction = transactionFixture.snapshot();
+  const preTransitionDocumentIdentity = preTransitionLayout.documentIdentityToken;
+
+  await setTouchLayoutCapability(send, true);
+  const mobileViewportEvidence = await verifyContinuousViewportTransitions(
+    send,
+    transactionFixture,
+    {
+      channel: "mobile",
+      expectedDocumentIdentity: preTransitionDocumentIdentity,
+      expectedState: preTransitionState,
+      expectedTransaction: preTransitionTransaction,
+      surfaceForViewport: (viewport) => responsiveSurfaceForViewport(viewport, "mobile"),
+      transportFailure: () => transportFailure,
+      viewports: CONTINUOUS_VIEWPORTS,
+    },
+  );
+  const helpViewportEvidence = await verifyOfficialHelpLayout(
+    send,
+    transactionFixture,
+    {
+      expectedDocumentIdentity: preTransitionDocumentIdentity,
+      expectedState: preTransitionState,
+      expectedTransaction: preTransitionTransaction,
+      transportFailure: () => transportFailure,
+    },
+  );
+
+  await setTouchLayoutCapability(send, false);
   const desktopViewportEvidence = await verifyContinuousViewportTransitions(
     send,
     transactionFixture,
     {
       channel: "desktop",
-      surfaceForViewport: () => DESKTOP_VIEWPORT_SURFACE,
+      expectedDocumentIdentity: preTransitionDocumentIdentity,
+      expectedState: preTransitionState,
+      expectedTransaction: preTransitionTransaction,
+      surfaceForViewport: (viewport) => responsiveSurfaceForViewport(viewport, "desktop"),
       transportFailure: () => transportFailure,
+      viewports: DESKTOP_TRANSITION_VIEWPORTS,
     },
   );
+  const postTransitionLayout = await readViewportLayout(send);
+  const postTransitionTransaction = transactionFixture.snapshot();
+  assertViewportStatePreserved(
+    preTransitionState,
+    postTransitionLayout.state,
+    DESKTOP_TRANSITION_VIEWPORTS.at(-1),
+    "desktop",
+  );
+  assertTransactionStatePreserved(
+    preTransitionTransaction,
+    postTransitionTransaction,
+    DESKTOP_TRANSITION_VIEWPORTS.at(-1),
+    "desktop",
+  );
+  const layoutTransitionEvidence = Object.freeze({
+    mobileToDesktopWithoutReload: mobileViewportEvidence.steps.every(
+      (step) => step.channel === "mobile" && step.maxTouchPoints > 0
+        && step.documentIdentityPreserved,
+    ) && desktopViewportEvidence.steps.every(
+      (step) => step.channel === "desktop" && step.maxTouchPoints === 0
+        && step.documentIdentityPreserved,
+    ),
+    nodeIdentityPreserved: mobileViewportEvidence.steps.every(
+      (step) => step.nodeIdentityPreserved,
+    ) && desktopViewportEvidence.steps.every(
+      (step) => step.nodeIdentityPreserved,
+    ) && postTransitionLayout.nodeIdentityPreserved
+      && postTransitionLayout.documentIdentityToken === preTransitionDocumentIdentity,
+    statePreserved: mobileViewportEvidence.steps.every((step) => step.statePreserved)
+      && desktopViewportEvidence.steps.every((step) => step.statePreserved),
+    transactionStatePreserved: JSON.stringify(postTransitionTransaction)
+      === JSON.stringify(preTransitionTransaction),
+  });
+
   await armTransactionObservation(send);
   const baselineCapture = await captureGameCanvas(send);
   await clickPrimarySpin(send);
@@ -777,57 +933,14 @@ async function verifyBootstrap(
       finalDigest: finalCapture.digest,
     },
   );
-
-  // 通道在 ResponsiveLayout 构造时冻结。移动四表面必须使用新的、独立的受控会话，
-  // 不能靠同一文档中改查询参数或伪造 pointer media 结果来绕过该生产契约。
-  activeTransactionFixture = mobileLayoutFixture;
-  transportFailure = null;
-  documentContentSecurityPolicy = undefined;
-  expectedDocumentUrl = documentUrlWithoutHash(mobilePageUrl);
-  await send("Page.navigate", { url: mobilePageUrl });
-  await waitForDocumentReady(send);
-  if (documentContentSecurityPolicy !== browserContentSecurityPolicy) {
-    throw new Error("移动布局生产主文档未收到共享的精确发布 CSP");
-  }
-  const mobileBrowserState = await waitForApplicationReady(send, () => transportFailure);
-  if (!mobileBrowserState.ready || mobileBrowserState.explicitFailure) {
-    throw new Error(`移动布局生产会话没有进入可下注状态：${JSON.stringify({
-      finalState: mobileBrowserState.finalState,
-      diagnostics: mobileBrowserState.diagnostics,
-      playerErrors: mobileBrowserState.playerErrors,
-      runtimeErrors: mobileBrowserState.runtimeErrors,
-      unhandledRejections: mobileBrowserState.unhandledRejections,
-      cspViolations: mobileBrowserState.cspViolations,
-    })}`);
-  }
-  const mobileViewportEvidence = await verifyContinuousViewportTransitions(
-    send,
-    mobileLayoutFixture,
-    {
-      channel: "mobile",
-      surfaceForViewport: ({ width, height }) => (
-        MOBILE_VIEWPORT_SURFACES[`${width}x${height}`]
-      ),
-      transportFailure: () => transportFailure,
-    },
-  );
-  const mobilePostViewportState = await readBrowserState(send);
-  if (!mobilePostViewportState.ready || mobilePostViewportState.explicitFailure) {
-    throw new Error(`移动布局连续视口切换后出现运行时失败：${JSON.stringify({
-      finalState: mobilePostViewportState.finalState,
-      playerErrors: mobilePostViewportState.playerErrors,
-      runtimeErrors: mobilePostViewportState.runtimeErrors,
-      unhandledRejections: mobilePostViewportState.unhandledRejections,
-      cspViolations: mobilePostViewportState.cspViolations,
-    })}`);
-  }
   return Object.freeze({
     ...transactionResult,
-    mobileFinalState: mobilePostViewportState.finalState,
-    mobileSessionEvidence: mobileLayoutFixture.snapshot(),
+    layoutTransitionEvidence,
     viewportEvidence: Object.freeze({
       desktop: desktopViewportEvidence,
+      help: helpViewportEvidence,
       mobile: mobileViewportEvidence,
+      openingOverlay: openingOverlayEvidence,
     }),
   });
 }
@@ -837,11 +950,12 @@ async function verifyContinuousViewportTransitions(send, fixture, options) {
   if (!initialSnapshot || initialSnapshot.frameCount !== 1 || !initialSnapshot.nodeIdentityPreserved) {
     throw new Error(`连续视口门禁无法建立唯一游戏框架身份：${JSON.stringify(initialSnapshot)}`);
   }
-  const initialState = initialSnapshot.state;
+  const initialState = options.expectedState ?? initialSnapshot.state;
+  const initialTransaction = options.expectedTransaction ?? fixture.snapshot();
   const steps = [];
   let blackBorderClickCount = 0;
 
-  for (const viewport of CONTINUOUS_VIEWPORTS) {
+  for (const viewport of options.viewports) {
     const transportError = options.transportFailure?.();
     if (transportError) throw transportError;
     const surface = options.surfaceForViewport(viewport);
@@ -864,7 +978,44 @@ async function verifyContinuousViewportTransitions(send, fixture, options) {
       options.transportFailure,
     );
     assertViewportGeometry(snapshot, viewport, surface, options.channel);
+    if (snapshot.documentIdentityToken !== options.expectedDocumentIdentity) {
+      throw new Error(`连续视口切换重新加载了文档：${JSON.stringify({
+        channel: options.channel,
+        viewport,
+        expected: options.expectedDocumentIdentity,
+        actual: snapshot.documentIdentityToken,
+      })}`);
+    }
     assertViewportStatePreserved(initialState, snapshot.state, viewport, options.channel);
+    assertTransactionStatePreserved(
+      initialTransaction,
+      fixture.snapshot(),
+      viewport,
+      options.channel,
+    );
+    const controlLayout = options.channel === "mobile" && surface.regularAspect
+      ? assertMobileControlLayout(snapshot, viewport)
+      : null;
+    const maximumStatusLayout = options.channel === "mobile"
+      ? await verifyMaximumStatusValues(send, viewport)
+      : null;
+    const afterMaximumStatus = await readViewportLayout(send);
+    assertViewportStatePreserved(
+      initialState,
+      afterMaximumStatus.state,
+      viewport,
+      options.channel,
+    );
+    assertTransactionStatePreserved(
+      initialTransaction,
+      fixture.snapshot(),
+      viewport,
+      options.channel,
+    );
+    if (!afterMaximumStatus.nodeIdentityPreserved
+      || afterMaximumStatus.documentIdentityToken !== options.expectedDocumentIdentity) {
+      throw new Error(`最大金额排版探针替换了文档或游戏节点：${viewport.width}x${viewport.height}`);
+    }
 
     const borderPoint = blackBorderPoint(snapshot);
     let blackBorderClicked = false;
@@ -876,15 +1027,15 @@ async function verifyContinuousViewportTransitions(send, fixture, options) {
       if (clickTransportError) throw clickTransportError;
       const afterTransaction = fixture.snapshot();
       const afterClick = await readViewportLayout(send);
-      if (JSON.stringify(afterTransaction) !== JSON.stringify(beforeTransaction)) {
-        throw new Error(`黑边点击触发了 RGS 事务：${JSON.stringify({
-          viewport,
-          beforeTransaction,
-          afterTransaction,
-        })}`);
-      }
+      assertTransactionStatePreserved(
+        beforeTransaction,
+        afterTransaction,
+        viewport,
+        options.channel,
+      );
       assertViewportStatePreserved(initialState, afterClick.state, viewport, options.channel);
-      if (!afterClick.nodeIdentityPreserved) {
+      if (!afterClick.nodeIdentityPreserved
+        || afterClick.documentIdentityToken !== options.expectedDocumentIdentity) {
         throw new Error(`黑边点击替换了游戏框架节点：${viewport.width}x${viewport.height}`);
       }
       blackBorderClickCount += 1;
@@ -898,14 +1049,24 @@ async function verifyContinuousViewportTransitions(send, fixture, options) {
       profile: snapshot.profile,
       designWidth: snapshot.designWidth,
       designHeight: snapshot.designHeight,
+      frameHeight: snapshot.frameRect.height,
+      frameWidth: snapshot.frameRect.width,
       scale: snapshot.datasetScale,
       x: snapshot.frameRect.left,
       y: snapshot.frameRect.top,
+      coarsePointer: snapshot.coarsePointer,
+      maxTouchPoints: snapshot.maxTouchPoints,
+      maximumStatusLayout,
       balance: snapshot.state.balance,
       reelState: snapshot.state.reelState,
       roundId: snapshot.state.roundId,
       nodeIdentityPreserved: snapshot.nodeIdentityPreserved,
+      documentIdentityPreserved: snapshot.documentIdentityToken
+        === options.expectedDocumentIdentity,
       statePreserved: true,
+      transactionStatePreserved: true,
+      controlLayout,
+      regularAspect: surface.regularAspect,
       blackBorderClicked,
     }));
   }
@@ -915,6 +1076,410 @@ async function verifyContinuousViewportTransitions(send, fixture, options) {
     channel: options.channel,
     steps: Object.freeze(steps),
   });
+}
+
+function responsiveSurfaceForViewport(viewport, channel) {
+  if (channel === "desktop") return DESKTOP_VIEWPORT_SURFACE;
+  const rawAspect = viewport.width / viewport.height;
+  const designAspect = Math.min(
+    MOBILE_MAX_DESIGN_ASPECT,
+    Math.max(MOBILE_MIN_DESIGN_ASPECT, rawAspect),
+  );
+  const portrait = designAspect <= 1;
+  const shortEdge = Math.min(viewport.width, viewport.height);
+  return Object.freeze({
+    profile: portrait
+      ? (shortEdge >= TABLET_SHORT_EDGE_MIN ? "tablet-pt" : "phone-pt")
+      : (shortEdge >= TABLET_SHORT_EDGE_MIN ? "tablet-ls" : "phone-ls"),
+    designWidth: portrait ? MOBILE_DESIGN_LONG_EDGE * designAspect : MOBILE_DESIGN_LONG_EDGE,
+    designHeight: portrait ? MOBILE_DESIGN_LONG_EDGE : MOBILE_DESIGN_LONG_EDGE / designAspect,
+    regularAspect: rawAspect >= MOBILE_MIN_DESIGN_ASPECT
+      && rawAspect <= MOBILE_MAX_DESIGN_ASPECT,
+  });
+}
+
+async function setTouchLayoutCapability(send, enabled) {
+  await send("Emulation.setTouchEmulationEnabled", {
+    enabled,
+    ...(enabled ? { maxTouchPoints: 5 } : {}),
+  });
+  // CDP 会触发 pointer media-query change；给应用一帧机会同步布局通道，首个
+  // setDeviceMetricsOverride 随后仍会等待两次稳定采样，不依赖这个短延迟判绿。
+  await delay(50);
+}
+
+async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
+  // 开场预览位于完整预加载之后；真实字体、Spine 与 GPU 首次编译不得被一个
+  // 比正式启动门禁更短的任意 5s 窗口误判为不可达。
+  const overlayDeadline = Date.now() + startupTimeoutMs;
+  let opening = null;
+  while (Date.now() < overlayDeadline) {
+    const transportError = transportFailure?.();
+    if (transportError) throw transportError;
+    opening = await readOpeningOverlayLayout(send);
+    if (opening?.visible && opening?.authored && !opening?.continueDisabled
+      && fixture.snapshot().exchangeCount === 1) break;
+    await delay(50);
+  }
+  if (!opening?.visible || !opening.authored || opening.continueDisabled) {
+    throw new Error(`正式浏览器无法到达已启用的开场 Feature Preview：${JSON.stringify(opening)}`);
+  }
+  const initialLayout = await readViewportLayout(send);
+  const expectedDocumentIdentity = initialLayout.documentIdentityToken;
+  const expectedState = initialLayout.state;
+  const expectedTransaction = fixture.snapshot();
+  const steps = [];
+
+  await setTouchLayoutCapability(send, true);
+  for (const viewport of OFFICIAL_HELP_VIEWPORTS) {
+    const surface = responsiveSurfaceForViewport(viewport, "mobile");
+    await send("Emulation.setDeviceMetricsOverride", {
+      width: viewport.width,
+      height: viewport.height,
+      deviceScaleFactor: 1,
+      mobile: false,
+      screenWidth: viewport.width,
+      screenHeight: viewport.height,
+    });
+    const layout = await waitForStableViewportLayout(
+      send,
+      viewport,
+      surface,
+      "mobile",
+      transportFailure,
+    );
+    assertViewportGeometry(layout, viewport, surface, "mobile");
+    assertViewportStatePreserved(expectedState, layout.state, viewport, "mobile");
+    assertTransactionStatePreserved(
+      expectedTransaction,
+      fixture.snapshot(),
+      viewport,
+      "mobile",
+    );
+    if (!layout.nodeIdentityPreserved
+      || layout.documentIdentityToken !== expectedDocumentIdentity) {
+      throw new Error(`开场 overlay 视口切换替换了文档或游戏节点：${viewport.width}x${viewport.height}`);
+    }
+    opening = await readOpeningOverlayLayout(send);
+    const detail = () => JSON.stringify({ viewport, surface, opening });
+    if (!opening?.visible || !opening.authored || opening.continueDisabled
+      || !opening.previewRect || !opening.frameRect || !opening.featuresMatrix) {
+      throw new Error(`开场 Feature Preview 缺少完整布局证据：${detail()}`);
+    }
+    requireNear(opening.featuresMatrix.a, opening.featuresMatrix.d, 0.000_01,
+      "开场 overlay scaleX/scaleY", detail);
+    if (opening.featuresMatrix.a <= 0) {
+      throw new Error(`开场 Feature Preview 没有正向等比投影：${detail()}`);
+    }
+    requireNear(opening.featuresMatrix.b, 0, 0.000_001, "开场 overlay skewY", detail);
+    requireNear(opening.featuresMatrix.c, 0, 0.000_001, "开场 overlay skewX", detail);
+    requireNear(opening.previewRect.left, opening.frameRect.left, 0.75,
+      "开场 overlay 左边界", detail);
+    requireNear(opening.previewRect.top, opening.frameRect.top, 0.75,
+      "开场 overlay 上边界", detail);
+    requireNear(opening.previewRect.width, opening.frameRect.width, 0.75,
+      "开场 overlay 宽度", detail);
+    requireNear(opening.previewRect.height, opening.frameRect.height, 0.75,
+      "开场 overlay 高度", detail);
+    for (const [name, rectangle] of Object.entries(opening.controls ?? {})) {
+      if (!rectangle
+        || rectangle.width <= 0 || rectangle.height <= 0
+        || rectangle.left < opening.previewRect.left - 0.75
+        || rectangle.right > opening.previewRect.right + 0.75
+        || rectangle.top < opening.previewRect.top - 0.75
+        || rectangle.bottom > opening.previewRect.bottom + 0.75) {
+        throw new Error(`开场 Feature Preview ${name} 控件越出画面：${detail()}`);
+      }
+    }
+    if (rectangleIntersectionArea(opening.controls.continue, opening.controls.optOut) > 0.75
+      || rectangleIntersectionArea(opening.controls.continue, opening.controls.sound) > 0.75
+      || rectangleIntersectionArea(opening.controls.optOut, opening.controls.sound) > 0.75) {
+      throw new Error(`开场 Feature Preview 控件发生交叠：${detail()}`);
+    }
+    steps.push(Object.freeze({
+      height: viewport.height,
+      noControlOverlap: true,
+      nodeIdentityPreserved: true,
+      scaleX: opening.featuresMatrix.a,
+      scaleY: opening.featuresMatrix.d,
+      width: viewport.width,
+    }));
+  }
+
+  await clickElement(send, '[data-role="preview-continue"]');
+  await waitForElementDataset(send, '[data-role="feature-preview"]', "visible", "false");
+  assertTransactionStatePreserved(
+    expectedTransaction,
+    fixture.snapshot(),
+    OFFICIAL_HELP_VIEWPORTS.at(-1),
+    "mobile",
+  );
+  return Object.freeze({
+    freeSpinsHud: Object.freeze({
+      reachable: false,
+      reason: "controlled-transaction-fixture-feature-mode-none",
+      verified: false,
+    }),
+    steps: Object.freeze(steps),
+  });
+}
+
+async function readOpeningOverlayLayout(send) {
+  return evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const frame = document.querySelector('[data-role="frame"]');
+        const preview = document.querySelector('[data-role="feature-preview"]');
+        const features = document.querySelector('.feature-preview__features');
+        const continuation = document.querySelector('[data-role="preview-continue"]');
+        const optOut = document.querySelector('.feature-preview__opt-out');
+        const sound = document.querySelector('[data-role="preview-sound"]');
+        const logo = document.querySelector('.feature-preview__logo');
+        const powered = document.querySelector('.launcher-powered-by');
+        const rectangle = (element) => {
+          if (!(element instanceof HTMLElement)) return null;
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        let featuresMatrix = null;
+        if (features instanceof HTMLElement) {
+          try {
+            const parsed = new DOMMatrixReadOnly(getComputedStyle(features).transform);
+            featuresMatrix = {
+              a: parsed.a,
+              b: parsed.b,
+              c: parsed.c,
+              d: parsed.d,
+            };
+          } catch {
+            featuresMatrix = null;
+          }
+        }
+        return {
+          authored: preview instanceof HTMLElement && preview.dataset.authored === 'true',
+          continueDisabled: !(continuation instanceof HTMLButtonElement) || continuation.disabled,
+          controls: {
+            continue: rectangle(continuation),
+            logo: rectangle(logo),
+            optOut: rectangle(optOut),
+            powered: rectangle(powered),
+            sound: rectangle(sound),
+          },
+          featuresMatrix,
+          frameRect: rectangle(frame),
+          previewRect: rectangle(preview),
+          visible: preview instanceof HTMLElement && preview.dataset.visible === 'true',
+        };
+      })()
+    `,
+  });
+}
+
+async function verifyOfficialHelpLayout(send, fixture, options) {
+  const steps = [];
+  for (const viewport of OFFICIAL_HELP_VIEWPORTS) {
+    const transportError = options.transportFailure?.();
+    if (transportError) throw transportError;
+    const surface = responsiveSurfaceForViewport(viewport, "mobile");
+    await send("Emulation.setDeviceMetricsOverride", {
+      width: viewport.width,
+      height: viewport.height,
+      deviceScaleFactor: 1,
+      mobile: false,
+      screenWidth: viewport.width,
+      screenHeight: viewport.height,
+    });
+    const layout = await waitForStableViewportLayout(
+      send,
+      viewport,
+      surface,
+      "mobile",
+      options.transportFailure,
+    );
+    assertViewportGeometry(layout, viewport, surface, "mobile");
+    if (layout.documentIdentityToken !== options.expectedDocumentIdentity) {
+      throw new Error(`帮助页视口切换重新加载了文档：${JSON.stringify({
+        viewport,
+        expected: options.expectedDocumentIdentity,
+        actual: layout.documentIdentityToken,
+      })}`);
+    }
+    assertViewportStatePreserved(options.expectedState, layout.state, viewport, "mobile");
+    assertTransactionStatePreserved(
+      options.expectedTransaction,
+      fixture.snapshot(),
+      viewport,
+      "mobile",
+    );
+
+    await clickElement(send, '[data-role="paytable"]');
+    const deadline = Date.now() + 5_000;
+    let help = null;
+    while (Date.now() < deadline) {
+      const helpTransportError = options.transportFailure?.();
+      if (helpTransportError) throw helpTransportError;
+      help = await readOfficialHelpLayout(send);
+      if (help?.menuOpen && help?.presentationRulesStatus === "bound"
+        && !help?.viewportHidden && Number.isFinite(help?.scaleX)
+        && Number.isFinite(help?.scaleY)) break;
+      await delay(50);
+    }
+    const detail = () => JSON.stringify({ viewport, surface, help });
+    if (!help?.menuOpen || help.presentationRulesStatus !== "bound" || help.viewportHidden) {
+      throw new Error(`正式浏览器帮助页未使用已批准 definition binding：${detail()}`);
+    }
+    requireNear(help.scaleX, help.scaleY, 0.000_000_01, "帮助页 scaleX/scaleY", detail);
+    if (help.scaleX <= 0 || help.scaleX > 1
+      || help.authoredWidth !== String(750)
+      || help.horizontalOverflowDataset !== "false") {
+      throw new Error(`正式浏览器帮助页没有发布单一等比投影契约：${detail()}`);
+    }
+    // 作者面保持未缩放的 750px 布局，projection 使用 overflow:clip 封装它；因此
+    // 只把玩家实际可滚动的 viewport 当作溢出边界，不能把内部作者坐标误判成滚动。
+    if (help.viewportScrollWidth > help.viewportClientWidth + 1) {
+      throw new Error(`正式浏览器帮助页发生水平滚动溢出：${detail()}`);
+    }
+    if (!help.viewportRect || !help.projectionRect || !help.authoredRect
+      || help.projectionRect.left < help.viewportRect.left - 0.75
+      || help.projectionRect.right > help.viewportRect.right + 0.75
+      || help.authoredRect.left < help.viewportRect.left - 0.75
+      || help.authoredRect.right > help.viewportRect.right + 0.75) {
+      throw new Error(`正式浏览器帮助页投影越出可见横向边界：${detail()}`);
+    }
+    if (!help.tabsRect || !help.closeRect
+      || rectangleIntersectionArea(help.tabsRect, help.closeRect) > 0.75) {
+      throw new Error(`正式浏览器帮助页标签与关闭按钮发生交叠：${detail()}`);
+    }
+    const postHelpLayout = await readViewportLayout(send);
+    if (!postHelpLayout.nodeIdentityPreserved
+      || postHelpLayout.documentIdentityToken !== options.expectedDocumentIdentity) {
+      throw new Error(`帮助页交互替换了文档或游戏节点：${detail()}`);
+    }
+    assertViewportStatePreserved(
+      options.expectedState,
+      postHelpLayout.state,
+      viewport,
+      "mobile",
+    );
+    assertTransactionStatePreserved(
+      options.expectedTransaction,
+      fixture.snapshot(),
+      viewport,
+      "mobile",
+    );
+    steps.push(Object.freeze({
+      authoredWidth: help.authoredWidth,
+      bound: true,
+      height: viewport.height,
+      horizontalOverflow: false,
+      scaleX: help.scaleX,
+      scaleY: help.scaleY,
+      width: viewport.width,
+    }));
+
+    await clickElement(send, '[data-role="game-menu-close"]');
+    await waitForElementDataset(send, '[data-role="game-menu"]', "open", "false");
+  }
+  return Object.freeze({ steps: Object.freeze(steps) });
+}
+
+async function readOfficialHelpLayout(send) {
+  return evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const menu = document.querySelector('[data-role="game-menu"]');
+        const viewport = document.querySelector('[data-role="presentation-rules-content"]');
+        const projection = document.querySelector('[data-role="official-help-projection"]');
+        const authored = document.querySelector('[data-role="official-help-authored-surface"]');
+        const tabs = document.querySelector('.game-menu__tabs');
+        const close = document.querySelector('[data-role="game-menu-close"]');
+        const rectangle = (element) => {
+          if (!(element instanceof HTMLElement)) return null;
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        return {
+          authoredClientWidth: authored instanceof HTMLElement ? authored.clientWidth : -1,
+          authoredRect: rectangle(authored),
+          authoredScrollWidth: authored instanceof HTMLElement ? authored.scrollWidth : -1,
+          authoredWidth: projection instanceof HTMLElement
+            ? projection.dataset.authoredWidth ?? null
+            : null,
+          closeRect: rectangle(close),
+          horizontalOverflowDataset: viewport instanceof HTMLElement
+            ? viewport.dataset.horizontalOverflow ?? null
+            : null,
+          menuOpen: menu instanceof HTMLElement && menu.dataset.open === 'true',
+          presentationRulesStatus: menu instanceof HTMLElement
+            ? menu.dataset.presentationRulesStatus ?? null
+            : null,
+          projectionClientWidth: projection instanceof HTMLElement ? projection.clientWidth : -1,
+          projectionRect: rectangle(projection),
+          projectionScrollWidth: projection instanceof HTMLElement ? projection.scrollWidth : -1,
+          scaleX: projection instanceof HTMLElement ? Number(projection.dataset.scaleX) : NaN,
+          scaleY: projection instanceof HTMLElement ? Number(projection.dataset.scaleY) : NaN,
+          tabsRect: rectangle(tabs),
+          viewportClientWidth: viewport instanceof HTMLElement ? viewport.clientWidth : -1,
+          viewportHidden: !(viewport instanceof HTMLElement) || viewport.hidden,
+          viewportRect: rectangle(viewport),
+          viewportScrollWidth: viewport instanceof HTMLElement ? viewport.scrollWidth : -1,
+        };
+      })()
+    `,
+  });
+}
+
+async function clickElement(send, selector) {
+  const point = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const element = document.querySelector(${JSON.stringify(selector)});
+        if (!(element instanceof HTMLElement)) return null;
+        const bounds = element.getBoundingClientRect();
+        if (bounds.width <= 0 || bounds.height <= 0) return null;
+        return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+      })()
+    `,
+  });
+  if (!point) throw new Error(`正式浏览器找不到可点击控件：${selector}`);
+  await dispatchMouseClick(send, point);
+}
+
+async function waitForElementDataset(send, selector, name, expected) {
+  const deadline = Date.now() + 5_000;
+  let actual = null;
+  while (Date.now() < deadline) {
+    actual = await evaluateValue(send, {
+      returnByValue: true,
+      expression: `document.querySelector(${JSON.stringify(selector)})?.dataset?.[${JSON.stringify(name)}] ?? null`,
+    });
+    if (actual === expected) return;
+    await delay(50);
+  }
+  throw new Error(`正式浏览器控件状态没有稳定：${selector} data-${name}=${actual}`);
+}
+
+function rectangleIntersectionArea(left, right) {
+  const width = Math.max(0, Math.min(left.right, right.right) - Math.max(left.left, right.left));
+  const height = Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
+  return width * height;
 }
 
 async function waitForStableViewportLayout(
@@ -943,8 +1508,8 @@ async function waitForStableViewportLayout(
       && snapshot?.frameCount === 1
       && snapshot?.channel === channel
       && snapshot?.profile === surface.profile
-      && snapshot?.designWidth === surface.designWidth
-      && snapshot?.designHeight === surface.designHeight
+      && Math.abs(snapshot?.designWidth - surface.designWidth) <= 0.000_001
+      && Math.abs(snapshot?.designHeight - surface.designHeight) <= 0.000_001
       && Math.abs(snapshot.datasetScale - expectedScale) <= 0.000_001
       && Math.abs(snapshot.frameRect.width - expectedWidth) <= 0.75
       && Math.abs(snapshot.frameRect.height - expectedHeight) <= 0.75;
@@ -995,6 +1560,27 @@ async function readViewportLayout(send) {
         const bet = root?.querySelector('[data-role="bet"]');
         const lastWin = root?.querySelector('[data-role="last-win"]');
         const overlay = root?.querySelector('[data-role="overlay"]');
+        const rectangle = (selector) => {
+          const element = root?.querySelector(selector);
+          if (!(element instanceof HTMLElement)) return null;
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        const statusPanel = root?.querySelector('.status-panel');
+        const statusValues = [...(root?.querySelectorAll('.status-metric') ?? [])]
+          .filter((element) => element instanceof HTMLElement)
+          .map((element) => ({
+            clientHeight: element.clientHeight,
+            role: element.className,
+            scrollHeight: element.scrollHeight,
+          }));
         if (!probe || !(root instanceof HTMLElement) || !(viewport instanceof HTMLElement)
           || !(safeArea instanceof HTMLElement) || !(frame instanceof HTMLElement)) {
           return {
@@ -1007,6 +1593,11 @@ async function readViewportLayout(send) {
         }
         if (!probe.viewportIdentity) {
           probe.viewportIdentity = { root, viewport, safeArea, frame, spin, balance, bet, lastWin };
+        }
+        if (!probe.documentIdentityToken) {
+          probe.documentIdentityToken = typeof crypto?.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : String(performance.timeOrigin);
         }
         const identity = probe.viewportIdentity;
         const frameStyle = getComputedStyle(frame);
@@ -1038,6 +1629,7 @@ async function readViewportLayout(send) {
             safeArea: getComputedStyle(safeArea).backgroundColor,
           },
           channel: frame.dataset.channel ?? null,
+          coarsePointer: matchMedia('(pointer: coarse)').matches,
           computedHeight: frameStyle.height,
           computedLeft: frameStyle.left,
           computedTop: frameStyle.top,
@@ -1056,7 +1648,15 @@ async function readViewportLayout(send) {
             top: frameRect.top,
             width: frameRect.width,
           },
+          documentOverflow: {
+            bodyX: document.body.scrollWidth - innerWidth,
+            bodyY: document.body.scrollHeight - innerHeight,
+            rootX: document.documentElement.scrollWidth - innerWidth,
+            rootY: document.documentElement.scrollHeight - innerHeight,
+          },
+          documentIdentityToken: probe.documentIdentityToken,
           matrix,
+          maxTouchPoints: navigator.maxTouchPoints,
           nodeIdentityPreserved: identity.root === root
             && identity.viewport === viewport
             && identity.safeArea === safeArea
@@ -1073,6 +1673,16 @@ async function readViewportLayout(send) {
             right: safeAreaRect.right,
             top: safeAreaRect.top,
             width: safeAreaRect.width,
+          },
+          controlLayout: {
+            portrait: innerHeight >= innerWidth,
+            round: rectangle('.round-state'),
+            spin: rectangle('[data-role="spin-dock"]'),
+            utility: rectangle('[data-role="tool-strip"]'),
+            status: rectangle('.status-panel'),
+            statusClientHeight: statusPanel instanceof HTMLElement ? statusPanel.clientHeight : -1,
+            statusScrollHeight: statusPanel instanceof HTMLElement ? statusPanel.scrollHeight : -1,
+            statusValues,
           },
           state: {
             balance: balance?.textContent ?? null,
@@ -1107,9 +1717,9 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
   const detail = () => JSON.stringify({ viewport, surface, snapshot });
   if (snapshot.frameCount !== 1 || !snapshot.nodeIdentityPreserved
     || snapshot.channel !== channel || snapshot.profile !== surface.profile
-    || snapshot.designWidth !== surface.designWidth
-    || snapshot.designHeight !== surface.designHeight) {
-    throw new Error(`生产布局没有唯一且冻结通道的设计框架：${detail()}`);
+    || Math.abs(snapshot.designWidth - surface.designWidth) > 0.000_001
+    || Math.abs(snapshot.designHeight - surface.designHeight) > 0.000_001) {
+    throw new Error(`生产布局没有唯一且动态匹配当前能力的设计框架：${detail()}`);
   }
   requireNear(snapshot.datasetScale, expectedScale, 0.000_001, "数据 scale", detail);
   requireNear(snapshot.datasetX, expectedX, 0.000_001, "数据 x", detail);
@@ -1133,8 +1743,9 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
   if (!matrix || matrix.is2D !== true) {
     throw new Error(`生产布局没有唯一二维缩放矩阵：${detail()}`);
   }
-  requireNear(matrix.a, expectedScale, 0.000_001, "矩阵 scaleX", detail);
-  requireNear(matrix.d, expectedScale, 0.000_001, "矩阵 scaleY", detail);
+  // getComputedStyle() 会把 CSS matrix 小数序列化为约 6 位；数据集仍保持完整精度。
+  requireNear(matrix.a, expectedScale, 0.000_01, "矩阵 scaleX", detail);
+  requireNear(matrix.d, expectedScale, 0.000_01, "矩阵 scaleY", detail);
   requireNear(matrix.b, 0, 0.000_001, "矩阵 skewY", detail);
   requireNear(matrix.c, 0, 0.000_001, "矩阵 skewX", detail);
   requireNear(matrix.e, 0, 0.000_001, "矩阵 translateX", detail);
@@ -1150,6 +1761,15 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
   if (Object.keys(snapshot.backgroundColors ?? {}).length !== 5) {
     throw new Error(`生产布局黑边背景证据不完整：${detail()}`);
   }
+  if (Object.values(snapshot.documentOverflow ?? {}).some((overflow) => overflow > 1)) {
+    throw new Error(`生产布局产生文档级溢出：${detail()}`);
+  }
+  if (channel === "mobile" && surface.regularAspect) {
+    requireNear(snapshot.frameRect.left, 0, 0.75, "常规比例左边", detail);
+    requireNear(snapshot.frameRect.top, 0, 0.75, "常规比例上边", detail);
+    requireNear(snapshot.frameRect.width, viewport.width, 0.75, "常规比例全视口宽度", detail);
+    requireNear(snapshot.frameRect.height, viewport.height, 0.75, "常规比例全视口高度", detail);
+  }
 }
 
 function assertViewportStatePreserved(expected, actual, viewport, channel) {
@@ -1161,6 +1781,165 @@ function assertViewportStatePreserved(expected, actual, viewport, channel) {
       actual,
     })}`);
   }
+}
+
+function assertTransactionStatePreserved(expected, actual, viewport, channel) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`连续视口切换或界面点击改变了 RGS 事务：${JSON.stringify({
+      channel,
+      viewport,
+      expected,
+      actual,
+    })}`);
+  }
+}
+
+function assertMobileControlLayout(snapshot, viewport) {
+  const controls = snapshot.controlLayout;
+  const detail = () => JSON.stringify({ viewport, controls, snapshot });
+  const { round, spin, status, utility } = controls ?? {};
+  if (!round || !spin || !status || !utility) {
+    throw new Error(`移动布局缺少轮次、旋转、工具或状态栏几何：${detail()}`);
+  }
+  const tolerance = 0.75;
+  if (controls.portrait) {
+    if (round.bottom > spin.top + tolerance
+      || spin.bottom > utility.top + tolerance
+      || utility.bottom > status.top + tolerance) {
+      throw new Error(`移动纵向轮次、旋转、工具与状态栏发生交叠：${detail()}`);
+    }
+  } else if (round.left < utility.right - tolerance
+    || round.right > spin.left + tolerance) {
+    throw new Error(`移动横向轮次提示没有位于两侧控件之间：${detail()}`);
+  }
+  if (controls.statusScrollHeight > controls.statusClientHeight + 1) {
+    throw new Error(`移动状态栏内容发生纵向裁切：${detail()}`);
+  }
+  for (const metric of controls.statusValues ?? []) {
+    if (metric.scrollHeight > metric.clientHeight + 1) {
+      throw new Error(`移动状态值内容发生纵向裁切：${detail()}`);
+    }
+  }
+  return Object.freeze({
+    orientation: controls.portrait ? "portrait" : "landscape",
+    roundBetweenControls: controls.portrait
+      ? round.bottom <= spin.top + tolerance
+      : round.left >= utility.right - tolerance && round.right <= spin.left + tolerance,
+    statusContained: controls.statusScrollHeight <= controls.statusClientHeight + 1
+      && (controls.statusValues ?? []).every(
+        (metric) => metric.scrollHeight <= metric.clientHeight + 1,
+      ),
+  });
+}
+
+async function verifyMaximumStatusValues(send, viewport) {
+  const evidence = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const maximum = ${JSON.stringify(MAXIMUM_STATUS_VALUE)};
+        const panel = document.querySelector('.status-panel');
+        const targets = [
+          ['balance', document.querySelector('[data-role="balance"]')],
+          ['bet', document.querySelector('[data-role="bet-status"]')],
+          ['win', document.querySelector('[data-role="last-win"]')],
+        ];
+        if (!(panel instanceof HTMLElement)
+          || targets.some(([, element]) => !(element instanceof HTMLElement))) return null;
+        const panelZeroWin = panel.getAttribute('data-zero-win');
+        const panelMoneyDensity = panel.getAttribute('data-money-density');
+        const originals = targets.map(([name, element]) => ({
+          element,
+          name,
+          text: element.textContent,
+          zero: element.getAttribute('data-zero'),
+        }));
+        const rectangle = (element) => {
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        let result;
+        try {
+          panel.dataset.zeroWin = 'false';
+          // 直接文本探针绕过 DomOverlay setter，因此必须同时模拟 setter 发布的
+          // 固定低基数布局状态；不伪造或改变 RGS/玩家经济状态。
+          panel.dataset.moneyDensity = 'extreme';
+          for (const { element } of originals) {
+            element.textContent = maximum;
+            element.dataset.zero = 'false';
+          }
+          const panelRect = rectangle(panel);
+          result = {
+            maximum,
+            panelRect,
+            values: originals.map(({ element, name }) => {
+              const metric = element.closest('.status-metric');
+              return {
+                clientHeight: element.clientHeight,
+                clientWidth: element.clientWidth,
+                metricRect: metric instanceof HTMLElement ? rectangle(metric) : null,
+                name,
+                rect: rectangle(element),
+                scrollHeight: element.scrollHeight,
+                scrollWidth: element.scrollWidth,
+                text: element.textContent,
+              };
+            }),
+          };
+        } finally {
+          for (const { element, text, zero } of originals) {
+            element.textContent = text;
+            if (zero === null) element.removeAttribute('data-zero');
+            else element.setAttribute('data-zero', zero);
+          }
+          if (panelZeroWin === null) panel.removeAttribute('data-zero-win');
+          else panel.setAttribute('data-zero-win', panelZeroWin);
+          if (panelMoneyDensity === null) panel.removeAttribute('data-money-density');
+          else panel.setAttribute('data-money-density', panelMoneyDensity);
+        }
+        return result;
+      })()
+    `,
+  });
+  const detail = () => JSON.stringify({ viewport, evidence });
+  if (!evidence?.panelRect || evidence.maximum !== MAXIMUM_STATUS_VALUE
+    || evidence.values?.length !== 3) {
+    throw new Error(`最大 int64 金额状态栏探针缺少完整证据：${detail()}`);
+  }
+  for (const value of evidence.values) {
+    if (value.text !== MAXIMUM_STATUS_VALUE || !value.rect || !value.metricRect
+      || value.clientWidth <= 0 || value.clientHeight <= 0
+      || value.scrollWidth > value.clientWidth + 1
+      || value.scrollHeight > value.clientHeight + 1
+      || value.rect.left < evidence.panelRect.left - 0.75
+      || value.rect.right > evidence.panelRect.right + 0.75
+      || value.rect.top < evidence.panelRect.top - 0.75
+      || value.rect.bottom > evidence.panelRect.bottom + 0.75) {
+      throw new Error(`最大 int64 金额在移动状态栏中被裁切：${detail()}`);
+    }
+  }
+  for (let leftIndex = 0; leftIndex < evidence.values.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < evidence.values.length; rightIndex += 1) {
+      if (rectangleIntersectionArea(
+        evidence.values[leftIndex].metricRect,
+        evidence.values[rightIndex].metricRect,
+      ) > 0.75) {
+        throw new Error(`最大 int64 Balance/Bet/Win 在移动状态栏中互相覆盖：${detail()}`);
+      }
+    }
+  }
+  return Object.freeze({
+    maximum: evidence.maximum,
+    noClipping: true,
+    noOverlap: true,
+  });
 }
 
 function blackBorderPoint(snapshot) {
@@ -1216,26 +1995,73 @@ function rounded(value) {
 
 function validateContinuousViewportEvidence(viewportEvidence) {
   const desktop = viewportEvidence?.desktop;
+  const help = viewportEvidence?.help;
   const mobile = viewportEvidence?.mobile;
-  if (!desktop || !mobile
+  const openingOverlay = viewportEvidence?.openingOverlay;
+  if (!desktop || !help || !mobile || !openingOverlay
     || desktop.channel !== "desktop" || mobile.channel !== "mobile"
-    || desktop.steps?.length !== CONTINUOUS_VIEWPORTS.length
+    || desktop.steps?.length !== DESKTOP_TRANSITION_VIEWPORTS.length
     || mobile.steps?.length !== CONTINUOUS_VIEWPORTS.length
-    || desktop.blackBorderClickCount !== 6
+    || help.steps?.length !== OFFICIAL_HELP_VIEWPORTS.length
+    || openingOverlay.steps?.length !== OFFICIAL_HELP_VIEWPORTS.length
+    || openingOverlay.freeSpinsHud?.reachable !== false
+    || openingOverlay.freeSpinsHud?.verified !== false
+    || openingOverlay.freeSpinsHud?.reason
+      !== "controlled-transaction-fixture-feature-mode-none"
+    || desktop.blackBorderClickCount !== 3
     || mobile.blackBorderClickCount !== 2) {
     throw new Error(`生产浏览器连续视口证据不完整：${JSON.stringify(viewportEvidence)}`);
   }
   for (let index = 0; index < CONTINUOUS_VIEWPORTS.length; index += 1) {
     const expected = CONTINUOUS_VIEWPORTS[index];
-    for (const evidence of [desktop, mobile]) {
-      const step = evidence.steps[index];
-      if (step.width !== expected.width || step.height !== expected.height
-        || !step.nodeIdentityPreserved || !step.statePreserved) {
-        throw new Error(`生产浏览器连续视口顺序或状态证据失真：${JSON.stringify({
-          expected,
-          step,
-        })}`);
-      }
+    const step = mobile.steps[index];
+    const shouldHaveBlackBorder = index >= CONTINUOUS_VIEWPORTS.length - 2;
+    if (step.width !== expected.width || step.height !== expected.height
+      || step.channel !== "mobile" || step.maxTouchPoints <= 0 || !step.coarsePointer
+      || !step.nodeIdentityPreserved || !step.documentIdentityPreserved || !step.statePreserved
+      || !step.transactionStatePreserved
+      || step.maximumStatusLayout?.maximum !== MAXIMUM_STATUS_VALUE
+      || !step.maximumStatusLayout?.noClipping || !step.maximumStatusLayout?.noOverlap
+      || step.blackBorderClicked !== shouldHaveBlackBorder
+      || (step.regularAspect && (!step.controlLayout?.roundBetweenControls
+        || !step.controlLayout?.statusContained))) {
+      throw new Error(`生产浏览器移动连续视口顺序或状态证据失真：${JSON.stringify({
+        expected,
+        step,
+      })}`);
+    }
+  }
+  for (let index = 0; index < DESKTOP_TRANSITION_VIEWPORTS.length; index += 1) {
+    const expected = DESKTOP_TRANSITION_VIEWPORTS[index];
+    const step = desktop.steps[index];
+    if (step.width !== expected.width || step.height !== expected.height
+      || step.channel !== "desktop" || step.maxTouchPoints !== 0
+      || !step.nodeIdentityPreserved || !step.documentIdentityPreserved || !step.statePreserved
+      || !step.transactionStatePreserved) {
+      throw new Error(`生产浏览器桌面连续视口顺序或状态证据失真：${JSON.stringify({
+        expected,
+        step,
+      })}`);
+    }
+  }
+  for (let index = 0; index < OFFICIAL_HELP_VIEWPORTS.length; index += 1) {
+    const expected = OFFICIAL_HELP_VIEWPORTS[index];
+    const step = help.steps[index];
+    if (step.width !== expected.width || step.height !== expected.height
+      || !step.bound || step.horizontalOverflow || step.scaleX !== step.scaleY) {
+      throw new Error(`正式浏览器帮助页视口证据失真：${JSON.stringify({
+        expected,
+        step,
+      })}`);
+    }
+    const overlayStep = openingOverlay.steps[index];
+    if (overlayStep.width !== expected.width || overlayStep.height !== expected.height
+      || !overlayStep.noControlOverlap || !overlayStep.nodeIdentityPreserved
+      || Math.abs(overlayStep.scaleX - overlayStep.scaleY) > 0.000_01) {
+      throw new Error(`开场 Feature Preview 视口证据失真：${JSON.stringify({
+        expected,
+        overlayStep,
+      })}`);
     }
   }
   const observedProfiles = [...new Set([

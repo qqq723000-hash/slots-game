@@ -230,7 +230,7 @@ export function resolveInitialRendererSize(
 ): Readonly<{ width: number; height: number }> {
   const dimension = (value: number | undefined, fallback: number): number => (
     value !== undefined && Number.isFinite(value) && value > 0
-      ? Math.max(1, Math.round(value))
+      ? Math.max(1, value)
       : fallback
   );
   return Object.freeze({
@@ -540,6 +540,13 @@ export class PixiRenderer {
   /** 保留直至正版Wheel登陆；从不驱动服务器状态。 */
   private pendingWheelAward: WheelAwardedEvent | null = null;
   private pendingFeatureExit: Promise<void> | null = null;
+  /**
+   * Pixi 6 独占帧缓冲量化：round(logical * DPR)。单独保留连续请求值，因为
+   * renderer.screen 返回量化后的 backing/DPR，不能直接与带小数的设计表面比较
+   * 来判断 resize 幂等性。
+   */
+  private rendererRequestedWidth = Number.NaN;
+  private rendererRequestedHeight = Number.NaN;
   private anticipationVisualOperation: VisualTelemetryOperation | null = null;
   private launchIntroVisualOperation: VisualTelemetryOperation | null = null;
   private backgroundIntroVisualOperation: VisualTelemetryOperation | null = null;
@@ -1208,6 +1215,11 @@ export class PixiRenderer {
   /** 将一个不可变的桌面/移动快照路由到每个独立布局的 Z 层。 */
   setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
     this.featurePreview.setResponsiveLayout(snapshot);
+    this.freeSpinHud.setResponsiveLayout(snapshot);
+    this.launchScene.setResponsiveTransitionLayout(
+      snapshot.viewportRegion,
+      snapshot.mobileProfile,
+    );
     this.resizeRenderer(
       snapshot.viewportRegion.width,
       snapshot.viewportRegion.height,
@@ -1264,15 +1276,15 @@ export class PixiRenderer {
   }
 
   private resizeRenderer(width: number, height: number, pixelRatio: number): void {
-    const safeWidth = Math.max(1, Math.round(width));
-    const safeHeight = Math.max(1, Math.round(height));
+    const safeWidth = Number.isFinite(width) && width > 0 ? Math.max(1, width) : 1;
+    const safeHeight = Number.isFinite(height) && height > 0 ? Math.max(1, height) : 1;
     const resolution = Math.max(1, Math.min(
       2,
       Number.isFinite(pixelRatio) ? pixelRatio : 1,
     ));
     const resolutionChanged = Math.abs(this.app.renderer.resolution - resolution) > 1e-9;
-    if (this.app.renderer.screen.width === safeWidth
-      && this.app.renderer.screen.height === safeHeight
+    if (this.rendererRequestedWidth === safeWidth
+      && this.rendererRequestedHeight === safeHeight
       && !resolutionChanged) return;
     if (resolutionChanged) {
       this.app.renderer.resolution = resolution;
@@ -1280,6 +1292,8 @@ export class PixiRenderer {
       this.anticipation.setPerspectiveCoordinateScale(resolution);
     }
     this.app.renderer.resize(safeWidth, safeHeight);
+    this.rendererRequestedWidth = safeWidth;
+    this.rendererRequestedHeight = safeHeight;
   }
 
   private syncAnticipationComposition(): void {

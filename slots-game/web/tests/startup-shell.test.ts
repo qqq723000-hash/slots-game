@@ -74,6 +74,16 @@ describe("startup shell contract", () => {
     expect(controllerSource).not.toContain("|| window.innerHeight");
   });
 
+  it("freezes asset selection without freezing the live responsive layout channel", () => {
+    expect(controllerSource).toContain("setPrimalRuntimeAssetChannel(assetChannel)");
+    expect(controllerSource).toContain("channel: responsiveLayoutChannel(viewportWidth, viewportHeight");
+    expect(controllerSource).toContain(
+      "this.layout = new ResponsiveLayout(shell.safeArea ?? shell.viewport, frame",
+    );
+    expect(controllerSource).toContain("this.ui.setResponsiveLayout(snapshot)");
+    expect(controllerSource).not.toContain("}, { channel: assetChannel });");
+  });
+
   it("keeps true 100% visible through a painted frame before launch", () => {
     const preload = controllerSource.indexOf("await this.preload.run");
     const complete = controllerSource.indexOf(

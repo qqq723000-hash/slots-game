@@ -3839,7 +3839,13 @@ select {
   * 移动端复刻的点击直径大于原生 44px 控件间距。在相邻图标的中点裁剪重叠圆形，
   * 避免后面的 DOM 同级节点抢占相邻按钮中心的点击。两侧外部控件仍保留完整的向外触达范围。
    */
-  --utility-hit-trim: max(0px, calc((var(--utility-hit-size, 35px) - 44px) / 2));
+  --utility-hit-step: calc(
+    var(--mobile-utility-control-size, 44px) + var(--mobile-control-gap, 0px)
+  );
+  --utility-hit-trim: max(
+    0px,
+    calc((var(--utility-hit-size, 35px) - var(--utility-hit-step)) / 2)
+  );
   clip-path: inset(0 var(--utility-hit-trim) 0 var(--utility-hit-trim));
 }
 
@@ -4293,8 +4299,8 @@ select {
   top: calc(var(--gameplay-height) / 2);
   bottom: auto;
   width: clamp(58px, 7cqw, 74px);
-  height: min(74cqh, 350px);
-  min-height: 250px;
+  height: min(74cqh, calc(var(--gameplay-height) - 4.8cqh));
+  min-height: 0;
   flex-direction: column;
   justify-content: space-evenly;
   gap: 0;
@@ -4404,7 +4410,7 @@ select {
   left: 50%;
   top: auto;
   bottom: calc(var(--status-height) + 15px);
-  width: clamp(244px, 68cqw, 302px);
+  width: min(calc(100cqw - 4.8cqw), 68cqw, 302px);
   height: 46px;
   justify-content: space-evenly;
   gap: 0;
@@ -4956,6 +4962,433 @@ select {
 
 .game-frame[data-channel="mobile"] .status-metric--win {
   background: transparent;
+}
+
+/* 任意移动视口 DOM 合约 */
+/*
+ * 移动设计域由当前视口纵横比连续求解；这里仅消费连续 cqw/cqh 与现有 gameplay/status 变量。
+ * 这些回退值也覆盖 DOM ResizeObserver 发布首个精确几何值之前的一帧，绝不识别设备型号或预设尺寸。
+ */
+.game-frame[data-channel="mobile"] .dom-overlay {
+  --mobile-hud-edge: clamp(8px, min(2.4cqw, 2.4cqh), 18px);
+  --mobile-control-gap: clamp(5px, min(1.8cqw, 1.8cqh), 10px);
+}
+
+.game-frame[data-channel="mobile"] .game-menu__content {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.game-frame[data-channel="mobile"] .game-menu__panel,
+.game-frame[data-channel="mobile"] #game-menu-paytable,
+.game-frame[data-channel="mobile"] .official-help-viewport {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.game-frame[data-channel="mobile"] .official-help-viewport {
+  overflow-x: clip;
+  contain: inline-size;
+}
+
+.game-frame[data-channel="mobile"] .official-help-projection {
+  max-width: 100%;
+  overflow: clip;
+}
+
+.game-frame[data-channel="mobile"] .compact-modal,
+.game-frame[data-channel="mobile"] .bet-popover {
+  width: 341px;
+  max-width: calc(100cqw - var(--mobile-hud-edge) - var(--mobile-hud-edge));
+  max-height: calc(var(--gameplay-height) - var(--mobile-hud-edge) - var(--mobile-hud-edge));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.game-frame[data-channel="mobile"] .bet-stepper {
+  grid-template-columns:
+    clamp(30px, 8cqw, 34px)
+    minmax(0, 1fr)
+    clamp(30px, 8cqw, 34px);
+  gap: clamp(4px, 1.6cqw, 7px);
+  padding-right: clamp(0px, 3cqw, 17px);
+  padding-left: clamp(0px, 3cqw, 17px);
+}
+
+.game-frame[data-channel="mobile"] .bet-choices {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.game-frame[data-channel="mobile"] .status-metric {
+  min-width: 0;
+  max-width: 48%;
+}
+
+.game-frame[data-channel="mobile"] .status-metric__label {
+  flex: 0 0 auto;
+}
+
+.game-frame[data-channel="mobile"] .status-metric strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 纵向手机与平板共享同一套比例式堆栈；iPad_pt 只影响 Pixi 作者节点，不改变 DOM 流。 */
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .dom-overlay {
+  --mobile-utility-control-size: clamp(35px, min(9.5cqw, 5.5cqh), 44px);
+  --mobile-utility-width: min(
+    calc(100cqw - var(--mobile-hud-edge) - var(--mobile-hud-edge)),
+    68cqw,
+    330px
+  );
+  --mobile-utility-height: calc(
+    var(--mobile-utility-control-size) + clamp(12px, 3.6cqw, 20px)
+  );
+  --mobile-spin-size: clamp(86px, min(23cqw, 12cqh), 104px);
+  --mobile-round-height: clamp(28px, 7.5cqw, 34px);
+  --mobile-utility-bottom: calc(var(--status-height) + var(--mobile-hud-edge));
+  --mobile-spin-bottom: calc(
+    var(--mobile-utility-bottom) + var(--mobile-utility-height) + var(--mobile-control-gap)
+  );
+  --mobile-round-bottom: calc(
+    var(--mobile-spin-bottom) + var(--mobile-spin-size) + var(--mobile-control-gap)
+  );
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-dock {
+  left: 50%;
+  top: auto;
+  right: auto;
+  bottom: var(--mobile-utility-bottom);
+  width: var(--mobile-utility-width);
+  max-width: calc(100cqw - var(--mobile-hud-edge) - var(--mobile-hud-edge));
+  height: var(--mobile-utility-height);
+  min-height: 0;
+  gap: var(--mobile-control-gap);
+  padding: clamp(6px, 1.8cqw, 10px);
+  transform: translateX(-50%) translateY(var(--launch-shift-y, 0));
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-button,
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .bet-trigger {
+  width: var(--mobile-utility-control-size);
+  height: var(--mobile-utility-control-size);
+  flex-basis: var(--mobile-utility-control-size);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-button__asset,
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .bet-trigger__icon {
+  width: min(70%, 29px);
+  height: min(70%, 29px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .spin-dock {
+  right: auto;
+  left: 50%;
+  top: auto;
+  bottom: var(--mobile-spin-bottom);
+  width: var(--mobile-spin-size);
+  height: var(--mobile-spin-size);
+  transform: translateX(-50%);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .round-state {
+  right: var(--mobile-hud-edge);
+  left: var(--mobile-hud-edge);
+  top: auto;
+  bottom: var(--mobile-round-bottom);
+  width: auto;
+  max-width: none;
+  height: var(--mobile-round-height);
+  transform: translateY(var(--launch-shift-y, 0));
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .round-state__title {
+  height: 100%;
+  overflow: hidden;
+  font-size: clamp(13px, 4.2cqw, 22px);
+  line-height: var(--mobile-round-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-text-stroke-width: clamp(2px, 0.55cqw, 3px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .round-state[data-variant="win-counting"] {
+  /* 覆盖旧 pt 变体的固定偏移；所有纵向比例都服从同一无重叠几何。 */
+  bottom: var(--mobile-round-bottom);
+  height: clamp(44px, 7cqh, 58px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .round-state[data-variant="win-counting"] .round-state__title {
+  height: 100%;
+  font-size: clamp(30px, 8cqw, 44px);
+  line-height: 1.2;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .round-state[data-variant="win-settled"],
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .round-state[data-variant="wheel-bonus"] {
+  bottom: var(--mobile-round-bottom);
+  height: clamp(36px, 5cqh, 42px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel {
+  overflow: hidden;
+  font-size: clamp(12px, min(3.6cqw, 2.2cqh), 16px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--balance,
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--bet {
+  left: var(--mobile-hud-edge);
+  max-width: calc(58% - var(--mobile-hud-edge));
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--balance {
+  top: 12%;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--bet {
+  top: 44%;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--win {
+  right: var(--mobile-hud-edge);
+  top: 12%;
+  max-width: calc(42% - var(--mobile-hud-edge));
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel__provider {
+  left: var(--mobile-hud-edge);
+  bottom: 5%;
+  width: clamp(42px, 13cqw, 62px);
+  max-width: 24%;
+  height: auto;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-game-name-visible="true"] .status-panel__game {
+  right: var(--mobile-hud-edge);
+  left: auto;
+  bottom: 5%;
+  max-width: 55%;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 横向手机与平板根据连续高度收缩；去掉旧的 250px 最小栏高，避免矮视口把两端控件顶出玩法区。 */
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .dom-overlay {
+  --mobile-utility-control-size: clamp(36px, min(5.5cqw, 10cqh), 48px);
+  --mobile-utility-width: calc(
+    var(--mobile-utility-control-size) + clamp(12px, 4cqh, 20px)
+  );
+  --mobile-utility-height: min(
+    calc(var(--gameplay-height) - var(--mobile-hud-edge) - var(--mobile-hud-edge)),
+    calc(
+      var(--mobile-utility-control-size) +
+      var(--mobile-utility-control-size) +
+      var(--mobile-utility-control-size) +
+      var(--mobile-utility-control-size) +
+      var(--mobile-utility-control-size) +
+      var(--mobile-control-gap) +
+      var(--mobile-control-gap) +
+      var(--mobile-control-gap) +
+      var(--mobile-control-gap) +
+      clamp(12px, 4cqh, 20px)
+    )
+  );
+  --mobile-spin-size: clamp(78px, min(12.8cqw, 24cqh), 108px);
+  --mobile-round-height: clamp(22px, 5.5cqh, 34px);
+  --mobile-round-bottom: calc(var(--status-height) + var(--mobile-hud-edge));
+  --mobile-round-inline-start: calc(
+    var(--mobile-hud-edge) + var(--mobile-utility-width) + var(--mobile-control-gap)
+  );
+  --mobile-round-inline-end: calc(
+    var(--mobile-hud-edge) + var(--mobile-spin-size) + var(--mobile-control-gap)
+  );
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-dock {
+  left: var(--mobile-hud-edge);
+  top: calc(var(--gameplay-height) / 2);
+  right: auto;
+  bottom: auto;
+  width: var(--mobile-utility-width);
+  height: var(--mobile-utility-height);
+  min-height: 0;
+  gap: var(--mobile-control-gap);
+  padding: clamp(6px, 2cqh, 10px);
+  transform: translateY(calc(-50% + var(--launch-shift-y, 0px)));
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-button,
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .bet-trigger {
+  width: var(--mobile-utility-control-size);
+  height: var(--mobile-utility-control-size);
+  flex-basis: var(--mobile-utility-control-size);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-button__asset,
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .bet-trigger__icon {
+  width: min(70%, 34px);
+  height: min(70%, 34px);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .spin-dock {
+  right: var(--mobile-hud-edge);
+  left: auto;
+  top: calc(var(--gameplay-height) / 2);
+  bottom: auto;
+  width: var(--mobile-spin-size);
+  height: var(--mobile-spin-size);
+  transform: translateY(-50%);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .round-state {
+  right: var(--mobile-round-inline-end);
+  left: var(--mobile-round-inline-start);
+  top: auto;
+  bottom: var(--mobile-round-bottom);
+  width: auto;
+  max-width: none;
+  height: var(--mobile-round-height);
+  transform: translateY(var(--launch-shift-y, 0));
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .round-state__title {
+  height: 100%;
+  overflow: hidden;
+  font-size: clamp(11px, min(1.7cqw, 3.2cqh), 16px);
+  line-height: var(--mobile-round-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-text-stroke-width: clamp(1.5px, min(0.22cqw, 0.45cqh), 2px);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-panel {
+  font-size: clamp(
+    11px,
+    min(var(--mobile-status-font-size, 12px), 3.2cqh),
+    20px
+  );
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric {
+  max-height: calc(var(--status-height) - 2px);
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1.15;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric strong {
+  line-height: inherit;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric--balance {
+  max-width: calc(
+    var(--mobile-status-bet-left) - var(--mobile-status-balance-left) - var(--mobile-control-gap)
+  );
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric--bet {
+  max-width: 30%;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric--win {
+  max-width: 31%;
+}
+
+/* int64 极值金额不得通过 ellipsis 隐藏：仅在长值出现时让三项接管整个状态栏。 */
+.game-frame[data-channel="mobile"]
+  .status-panel[data-money-density="extreme"] .status-metric strong {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.game-frame[data-channel="mobile"]
+  .status-panel[data-money-density="extreme"] .status-panel__provider,
+.game-frame[data-channel="mobile"]
+  .status-panel[data-money-density="extreme"] .status-panel__game {
+  display: none;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] {
+  font-size: clamp(10px, 3.6cqw, 14px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] .status-metric {
+  right: var(--mobile-hud-edge);
+  left: var(--mobile-hud-edge);
+  width: auto;
+  max-width: none;
+  height: 28%;
+  min-height: 0;
+  padding: 0 clamp(3px, 1cqw, 6px);
+  justify-content: flex-start;
+  line-height: 1.2;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] .status-metric--balance {
+  top: 2%;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] .status-metric--bet {
+  top: 35%;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] .status-metric--win {
+  top: 68%;
+  background: transparent;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"]
+  .status-panel[data-money-density="extreme"] {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  column-gap: var(--mobile-control-gap);
+  padding: 0 var(--mobile-hud-edge);
+  font-size: clamp(
+    9px,
+    min(var(--mobile-status-font-size, 12px), 1.45cqw),
+    12px
+  );
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"]
+  .status-panel[data-money-density="extreme"] .status-metric {
+  position: static;
+  inset: auto;
+  width: 100%;
+  max-width: none;
+  height: calc(var(--status-height) - 2px);
+  max-height: calc(var(--status-height) - 2px);
+  min-height: 0;
+  padding: 0;
+  justify-content: center;
+  overflow: visible;
+  transform: none;
+  line-height: 1.15;
 }
 
 /*

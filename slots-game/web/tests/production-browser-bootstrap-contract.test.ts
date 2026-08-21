@@ -129,25 +129,68 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).toContain('send("Fetch.fulfillRequest", {');
     expect(smoke).toContain("const CONTINUOUS_VIEWPORTS = Object.freeze([");
     for (const [width, height] of [
-      [1_280, 720],
-      [1_440, 900],
+      [360, 640],
+      [375, 812],
       [390, 844],
+      [393, 852],
+      [412, 915],
+      [600, 960],
       [633, 844],
+      [768, 1_024],
+      [800, 1_280],
       [844, 390],
-      [844, 633],
+      [1_024, 600],
       [1_024, 768],
+      [1_366, 1_024],
+      // 病态纵横比必须走等比黑边，不能为了填满而拉伸。
+      [320, 1_000],
+      [1_200, 300],
     ] as const) {
       expect(smoke).toContain(`Object.freeze({ width: ${width.toLocaleString("en-US")
-        .replaceAll(",", "_")}, height: ${height} })`);
+        .replaceAll(",", "_")}, height: ${height.toLocaleString("en-US")
+        .replaceAll(",", "_")} })`);
     }
+    expect(smoke).not.toContain("MOBILE_VIEWPORT_SURFACES");
+    expect(smoke).toContain("responsiveSurfaceForViewport");
+    expect(smoke).toContain("MOBILE_DESIGN_LONG_EDGE * designAspect");
+    expect(smoke).toContain("MOBILE_DESIGN_LONG_EDGE / designAspect");
     expect(smoke).toContain('send("Emulation.setDeviceMetricsOverride", {');
+    expect(smoke).toContain('send("Emulation.setTouchEmulationEnabled", {');
     expect(smoke).toContain("verifyContinuousViewportTransitions");
+    expect(smoke).toContain("assertMobileControlLayout");
+    expect(smoke).toContain("statusScrollHeight");
+    expect(smoke).toContain('const MAXIMUM_STATUS_VALUE = "92233720368547758.07";');
+    expect(smoke).toContain("panel.dataset.moneyDensity = 'extreme'");
+    expect(smoke).toContain("verifyMaximumStatusValues");
+    expect(smoke).toContain("value.scrollWidth > value.clientWidth + 1");
+    expect(smoke).toContain("最大 int64 Balance/Bet/Win 在移动状态栏中互相覆盖");
+    expect(smoke).toContain("verifyOfficialHelpLayout");
+    expect(smoke).toContain("horizontalOverflowDataset");
+    expect(smoke).toContain("createPresentationApprovedFixture");
+    expect(smoke).toContain("verifyOpeningOverlayLayout");
+    expect(smoke).toContain("featurePreview=force");
+    expect(smoke).toContain("const overlayDeadline = Date.now() + startupTimeoutMs");
+    expect(smoke).toContain("controlled-transaction-fixture-feature-mode-none");
     expect(smoke).toContain("blackBorderClickCount");
     expect(smoke).toContain("frame.dataset.reelRoundId");
     expect(smoke).toContain("channel=desktop");
-    expect(smoke).toContain("channel=mobile");
+    expect(smoke).not.toContain("mobilePageUrl");
+    expect(smoke.match(/send\("Page\.navigate"/g) ?? []).toHaveLength(1);
     expect(smoke).toContain("viewportEvidence");
-    expect(smoke).toContain("mobileSessionEvidence.spinCount !== 0");
+    expect(smoke).toContain("layoutTransitionEvidence");
+    expect(smoke).toContain("documentIdentityToken");
+    expect(smoke).toContain("assertTransactionStatePreserved");
+
+    const touchEnabled = smoke.indexOf("await setTouchLayoutCapability(send, true);");
+    const mobileMatrix = smoke.indexOf("const mobileViewportEvidence =", touchEnabled);
+    const touchDisabled = smoke.indexOf("await setTouchLayoutCapability(send, false);", mobileMatrix);
+    const desktopMatrix = smoke.indexOf("const desktopViewportEvidence =", touchDisabled);
+    const transactionArm = smoke.indexOf("await armTransactionObservation(send);", desktopMatrix);
+    expect(touchEnabled).toBeGreaterThan(-1);
+    expect(mobileMatrix).toBeGreaterThan(touchEnabled);
+    expect(touchDisabled).toBeGreaterThan(mobileMatrix);
+    expect(desktopMatrix).toBeGreaterThan(touchDisabled);
+    expect(transactionArm).toBeGreaterThan(desktopMatrix);
     expect(smoke).toContain("createControlledRgsTransactionFixture");
     expect(transactionFixture).toContain("sessions/exchange");
     expect(transactionFixture).toContain("client/v1/spins");

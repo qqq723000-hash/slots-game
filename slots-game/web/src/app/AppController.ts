@@ -51,6 +51,7 @@ import {
   ResponsiveLayout,
   computeResponsiveLayoutSnapshot,
   responsiveChannelFromEnvironment,
+  responsiveLayoutChannel,
 } from "../renderer/ResponsiveLayout";
 import { setPrimalRuntimeAssetChannel } from "../assets/primalRuntimeAssets";
 import { DomOverlay } from "../ui/DomOverlay";
@@ -739,7 +740,14 @@ export class AppController {
       const initialLayout = computeResponsiveLayoutSnapshot(
         viewportWidth,
         viewportHeight,
-        { channel: assetChannel },
+        {
+          channel: responsiveLayoutChannel(viewportWidth, viewportHeight, {
+            search: window.location.search,
+            coarsePointer: window.matchMedia?.("(pointer: coarse)").matches ?? false,
+            finePointer: window.matchMedia?.("(pointer: fine)").matches ?? false,
+            touchPoints: window.navigator?.maxTouchPoints,
+          }),
+        },
       );
       const rendererOptions = {
         characterCollectRandomSource: dependencies.characterCollectRandomSource,
@@ -827,8 +835,9 @@ export class AppController {
     this.audio.bindUserGestures(root);
     // 测试/嵌入式宿主可能仍只提供旧 viewport；生产 shell 始终优先观察安全区外框。
     this.layout = new ResponsiveLayout(shell.safeArea ?? shell.viewport, frame, (snapshot) => {
+      this.ui.setResponsiveLayout(snapshot);
       this.renderer.setResponsiveLayout(snapshot);
-    }, { channel: assetChannel });
+    });
     this.stops = new StopSequencer(this.renderer.reels, {}, {
       onReelStopStart: ({ reel }) => {
         this.reelRound.transition({ type: "REEL_STOP_STARTED", reel });

@@ -16,6 +16,7 @@ import {
   computeResponsiveLayoutSnapshot,
   resolveResponsiveMinBound,
   responsiveChannelFromEnvironment,
+  responsiveLayoutChannel,
 } from "../src/renderer/ResponsiveLayout";
 
 interface OfficialMobileNode {
@@ -67,6 +68,28 @@ describe("mobile channel routing", () => {
     })).toBe("desktop");
     expect(responsiveChannelFromEnvironment()).toBe("desktop");
   });
+
+  it("keeps asset channel routing separate from the live viewport layout channel", () => {
+    expect(responsiveLayoutChannel(1_024, 768, {
+      search: "?channel=mobile",
+      coarsePointer: false,
+    })).toBe("desktop");
+    expect(responsiveLayoutChannel(1_024, 768, { coarsePointer: true })).toBe("mobile");
+    expect(responsiveLayoutChannel(1_024, 768, { touchPoints: 5 })).toBe("mobile");
+    expect(responsiveLayoutChannel(1_920, 1_080, {
+      finePointer: true,
+      touchPoints: 10,
+    })).toBe("desktop");
+    expect(responsiveLayoutChannel(1_366, 768, {
+      finePointer: true,
+      touchPoints: 10,
+    })).toBe("desktop");
+    expect(responsiveLayoutChannel(390, 844)).toBe("mobile");
+    expect(responsiveLayoutChannel(844, 390)).toBe("mobile");
+    expect(responsiveLayoutChannel(1_024, 768)).toBe("desktop");
+    expect(responsiveLayoutChannel(1_024, 768, { search: "?layout=mobile" })).toBe("mobile");
+    expect(responsiveLayoutChannel(390, 844, { search: "?layout=desktop" })).toBe("desktop");
+  });
 });
 
 describe("mobile renderer projection contracts", () => {
@@ -111,12 +134,15 @@ describe("mobile renderer projection contracts", () => {
     expect(geometry.areaWidth * projection.scale).toBeGreaterThan(0);
   });
 
-  it("keeps an arbitrary tablet viewport on the fixed 844x633 design projection", () => {
-    const resized = computeResponsiveLayoutSnapshot(1_024, 768, { channel: "mobile" });
+  it("continuously reflows an arbitrary tablet viewport instead of freezing 844x633", () => {
+    const resized = computeResponsiveLayoutSnapshot(1_180, 820, { channel: "mobile" });
     const canonical = computeResponsiveLayoutSnapshot(844, 633, { channel: "mobile" });
     expect(resized.surfaceProfile).toBe("tablet-ls");
-    expect(resized.viewportRegion).toEqual(canonical.viewportRegion);
-    expect(mobileReelProjection(resized.viewportRegion, resized.mobileProfile!)).toEqual(
+    expect(resized.viewportRegion).not.toEqual(canonical.viewportRegion);
+    expect(resized.viewportRegion.width).toBe(844);
+    expect(resized.viewportRegion.height).toBeCloseTo(844 * 820 / 1_180, 12);
+    expect(resized.viewportRegion.width / resized.viewportRegion.height).toBeCloseTo(1_180 / 820, 12);
+    expect(mobileReelProjection(resized.viewportRegion, resized.mobileProfile!)).not.toEqual(
       mobileReelProjection(canonical.viewportRegion, canonical.mobileProfile!),
     );
   });

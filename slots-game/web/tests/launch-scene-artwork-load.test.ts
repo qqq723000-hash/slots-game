@@ -96,6 +96,7 @@ function createHarness(): {
     monsterFallback,
     monsterHost,
     overlay,
+    transitionHost: overlay,
     leftTank: { texture: Texture.EMPTY, position: position(), width: 0, height: 0, alpha: 0 },
     rightTank: { texture: Texture.EMPTY, position: position(), width: 0, height: 0, alpha: 0 },
     persistentPresentation: { body: "base", auraLevel: null, palette: "main" },

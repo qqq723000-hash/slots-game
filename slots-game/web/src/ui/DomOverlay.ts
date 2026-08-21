@@ -12,6 +12,7 @@ import { publicAssetUrl } from "../assets/publicAssetUrl";
 import type { GatewayStatus } from "../protocol/GameGateway";
 import type { LaunchPhase } from "../startup/LaunchStateMachine";
 import type { PreloadProgress } from "../startup/PreloadGate";
+import type { ResponsiveLayoutSnapshot } from "../renderer/ResponsiveLayout";
 import {
   DEFAULT_MINOR_UNIT_FORMATTER,
   MoneyDisplayBindingError,
@@ -812,6 +813,154 @@ export interface OfficialHelpProjectionGeometry {
   readonly scrollWidthPx: number;
 }
 
+export interface MobileDomLayoutGeometry {
+  readonly orientation: "portrait" | "landscape";
+  readonly edge: number;
+  readonly gap: number;
+  readonly utilityControlSize: number;
+  readonly utilityWidth: number;
+  readonly utilityHeight: number;
+  readonly spinSize: number;
+  readonly roundHeight: number;
+  readonly utilityBottom: number;
+  readonly spinBottom: number;
+  readonly roundBottom: number;
+  readonly roundInlineStart: number;
+  readonly roundInlineEnd: number;
+}
+
+function clampedDomLayoutValue(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+export type MobileStatusMoneyDensity = "normal" | "extreme";
+
+/**
+ * 长金额必须切换为无省略布局；阈值按值本身计算，标签由 CSS 槽位另外预留。
+ */
+export function mobileStatusMoneyDensity(
+  formattedValues: readonly string[],
+): MobileStatusMoneyDensity {
+  return formattedValues.some((value) => value.trim().length > 10) ? "extreme" : "normal";
+}
+
+/**
+ * 移动 DOM HUD 只根据当前连续设计域求解，绝不识别 390/633/844 等设备预设。
+ * Pixi 仍拥有玩法区域；这里仅保证菜单、状态信息和输入控件留在其安全边界内。
+ */
+export function mobileDomLayoutGeometry(
+  designWidth: number,
+  designHeight: number,
+  gameplayHeight: number,
+  statusHeight: number,
+  frameScale = 1,
+): MobileDomLayoutGeometry {
+  const width = Number.isFinite(designWidth) ? Math.max(0, designWidth) : 0;
+  const height = Number.isFinite(designHeight) ? Math.max(0, designHeight) : 0;
+  const gameplay = Number.isFinite(gameplayHeight)
+    ? clampedDomLayoutValue(gameplayHeight, 0, height)
+    : 0;
+  const status = Number.isFinite(statusHeight)
+    ? clampedDomLayoutValue(statusHeight, 0, height - gameplay)
+    : Math.max(0, height - gameplay);
+  const shortEdge = Math.min(width, height);
+  const safeFrameScale = Number.isFinite(frameScale) && frameScale > 0 ? frameScale : 1;
+  const minimumTouchLogicalSize = 44 / safeFrameScale;
+  const orientation = width > height ? "landscape" : "portrait";
+  const edge = clampedDomLayoutValue(shortEdge * 0.024, 8, 18);
+  const gap = clampedDomLayoutValue(shortEdge * 0.018, 5, 10);
+
+  if (orientation === "portrait") {
+    const padding = clampedDomLayoutValue(shortEdge * 0.018, 6, 10);
+    const usableWidth = Math.max(0, width - edge * 2);
+    const desiredControl = Math.max(
+      minimumTouchLogicalSize,
+      clampedDomLayoutValue(Math.min(width * 0.095, height * 0.055), 35, 44),
+    );
+    const controlCapacity = Math.max(0, (usableWidth - gap * 4 - padding * 2) / 5);
+    const utilityControlSize = Math.min(desiredControl, controlCapacity);
+    const contentWidth = utilityControlSize * 5 + gap * 4 + padding * 2;
+    const desiredWidth = Math.min(width * 0.68, 330);
+    const utilityWidth = Math.min(usableWidth, Math.max(contentWidth, desiredWidth));
+    const utilityHeight = Math.min(gameplay, utilityControlSize + padding * 2);
+    const desiredSpin = clampedDomLayoutValue(
+      Math.min(width * 0.23, height * 0.12),
+      86,
+      104,
+    );
+    const spinSize = Math.min(desiredSpin, usableWidth, gameplay);
+    const roundHeight = Math.min(
+      clampedDomLayoutValue(width * 0.075, 28, 34),
+      gameplay,
+    );
+    const utilityBottom = status + edge;
+    const spinBottom = utilityBottom + utilityHeight + gap;
+    const roundBottom = spinBottom + spinSize + gap;
+
+    return Object.freeze({
+      orientation,
+      edge,
+      gap,
+      utilityControlSize,
+      utilityWidth,
+      utilityHeight,
+      spinSize,
+      roundHeight,
+      utilityBottom,
+      spinBottom,
+      roundBottom,
+      roundInlineStart: edge,
+      roundInlineEnd: edge,
+    });
+  }
+
+  const usableGameplayHeight = Math.max(0, gameplay - edge * 2);
+  const padding = clampedDomLayoutValue(shortEdge * 0.02, 6, 10);
+  const desiredControl = Math.max(
+    minimumTouchLogicalSize,
+    clampedDomLayoutValue(Math.min(width * 0.055, height * 0.1), 36, 48),
+  );
+  const controlCapacity = Math.max(
+    0,
+    (usableGameplayHeight - gap * 4 - padding * 2) / 5,
+  );
+  const utilityControlSize = Math.min(desiredControl, controlCapacity);
+  const utilityWidth = Math.min(
+    Math.max(0, width - edge * 2),
+    utilityControlSize + padding * 2,
+  );
+  const utilityHeight = Math.min(
+    usableGameplayHeight,
+    utilityControlSize * 5 + gap * 4 + padding * 2,
+  );
+  const desiredSpin = clampedDomLayoutValue(
+    Math.min(width * 0.128, height * 0.24),
+    78,
+    108,
+  );
+  const spinSize = Math.min(desiredSpin, usableGameplayHeight, Math.max(0, width - edge * 2));
+  const roundHeight = Math.min(
+    clampedDomLayoutValue(height * 0.055, 22, 34),
+    gameplay,
+  );
+
+  return Object.freeze({
+    orientation,
+    edge,
+    gap,
+    utilityControlSize,
+    utilityWidth,
+    utilityHeight,
+    spinSize,
+    roundHeight,
+    utilityBottom: 0,
+    spinBottom: 0,
+    roundBottom: status + edge,
+    roundInlineStart: edge + utilityWidth + gap,
+    roundInlineEnd: edge + spinSize + gap,
+  });
+}
+
 /**
  * 750px 作者坐标只在这一层做一次各向同性投影。字体、换行盒和网格始终保留作者尺寸。
  */
@@ -822,7 +971,12 @@ export function officialHelpProjectionGeometry(
   const available = Number.isFinite(availableWidthPx) ? Math.max(0, availableWidthPx) : 0;
   const authoredHeight = Number.isFinite(authoredHeightPx) ? Math.max(0, authoredHeightPx) : 0;
   const scale = Math.min(1, available / PRIMAL_HELP_AUTHORING.logicalWidthPx);
-  const projectedWidth = PRIMAL_HELP_AUTHORING.logicalWidthPx * scale;
+  // IEEE-754 可能把 `750 * (available / 750)` 舍入到 available 右侧几个 ulp；
+  // 物理滚动边界必须严格封闭，不能把这个误差发布成水平滚动范围。
+  const projectedWidth = Math.min(
+    available,
+    PRIMAL_HELP_AUTHORING.logicalWidthPx * scale,
+  );
   return Object.freeze({
     authoredWidthPx: PRIMAL_HELP_AUTHORING.logicalWidthPx,
     authoredHeightPx: authoredHeight,
@@ -1256,7 +1410,10 @@ export class DomOverlay {
   private soundToggleHandler: SoundToggleHandler = () => undefined;
   private fastPlayHandler: FastPlayHandler = () => undefined;
   private officialHelpResizeObserver: ResizeObserver | null = null;
-  private readonly handleOfficialHelpResize = (): void => this.syncOfficialHelpProjection();
+  private readonly handleOfficialHelpResize = (): void => {
+    this.syncMobileDomLayout();
+    this.syncOfficialHelpProjection();
+  };
 
   constructor(host: HTMLElement) {
     this.host = host;
@@ -1319,7 +1476,12 @@ export class DomOverlay {
             <span>Continue</span>
           </button>
           <label class="feature-preview__opt-out">
-            <input data-role="preview-opt-out" type="checkbox" />
+            <input
+              id="feature-preview-opt-out"
+              name="featurePreviewOptOut"
+              data-role="preview-opt-out"
+              type="checkbox"
+            />
             <i aria-hidden="true"></i>
             <span>Don't show again</span>
           </label>
@@ -1662,6 +1824,8 @@ export class DomOverlay {
               <label class="autoplay-stop-condition">
                 <span>${label}</span>
                 <input
+                  id="autoplay-stop-${boundary}"
+                  name="autoplayStopConditions"
                   type="checkbox"
                   data-autoplay-stop-boundary="${boundary}"
                   aria-label="${label}"
@@ -1740,7 +1904,15 @@ export class DomOverlay {
           <strong data-role="bet-trigger-value">—</strong>
           <i aria-hidden="true"></i>
         </button>
-        <select class="bet-control--native" data-role="bet" aria-hidden="true" tabindex="-1" disabled>
+        <select
+          id="bet-control-native"
+          name="betMinor"
+          class="bet-control--native"
+          data-role="bet"
+          aria-hidden="true"
+          tabindex="-1"
+          disabled
+        >
           <option value="">—</option>
         </select>
         <button
@@ -1966,10 +2138,12 @@ export class DomOverlay {
     document.addEventListener("keydown", this.handleKeyDown);
     if (typeof ResizeObserver === "function") {
       this.officialHelpResizeObserver = new ResizeObserver(this.handleOfficialHelpResize);
+      this.officialHelpResizeObserver.observe(this.host);
       this.officialHelpResizeObserver.observe(this.officialHelpViewport);
       this.officialHelpResizeObserver.observe(this.officialHelpAuthoredSurface);
     }
     window.addEventListener("resize", this.handleOfficialHelpResize);
+    this.syncMobileDomLayout();
     this.setHudReveal(0);
   }
 
@@ -2308,6 +2482,74 @@ export class DomOverlay {
     );
   }
 
+  /** ResponsiveLayout 的同一提交直接驱动 HUD；ResizeObserver 只保留为内容变化兜底。 */
+  setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
+    this.syncMobileDomLayout(snapshot);
+    this.syncOfficialHelpProjection();
+  }
+
+  private syncMobileDomLayout(snapshot?: ResponsiveLayoutSnapshot): void {
+    const properties = [
+      "--mobile-hud-edge",
+      "--mobile-control-gap",
+      "--mobile-utility-control-size",
+      "--mobile-utility-width",
+      "--mobile-utility-height",
+      "--mobile-spin-size",
+      "--mobile-round-height",
+      "--mobile-utility-bottom",
+      "--mobile-spin-bottom",
+      "--mobile-round-bottom",
+      "--mobile-round-inline-start",
+      "--mobile-round-inline-end",
+    ] as const;
+    const frame = this.host.closest<HTMLElement>(".game-frame");
+    const channel = snapshot?.channel ?? frame?.dataset.channel;
+    if (!frame || channel !== "mobile") {
+      for (const property of properties) this.host.style.removeProperty(property);
+      delete this.host.dataset.domOrientation;
+      return;
+    }
+
+    const width = snapshot?.viewportRegion.width ?? frame.clientWidth;
+    const height = snapshot?.viewportRegion.height ?? frame.clientHeight;
+    if (width <= 0 || height <= 0) return;
+    const frameStyle = snapshot ? null : getComputedStyle(frame);
+    const cssPixels = (property: string): number => {
+      const value = Number.parseFloat(frameStyle?.getPropertyValue(property) ?? "");
+      return Number.isFinite(value) ? Math.max(0, value) : 0;
+    };
+    const gameplayHeight = snapshot?.gameplayRegion.height ?? cssPixels("--gameplay-height");
+    const statusHeight = snapshot?.statusRegion.height ?? cssPixels("--status-height");
+    if (gameplayHeight <= 0 || gameplayHeight + statusHeight > height + 0.01) return;
+
+    const geometry = mobileDomLayoutGeometry(
+      width,
+      height,
+      gameplayHeight,
+      statusHeight,
+      snapshot?.frame.scale ?? Number.parseFloat(frame.dataset.frameScale ?? "1"),
+    );
+    const values = [
+      geometry.edge,
+      geometry.gap,
+      geometry.utilityControlSize,
+      geometry.utilityWidth,
+      geometry.utilityHeight,
+      geometry.spinSize,
+      geometry.roundHeight,
+      geometry.utilityBottom,
+      geometry.spinBottom,
+      geometry.roundBottom,
+      geometry.roundInlineStart,
+      geometry.roundInlineEnd,
+    ] as const;
+    properties.forEach((property, index) => {
+      this.host.style.setProperty(property, `${values[index]}px`);
+    });
+    this.host.dataset.domOrientation = geometry.orientation;
+  }
+
   private bindSessionPresentationRules(session: SessionOpened): void {
     this.presentationRulesBinding = bindPrimalPresentationRules(
       this.presentationRulesBinding ?? null,
@@ -2492,7 +2734,17 @@ export class DomOverlay {
     if (this.statusPanel?.dataset) {
       this.statusPanel.dataset.zeroWin = String(zero);
     }
+    this.syncStatusMoneyDensity();
     this.syncStatusGameNameProjection();
+  }
+
+  private syncStatusMoneyDensity(): void {
+    if (!this.statusPanel?.dataset) return;
+    this.statusPanel.dataset.moneyDensity = mobileStatusMoneyDensity([
+      this.balance?.textContent ?? "",
+      this.betStatus?.textContent ?? "",
+      this.lastWin?.textContent ?? "",
+    ]);
   }
 
   /**
@@ -3236,6 +3488,7 @@ export class DomOverlay {
     this.betStatus.textContent = this.bet.value
       ? this.activeMoneyFormatter().format(this.bet.value, false)
       : "—";
+    this.syncStatusMoneyDensity();
     this.renderBetTicker();
     const selectedIndex = this.betOptions.indexOf(this.bet.value);
     this.betDecrease.disabled = !this.canChangeBet || selectedIndex <= 0;

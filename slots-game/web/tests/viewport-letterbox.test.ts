@@ -4,6 +4,7 @@ import {
   computeResponsiveFrameGeometry,
   computeResponsiveLayoutSnapshot,
   responsiveDesignPoint,
+  responsiveDesignSurface,
   responsiveSurfaceProfile,
 } from "../src/renderer/ResponsiveLayout";
 
@@ -100,23 +101,63 @@ describe("canonical viewport letterboxing", () => {
     expect(responsiveSurfaceProfile(viewport[0], viewport[1], channel)).toBe(profile);
   });
 
-  it("keeps physical viewport dimensions out of the canonical Pixi region", () => {
-    const snapshot = computeResponsiveLayoutSnapshot(1_024, 768, { channel: "mobile" });
+  it.each([
+    [430, 932],
+    [412, 915],
+    [820, 1_180],
+    [1_180, 820],
+    [834, 1_113],
+    [1_113, 834],
+  ])("derives a continuous mobile design surface for an arbitrary %sx%s viewport", (
+    physicalWidth,
+    physicalHeight,
+  ) => {
+    const snapshot = computeResponsiveLayoutSnapshot(physicalWidth, physicalHeight, {
+      channel: "mobile",
+    });
 
-    expect(snapshot.surfaceProfile).toBe("tablet-ls");
-    expect(snapshot.physicalViewportRegion).toEqual({ left: 0, top: 0, width: 1_024, height: 768 });
-    expect(snapshot.viewportRegion).toEqual({
+    expect(snapshot.physicalViewportRegion).toEqual({
       left: 0,
       top: 0,
-      width: RESPONSIVE_DESIGN_SURFACES["tablet-ls"].width,
-      height: RESPONSIVE_DESIGN_SURFACES["tablet-ls"].height,
+      width: physicalWidth,
+      height: physicalHeight,
     });
-    expect(snapshot.frame).toMatchObject({
-      x: 0,
+    expect(snapshot.viewportRegion.width / snapshot.viewportRegion.height).toBeCloseTo(
+      physicalWidth / physicalHeight,
+      12,
+    );
+    expect(snapshot.frame.x).toBe(0);
+    expect(snapshot.frame.y).toBe(0);
+    expect(snapshot.frame.width).toBeCloseTo(physicalWidth, 12);
+    expect(snapshot.frame.height).toBeCloseTo(physicalHeight, 12);
+    expect(snapshot.frame.width / snapshot.viewportRegion.width).toBeCloseTo(
+      snapshot.frame.height / snapshot.viewportRegion.height,
+      12,
+    );
+  });
+
+  it("uses the five captured sizes as exact calibration points, not the only canvases", () => {
+    for (const [profile, reference] of Object.entries(RESPONSIVE_DESIGN_SURFACES)) {
+      const channel = profile === "desktop" ? "desktop" : "mobile";
+      expect(responsiveDesignSurface(reference.width, reference.height, channel)).toEqual({
+        width: reference.width,
+        height: reference.height,
+      });
+    }
+  });
+
+  it("clamps only pathological mobile aspect ratios and keeps their bars outside input", () => {
+    const snapshot = computeResponsiveLayoutSnapshot(240, 1_000, { channel: "mobile" });
+
+    expect(snapshot.viewportRegion.width / snapshot.viewportRegion.height).toBeCloseTo(9 / 22, 12);
+    expect(snapshot.frame.x).toBe(0);
+    expect(snapshot.frame.y).toBeGreaterThan(0);
+    expect(snapshot.frame.width).toBeCloseTo(240, 12);
+    expect(snapshot.frame.height).toBeLessThan(1_000);
+    expect(responsiveDesignPoint(snapshot.frame, 120, snapshot.frame.y - 0.01)).toBeNull();
+    expect(responsiveDesignPoint(snapshot.frame, 120, snapshot.frame.y)).toEqual({
+      x: snapshot.viewportRegion.width / 2,
       y: 0,
-      scale: 1_024 / 844,
-      designWidth: 844,
-      designHeight: 633,
     });
   });
 

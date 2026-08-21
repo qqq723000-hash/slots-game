@@ -213,8 +213,8 @@ describe("responsive game viewport", () => {
       expect(fixture.onLayout.mock.calls.at(-1)?.[0].viewportRegion).toEqual({
         left: 0,
         top: 0,
-        width: 1_280,
-        height: 720,
+        width: 390,
+        height: 844,
       });
       expect(fixture.onLayout.mock.calls.at(-1)?.[0].physicalViewportRegion).toEqual({
         left: 0,
@@ -358,7 +358,7 @@ describe("responsive game viewport", () => {
     }
   });
 
-  it("freezes the launch channel across repeated DevTools device-mode viewport changes", () => {
+  it("re-resolves the layout channel across repeated DevTools device-mode viewport changes", () => {
     const properties = new Map<string, string>();
     const style = {
       width: "",
@@ -414,13 +414,13 @@ describe("responsive game viewport", () => {
       Object.assign(viewport, { clientWidth: 390, clientHeight: 844 });
       resize();
       frames.flush();
-      expect(snapshots.at(-1)?.channel).toBe("desktop");
-      expect(frame.dataset.channel).toBe("desktop");
-      expect(style.width).toBe("1280px");
-      expect(style.height).toBe("720px");
+      expect(snapshots.at(-1)?.channel).toBe("mobile");
+      expect(frame.dataset.channel).toBe("mobile");
+      expect(style.width).toBe("390px");
+      expect(style.height).toBe("844px");
       expect(style.left).toBe("0px");
-      expect(style.top).toBe("312.3125px");
-      expect(style.transform).toBe("scale(0.3046875)");
+      expect(style.top).toBe("0px");
+      expect(style.transform).toBe("scale(1)");
 
       coarsePointer = false;
       Object.assign(viewport, { clientWidth: 1_280, clientHeight: 720 });
@@ -661,5 +661,19 @@ describe("responsive game viewport", () => {
     expect(snapshot.mobileLayouts).toBe(MOBILE_BASE_LAYOUTS.iPad_pt);
     expect(snapshot.fpsLayouts).toBe(MOBILE_FPS_LAYOUTS.iPad_ls);
     expect(snapshot.statusRegion.height).toBe(63);
+  });
+
+  it("recomputes continuous mobile geometry across DevTools phone/tablet thresholds", () => {
+    const phone = computeResponsiveLayoutSnapshot(599, 1_000, { channel: "mobile" });
+    const tablet = computeResponsiveLayoutSnapshot(600, 1_000, { channel: "mobile" });
+
+    expect(phone.surfaceProfile).toBe("phone-pt");
+    expect(tablet.surfaceProfile).toBe("tablet-pt");
+    expect(phone.viewportRegion).toEqual({ left: 0, top: 0, width: 844 * 0.599, height: 844 });
+    expect(tablet.viewportRegion).toEqual({ left: 0, top: 0, width: 844 * 0.6, height: 844 });
+    expect(phone.mobileProfile).toBe("pt");
+    expect(tablet.mobileProfile).toBe("pt");
+    expect(phone.frame).toMatchObject({ x: 0, y: 0, width: 599, height: 1_000 });
+    expect(tablet.frame).toMatchObject({ x: 0, y: 0, width: 600, height: 1_000 });
   });
 });
