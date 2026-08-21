@@ -1,0 +1,58 @@
+apiVersion: slots.example.com/v1
+kind: AwsLandingZoneInterface
+metadata:
+  name: slots-application-platform
+spec:
+  contractVersion: 1.0.0
+  providedByEnterprisePlatform:
+    - 独立或经批准共享的 AWS 账号以及不可变账号 ID
+    - 受 SCP 和权限边界约束的 GitHub OIDC 部署角色
+    - 在应用 KMS key 创建前已存在的默认 AWSServiceRoleForAutoScaling 服务关联角色
+    - 开启版本控制、SSE-KMS 和对象锁定保护的 Terraform state bucket
+    - S3 原生 state 锁文件所需的最小对象权限
+    - 三个可用区、组织 DNS zone、ACM 证书和网络互联审批
+    - 组织级 CloudTrail、Config、GuardDuty、Security Hub、日志归档和预算告警
+    - 跨账号备份目标策略以及灾备账号 KMS 授权
+  consumedByApplicationRepository:
+    - expectedAccountId
+    - awsRegion
+    - availabilityZones
+    - terraformStateBucket
+    - terraformStateKmsKeyArn
+    - terraformDeploymentRoleArn
+    - publicDnsZoneId
+    - regionalAcmCertificateArn
+    - globalAcmCertificateArn
+    - backupCopyDestinationVaultArn
+    - applicationNamespace
+    - helmReleaseName
+    - hmacQuiesceEvidenceBucket
+    - hmacQuiesceEvidenceKey
+    - hmacQuiesceEvidenceKmsKeyArn
+    - hmacQuiesceEvidenceProducerRoleArn
+  guaranteesByApplicationRepository:
+    - Provider 拒绝未声明账号
+    - EKS 和 RDS 只部署到私有或隔离子网
+    - 应用 Secret 值不进入 Terraform state
+    - Web S3 禁止公共访问且仅允许指定 CloudFront OAC
+    - 生产备份启用 Vault Lock 并要求跨区域副本
+    - EKS 节点 CMK 只把使用与持久资源 grant 授予默认 Auto Scaling 服务关联角色
+  excludedResponsibilities:
+    - AWS Organizations 和账号工厂
+    - 企业身份中心与人员生命周期
+    - 组织级 SCP 和集中取证账号
+    - 企业共享网络和第三方专线
+  protectedRoleContracts:
+    applicationRelease:
+      requiredReadOnlyActions:
+        - iam:GetRolePolicy
+      purpose: 实时核对 Cluster Autoscaler 内联策略的容量发现权限集
+    hmacQuiesceEvidenceProducer:
+      privateEksAccessRequired: true
+      evidenceObjectVersioningRequired: true
+      evidenceObjectKmsRequired: true
+    terraformPlanApply:
+      hmacEvidenceReadActions:
+        - s3:GetObjectVersion
+        - kms:Decrypt
+      eksAccessAllowedForHmacMaintenance: false

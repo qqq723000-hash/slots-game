@@ -1,26 +1,28 @@
-import {
-  SYMBOL_IDS,
-  LOCKED_VAULT_FACES,
-  WHEEL_INSTANT_MULTIPLIER_BY_TIER,
-  type CellAddress,
-  type FeatureEvent,
-  type FeatureMode,
-  type FeatureState,
-  type GridCell,
-  type MoneyMinor,
-  type PathAward,
-  type ServerMessage,
-  type SpinResult,
-  type SymbolId,
-  type WheelAwardedEvent,
-  type WheelJackpotTier,
-  type Win,
+import type {
+  CellAddress,
+  FeatureEvent,
+  FeatureMode,
+  FeatureState,
+  GridCell,
+  MoneyMinor,
+  PathAward,
+  ServerMessage,
+  SpinResult,
+  WheelAwardedEvent,
+  Win,
 } from "../app/state/types";
 import {
   SpinResultOriginError,
   validateVaultEventsAgainstOrigin,
 } from "./spinResultOriginGuard";
 import { ENGINE_RULES_VERSION } from "./messages";
+import {
+  LOCKED_VAULT_FACES,
+  SYMBOL_IDS,
+  WHEEL_INSTANT_MULTIPLIER_BY_TIER,
+  type SymbolId,
+  type WheelJackpotTier,
+} from "./protocolConstants";
 
 export class ProtocolDecodeError extends Error {
   constructor(message: string) {
@@ -28,6 +30,22 @@ export class ProtocolDecodeError extends Error {
     this.name = "ProtocolDecodeError";
   }
 }
+
+/** 只标记 spin.result 投影内部的固定校验边界，不携带任何业务值。 */
+export type SpinResultProjectionDecodeStage =
+  | "projection-message-shape"
+  | "projection-message-grid"
+  | "projection-message-wins"
+  | "projection-message-events"
+  | "projection-message-feature"
+  | "projection-invariant-win-identities"
+  | "projection-invariant-award-total"
+  | "projection-invariant-wheel"
+  | "projection-invariant-vault"
+  | "projection-invariant-reels"
+  | "projection-message-output";
+
+type SpinResultProjectionStageObserver = (stage: SpinResultProjectionDecodeStage) => void;
 
 const MONEY_PATTERN = /^(0|[1-9]\d*)$/;
 const MAX_SIGNED_INT64 = 9_223_372_036_854_775_807n;
@@ -1018,7 +1036,11 @@ function protocolVersion(value: unknown): 1 {
   return 1;
 }
 
-function decodeSpinResult(message: Record<string, unknown>): SpinResult {
+function decodeSpinResult(
+  message: Record<string, unknown>,
+  onStage?: SpinResultProjectionStageObserver,
+): SpinResult {
+  onStage?.("projection-message-shape");
   exactKeys(message, [
     "type",
     "protocolVersion",
@@ -1036,19 +1058,39 @@ function decodeSpinResult(message: Record<string, unknown>): SpinResult {
     "featureState",
   ], "message");
   const betMinor = money(message.betMinor, "betMinor");
+
+  onStage?.("projection-message-grid");
   const decodedGrid = grid(message.grid, "grid");
+
+  onStage?.("projection-message-wins");
   if (!Array.isArray(message.wins) || message.wins.length > 10_000) {
     throw new ProtocolDecodeError("wins must be an array with at most 10000 entries");
   }
   const decodedWins = message.wins.map((value, index) => win(value, `wins[${index}]`, decodedGrid));
+
+  onStage?.("projection-message-events");
   const decodedEvents = events(message.events, "events", decodedGrid);
+
+  onStage?.("projection-message-feature");
   const decodedFeatureState = featureState(message.featureState, "featureState");
   const totalWinMinor = money(message.totalWinMinor, "totalWinMinor");
+
+  onStage?.("projection-invariant-win-identities");
   validateWinIdentities(decodedWins);
+
+  onStage?.("projection-invariant-award-total");
   validateVisibleAwardTotal(decodedWins, decodedEvents, totalWinMinor);
+
+  onStage?.("projection-invariant-wheel");
   validateWheelAwardProjection(decodedEvents, decodedFeatureState, betMinor);
+
+  onStage?.("projection-invariant-vault");
   validateVaultAwardProjection(decodedGrid, decodedEvents, decodedFeatureState, betMinor);
+
+  onStage?.("projection-invariant-reels");
   validateResultReelProjection(decodedGrid, decodedEvents, decodedFeatureState);
+
+  onStage?.("projection-message-output");
   return {
     type: "spin.result",
     protocolVersion: protocolVersion(message.protocolVersion),
@@ -1067,7 +1109,10 @@ function decodeSpinResult(message: Record<string, unknown>): SpinResult {
   };
 }
 
-export function decodeServerMessage(input: string | unknown): ServerMessage {
+export function decodeServerMessage(
+  input: string | unknown,
+  onSpinResultStage?: SpinResultProjectionStageObserver,
+): ServerMessage {
   let raw: unknown = input;
   if (typeof input === "string") {
     try {
@@ -1123,7 +1168,7 @@ export function decodeServerMessage(input: string | unknown): ServerMessage {
       };
     }
     case "spin.result":
-      return decodeSpinResult(message);
+      return decodeSpinResult(message, onSpinResultStage);
     case "error": {
       exactKeys(message, [
         "type",

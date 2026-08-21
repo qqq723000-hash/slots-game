@@ -1,13 +1,15 @@
+import type {
+  CellAddress,
+  FeatureEvent,
+  FeatureState,
+  MoneyMinor,
+  SpinResult,
+  WheelAwardedEvent,
+} from "../app/state/types";
 import {
   WHEEL_INSTANT_MULTIPLIER_BY_TIER,
-  type CellAddress,
-  type FeatureEvent,
-  type FeatureState,
-  type MoneyMinor,
-  type SpinResult,
-  type WheelAwardedEvent,
   type WheelJackpotTier,
-} from "../app/state/types";
+} from "./protocolConstants";
 
 export class SpinResultOriginError extends Error {
   constructor(message: string) {

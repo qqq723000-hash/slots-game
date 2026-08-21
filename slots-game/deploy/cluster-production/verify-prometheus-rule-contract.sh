@@ -29,6 +29,8 @@ done
 
 rendered_rule="$fixture_directory/prometheusrule.yaml"
 prometheus_rule="$fixture_directory/rules.yaml"
+rule_tests="$script_directory/prometheus-rule-tests.yaml"
+test -f "$rule_tests" || fail '缺少 PromQL 行为测试'
 "$helm_binary" template slots "$chart_directory" \
   --namespace slots-production \
   -f "$example_values" \
@@ -40,5 +42,11 @@ docker run --rm --platform linux/amd64 \
   --entrypoint /bin/promtool \
   --mount "type=bind,src=$prometheus_rule,dst=/rules.yaml,readonly" \
   "$promtool_image" check rules /rules.yaml
+
+docker run --rm --platform linux/amd64 \
+  --entrypoint /bin/promtool \
+  --mount "type=bind,src=$prometheus_rule,dst=/rules.yaml,readonly" \
+  --mount "type=bind,src=$rule_tests,dst=/tests.yaml,readonly" \
+  "$promtool_image" test rules /tests.yaml
 
 printf '%s\n' 'cluster prometheus rule contract: passed'

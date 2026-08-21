@@ -33,10 +33,16 @@ type Metrics struct {
 	HTTPRequests atomic.Uint64
 	// HTTPFailures 保留全部 4xx/5xx 供诊断；HTTPServerFailures 只计 5xx，
 	// 供可用性告警使用，避免认证攻击或客户端输入错误制造服务故障噪声。
-	HTTPFailures       atomic.Uint64
-	HTTPServerFailures atomic.Uint64
-	AuthFailures       atomic.Uint64
-	RateLimited        atomic.Uint64
+	HTTPFailures           atomic.Uint64
+	HTTPServerFailures     atomic.Uint64
+	AuthFailures           atomic.Uint64
+	AuthReplays            atomic.Uint64
+	RateLimited            atomic.Uint64
+	AccessLogsEmitted      atomic.Uint64
+	AccessLogsDropped      atomic.Uint64
+	SharedAdmissionAllowed atomic.Uint64
+	SharedAdmissionLimited atomic.Uint64
+	SharedAdmissionErrors  atomic.Uint64
 	// CapacityRejected 只计进程级公网并发硬闸门拒绝；不得与租户/速率限流混用，
 	// 以便值班人员区分资源饱和与攻击或调用方超额。
 	CapacityRejected   atomic.Uint64
@@ -78,7 +84,13 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 		{"rgs_http_failures_total", "HTTP requests ending in a client or server error.", m.HTTPFailures.Load()},
 		{"rgs_http_server_failures_total", "HTTP requests ending in a server error.", m.HTTPServerFailures.Load()},
 		{"rgs_auth_failures_total", "Rejected authentication attempts.", m.AuthFailures.Load()},
+		{"rgs_auth_replays_total", "Rejected operator authentication nonce replays.", m.AuthReplays.Load()},
 		{"rgs_rate_limited_total", "Requests rejected by local admission control.", m.RateLimited.Load()},
+		{"rgs_access_logs_emitted_total", "Access log records emitted after severity and sampling decisions.", m.AccessLogsEmitted.Load()},
+		{"rgs_access_logs_dropped_total", "Successful access log records omitted by deterministic sampling.", m.AccessLogsDropped.Load()},
+		{"rgs_shared_admission_allowed_total", "Verified-identity requests allowed by shared admission control.", m.SharedAdmissionAllowed.Load()},
+		{"rgs_shared_admission_limited_total", "Verified-identity requests rejected by shared admission control.", m.SharedAdmissionLimited.Load()},
+		{"rgs_shared_admission_errors_total", "Shared admission backend or protocol failures.", m.SharedAdmissionErrors.Load()},
 		{"rgs_capacity_rejected_total", "Public requests rejected by the process-wide in-flight capacity gate.", m.CapacityRejected.Load()},
 		{"rgs_rounds_prepared_total", "Durably prepared game rounds.", m.RoundsPrepared.Load()},
 		{"rgs_rounds_committed_total", "Wallet-confirmed committed rounds.", m.RoundsCommitted.Load()},
@@ -131,6 +143,13 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// NonceReplay 记录已经由签名验证链路确认的随机数重放，不携带任何请求派生标签。
+func (m *Metrics) NonceReplay() {
+	if m != nil {
+		m.AuthReplays.Add(1)
+	}
 }
 
 func (m *Metrics) writeRequestLatencyHistogram(w io.Writer) error {
@@ -230,6 +249,20 @@ func (m *Metrics) EndHTTPRequest(duration time.Duration) {
 		if duration <= boundary {
 			m.HTTPRequestDurations[index].Add(1)
 		}
+	}
+}
+
+// AccessLogEmitted 与 AccessLogDropped 只累计两个无标签总量；访问日志中的
+// 路由和请求标识绝不能进入指标标签，以免形成高基数时序。
+func (m *Metrics) AccessLogEmitted() {
+	if m != nil {
+		m.AccessLogsEmitted.Add(1)
+	}
+}
+
+func (m *Metrics) AccessLogDropped() {
+	if m != nil {
+		m.AccessLogsDropped.Add(1)
 	}
 }
 

@@ -25,6 +25,22 @@ describe("startup shell contract", () => {
       .toBeLessThan(mainSource.indexOf("await ApplicationController.create"));
   });
 
+  it("不会把渲染装配故障误报为运营方会话失效", () => {
+    expect(mainSource).toContain(
+      "presentStartupFailure(\n      error,\n      false,\n      launchGateway.operatorHostOrigin,",
+    );
+    expect(mainSource).not.toContain(
+      'launchGateway.initialSessionRecoveryMode === "operator-session"',
+    );
+  });
+
+  it("在创建渲染器前启用严格 CSP 兼容的 Pixi 同步器", () => {
+    const configure = mainSource.indexOf("configurePixiContentSecurityPolicy()");
+    const create = mainSource.indexOf("await ApplicationController.create");
+    expect(configure).toBeGreaterThanOrEqual(0);
+    expect(configure).toBeLessThan(create);
+  });
+
   it("mounts shell and overlay before constructing final renderer owners across frames", () => {
     const shell = controllerSource.indexOf('"shell-mounted",\n        () => mountApplicationShell');
     const overlay = controllerSource.indexOf('"overlay-mounted",\n        () =>');

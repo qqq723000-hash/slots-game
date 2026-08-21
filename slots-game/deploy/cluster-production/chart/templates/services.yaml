@@ -36,6 +36,25 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-worker-operations") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs-worker-operations
+    slots-game.io/metrics-job: slots-rgs-worker
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "slots.selectorLabels" (dict "root" . "component" "rgs-worker") | nindent 4 }}
+  ports:
+    - name: operations
+      port: 8081
+      targetPort: operations
+      protocol: TCP
+{{- if .Values.web.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: {{ include "slots.resourceName" (dict "root" . "suffix" "web") }}
   labels:
     {{- include "slots.commonLabels" . | nindent 4 }}
@@ -49,3 +68,4 @@ spec:
       port: 80
       targetPort: http
       protocol: TCP
+{{- end }}

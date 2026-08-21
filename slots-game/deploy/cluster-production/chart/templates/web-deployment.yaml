@@ -1,3 +1,4 @@
+{{- if .Values.web.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,7 +9,6 @@ metadata:
     slots-game.io/log-pipeline-provider: {{ .Values.externalControls.logPipelineProvider | quote }}
     slots-game.io/web-version-isolation-provider: {{ .Values.externalControls.webVersionIsolationProvider | quote }}
 spec:
-  replicas: {{ .Values.web.replicaCount }}
   revisionHistoryLimit: 5
   minReadySeconds: 10
   progressDeadlineSeconds: 600
@@ -145,3 +145,4 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 32Mi
+{{- end }}

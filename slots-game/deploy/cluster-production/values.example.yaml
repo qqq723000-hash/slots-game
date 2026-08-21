@@ -15,9 +15,15 @@ rgs:
   publicBaseURL: https://rgs.example.com
   allowedOrigins:
     - https://slots.example.com
+  sharedAdmission:
+    endpointURL: rediss://valkey.example.internal:6379
+
+web:
+  enabled: true
 
 ingress:
   className: nginx
+  tlsSecretEnabled: true
   apiHost: rgs.example.com
   webHost: slots.example.com
   apiTLSSecretName: rgs-ingress-tls
@@ -36,8 +42,10 @@ externalSecrets:
     name: slots-rgs-migrator-database-v1
   operationsBearer:
     name: slots-rgs-operations-bearer-v1
-  runtimeAssets:
-    name: slots-rgs-runtime-assets-v1
+  sharedAdmission:
+    name: slots-rgs-shared-admission-v1
+  apiRuntimeAssets:
+    name: slots-rgs-api-runtime-assets-v1
     additionalItems:
       - key: operator-access-private.pem
         path: keys/operator-access-private.pem
@@ -49,6 +57,15 @@ externalSecrets:
         path: keys/operator-response-private.pem
       - key: operator-response-public.pem
         path: keys/operator-response-public.pem
+      - key: wallet-request-private.pem
+        path: keys/wallet-request-private.pem
+      - key: wallet-request-public.pem
+        path: keys/wallet-request-public.pem
+      - key: wallet-response-public.pem
+        path: keys/wallet-response-public.pem
+  workerRuntimeAssets:
+    name: slots-rgs-worker-runtime-assets-v1
+    additionalItems:
       - key: wallet-request-private.pem
         path: keys/wallet-request-private.pem
       - key: wallet-request-public.pem
@@ -68,6 +85,10 @@ externalControls:
 
 release:
   compatibilityClass: same-schema-and-definition
+  definitionIdentity:
+    gameID: iron-colossus
+    version: definition-v1
+    sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 monitoring:
   namespaceSelector:
@@ -81,12 +102,14 @@ monitoring:
 
 networkPolicy:
   ingressController:
+    mode: selectors
     namespaceSelector:
       matchLabels:
         kubernetes.io/metadata.name: ingress-nginx
     podSelector:
       matchLabels:
         app.kubernetes.io/name: ingress-nginx
+    cidrs: []
   dns:
     namespaceSelector:
       matchLabels:
@@ -104,6 +127,9 @@ networkPolicy:
     audit:
       cidrs:
         - 10.40.0.0/24
+    sharedAdmission:
+      cidrs:
+        - 10.50.0.0/24
 
 scheduling:
   nodeSelector:

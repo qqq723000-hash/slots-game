@@ -1,18 +1,86 @@
 import { createReadStream } from "node:fs";
-import { access, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import {
+  CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE,
+  createReleaseContentSecurityPolicy,
+  verifyReleaseContentSecurityPolicy,
+} from "../../deploy/web/content-security-policy.mjs";
+import { createControlledRgsTransactionFixture } from "./production-browser-transaction-fixture.mjs";
+import { validateReleaseRgsBuildEnvironment } from "../src/validateReleaseRgsBuildConfig.mjs";
+
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const distributionRoot = resolve(webRoot, "dist");
+const distributionRoot = distributionRootFromArguments(process.argv.slice(2));
 const bootstrapFailureText = "The game could not start. Please try again.";
 const startupTimeoutMs = 15_000;
+const transactionTimeoutMs = 25_000;
+const commandTimeoutMs = transactionTimeoutMs + 5_000;
+validateReleaseRgsBuildEnvironment(process.env);
+const browserRgsBaseUrl = process.env.VITE_RGS_BASE_URL;
+const browserHostOrigin = process.env.VITE_RGS_HOST_ORIGIN;
+const browserBetMinor = process.env.VITE_RGS_DEFAULT_BET_MINOR;
+const initialBalanceMinor = (BigInt(browserBetMinor) + 800n).toString();
+const finalBalanceMinor = "800";
+const expectedInitialBalance = formatMinor(initialBalanceMinor, 2);
+const expectedFinalBalance = formatMinor(finalBalanceMinor, 2);
+const browserContentSecurityPolicy = createReleaseContentSecurityPolicy({
+  rgsBaseUrl: browserRgsBaseUrl,
+  hostOrigin: browserHostOrigin,
+});
+verifyReleaseContentSecurityPolicy(browserContentSecurityPolicy, {
+  rgsBaseUrl: browserRgsBaseUrl,
+  hostOrigin: browserHostOrigin,
+});
+
+const BROWSER_TRANSACTION_PROBE_SOURCE = `
+  (() => {
+    const probe = {
+      operatorSessionRequests: [],
+      playerErrors: [],
+      runtimeErrors: [],
+      unhandledRejections: [],
+      transaction: null,
+    };
+    Object.defineProperty(globalThis, "__slotsProductionTransactionProbe", {
+      configurable: false,
+      enumerable: false,
+      value: probe,
+      writable: false,
+    });
+    addEventListener("slots-game:operator-session-required", (event) => {
+      probe.operatorSessionRequests.push({
+        code: String(event?.detail?.code ?? "unknown").slice(0, 64),
+        reason: String(event?.detail?.reason ?? "unknown").slice(0, 64),
+      });
+    });
+    addEventListener("slots-game:player-error", (event) => {
+      probe.playerErrors.push(String(event?.detail?.code ?? "unknown").slice(0, 64));
+    });
+    addEventListener("error", (event) => {
+      probe.runtimeErrors.push(String(event?.error?.name ?? "Error").slice(0, 64));
+    });
+    addEventListener("unhandledrejection", (event) => {
+      probe.unhandledRejections.push(String(event?.reason?.name ?? "UnhandledRejection").slice(0, 64));
+    });
+    try {
+      localStorage.setItem("primal-rampage.feature-preview.dismissed.v1", "1");
+    } catch {
+      probe.runtimeErrors.push("FeaturePreviewStorageUnavailable");
+    }
+  })();
+`;
 
 const contentTypes = Object.freeze({
+  ".atlas": "text/plain; charset=utf-8",
+  ".avif": "image/avif",
   ".css": "text/css; charset=utf-8",
+  ".fnt": "text/plain; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".ico": "image/x-icon",
   ".js": "text/javascript; charset=utf-8",
@@ -20,12 +88,26 @@ const contentTypes = Object.freeze({
   ".m4a": "audio/mp4",
   ".mp3": "audio/mpeg",
   ".png": "image/png",
+  ".skel": "application/octet-stream",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
   ".webp": "image/webp",
+  ".woff": "font/woff",
 });
+
+function distributionRootFromArguments(argumentsValue) {
+  if (argumentsValue.length === 0) return resolve(webRoot, "dist");
+  if (argumentsValue.length !== 2 || argumentsValue[0] !== "--distribution-root"
+    || argumentsValue[1] === "") {
+    throw new Error("用法：verify-production-browser-bootstrap.mjs [--distribution-root PATH]");
+  }
+  return resolve(argumentsValue[1]);
+}
 
 await access(resolve(distributionRoot, "index.html"));
 const distributionRealRoot = await realpath(distributionRoot);
 const modulePaths = await productionModulePaths(distributionRoot);
+await verifyEmbeddedBuildConfiguration(distributionRoot, modulePaths);
 const chromeExecutable = findChromeExecutable();
 const profileDirectory = await mkdtemp(join(tmpdir(), "slots-production-browser-"));
 const server = createDistributionServer();
@@ -34,21 +116,121 @@ let pageSocket;
 
 try {
   const address = await listenOnLoopback(server);
-  const pageUrl = `http://127.0.0.1:${address.port}/`;
+  const launchCode = `lc_${"b".repeat(43)}`;
+  const operatorId = "browser-smoke";
+  const sessionId = "browser-smoke";
+  const pageUrl = `http://127.0.0.1:${address.port}/#${new URLSearchParams({
+    rgsLaunchCode: launchCode,
+    rgsOperatorId: operatorId,
+    rgsSessionId: sessionId,
+  })}`;
+  const transactionFixture = createControlledRgsTransactionFixture({
+    baseUrl: browserRgsBaseUrl,
+    pageOrigin: new URL(pageUrl).origin,
+    launchCode,
+    operatorId,
+    sessionId,
+    initialBalanceMinor,
+    betMinor: browserBetMinor,
+    finalBalanceMinor,
+  });
   const debuggingPort = await chrome.debuggingPort;
-  const target = await waitForPageTarget(debuggingPort, pageUrl);
+  const target = await waitForPageTarget(debuggingPort);
   pageSocket = await connectDevTools(target.webSocketDebuggerUrl);
-  const result = await verifyBootstrap(pageSocket, pageUrl, modulePaths);
+  const result = await verifyBootstrap(pageSocket, pageUrl, modulePaths, transactionFixture);
+  if (!Array.isArray(result.cspViolations)) {
+    throw new Error("生产浏览器 CSP 违规探针未返回可信结果");
+  }
+  if (result.cspViolations.length > 0) {
+    throw new Error(`生产模块求值触发 CSP 违规：${JSON.stringify(result.cspViolations)}`);
+  }
   if (result.moduleFailures.length > 0) {
     const detail = result.moduleFailures
       .map(({ path, name, message, stack }) => [path, name, message, stack].filter(Boolean).join("\n"))
       .join("\n\n");
     throw new Error(`生产入口在真实浏览器中求值失败：\n${detail}`);
   }
+  if (!result.rendererReady) {
+    throw new Error(
+      `生产入口没有完成严格 CSP Pixi/WebGL 装配：${JSON.stringify(result.rendererEvidence)}`,
+    );
+  }
   if (result.status === bootstrapFailureText) {
     throw new Error("生产入口被启动边界判定为模块加载失败");
   }
-  process.stdout.write(`生产浏览器启动门禁通过：${basename(result.entryPath)} 已完成模块求值。\n`);
+  if (result.operatorSessionRequests.length > 0
+    || result.playerErrors.includes("OPERATOR_SESSION_REQUIRED")) {
+    throw new Error("生产浏览器事务触发 OPERATOR_SESSION_REQUIRED，禁止把会话失败页判绿");
+  }
+  if (result.playerErrors.length > 0) {
+    throw new Error(`生产浏览器事务触发玩家错误码：${JSON.stringify({
+      codes: result.playerErrors,
+      diagnostics: result.diagnostics,
+      finalState: result.finalState,
+      transactionEvidence: result.transactionEvidence,
+    })}`);
+  }
+  if (result.runtimeErrors.length > 0 || result.unhandledRejections.length > 0) {
+    throw new Error("生产浏览器事务发生未处理的运行时异常");
+  }
+  const transactionEvidence = result.transactionEvidence;
+  if (transactionEvidence.exchangeCount !== 1
+    || transactionEvidence.spinCount !== 1
+    || transactionEvidence.acknowledgementCount !== 1
+    || !transactionEvidence.committedRoundObserved
+    || JSON.stringify(transactionEvidence.order)
+      !== JSON.stringify(["session-exchange", "spin", "result-acknowledgement"])) {
+    throw new Error(`生产浏览器 RGS 事务不完整：${JSON.stringify(transactionEvidence)}`);
+  }
+  for (const stage of ["decode-complete", "controller-dispatch", "callback", "accepted"]) {
+    if (!result.deliveryStages.includes(stage)) {
+      throw new Error(`生产浏览器事务没有观察到结果交付阶段：${stage}`);
+    }
+  }
+  for (const state of [
+    "Spin_Start",
+    "Spinning",
+    "Spin_Stopping",
+    "Reel_Stop_One_By_One",
+    "Result_Show",
+    "Win_Line_Animation",
+    "Idle",
+  ]) {
+    if (!result.reelStates.includes(state)) {
+      throw new Error(`生产浏览器事务没有观察到转轴表现状态：${state}`);
+    }
+  }
+  const finalState = result.finalState;
+  if (finalState.balance !== "8.00" || finalState.balance !== expectedFinalBalance
+    || finalState.lastWin !== "0.00"
+    || finalState.reelState !== "Idle"
+    || finalState.hasReelRoundId
+    || finalState.spinMode !== "ready"
+    || finalState.spinAction !== "spin"
+    || finalState.spinDisabled
+    || finalState.launchPhase !== "ready") {
+    throw new Error(`生产浏览器事务完成后没有恢复可下注状态：${JSON.stringify(finalState)}`);
+  }
+  if (!result.balanceValues.includes(expectedInitialBalance)
+    || !result.balanceValues.includes(expectedFinalBalance)) {
+    throw new Error("生产浏览器事务没有观察到权威余额从会话值更新为结算值");
+  }
+  const visualEvidence = result.visualEvidence;
+  if (!visualEvidence
+    || visualEvidence.baselineBytes < 10_000
+    || visualEvidence.activeBytes < 10_000
+    || visualEvidence.finalBytes < 10_000
+    || visualEvidence.activeReelState === "Idle"
+    || new Set([
+      visualEvidence.baselineDigest,
+      visualEvidence.activeDigest,
+      visualEvidence.finalDigest,
+    ]).size !== 3) {
+    throw new Error(`生产浏览器事务缺少真实 WebGL 画面变化证据：${JSON.stringify(visualEvidence)}`);
+  }
+  process.stdout.write(
+    `生产浏览器事务门禁通过：${basename(result.entryPath)} 已在精确 CSP 下完成会话交换、旋转、结果解码与表现、余额更新及结果 ACK。\n`,
+  );
 } finally {
   pageSocket?.close();
   await closeServer(server);
@@ -83,13 +265,32 @@ function createDistributionServer() {
       }
       response.writeHead(200, {
         "Cache-Control": "no-store",
+        "Content-Security-Policy": browserContentSecurityPolicy,
         "Content-Type": contentTypes[extname(filePath)] ?? "application/octet-stream",
+        "X-Content-Type-Options": "nosniff",
       });
       createReadStream(filePath).pipe(response);
     } catch {
       response.writeHead(404).end();
     }
   });
+}
+
+async function verifyEmbeddedBuildConfiguration(root, productionModules) {
+  const javascript = (await Promise.all(productionModules.map((modulePath) => (
+    readFile(resolve(root, `.${modulePath}`), "utf8")
+  )))).join("\n");
+  const expectedValues = [
+    process.env.VITE_RGS_BASE_URL,
+    process.env.VITE_RGS_BET_OPTIONS_MINOR,
+    process.env.VITE_RGS_DEFAULT_BET_MINOR,
+    process.env.VITE_RGS_HOST_ORIGIN,
+  ];
+  for (const value of expectedValues) {
+    if (!javascript.includes(JSON.stringify(value).slice(1, -1))) {
+      throw new Error("生产浏览器门禁环境与 dist 内联的 RGS 配置不一致");
+    }
+  }
 }
 
 async function productionModulePaths(root, parent = root) {
@@ -142,13 +343,19 @@ function findChromeExecutable() {
 }
 
 function launchChrome(executable, profileDirectoryValue) {
+  // Linux CI runner 没有实体 GPU；只对隔离的本地发布字节启用 Chrome 自带软件 WebGL，
+  // macOS 验收仍走真实图形栈，生产浏览器不会继承此参数。
+  const softwareWebglArguments = process.platform === "linux"
+    ? ["--enable-unsafe-swiftshader"]
+    : [];
   const browser = spawn(executable, [
     "--headless=new",
     "--disable-background-networking",
     "--disable-component-update",
     "--disable-default-apps",
     "--disable-extensions",
-    "--disable-gpu",
+    "--force-prefers-reduced-motion=reduce",
+    ...softwareWebglArguments,
     "--disable-sync",
     "--no-first-run",
     "--remote-debugging-address=127.0.0.1",
@@ -182,13 +389,13 @@ function launchChrome(executable, profileDirectoryValue) {
   return { process: browser, debuggingPort };
 }
 
-async function waitForPageTarget(debuggingPort, pageUrl) {
+async function waitForPageTarget(debuggingPort) {
   const deadline = Date.now() + startupTimeoutMs;
   let lastError;
   while (Date.now() < deadline) {
     try {
       const createResponse = await fetch(
-        `http://127.0.0.1:${debuggingPort}/json/new?${encodeURIComponent(pageUrl)}`,
+        `http://127.0.0.1:${debuggingPort}/json/new?${encodeURIComponent("about:blank")}`,
         { method: "PUT" },
       );
       if (!createResponse.ok) throw new Error(`DevTools target HTTP ${createResponse.status}`);
@@ -212,11 +419,28 @@ function connectDevTools(url) {
   });
 }
 
-async function verifyBootstrap(socket, pageUrl, productionModules) {
+async function verifyBootstrap(socket, pageUrl, productionModules, transactionFixture) {
   let identifier = 0;
+  let documentContentSecurityPolicy;
+  let transportFailure = null;
+  const documentUrl = new URL(pageUrl);
+  documentUrl.hash = "";
   const pending = new Map();
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
+    if (message.method === "Network.responseReceived") {
+      const response = message.params?.response;
+      if (message.params?.type === "Document" && response?.url === documentUrl.href) {
+        const policyHeader = Object.entries(response.headers ?? {})
+          .find(([name]) => name.toLowerCase() === "content-security-policy");
+        documentContentSecurityPolicy = policyHeader ? String(policyHeader[1]) : undefined;
+      }
+    }
+    if (message.method === "Fetch.requestPaused") {
+      void fulfillControlledRgsRequest(message.params).catch((error) => {
+        transportFailure = error instanceof Error ? error : new Error("受控 RGS 响应失败");
+      });
+    }
     if (typeof message.id !== "number") return;
     const waiter = pending.get(message.id);
     if (!waiter) return;
@@ -239,25 +463,82 @@ async function verifyBootstrap(socket, pageUrl, productionModules) {
       const timer = setTimeout(() => {
         pending.delete(id);
         rejectPromise(new Error(`浏览器调试命令超时：${method}`));
-      }, startupTimeoutMs);
+      }, commandTimeoutMs);
       pending.set(id, { resolve: resolvePromise, reject: rejectPromise, timer });
       socket.send(JSON.stringify({ id, method, params }));
     });
   };
 
-  await Promise.all([send("Page.enable"), send("Runtime.enable")]);
+  async function fulfillControlledRgsRequest(parameters) {
+    try {
+      const fulfillment = transactionFixture.responseForPausedRequest(parameters);
+      await send("Fetch.fulfillRequest", {
+        requestId: parameters.requestId,
+        responseCode: fulfillment.responseCode,
+        responseHeaders: fulfillment.responseHeaders,
+        ...(fulfillment.body === undefined
+          ? {}
+          : { body: Buffer.from(fulfillment.body, "utf8").toString("base64") }),
+      });
+    } catch (error) {
+      transportFailure = error instanceof Error ? error : new Error("受控 RGS 请求不符合契约");
+      try {
+        await send("Fetch.failRequest", {
+          requestId: parameters.requestId,
+          errorReason: "Failed",
+        });
+      } catch {
+        // 首个协议失败仍是根因；浏览器调试连接的后续失败不能覆盖它。
+      }
+      throw transportFailure;
+    }
+  }
+
+  await Promise.all([
+    send("Page.enable"),
+    send("Runtime.enable"),
+    send("Network.enable"),
+    send("Fetch.enable", {
+      patterns: [{
+        urlPattern: transactionFixture.interceptedOriginPattern,
+        requestStage: "Request",
+      }],
+    }),
+  ]);
+  await send("Page.addScriptToEvaluateOnNewDocument", {
+    source: CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE,
+  });
+  await send("Page.addScriptToEvaluateOnNewDocument", {
+    source: BROWSER_TRANSACTION_PROBE_SOURCE,
+  });
   await send("Page.navigate", { url: pageUrl });
   await waitForDocumentReady(send);
-  const evaluation = await send("Runtime.evaluate", {
+  if (documentContentSecurityPolicy !== browserContentSecurityPolicy) {
+    throw new Error("生产浏览器主文档未收到共享的精确发布 CSP");
+  }
+  const bootstrap = await evaluateValue(send, {
     awaitPromise: true,
     returnByValue: true,
     expression: `
       (async () => {
+        const readCspViolations = () => {
+          const snapshot = globalThis.__slotsContentSecurityPolicyProbe?.violations;
+          if (!Array.isArray(snapshot)) {
+            return [{ effectiveDirective: "probe-missing", disposition: "enforce" }];
+          }
+          return snapshot.slice(0, 16).map((violation) => ({
+            effectiveDirective: String(violation?.effectiveDirective ?? '').slice(0, 64),
+            violatedDirective: String(violation?.violatedDirective ?? '').slice(0, 64),
+            disposition: String(violation?.disposition ?? '').slice(0, 32),
+            blockedTarget: String(violation?.blockedTarget ?? '').slice(0, 256),
+          }));
+        };
         const entry = document.querySelector('script[type="module"][src]');
         if (!entry) return {
           entryPath: "missing",
           moduleFailures: [{ message: "missing production module entry" }],
           status: null,
+          cspViolations: readCspViolations(),
         };
         const productionModules = ${JSON.stringify(productionModules)};
         const moduleFailures = [];
@@ -274,20 +555,386 @@ async function verifyBootstrap(socket, pageUrl, productionModules) {
             });
           }
         }
+        const observedStages = [];
+        const deadline = Date.now() + ${startupTimeoutMs};
+        let rendererReady = false;
+        let rendererEvidence = null;
+        while (Date.now() < deadline) {
+          const root = document.querySelector('#app');
+          const stage = root?.dataset.startupAssemblyStage ?? null;
+          if (stage !== null && observedStages.at(-1) !== stage) observedStages.push(stage);
+          const canvas = root?.querySelector('[data-role="canvas"] canvas');
+          let webgl = false;
+          if (canvas instanceof HTMLCanvasElement) {
+            try {
+              webgl = Boolean(canvas.getContext('webgl2') ?? canvas.getContext('webgl'));
+            } catch {
+              webgl = false;
+            }
+          }
+          rendererEvidence = {
+            canvasHeight: canvas instanceof HTMLCanvasElement ? canvas.height : 0,
+            canvasWidth: canvas instanceof HTMLCanvasElement ? canvas.width : 0,
+            pixiCspMode: root?.dataset.pixiCspMode ?? null,
+            stage,
+            observedStages: observedStages.slice(-16),
+            webgl,
+          };
+          rendererReady = rendererEvidence.pixiCspMode === 'static-uniform-sync'
+            && rendererEvidence.canvasWidth > 0
+            && rendererEvidence.canvasHeight > 0
+            && rendererEvidence.webgl
+            && ['renderer-mounted', 'controller-wired', 'readiness-complete-painted'].includes(stage);
+          if (rendererReady || stage === 'assembly-failed') break;
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+        }
         return {
           entryPath: new URL(entry.src).pathname,
           moduleFailures,
+          rendererEvidence,
+          rendererReady,
+          reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
           status: document.querySelector('.launch-loading__status')?.textContent ?? null,
+          cspViolations: readCspViolations(),
         };
       })()
     `,
   });
+  let browserState = await waitForApplicationReady(send, () => transportFailure);
+  if (!browserState.ready) {
+    return completeBrowserResult(bootstrap, browserState, transactionFixture.snapshot());
+  }
+  if (!bootstrap.reducedMotion) {
+    throw new Error("生产浏览器事务夹具没有启用系统级减少动态效果配置");
+  }
+  await armTransactionObservation(send);
+  const baselineCapture = await captureGameCanvas(send);
+  await clickPrimarySpin(send);
+  const activeState = await waitForActivePresentation(
+    send,
+    transactionFixture,
+    () => transportFailure,
+  );
+  const activeCapture = await captureGameCanvas(send);
+  browserState = await waitForTransactionCompletion(
+    send,
+    transactionFixture,
+    () => transportFailure,
+  );
+  const finalCapture = await captureGameCanvas(send);
+  return completeBrowserResult(
+    bootstrap,
+    browserState,
+    transactionFixture.snapshot(),
+    {
+      baselineBytes: baselineCapture.bytes,
+      baselineDigest: baselineCapture.digest,
+      activeBytes: activeCapture.bytes,
+      activeDigest: activeCapture.digest,
+      activeReelState: activeState.finalState.reelState,
+      finalBytes: finalCapture.bytes,
+      finalDigest: finalCapture.digest,
+    },
+  );
+}
+
+function completeBrowserResult(bootstrap, browserState, transactionEvidence, visualEvidence = null) {
+  const observed = browserState.transaction ?? {};
+  return {
+    ...bootstrap,
+    status: browserState.status,
+    cspViolations: browserState.cspViolations,
+    operatorSessionRequests: browserState.operatorSessionRequests,
+    playerErrors: browserState.playerErrors,
+    runtimeErrors: browserState.runtimeErrors,
+    unhandledRejections: browserState.unhandledRejections,
+    deliveryStages: observed.deliveryStages ?? [],
+    reelStates: observed.reelStates ?? [],
+    spinModes: observed.spinModes ?? [],
+    balanceValues: observed.balanceValues ?? [],
+    transactionEvidence,
+    visualEvidence,
+    diagnostics: browserState.diagnostics,
+    finalState: browserState.finalState,
+  };
+}
+
+async function evaluateValue(send, options) {
+  const evaluation = await send("Runtime.evaluate", options);
   if (evaluation.exceptionDetails) {
     throw new Error(evaluation.exceptionDetails.exception?.description
       ?? evaluation.exceptionDetails.text
       ?? "浏览器求值失败");
   }
   return evaluation.result.value;
+}
+
+async function readBrowserState(send) {
+  return evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const probe = globalThis.__slotsProductionTransactionProbe;
+        const cspSnapshot = globalThis.__slotsContentSecurityPolicyProbe?.violations;
+        const root = document.querySelector('#app');
+        const frame = root?.querySelector('[data-role="frame"]');
+        const overlay = root?.querySelector('[data-role="overlay"]');
+        const spin = root?.querySelector('[data-role="spin"]');
+        const balance = root?.querySelector('[data-role="balance"]');
+        const lastWin = root?.querySelector('[data-role="last-win"]');
+        const operatorSessionRequests = Array.isArray(probe?.operatorSessionRequests)
+          ? probe.operatorSessionRequests.slice(0, 16)
+          : [{ code: "probe-missing", reason: "probe-missing" }];
+        const playerErrors = Array.isArray(probe?.playerErrors)
+          ? probe.playerErrors.slice(0, 16)
+          : ["probe-missing"];
+        const runtimeErrors = Array.isArray(probe?.runtimeErrors)
+          ? probe.runtimeErrors.slice(0, 16)
+          : ["probe-missing"];
+        const unhandledRejections = Array.isArray(probe?.unhandledRejections)
+          ? probe.unhandledRejections.slice(0, 16)
+          : ["probe-missing"];
+        const transaction = probe?.transaction;
+        const cspViolations = Array.isArray(cspSnapshot)
+          ? cspSnapshot.slice(0, 16).map((violation) => ({
+              effectiveDirective: String(violation?.effectiveDirective ?? '').slice(0, 64),
+              violatedDirective: String(violation?.violatedDirective ?? '').slice(0, 64),
+              disposition: String(violation?.disposition ?? '').slice(0, 32),
+              blockedTarget: String(violation?.blockedTarget ?? '').slice(0, 256),
+            }))
+          : [{ effectiveDirective: "probe-missing", disposition: "enforce" }];
+        const finalState = {
+          balance: balance?.textContent ?? null,
+          lastWin: lastWin?.textContent ?? null,
+          reelState: frame?.dataset.reelState ?? null,
+          hasReelRoundId: Boolean(frame?.dataset.reelRoundId),
+          spinMode: spin?.dataset.mode ?? null,
+          spinAction: spin?.dataset.action ?? null,
+          spinDisabled: !(spin instanceof HTMLButtonElement) || spin.disabled,
+          launchPhase: overlay?.dataset.launch ?? null,
+        };
+        const diagnostics = {
+          hasRgsSession: root?.dataset.rgsSession === 'online',
+          rgsDeliveryStage: root?.dataset.rgsDeliveryStage ?? null,
+          startupAssemblyStage: root?.dataset.startupAssemblyStage ?? null,
+          startupReadinessStage: root?.dataset.startupReadinessStage ?? null,
+          startupReadiness: root?.dataset.startupReadiness ?? null,
+          loadingStage: root?.querySelector('[data-role="launch-loading"]')?.dataset.stage ?? null,
+        };
+        return {
+          ready: finalState.launchPhase === 'ready'
+            && finalState.reelState === 'Idle'
+            && finalState.spinMode === 'ready'
+            && finalState.spinAction === 'spin'
+            && finalState.spinDisabled === false,
+          explicitFailure: root?.dataset.startupAssemblyStage === 'assembly-failed'
+            || finalState.launchPhase === 'failed'
+            || operatorSessionRequests.length > 0
+            || playerErrors.length > 0
+            || runtimeErrors.length > 0
+            || unhandledRejections.length > 0
+            || cspViolations.length > 0,
+          status: document.querySelector('.launch-loading__status')?.textContent ?? null,
+          cspViolations,
+          operatorSessionRequests,
+          playerErrors,
+          runtimeErrors,
+          unhandledRejections,
+          transaction: transaction ? {
+            balanceValues: transaction.balanceValues.slice(0, 32),
+            deliveryStages: transaction.deliveryStages.slice(0, 64),
+            reelStates: transaction.reelStates.slice(0, 32),
+            spinModes: transaction.spinModes.slice(0, 32),
+          } : null,
+          diagnostics,
+          finalState,
+        };
+      })()
+    `,
+  });
+}
+
+async function waitForApplicationReady(send, transportFailure) {
+  const deadline = Date.now() + startupTimeoutMs;
+  let state;
+  while (Date.now() < deadline) {
+    const transportError = transportFailure();
+    if (transportError) throw transportError;
+    state = await readBrowserState(send);
+    if (state.ready || state.explicitFailure) return state;
+    await delay(50);
+  }
+  throw new Error(`生产应用没有进入可下注状态：${JSON.stringify(state?.finalState ?? null)}`);
+}
+
+async function armTransactionObservation(send) {
+  const armed = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const probe = globalThis.__slotsProductionTransactionProbe;
+        if (!probe || probe.transaction) return false;
+        const transaction = {
+          balanceValues: [],
+          deliveryStages: [],
+          reelStates: [],
+          spinModes: [],
+        };
+        const append = (values, value) => {
+          if (typeof value !== 'string' || value === '') return;
+          if (values.at(-1) !== value) values.push(value);
+        };
+        const capture = () => {
+          const root = document.querySelector('#app');
+          const frame = root?.querySelector('[data-role="frame"]');
+          const spin = root?.querySelector('[data-role="spin"]');
+          append(transaction.balanceValues, root?.querySelector('[data-role="balance"]')?.textContent);
+          append(transaction.deliveryStages, root?.dataset.rgsDeliveryStage);
+          append(transaction.reelStates, frame?.dataset.reelState);
+          append(transaction.spinModes, spin?.dataset.mode);
+        };
+        const observer = new MutationObserver((records) => {
+          for (const record of records) {
+            if (record.type !== 'attributes') continue;
+            if (record.attributeName === 'data-rgs-delivery-stage') {
+              append(transaction.deliveryStages, record.oldValue);
+            }
+            if (record.attributeName === 'data-reel-state') {
+              append(transaction.reelStates, record.oldValue);
+            }
+            if (record.attributeName === 'data-mode') {
+              append(transaction.spinModes, record.oldValue);
+            }
+          }
+          capture();
+        });
+        observer.observe(document.documentElement, {
+          attributeOldValue: true,
+          attributes: true,
+          characterData: true,
+          childList: true,
+          subtree: true,
+        });
+        probe.transaction = transaction;
+        capture();
+        return true;
+      })()
+    `,
+  });
+  if (armed !== true) throw new Error("生产浏览器事务观察器未能唯一装配");
+}
+
+async function clickPrimarySpin(send) {
+  const target = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const spin = document.querySelector('[data-role="spin"]');
+        if (!(spin instanceof HTMLButtonElement) || spin.disabled
+          || spin.dataset.mode !== 'ready' || spin.dataset.action !== 'spin') return null;
+        spin.scrollIntoView({ block: 'center', inline: 'center' });
+        const rectangle = spin.getBoundingClientRect();
+        return {
+          x: rectangle.left + rectangle.width / 2,
+          y: rectangle.top + rectangle.height / 2,
+        };
+      })()
+    `,
+  });
+  if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y)) {
+    throw new Error("生产浏览器主旋转控件不可点击");
+  }
+  await send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: target.x,
+    y: target.y,
+    button: "left",
+    clickCount: 1,
+  });
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: target.x,
+    y: target.y,
+    button: "left",
+    clickCount: 1,
+  });
+}
+
+async function captureGameCanvas(send) {
+  const clip = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const canvas = document.querySelector('[data-role="canvas"] canvas');
+        if (!(canvas instanceof HTMLCanvasElement) || canvas.width <= 0 || canvas.height <= 0) {
+          return null;
+        }
+        const rectangle = canvas.getBoundingClientRect();
+        if (rectangle.width <= 0 || rectangle.height <= 0) return null;
+        return {
+          x: Math.max(0, rectangle.left),
+          y: Math.max(0, rectangle.top),
+          width: Math.min(innerWidth, rectangle.right) - Math.max(0, rectangle.left),
+          height: Math.min(innerHeight, rectangle.bottom) - Math.max(0, rectangle.top),
+          scale: 1,
+        };
+      })()
+    `,
+  });
+  if (!clip || clip.width <= 0 || clip.height <= 0) {
+    throw new Error("生产 WebGL 画布没有可截图的视口区域");
+  }
+  const screenshot = await send("Page.captureScreenshot", {
+    captureBeyondViewport: false,
+    clip,
+    format: "png",
+    fromSurface: true,
+  });
+  if (typeof screenshot.data !== "string") throw new Error("Chrome 没有返回画布截图");
+  const bytes = Buffer.from(screenshot.data, "base64");
+  return Object.freeze({
+    bytes: bytes.byteLength,
+    digest: createHash("sha256").update(bytes).digest("hex"),
+  });
+}
+
+async function waitForActivePresentation(send, fixture, transportFailure) {
+  const deadline = Date.now() + startupTimeoutMs;
+  let state;
+  while (Date.now() < deadline) {
+    const transportError = transportFailure();
+    if (transportError) throw transportError;
+    state = await readBrowserState(send);
+    if (state.explicitFailure) return state;
+    if (fixture.snapshot().spinCount === 1
+      && state.finalState.reelState !== null
+      && state.finalState.reelState !== "Idle") return state;
+    await delay(20);
+  }
+  throw new Error(`生产浏览器没有进入真实转轴表现：${JSON.stringify(state?.finalState ?? null)}`);
+}
+
+async function waitForTransactionCompletion(send, fixture, transportFailure) {
+  const deadline = Date.now() + transactionTimeoutMs;
+  let state;
+  while (Date.now() < deadline) {
+    const transportError = transportFailure();
+    if (transportError) throw transportError;
+    state = await readBrowserState(send);
+    const evidence = fixture.snapshot();
+    if (state.explicitFailure) return state;
+    if (evidence.acknowledgementCount === 1
+      && state.ready
+      && state.finalState.balance === expectedFinalBalance
+      && !state.finalState.hasReelRoundId) return state;
+    await delay(50);
+  }
+  throw new Error(
+    `生产浏览器事务超时：${JSON.stringify({
+      finalState: state?.finalState ?? null,
+      transactionEvidence: fixture.snapshot(),
+    })}`,
+  );
 }
 
 async function waitForDocumentReady(send) {
@@ -331,4 +978,10 @@ function waitForProcessExit(browser, timeoutMs) {
 
 function delay(milliseconds) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+function formatMinor(value, exponent) {
+  const digits = BigInt(value).toString().padStart(exponent + 1, "0");
+  if (exponent === 0) return digits;
+  return `${digits.slice(0, -exponent)}.${digits.slice(-exponent)}`;
 }

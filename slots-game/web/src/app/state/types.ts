@@ -1,44 +1,21 @@
-export const SYMBOL_IDS = [
-  "ORBIT",
-  "PRISM",
-  "PULSE",
-  "NOVA",
-  "CIRCUIT",
-  "TANK",
-  "WILD",
-  "VAULT",
-  "SURGE",
-] as const;
+import type {
+  LockedVaultFace,
+  SymbolId,
+  WheelInstantMultiplier,
+  WheelJackpotTier,
+} from "../../protocol/protocolConstants";
 
-export type SymbolId = (typeof SYMBOL_IDS)[number];
-
-/** 官方锁定 Symbol8 骨架上制作的零时长数值姿态。 */
-export const LOCKED_VAULT_FACES = [
-  "x1",
-  "x2",
-  "x3",
-  "x4",
-  "x5",
-  "x6",
-  "x7",
-  "x8",
-  "x9",
-  "mini",
-  "minor",
-  "major",
-  "mega",
-  "grand",
-  "free_spin",
-] as const;
-
-export type LockedVaultFace = (typeof LOCKED_VAULT_FACES)[number];
-
-/** 从官方锁定的服务端 ID 17-31 中恢复的精确表现映射。 */
-export function lockedVaultFaceForOriginalServerId(serverId: number): LockedVaultFace | null {
-  return Number.isInteger(serverId) && serverId >= 17 && serverId <= 31
-    ? LOCKED_VAULT_FACES[serverId - 17] ?? null
-    : null;
-}
+// 保留既有应用状态入口；运行时定义只允许位于无反向依赖的协议叶子模块。
+export {
+  LOCKED_VAULT_FACES,
+  SYMBOL_IDS,
+  WHEEL_INSTANT_MULTIPLIER_BY_TIER,
+  lockedVaultFaceForOriginalServerId,
+  type LockedVaultFace,
+  type SymbolId,
+  type WheelInstantMultiplier,
+  type WheelJackpotTier,
+} from "../../protocol/protocolConstants";
 
 export type MoneyMinor = string;
 
@@ -123,19 +100,6 @@ export interface RageTransformedEvent {
 export interface WheelStartedEvent {
   type: "wheel.started";
 }
-
-export const WHEEL_INSTANT_MULTIPLIER_BY_TIER = Object.freeze({
-  MINI: 10,
-  MINOR: 30,
-  MAJOR: 75,
-  MEGA: 250,
-  GRAND: 1_000,
-} as const);
-
-export type WheelJackpotTier = keyof typeof WHEEL_INSTANT_MULTIPLIER_BY_TIER;
-export type WheelInstantMultiplier = (
-  typeof WHEEL_INSTANT_MULTIPLIER_BY_TIER
-)[WheelJackpotTier];
 
 export interface InstantWheelAwardedEvent {
   type: "wheel.awarded";

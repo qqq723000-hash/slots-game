@@ -8,7 +8,9 @@ require_node22
 require_state
 
 ca_file="$secrets_root/local-production-root-ca.pem"
+csp_verifier="$repository_root/deploy/web/content-security-policy.mjs"
 test -s "$ca_file"
+test -s "$csp_verifier"
 
 metadata_value() {
   value="$(sed -n "s/^$1=//p" "$compose_environment")"
@@ -100,6 +102,48 @@ for ingress_host in slots.localhost rgs.localhost; do
       exit 1
     }
 done
+verify_web_content_security_policy() {
+  web_path="$1"
+  web_label="$2"
+  web_headers_file="$(mktemp -t slots-web-csp.XXXXXX)"
+  if ! curl --fail --silent --show-error --dump-header "$web_headers_file" --output /dev/null \
+    --cacert "$ca_file" --resolve slots.localhost:8443:127.0.0.1 \
+    "https://slots.localhost:8443$web_path"; then
+    rm -f "$web_headers_file"
+    printf '%s\n' "$web_label 无法完整读取。" >&2
+    exit 1
+  fi
+  if ! tr -d '\r' < "$web_headers_file" \
+    | node "$csp_verifier" \
+      --rgs-base-url https://rgs.localhost:8443 \
+      --host-origin https://slots.localhost:8443; then
+    rm -f "$web_headers_file"
+    printf '%s\n' "$web_label 未返回唯一且完整的严格 CSP。" >&2
+    exit 1
+  fi
+  rm -f "$web_headers_file"
+}
+
+verify_web_content_security_policy / 'Web 首页'
+verify_web_content_security_policy /release-manifest.json 'Web 发布清单'
+release_manifest_json="$(curl --fail --silent --show-error --cacert "$ca_file" \
+  --resolve slots.localhost:8443:127.0.0.1 \
+  https://slots.localhost:8443/release-manifest.json)"
+representative_script_path="$(printf '%s' "$release_manifest_json" | node -e '
+let source="";
+process.stdin.on("data", chunk => { source += chunk; }).on("end", () => {
+  const manifest=JSON.parse(source);
+  const script=(manifest.files ?? []).find((file) =>
+    typeof file?.path === "string" && /^assets\/[A-Za-z0-9_-]+\.js$/u.test(file.path));
+  if (!script) process.exit(1);
+  process.stdout.write(script.path);
+});')"
+test -n "$representative_script_path" || {
+  printf '%s\n' '发布清单中没有可用于响应头验收的代表性脚本。' >&2
+  exit 1
+}
+verify_web_content_security_policy "/$representative_script_path" 'Web 代表性脚本'
+unset release_manifest_json representative_script_path
 launcher_page="$(curl --fail --silent --show-error --cacert "$ca_file" \
   --resolve slots.localhost:8443:127.0.0.1 https://slots.localhost:8443/operator/)"
 printf '%s' "$launcher_page" | grep -Eq '<form[^>]+action="/launch"'
@@ -238,9 +282,10 @@ printf '%s\n' '验收阶段：一次性游戏启动会话。'
 admin_token="$(sed -n '1p' "$secrets_root/local-operator-admin.token")"
 launch_response="$(mktemp -t slots-launch.XXXXXX)"
 trap 'rm -f "$launch_response"' EXIT HUP INT TERM
-launch_status="$(curl --silent --show-error --output "$launch_response" --write-out '%{http_code}' \
+launch_status="$(printf 'Authorization: Bearer %s\n' "$admin_token" \
+  | curl --silent --show-error --output "$launch_response" --write-out '%{http_code}' \
   --cacert "$ca_file" --resolve slots.localhost:8443:127.0.0.1 \
-  -H "Authorization: Bearer $admin_token" -H 'Content-Type: application/json' \
+  --header @- -H 'Content-Type: application/json' \
   --data '{}' https://slots.localhost:8443/api/v1/launches)"
 unset admin_token
 test "$launch_status" = 201
@@ -249,6 +294,8 @@ const fs=require("fs"); const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8
 const target=new URL(p.url||"https://invalid.local");
 if(!/^lc_[A-Za-z0-9_-]{43}$/.test(p.launchCode||"") || target.origin!=="https://slots.localhost:8443" || !p.sessionId) process.exit(1);
 ' "$launch_response"
+LOCAL_BROWSER_CERT_FILE="$secrets_root/ingress-server.pem" \
+  node "$local_production_directory/verify-browser-session.mjs" "$launch_response"
 rm -f "$launch_response"
 trap - EXIT HUP INT TERM
 
@@ -257,8 +304,10 @@ unauthorized_status="$(curl --silent --output /dev/null --write-out '%{http_code
 test "$unauthorized_status" = 401
 printf '%s\n' '验收阶段：Alertmanager 认证与 receiver 持久化。'
 alert_token="$(sed -n '1p' "$secrets_root/alertmanager.token")"
-curl --fail --silent --show-error --cacert "$ca_file" --resolve alertmanager:9093:127.0.0.1 \
-  -H "Authorization: Bearer $alert_token" https://alertmanager:9093/-/ready >/dev/null
+printf 'Authorization: Bearer %s\n' "$alert_token" \
+  | curl --fail --silent --show-error --cacert "$ca_file" \
+    --resolve alertmanager:9093:127.0.0.1 --header @- \
+    https://alertmanager:9093/-/ready >/dev/null
 
 # 向真实 Alertmanager API 注入一个两分钟自愈的技术探针，确认非空 receiver 经过
 # TLS/Bearer 到达 local-operator，并由 Prometheus 观察到持久化成功计数增长。
@@ -280,8 +329,9 @@ process.stdout.write(JSON.stringify([{
  startsAt:now.toISOString(),endsAt:end.toISOString(),generatorURL:"https://slots.localhost:8443/operator/runbooks/alert-delivery-probe"
 }]));
 ' "$$")"
-curl --fail --silent --show-error --cacert "$ca_file" --resolve alertmanager:9093:127.0.0.1 \
-  -H "Authorization: Bearer $alert_token" -H 'Content-Type: application/json' \
+printf 'Authorization: Bearer %s\n' "$alert_token" \
+  | curl --fail --silent --show-error --cacert "$ca_file" \
+  --resolve alertmanager:9093:127.0.0.1 --header @- -H 'Content-Type: application/json' \
   --data "$probe_payload" https://alertmanager:9093/api/v2/alerts >/dev/null
 unset probe_payload
 alert_delivered=0
@@ -327,4 +377,4 @@ fi
 
 "$local_production_directory/verify-backups.sh"
 
-printf '%s\n' '本机 production-mode 端到端验收通过。'
+printf '%s\n' '本机集成验收端到端门禁通过。'

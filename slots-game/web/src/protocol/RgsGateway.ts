@@ -8,6 +8,7 @@ import type {
 import type {
   GameGateway,
   GatewayCallbacks,
+  ResultDeliveryStage,
 } from "./GameGateway";
 import { createRequestId } from "./messages";
 import {
@@ -866,6 +867,14 @@ export class RgsGateway implements GameGateway {
     this.callbacks = callbacks;
   }
 
+  private reportResultDeliveryStage(stage: ResultDeliveryStage): void {
+    try {
+      this.callbacks.onResultDeliveryStage?.(stage);
+    } catch {
+      // 固定诊断观察不属于传输或权威结果路径。
+    }
+  }
+
   get hasPendingSpin(): boolean {
     return this.pending !== null;
   }
@@ -1362,7 +1371,14 @@ export class RgsGateway implements GameGateway {
           betMinor: pending.ledger.betMinor,
           startRevision: pending.ledger.startRevision,
         },
-        (raw, requestId) => decodeRgsSpin(raw, requestId),
+        (raw, requestId) => {
+          this.reportResultDeliveryStage("post-response-before-decode");
+          const result = decodeRgsSpin(raw, requestId, (stage) => {
+            this.reportResultDeliveryStage(stage);
+          });
+          this.reportResultDeliveryStage("decoded");
+          return result;
+        },
       );
       this.acceptCommitted(pending, decoded);
     } catch (error) {
@@ -1475,6 +1491,7 @@ export class RgsGateway implements GameGateway {
     const session = this.requireSession();
     const binding = session.binding;
     const result = decoded.result;
+    this.reportResultDeliveryStage("economic-identity");
     if (!partialBindingMatches(decoded, binding)
       || result.sessionId !== binding.sessionId
       || result.roundId !== pending.ledger.roundId
@@ -1486,6 +1503,7 @@ export class RgsGateway implements GameGateway {
       || (pending.roundKind === "FREE_SPIN" && result.chargedBetMinor !== "0")) {
       throw new RgsProtocolError("committed RGS result does not match the pending economic identity");
     }
+    this.reportResultDeliveryStage("sequence-guard");
     const guardState = {
       sessionId: binding.sessionId,
       pendingRoundId: pending.ledger.roundId,
@@ -1501,9 +1519,12 @@ export class RgsGateway implements GameGateway {
       // 已交付结果在控制器确认可见展示或兜底提交前必须保持持久；
       // 重复网络响应不得 ACK 它。
       if (pending.deliveredSequence !== result.sequence) this.clearPending(pending);
+      this.reportResultDeliveryStage("delivered");
       return;
     }
+    this.reportResultDeliveryStage("origin-reconstructed");
     const origin = reconstructOriginFeatureState(pending, result);
+    this.reportResultDeliveryStage("origin-validated");
     validateSpinResultAgainstOrigin(origin, result);
     const nextSession = Object.freeze({
       ...session,
@@ -1512,6 +1533,7 @@ export class RgsGateway implements GameGateway {
       sequence: result.sequence,
       featureState: cloneFeatureState(result.featureState),
     });
+    this.reportResultDeliveryStage("controller-dispatch");
     try {
       this.callbacks.onSpinResult(result, origin);
     } catch (error) {
@@ -1530,6 +1552,7 @@ export class RgsGateway implements GameGateway {
     pending.deliveredResultHash = decoded.resultHash;
     pending.acknowledgementInFlight = false;
     this.clearPollTimer();
+    this.reportResultDeliveryStage("delivered");
   }
 
   private finishRejectedRound(pending: PendingRound, code: string, message: string): void {

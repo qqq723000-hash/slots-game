@@ -132,6 +132,14 @@ func (f *fakeRoundReader) GetRound(ctx context.Context, key rgs.RoundKey) (rgs.R
 	return f.get(ctx, key)
 }
 
+type fakeSecurityEventObserver struct {
+	nonceReplays int
+}
+
+func (observer *fakeSecurityEventObserver) NonceReplay() {
+	observer.nonceReplays++
+}
+
 type securityFixture struct {
 	now              time.Time
 	requestSigning   operator.SigningKey
@@ -140,6 +148,7 @@ type securityFixture struct {
 	accessIssuer     *operator.AccessTokenIssuer
 	accessVerifier   *operator.AccessTokenVerifier
 	requestVerifier  *operator.RequestVerifier
+	securityEvents   SecurityEventObserver
 	nonceSequence    byte
 }
 
@@ -242,6 +251,19 @@ func (f *securityFixture) newHandlerWithAdmissions(
 	operatorAdmission Admission,
 	clientAdmission Admission,
 ) *Handler {
+	return f.newHandlerWithAllAdmissions(t, launches, spins, rounds, operatorAdmission, clientAdmission, nil, nil)
+}
+
+func (f *securityFixture) newHandlerWithAllAdmissions(
+	t *testing.T,
+	launches *fakeLaunchService,
+	spins *fakeCoordinator,
+	rounds *fakeRoundReader,
+	operatorAdmission Admission,
+	clientAdmission Admission,
+	launchAdmission Admission,
+	spinAdmission Admission,
+) *Handler {
 	t.Helper()
 	handler, err := NewHandler(Config{
 		OperatorRequests: f.requestVerifier, AccessTokens: f.accessVerifier,
@@ -253,7 +275,9 @@ func (f *securityFixture) newHandlerWithAdmissions(
 		}),
 		Launches: launches, Spins: spins, Rounds: rounds,
 		Admission: operatorAdmission, ClientAdmission: clientAdmission,
-		Now: func() time.Time { return f.now }, NewRequestID: func() string { return "generated-request" },
+		LaunchAdmission: launchAdmission, SpinAdmission: spinAdmission,
+		SecurityEvents: f.securityEvents,
+		Now:            func() time.Time { return f.now }, NewRequestID: func() string { return "generated-request" },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -452,6 +476,131 @@ func TestOperatorRateLimitResponseIsSigned(t *testing.T) {
 	}
 }
 
+func TestOperatorAdmissionBackendFailureReturnsSignedServiceUnavailable(t *testing.T) {
+	security := newSecurityFixture(t)
+	launches := &fakeLaunchService{create: func(context.Context, LaunchCommand) (LaunchResult, error) {
+		t.Fatal("共享准入故障时不应进入启动服务")
+		return LaunchResult{}, nil
+	}}
+	rounds := &fakeRoundReader{}
+	handler := security.newHandlerWithAllAdmissions(
+		t, launches, &fakeCoordinator{}, rounds, nil, nil,
+		AdmissionResultFunc(func(context.Context, string, time.Time) AdmissionResult {
+			return AdmissionResult{Decision: AdmissionBackendUnavailable, RetryAfter: 1500 * time.Millisecond}
+		}), nil,
+	)
+	request := security.signOperatorRequest(t, OperatorLaunchPath, operatorLaunchBody("12500"))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	response := recorder.Result()
+	responseBody, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusServiceUnavailable || response.Header.Get("Retry-After") != "2" {
+		t.Fatalf("status = %d, retry-after = %q, body = %s", response.StatusCode, response.Header.Get("Retry-After"), responseBody)
+	}
+	if !bytes.Contains(responseBody, []byte(`"code":"ADMISSION_UNAVAILABLE"`)) {
+		t.Fatalf("unexpected body: %s", responseBody)
+	}
+	if err := security.responseVerifier.Verify(context.Background(), response, responseBody, testOperatorID, request.Header.Get(operator.HeaderRequestID)); err != nil {
+		t.Fatalf("signed admission-unavailable response verification failed: %v", err)
+	}
+	statusRequest := security.signOperatorRequest(t, OperatorRoundStatusPath, roundStatusBody())
+	statusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(statusRecorder, statusRequest)
+	if statusRecorder.Code == http.StatusServiceUnavailable || rounds.calls != 1 {
+		t.Fatalf("operator status/shared reader = %d/%d, body = %s", statusRecorder.Code, rounds.calls, statusRecorder.Body.Bytes())
+	}
+}
+
+func TestSharedAdmissionFailureBlocksOnlyNewEconomicIntents(t *testing.T) {
+	security := newSecurityFixture(t)
+	sharedCalls := 0
+	unavailable := AdmissionResultFunc(func(context.Context, string, time.Time) AdmissionResult {
+		sharedCalls++
+		return AdmissionResult{Decision: AdmissionBackendUnavailable, RetryAfter: time.Second}
+	})
+	ackCalls := 0
+	spins := &fakeCoordinator{
+		spin: func(context.Context, rgs.SpinRequest) (rgs.SpinResult, error) {
+			t.Fatal("共享准入故障时不应进入 Spin 协调器")
+			return rgs.SpinResult{}, nil
+		},
+		acknowledge: func(context.Context, rgs.ResultDeliveryAcknowledgement) (rgs.ResultDelivery, bool, error) {
+			ackCalls++
+			return rgs.ResultDelivery{}, false, ErrUnavailable
+		},
+	}
+	rounds := &fakeRoundReader{}
+	launches := &fakeLaunchService{refresh: func(context.Context, RefreshCommand) (ExchangeResult, error) {
+		return ExchangeResult{}, ErrUnavailable
+	}}
+	handler := security.newHandlerWithAllAdmissions(
+		t, launches, spins, rounds,
+		nil, AdmissionFunc(func(string, time.Time) bool { return true }), nil, unavailable,
+	)
+	token := security.issueAccessTokenForSession(t, testSessionID, testDefinitionHash)
+
+	spinRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(spinRecorder, clientRequest(ClientSpinPath, clientSpinBody(testDefinitionHash), token))
+	if spinRecorder.Code != http.StatusServiceUnavailable || sharedCalls != 1 || spins.calls != 0 {
+		t.Fatalf("spin status/shared/coordinator = %d/%d/%d, body = %s", spinRecorder.Code, sharedCalls, spins.calls, spinRecorder.Body.Bytes())
+	}
+
+	statusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(statusRecorder, clientRequest(ClientRoundStatusPath, roundStatusBody(), token))
+	if statusRecorder.Code == http.StatusServiceUnavailable || sharedCalls != 1 || rounds.calls != 1 {
+		t.Fatalf("status/shared/reader = %d/%d/%d, body = %s", statusRecorder.Code, sharedCalls, rounds.calls, statusRecorder.Body.Bytes())
+	}
+
+	pendingRequest := httptest.NewRequest(http.MethodGet, "https://rgs.example"+ClientPendingResultPath, nil)
+	pendingRequest.Header.Set(operator.HeaderOperatorID, testOperatorID)
+	pendingRequest.Header.Set("Authorization", "Bearer "+token)
+	pendingRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(pendingRecorder, pendingRequest)
+	if pendingRecorder.Code != http.StatusNoContent || sharedCalls != 1 {
+		t.Fatalf("pending status/shared = %d/%d, body = %s", pendingRecorder.Code, sharedCalls, pendingRecorder.Body.Bytes())
+	}
+
+	refreshRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(refreshRecorder, clientRequest(ClientSessionRefreshPath, sessionBindingBody(testDefinitionHash), token))
+	if launches.refreshCalls != 1 || sharedCalls != 1 {
+		t.Fatalf("refresh calls/shared = %d/%d, body = %s", launches.refreshCalls, sharedCalls, refreshRecorder.Body.Bytes())
+	}
+
+	ackBody, _ := json.Marshal(map[string]any{
+		"operatorId": testOperatorID, "sessionId": testSessionID,
+		"gameId": testGameID, "definitionVersion": testDefinition,
+		"definitionHash": testDefinitionHash, "currency": testCurrency,
+		"currencyExponent": 2, "jurisdiction": testRegion,
+		"roundId": "round-a", "sequence": "1", "resultHash": strings.Repeat("b", 64),
+	})
+	ackRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(ackRecorder, clientRequest(ClientResultAckPath, ackBody, token))
+	if ackCalls != 1 || sharedCalls != 1 {
+		t.Fatalf("ack calls/shared = %d/%d, body = %s", ackCalls, sharedCalls, ackRecorder.Body.Bytes())
+	}
+}
+
+func TestLocalAdmissionRejectsBeforeSharedAdmission(t *testing.T) {
+	security := newSecurityFixture(t)
+	sharedCalls := 0
+	handler := security.newHandlerWithAllAdmissions(
+		t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{}, nil,
+		AdmissionFunc(func(string, time.Time) bool { return false }), nil,
+		AdmissionResultFunc(func(context.Context, string, time.Time) AdmissionResult {
+			sharedCalls++
+			return AdmissionResult{Decision: AdmissionAllowed}
+		}),
+	)
+	token := security.issueAccessTokenForSession(t, testSessionID, testDefinitionHash)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, clientRequest(ClientSpinPath, clientSpinBody(testDefinitionHash), token))
+	if recorder.Code != http.StatusTooManyRequests || sharedCalls != 0 {
+		t.Fatalf("status/shared = %d/%d, body = %s", recorder.Code, sharedCalls, recorder.Body.Bytes())
+	}
+}
+
 func TestOperatorRateLimitDoesNotConsumeNonce(t *testing.T) {
 	security := newSecurityFixture(t)
 	body := operatorLaunchBody("12500")
@@ -491,6 +640,54 @@ func TestOperatorRateLimitDoesNotConsumeNonce(t *testing.T) {
 			launches.createCalls,
 			second.Body.Bytes(),
 		)
+	}
+}
+
+func TestOperatorNonceReplayEmitsDedicatedEventAndKeepsGenericUnauthorizedResponse(t *testing.T) {
+	security := newSecurityFixture(t)
+	observer := &fakeSecurityEventObserver{}
+	security.securityEvents = observer
+	body := operatorLaunchBody("12500")
+	request := security.signOperatorRequest(t, OperatorLaunchPath, body)
+	launches := &fakeLaunchService{create: func(context.Context, LaunchCommand) (LaunchResult, error) {
+		return LaunchResult{
+			LaunchCode:  validTestLaunchCode(15),
+			ExchangeURL: "https://rgs.example" + ClientSessionExchangePath,
+			ExpiresAt:   security.now.Add(2 * time.Minute),
+		}, nil
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, request)
+	if first.Code != http.StatusCreated || observer.nonceReplays != 0 {
+		t.Fatalf("首次请求状态/重放事件 = %d/%d，响应 = %s", first.Code, observer.nonceReplays, first.Body.Bytes())
+	}
+
+	request.Body = io.NopCloser(bytes.NewReader(body))
+	request.ContentLength = int64(len(body))
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, request)
+
+	if second.Code != http.StatusUnauthorized || observer.nonceReplays != 1 || launches.createCalls != 1 {
+		t.Fatalf(
+			"重放状态/事件/业务调用 = %d/%d/%d，响应 = %s",
+			second.Code, observer.nonceReplays, launches.createCalls, second.Body.Bytes(),
+		)
+	}
+	if !bytes.Contains(second.Body.Bytes(), []byte(`"code":"UNAUTHORIZED"`)) ||
+		!bytes.Contains(second.Body.Bytes(), []byte(`"message":"credential is invalid"`)) ||
+		bytes.Contains(bytes.ToLower(second.Body.Bytes()), []byte("replay")) ||
+		bytes.Contains(bytes.ToLower(second.Body.Bytes()), []byte("nonce")) {
+		t.Fatalf("重放响应未保持通用认证失败形状: %s", second.Body.Bytes())
+	}
+	response := second.Result()
+	responseBody, _ := io.ReadAll(response.Body)
+	if err := security.responseVerifier.Verify(
+		context.Background(), response, responseBody, testOperatorID,
+		request.Header.Get(operator.HeaderRequestID),
+	); err != nil {
+		t.Fatalf("重放错误响应签名验证失败: %v", err)
 	}
 }
 

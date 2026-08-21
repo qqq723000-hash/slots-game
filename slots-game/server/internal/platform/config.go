@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -19,8 +20,25 @@ const (
 	Production  Environment = "production"
 )
 
+type RuntimeRole string
+
+const (
+	RuntimeRoleCombined RuntimeRole = "combined"
+	RuntimeRoleAPI      RuntimeRole = "api"
+	RuntimeRoleWorker   RuntimeRole = "worker"
+)
+
+func (role RuntimeRole) ServesPublicAPI() bool {
+	return role == RuntimeRoleCombined || role == RuntimeRoleAPI
+}
+
+func (role RuntimeRole) RunsBackgroundWorkloads() bool {
+	return role == RuntimeRoleCombined || role == RuntimeRoleWorker
+}
+
 type Config struct {
 	Environment                     Environment
+	RuntimeRole                     RuntimeRole
 	HTTPAddress                     string
 	OperationsHTTPAddress           string
 	OperationsBearerTokenFile       string
@@ -34,47 +52,60 @@ type Config struct {
 	DefinitionFile                  string
 	DefinitionApprovalFile          string
 	DefinitionApprovalPublicKeyFile string
+	ExpectedDefinitionGameID        string
+	ExpectedDefinitionVersion       string
+	ExpectedDefinitionSHA256        string
 	// AccessPrivateKeyFile 与 AccessPublicKeyFile 仅支持已弃用的 rgs-operators-v1 迁移路径。
 	// 生产环境必须使用 rgs-operators-v2 中逐运营商配置的路径，且绝不读取这些全局密钥设置。
-	AccessPrivateKeyFile      string
-	AccessPublicKeyFile       string
-	LaunchHMACKeyFile         string
-	ReadHeaderTimeout         time.Duration
-	ReadTimeout               time.Duration
-	RequestTimeout            time.Duration
-	WriteTimeout              time.Duration
-	IdleTimeout               time.Duration
-	ShutdownTimeout           time.Duration
-	DatabaseStatementTimeout  time.Duration
-	DatabaseLockTimeout       time.Duration
-	DatabaseMaxOpenConns      int
-	DatabaseMaxIdleConns      int
-	WalletTimeout             time.Duration
-	WalletMaxAttempts         int
-	LaunchTTL                 time.Duration
-	AccessTokenTTL            time.Duration
-	MaxRequestBytes           int64
-	MaxInFlightRequests       int
-	MaxConnectionsPerListener int
-	RatePerSecond             float64
-	RateBurst                 int
-	OutboxEndpointURL         string
-	OutboxHMACKeyID           string
-	OutboxHMACKeyFile         string
-	OutboxBearerTokenFile     string
-	OutboxRootCAFile          string
-	OutboxClientCertFile      string
-	OutboxClientKeyFile       string
-	OutboxOwner               string
-	OutboxInterval            time.Duration
-	OutboxLeaseDuration       time.Duration
-	OutboxPublishTimeout      time.Duration
-	OutboxWorkerMaxStaleness  time.Duration
-	OutboxBacklogMaxAge       time.Duration
-	OutboxInitialBackoff      time.Duration
-	OutboxMaximumBackoff      time.Duration
-	OutboxBatchSize           int
-	OutboxMaxParallel         int
+	AccessPrivateKeyFile             string
+	AccessPublicKeyFile              string
+	LaunchHMACKeyFile                string
+	ReadHeaderTimeout                time.Duration
+	ReadTimeout                      time.Duration
+	RequestTimeout                   time.Duration
+	WriteTimeout                     time.Duration
+	IdleTimeout                      time.Duration
+	ShutdownTimeout                  time.Duration
+	DatabaseStatementTimeout         time.Duration
+	DatabaseLockTimeout              time.Duration
+	DatabaseMaxOpenConns             int
+	DatabaseMaxIdleConns             int
+	WalletTimeout                    time.Duration
+	WalletRootCAFile                 string
+	WalletMaxAttempts                int
+	LaunchTTL                        time.Duration
+	AccessTokenTTL                   time.Duration
+	MaxRequestBytes                  int64
+	MaxInFlightRequests              int
+	MaxConnectionsPerListener        int
+	RatePerSecond                    float64
+	RateBurst                        int
+	SuccessAccessLogSamplePerMillion int
+	SharedAdmissionURL               string
+	SharedAdmissionUsername          string
+	SharedAdmissionPasswordFile      string
+	SharedAdmissionHMACKeyFile       string
+	SharedAdmissionRootCAFile        string
+	SharedAdmissionTimeout           time.Duration
+	SharedAdmissionRatePerSecond     float64
+	SharedAdmissionRateBurst         int
+	OutboxEndpointURL                string
+	OutboxHMACKeyID                  string
+	OutboxHMACKeyFile                string
+	OutboxBearerTokenFile            string
+	OutboxRootCAFile                 string
+	OutboxClientCertFile             string
+	OutboxClientKeyFile              string
+	OutboxOwner                      string
+	OutboxInterval                   time.Duration
+	OutboxLeaseDuration              time.Duration
+	OutboxPublishTimeout             time.Duration
+	OutboxWorkerMaxStaleness         time.Duration
+	OutboxBacklogMaxAge              time.Duration
+	OutboxInitialBackoff             time.Duration
+	OutboxMaximumBackoff             time.Duration
+	OutboxBatchSize                  int
+	OutboxMaxParallel                int
 }
 
 type EnvLookup func(string) (string, bool)
@@ -85,41 +116,49 @@ func LoadConfig() (Config, error) {
 
 func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 	config := Config{
-		Environment:               Development,
-		HTTPAddress:               ":8080",
-		OperationsHTTPAddress:     "127.0.0.1:8081",
-		PublicBaseURL:             "http://localhost:8080",
-		ReadHeaderTimeout:         5 * time.Second,
-		ReadTimeout:               15 * time.Second,
-		RequestTimeout:            15 * time.Second,
-		WriteTimeout:              20 * time.Second,
-		IdleTimeout:               60 * time.Second,
-		ShutdownTimeout:           20 * time.Second,
-		DatabaseStatementTimeout:  10 * time.Second,
-		DatabaseLockTimeout:       2 * time.Second,
-		DatabaseMaxOpenConns:      40,
-		DatabaseMaxIdleConns:      10,
-		WalletTimeout:             4 * time.Second,
-		WalletMaxAttempts:         100,
-		LaunchTTL:                 2 * time.Minute,
-		AccessTokenTTL:            15 * time.Minute,
-		MaxRequestBytes:           64 << 10,
-		MaxInFlightRequests:       256,
-		MaxConnectionsPerListener: 1_024,
-		RatePerSecond:             20,
-		RateBurst:                 40,
-		OutboxInterval:            time.Second,
-		OutboxLeaseDuration:       3 * time.Minute,
-		OutboxPublishTimeout:      10 * time.Second,
-		OutboxWorkerMaxStaleness:  4 * time.Minute,
-		OutboxBacklogMaxAge:       5 * time.Minute,
-		OutboxInitialBackoff:      time.Second,
-		OutboxMaximumBackoff:      5 * time.Minute,
-		OutboxBatchSize:           100,
-		OutboxMaxParallel:         8,
+		Environment:                      Development,
+		RuntimeRole:                      RuntimeRoleCombined,
+		HTTPAddress:                      ":8080",
+		OperationsHTTPAddress:            "127.0.0.1:8081",
+		PublicBaseURL:                    "http://localhost:8080",
+		ReadHeaderTimeout:                5 * time.Second,
+		ReadTimeout:                      15 * time.Second,
+		RequestTimeout:                   15 * time.Second,
+		WriteTimeout:                     20 * time.Second,
+		IdleTimeout:                      60 * time.Second,
+		ShutdownTimeout:                  20 * time.Second,
+		DatabaseStatementTimeout:         10 * time.Second,
+		DatabaseLockTimeout:              2 * time.Second,
+		DatabaseMaxOpenConns:             40,
+		DatabaseMaxIdleConns:             10,
+		WalletTimeout:                    4 * time.Second,
+		WalletMaxAttempts:                100,
+		LaunchTTL:                        2 * time.Minute,
+		AccessTokenTTL:                   15 * time.Minute,
+		MaxRequestBytes:                  64 << 10,
+		MaxInFlightRequests:              256,
+		MaxConnectionsPerListener:        1_024,
+		RatePerSecond:                    20,
+		RateBurst:                        40,
+		SuccessAccessLogSamplePerMillion: 1_000_000,
+		SharedAdmissionTimeout:           100 * time.Millisecond,
+		SharedAdmissionRatePerSecond:     20,
+		SharedAdmissionRateBurst:         40,
+		OutboxInterval:                   time.Second,
+		OutboxLeaseDuration:              3 * time.Minute,
+		OutboxPublishTimeout:             10 * time.Second,
+		OutboxWorkerMaxStaleness:         4 * time.Minute,
+		OutboxBacklogMaxAge:              5 * time.Minute,
+		OutboxInitialBackoff:             time.Second,
+		OutboxMaximumBackoff:             5 * time.Minute,
+		OutboxBatchSize:                  100,
+		OutboxMaxParallel:                8,
 	}
 	if value, ok := lookup("RGS_ENVIRONMENT"); ok {
 		config.Environment = Environment(strings.ToLower(strings.TrimSpace(value)))
+	}
+	if value, ok := lookup("RGS_RUNTIME_ROLE"); ok {
+		config.RuntimeRole = RuntimeRole(strings.ToLower(strings.TrimSpace(value)))
 	}
 	assignString(lookup, "RGS_HTTP_ADDR", &config.HTTPAddress)
 	assignString(lookup, "RGS_OPERATIONS_HTTP_ADDR", &config.OperationsHTTPAddress)
@@ -132,9 +171,18 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 	assignString(lookup, "RGS_DEFINITION_FILE", &config.DefinitionFile)
 	assignString(lookup, "RGS_DEFINITION_APPROVAL_FILE", &config.DefinitionApprovalFile)
 	assignString(lookup, "RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE", &config.DefinitionApprovalPublicKeyFile)
+	assignString(lookup, "RGS_EXPECTED_DEFINITION_GAME_ID", &config.ExpectedDefinitionGameID)
+	assignString(lookup, "RGS_EXPECTED_DEFINITION_VERSION", &config.ExpectedDefinitionVersion)
+	assignString(lookup, "RGS_EXPECTED_DEFINITION_SHA256", &config.ExpectedDefinitionSHA256)
 	assignString(lookup, "RGS_ACCESS_PRIVATE_KEY_FILE", &config.AccessPrivateKeyFile)
 	assignString(lookup, "RGS_ACCESS_PUBLIC_KEY_FILE", &config.AccessPublicKeyFile)
 	assignString(lookup, "RGS_LAUNCH_HMAC_KEY_FILE", &config.LaunchHMACKeyFile)
+	assignString(lookup, "RGS_SHARED_ADMISSION_URL", &config.SharedAdmissionURL)
+	assignString(lookup, "RGS_SHARED_ADMISSION_USERNAME", &config.SharedAdmissionUsername)
+	assignString(lookup, "RGS_SHARED_ADMISSION_PASSWORD_FILE", &config.SharedAdmissionPasswordFile)
+	assignString(lookup, "RGS_SHARED_ADMISSION_HMAC_KEY_FILE", &config.SharedAdmissionHMACKeyFile)
+	assignString(lookup, "RGS_SHARED_ADMISSION_ROOT_CA_FILE", &config.SharedAdmissionRootCAFile)
+	assignString(lookup, "RGS_WALLET_ROOT_CA_FILE", &config.WalletRootCAFile)
 	assignString(lookup, "RGS_OUTBOX_ENDPOINT_URL", &config.OutboxEndpointURL)
 	assignString(lookup, "RGS_OUTBOX_HMAC_KEY_ID", &config.OutboxHMACKeyID)
 	assignString(lookup, "RGS_OUTBOX_HMAC_KEY_FILE", &config.OutboxHMACKeyFile)
@@ -166,6 +214,7 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		"RGS_WALLET_TIMEOUT":              &config.WalletTimeout,
 		"RGS_LAUNCH_TTL":                  &config.LaunchTTL,
 		"RGS_ACCESS_TOKEN_TTL":            &config.AccessTokenTTL,
+		"RGS_SHARED_ADMISSION_TIMEOUT":    &config.SharedAdmissionTimeout,
 		"RGS_OUTBOX_INTERVAL":             &config.OutboxInterval,
 		"RGS_OUTBOX_LEASE_DURATION":       &config.OutboxLeaseDuration,
 		"RGS_OUTBOX_PUBLISH_TIMEOUT":      &config.OutboxPublishTimeout,
@@ -190,7 +239,16 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 	if err := floatValue(lookup, "RGS_RATE_PER_SECOND", &config.RatePerSecond); err != nil {
 		return Config{}, err
 	}
+	if err := floatValue(lookup, "RGS_SHARED_ADMISSION_RATE_PER_SECOND", &config.SharedAdmissionRatePerSecond); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_SHARED_ADMISSION_RATE_BURST", &config.SharedAdmissionRateBurst); err != nil {
+		return Config{}, err
+	}
 	if err := intValue(lookup, "RGS_RATE_BURST", &config.RateBurst); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_SUCCESS_ACCESS_LOG_SAMPLE_PER_MILLION", &config.SuccessAccessLogSamplePerMillion); err != nil {
 		return Config{}, err
 	}
 	if err := intValue(lookup, "RGS_WALLET_MAX_ATTEMPTS", &config.WalletMaxAttempts); err != nil {
@@ -220,6 +278,11 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("RGS_ENVIRONMENT must be development, staging, or production")
 	}
+	switch c.RuntimeRole {
+	case RuntimeRoleCombined, RuntimeRoleAPI, RuntimeRoleWorker:
+	default:
+		return errors.New("RGS_RUNTIME_ROLE must be combined, api, or worker")
+	}
 	if strings.TrimSpace(c.HTTPAddress) == "" {
 		return errors.New("RGS_HTTP_ADDR is required")
 	}
@@ -242,20 +305,36 @@ func (c Config) Validate() error {
 		return errors.New("RGS_TLS_CERT_FILE and RGS_TLS_KEY_FILE must be configured together")
 	}
 	if c.Environment == Production {
-		required := []struct {
+		type requiredProductionSetting struct {
 			name  string
 			value string
-		}{
+		}
+		required := []requiredProductionSetting{
 			{"RGS_DATABASE_URL", c.DatabaseURL},
 			{"RGS_OPERATOR_CONFIG_FILE", c.OperatorConfigFile},
 			{"RGS_DEFINITION_FILE", c.DefinitionFile},
 			{"RGS_DEFINITION_APPROVAL_FILE", c.DefinitionApprovalFile},
 			{"RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE", c.DefinitionApprovalPublicKeyFile},
-			{"RGS_LAUNCH_HMAC_KEY_FILE", c.LaunchHMACKeyFile},
 			{"RGS_OPERATIONS_BEARER_TOKEN_FILE", c.OperationsBearerTokenFile},
-			{"RGS_OUTBOX_ENDPOINT_URL", c.OutboxEndpointURL},
-			{"RGS_OUTBOX_HMAC_KEY_ID", c.OutboxHMACKeyID},
-			{"RGS_OUTBOX_HMAC_KEY_FILE", c.OutboxHMACKeyFile},
+		}
+		if c.RuntimeRole.ServesPublicAPI() {
+			required = append(required,
+				requiredProductionSetting{"RGS_LAUNCH_HMAC_KEY_FILE", c.LaunchHMACKeyFile},
+			)
+		}
+		if c.RuntimeRole == RuntimeRoleAPI || c.RuntimeRole == RuntimeRoleWorker {
+			required = append(required,
+				requiredProductionSetting{"RGS_EXPECTED_DEFINITION_GAME_ID", c.ExpectedDefinitionGameID},
+				requiredProductionSetting{"RGS_EXPECTED_DEFINITION_VERSION", c.ExpectedDefinitionVersion},
+				requiredProductionSetting{"RGS_EXPECTED_DEFINITION_SHA256", c.ExpectedDefinitionSHA256},
+			)
+		}
+		if c.RuntimeRole.RunsBackgroundWorkloads() {
+			required = append(required,
+				requiredProductionSetting{"RGS_OUTBOX_ENDPOINT_URL", c.OutboxEndpointURL},
+				requiredProductionSetting{"RGS_OUTBOX_HMAC_KEY_ID", c.OutboxHMACKeyID},
+				requiredProductionSetting{"RGS_OUTBOX_HMAC_KEY_FILE", c.OutboxHMACKeyFile},
+			)
 		}
 		for _, item := range required {
 			if strings.TrimSpace(item.value) == "" {
@@ -275,6 +354,9 @@ func (c Config) Validate() error {
 			return errors.New("RGS_ALLOWED_ORIGINS is required in production")
 		}
 	}
+	if err := validateExpectedDefinitionIdentityConfig(c); err != nil {
+		return err
+	}
 	// 非回环运维监听可能被端口转发、测试入口或错误的安全组意外暴露；生产环境
 	// 已在上方必填项中拒绝空值，开发及预发布环境也必须在非回环时显式配置承载令牌。
 	if c.Environment != Production && operationsListenerRequiresBearer(c.OperationsHTTPAddress) &&
@@ -282,6 +364,9 @@ func (c Config) Validate() error {
 		return errors.New("RGS_OPERATIONS_BEARER_TOKEN_FILE is required for a non-loopback operations listener")
 	}
 	if err := c.validateOutbox(); err != nil {
+		return err
+	}
+	if err := c.validateSharedAdmission(); err != nil {
 		return err
 	}
 	seenOrigins := make(map[string]struct{}, len(c.AllowedOrigins))
@@ -359,6 +444,9 @@ func (c Config) Validate() error {
 	if c.RatePerSecond <= 0 || c.RatePerSecond > 100_000 || c.RateBurst < 1 || c.RateBurst > 1_000_000 {
 		return errors.New("invalid rate limit configuration")
 	}
+	if c.SuccessAccessLogSamplePerMillion < 0 || c.SuccessAccessLogSamplePerMillion > 1_000_000 {
+		return errors.New("RGS_SUCCESS_ACCESS_LOG_SAMPLE_PER_MILLION must be between 0 and 1000000")
+	}
 	if c.WalletMaxAttempts < 1 || c.WalletMaxAttempts > 10_000 {
 		return errors.New("RGS_WALLET_MAX_ATTEMPTS must be between 1 and 10000")
 	}
@@ -371,6 +459,66 @@ func (c Config) Validate() error {
 		return errors.New("RGS_DB_MAX_IDLE_CONNS must be between 0 and RGS_DB_MAX_OPEN_CONNS")
 	}
 	return nil
+}
+
+func (c Config) validateSharedAdmission() error {
+	settings := []string{
+		c.SharedAdmissionURL,
+		c.SharedAdmissionUsername,
+		c.SharedAdmissionPasswordFile,
+		c.SharedAdmissionHMACKeyFile,
+		c.SharedAdmissionRootCAFile,
+	}
+	enabled := false
+	for _, setting := range settings {
+		if strings.TrimSpace(setting) != "" {
+			enabled = true
+			break
+		}
+	}
+	if c.RuntimeRole == RuntimeRoleWorker && enabled {
+		return errors.New("shared admission configuration is not allowed for the worker runtime role")
+	}
+	if c.Environment == Production && c.RuntimeRole == RuntimeRoleAPI && !enabled {
+		return errors.New("RGS_SHARED_ADMISSION_URL is required for the production api runtime role")
+	}
+	if !enabled {
+		return nil
+	}
+	if c.SharedAdmissionURL == "" || c.SharedAdmissionUsername == "" || c.SharedAdmissionPasswordFile == "" ||
+		c.SharedAdmissionHMACKeyFile == "" || c.SharedAdmissionRootCAFile == "" {
+		return errors.New("shared admission requires URL, ACL username, password, HMAC key, and root CA files")
+	}
+	if !validRuntimeIdentifier(c.SharedAdmissionUsername) {
+		return errors.New("RGS_SHARED_ADMISSION_USERNAME must be a 1..128 character identifier")
+	}
+	endpoint, err := url.Parse(c.SharedAdmissionURL)
+	if err != nil || endpoint.Scheme != "rediss" || endpoint.Host == "" || endpoint.User != nil ||
+		(endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return errors.New("RGS_SHARED_ADMISSION_URL must be a rediss origin without credentials, query, or fragment")
+	}
+	for name, path := range map[string]string{
+		"RGS_SHARED_ADMISSION_PASSWORD_FILE": pathClean(c.SharedAdmissionPasswordFile),
+		"RGS_SHARED_ADMISSION_HMAC_KEY_FILE": pathClean(c.SharedAdmissionHMACKeyFile),
+		"RGS_SHARED_ADMISSION_ROOT_CA_FILE":  pathClean(c.SharedAdmissionRootCAFile),
+	} {
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("%s must be an absolute path", name)
+		}
+	}
+	if c.SharedAdmissionTimeout < 10*time.Millisecond || c.SharedAdmissionTimeout > 500*time.Millisecond ||
+		c.SharedAdmissionTimeout >= c.RequestTimeout {
+		return errors.New("RGS_SHARED_ADMISSION_TIMEOUT must be between 10ms and 500ms and shorter than the request timeout")
+	}
+	if c.SharedAdmissionRatePerSecond < 0.001 || c.SharedAdmissionRatePerSecond > 100_000 ||
+		c.SharedAdmissionRateBurst < 1 || c.SharedAdmissionRateBurst > 1_000_000 {
+		return errors.New("invalid shared admission rate limit configuration")
+	}
+	return nil
+}
+
+func pathClean(path string) string {
+	return strings.TrimSpace(path)
 }
 
 // listenAddressesConflict 保守地识别同一端口的重叠监听地址。生产环境宁可
@@ -417,6 +565,52 @@ func operationsListenerRequiresBearer(address string) bool {
 	return !isLoopbackListenHost(normalizeListenHost(host))
 }
 
+func validateExpectedDefinitionIdentityConfig(config Config) error {
+	values := []string{
+		config.ExpectedDefinitionGameID,
+		config.ExpectedDefinitionVersion,
+		config.ExpectedDefinitionSHA256,
+	}
+	configured := 0
+	for _, value := range values {
+		if value != "" {
+			configured++
+		}
+	}
+	if configured == 0 {
+		return nil
+	}
+	if configured != len(values) {
+		return errors.New("expected definition game ID, version, and SHA-256 must be configured together")
+	}
+	if !validDefinitionIdentityPart(config.ExpectedDefinitionGameID) ||
+		!validDefinitionIdentityPart(config.ExpectedDefinitionVersion) {
+		return errors.New("expected definition game ID and version must be 1..128 character identifiers")
+	}
+	if len(config.ExpectedDefinitionSHA256) != 64 {
+		return errors.New("RGS_EXPECTED_DEFINITION_SHA256 must be a lowercase SHA-256 digest")
+	}
+	for _, character := range config.ExpectedDefinitionSHA256 {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return errors.New("RGS_EXPECTED_DEFINITION_SHA256 must be a lowercase SHA-256 digest")
+		}
+	}
+	return nil
+}
+
+func validDefinitionIdentityPart(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') && !strings.ContainsRune("._:-", character) {
+			return false
+		}
+	}
+	return true
+}
+
 func validateProductionDatabaseURL(raw string) error {
 	databaseURL, err := url.Parse(raw)
 	if err != nil {
@@ -442,6 +636,14 @@ func validateProductionDatabaseURL(raw string) error {
 }
 
 func (c Config) validateOutbox() error {
+	if c.RuntimeRole == RuntimeRoleAPI && (c.OutboxEndpointURL != "" || c.OutboxHMACKeyID != "" ||
+		c.OutboxHMACKeyFile != "" || c.OutboxBearerTokenFile != "" || c.OutboxRootCAFile != "" ||
+		c.OutboxClientCertFile != "" || c.OutboxClientKeyFile != "" || c.OutboxOwner != "") {
+		return errors.New("outbox delivery configuration is not allowed for the api runtime role")
+	}
+	if c.RuntimeRole == RuntimeRoleWorker && c.OutboxEndpointURL == "" {
+		return errors.New("RGS_OUTBOX_ENDPOINT_URL is required for the worker runtime role")
+	}
 	if (c.OutboxClientCertFile == "") != (c.OutboxClientKeyFile == "") {
 		return errors.New("RGS_OUTBOX_CLIENT_CERT_FILE and RGS_OUTBOX_CLIENT_KEY_FILE must be configured together")
 	}

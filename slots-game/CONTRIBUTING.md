@@ -48,6 +48,6 @@ make verify-web-container-contract
 make verify-deployment-contracts
 ```
 
-涉及数据库、迁移、钱包或恢复时还必须运行 `make test-postgres`；涉及本机生产编排时运行
+涉及数据库、迁移、钱包或恢复时还必须运行 `make test-postgres`；涉及本机集成验收编排时运行
 `./deploy/local-production/verify.sh`。涉及 Helm、网络策略、Secret、探针、容量或发布 Hook 时，
 必须同时评审 `deploy/cluster-production/` 的渲染结果，并保留失败关闭负测。

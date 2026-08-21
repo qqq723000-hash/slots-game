@@ -32,6 +32,10 @@ observability_prometheus="$repository_root/deploy/observability/prometheus.yml"
 runtime_smoke="$repository_root/deploy/observability/ci-runtime-smoke.sh"
 runtime_production_smoke="$repository_root/deploy/observability/ci-runtime-production-smoke.sh"
 runtime_fixture_command="$repository_root/server/cmd/ci-runtime-fixture/main.go"
+backend_notice_generator="$repository_root/server/scripts/third-party-notices/main.go"
+backend_notice_test="$repository_root/server/scripts/third-party-notices/main_test.go"
+backend_notice_policy="$repository_root/server/third-party-licenses/policy.json"
+backend_notice="$repository_root/server/THIRD_PARTY_NOTICES.txt"
 
 fail() {
   printf '%s\n' "supply-chain contract: $*" >&2
@@ -76,7 +80,11 @@ for required_file in \
   "$observability_prometheus" \
   "$runtime_smoke" \
   "$runtime_production_smoke" \
-  "$runtime_fixture_command"
+  "$runtime_fixture_command" \
+  "$backend_notice_generator" \
+  "$backend_notice_test" \
+  "$backend_notice_policy" \
+  "$backend_notice"
 do
   require_file "$required_file"
 done
@@ -88,6 +96,17 @@ network_none_line=$(printf '%s\134' '    --network=none ')
 require_line "$network_none_line" "$server_dockerfile"
 require_regex '^    CGO_ENABLED=0 GOOS=linux go build ' "$server_dockerfile"
 require_line 'EXPOSE 8080 8081' "$server_dockerfile"
+require_line '    go run ./scripts/third-party-notices --check && \' "$server_dockerfile"
+backend_notice_copy='COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt'
+test "$(grep -F -x -c "$backend_notice_copy" "$server_dockerfile" || true)" -eq 2 ||
+  fail 'runtime and migrator must each deliver the authoritative Go third-party notice'
+require_fixed 'var productionTargets = []string{"./cmd/rgs-server", "./cmd/rgs-migrator"}' "$backend_notice_generator"
+require_fixed 'TestCollectProductionModulesExcludesTestOnlyDependencies' "$backend_notice_test"
+require_fixed '"name": "NOTICE"' "$backend_notice_policy"
+require_fixed '生产第三方模块数量：8' "$backend_notice"
+if grep -F 'github.com/DATA-DOG/go-sqlmock' "$backend_notice" >/dev/null; then
+  fail 'test-only Go dependency leaked into production third-party notice'
+fi
 
 require_regex '^ARG NODE_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$web_dockerfile"
 require_regex '^ARG NGINX_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$web_dockerfile"
@@ -109,7 +128,7 @@ release_network_none_line=$(printf '%s\134' 'RUN --network=none ')
 require_line "$release_network_none_line" "$web_dockerfile"
 require_fixed '--mount=type=secret,id=release_asset_approval,required=true,target=/run/secrets/release_asset_approval' "$web_dockerfile"
 require_fixed 'node ./src/validateReleaseRgsBuildConfig.mjs &&' "$web_dockerfile"
-require_line 'COPY deploy/web/nginx.conf deploy/web/render-release-nginx.mjs /src/release-web/' "$web_dockerfile"
+require_line 'COPY deploy/web/nginx.conf deploy/web/content-security-policy.mjs deploy/web/render-release-nginx.mjs /src/release-web/' "$web_dockerfile"
 require_fixed 'node /src/release-web/render-release-nginx.mjs \' "$web_dockerfile"
 require_fixed '--rgs-base-url "$VITE_RGS_BASE_URL" \' "$web_dockerfile"
 require_fixed '--host-origin "$VITE_RGS_HOST_ORIGIN" && \' "$web_dockerfile"
@@ -159,6 +178,10 @@ test "$last_web_stage" = runtime || fail 'web runtime must remain the default fi
 require_line '    "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",' "$web_package_json"
 require_line 'verify-supply-chain-contract:' "$makefile"
 require_regex '^[[:space:]]+sh \./deploy/verify-supply-chain-contract\.sh$' "$makefile"
+require_line 'verify-backend-licenses:' "$makefile"
+require_regex '^[[:space:]]+cd server && go run \./scripts/third-party-notices --check$' "$makefile"
+require_regex '^[[:space:]]+cd server && go test \./scripts/third-party-notices$' "$makefile"
+require_line 'verify-backend: verify-supply-chain-contract verify-backend-licenses' "$makefile"
 require_line 'verify-observability-contract:' "$makefile"
 require_regex '^[[:space:]]+\./deploy/observability/verify-static-contract\.sh$' "$makefile"
 require_line 'verify-observability-release:' "$makefile"
@@ -214,6 +237,13 @@ require_line "        uses: actions/setup-go@$setup_go_sha" "$backend_workflow"
 require_line "        uses: actions/upload-artifact@$upload_artifact_sha" "$backend_workflow"
 require_line "        uses: actions/setup-node@$setup_node_sha" "$frontend_workflow"
 require_line '        run: make verify-supply-chain-contract' "$backend_workflow"
+require_line '        run: make verify-backend' "$backend_workflow"
+test "$(grep -F -c 'docker cp "$runtime_container:/THIRD_PARTY_NOTICES.txt"' "$backend_workflow" || true)" -eq 1 ||
+  fail 'backend CI does not extract the runtime Go third-party notice'
+test "$(grep -F -c 'docker cp "$migrator_container:/THIRD_PARTY_NOTICES.txt"' "$backend_workflow" || true)" -eq 1 ||
+  fail 'backend CI does not extract the migrator Go third-party notice'
+test "$(grep -F -c 'cmp server/THIRD_PARTY_NOTICES.txt' "$backend_workflow" || true)" -eq 2 ||
+  fail 'backend CI does not compare both image notices with the authority file'
 require_line '        run: make smoke-runtime-operations' "$backend_workflow"
 require_fixed 'RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}' "$backend_workflow"
 require_line '        run: make smoke-runtime-production' "$backend_workflow"
@@ -250,7 +280,7 @@ require_line '            --tag slots-web-runtime-missing-approval:conformance \
 require_line '            . 2>&1 | tee web-runtime-missing-approval.log; then' "$frontend_workflow"
 require_line "          grep -F 'release_asset_approval' web-runtime-missing-approval.log >/dev/null" "$frontend_workflow"
 for fixed_argument in \
-  '--build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid/client/v1' \
+  '--build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid' \
   '--build-arg VITE_RGS_BET_OPTIONS_MINOR=100,200,500' \
   '--build-arg VITE_RGS_DEFAULT_BET_MINOR=200' \
   '--build-arg VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid'

@@ -1,0 +1,100 @@
+rule_files:
+  - /rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - name: HPA 指标目标完全消失时必须告警
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SlotsRGSHPAUnableToScale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: RGS HPA 无法计算扩缩容目标
+              description: API 或 Worker HPA 的 ScalingActive 未保持为真；应检查 metrics-server、聚合 API、kube-state-metrics 与资源指标，避免流量高峰停留在暖副本下限。
+
+  - name: 只有一个 HPA ScalingActive 时必须告警
+    interval: 1m
+    input_series:
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true",horizontalpodautoscaler="slots-slots-cluster-production-rgs"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SlotsRGSHPAUnableToScale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: RGS HPA 无法计算扩缩容目标
+              description: API 或 Worker HPA 的 ScalingActive 未保持为真；应检查 metrics-server、聚合 API、kube-state-metrics 与资源指标，避免流量高峰停留在暖副本下限。
+
+  - name: HPA 只报告 ScalingActive false 时必须告警
+    interval: 1m
+    input_series:
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true",horizontalpodautoscaler="slots-slots-cluster-production-rgs"}'
+        values: '0x8'
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="false",horizontalpodautoscaler="slots-slots-cluster-production-rgs"}'
+        values: '1x8'
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true",horizontalpodautoscaler="slots-slots-cluster-production-rgs-worker"}'
+        values: '0x8'
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="false",horizontalpodautoscaler="slots-slots-cluster-production-rgs-worker"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SlotsRGSHPAUnableToScale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: RGS HPA 无法计算扩缩容目标
+              description: API 或 Worker HPA 的 ScalingActive 未保持为真；应检查 metrics-server、聚合 API、kube-state-metrics 与资源指标，避免流量高峰停留在暖副本下限。
+
+  - name: API 与 Worker HPA 都 ScalingActive 时不得告警
+    interval: 1m
+    input_series:
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true",horizontalpodautoscaler="slots-slots-cluster-production-rgs"}'
+        values: '1x8'
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true",horizontalpodautoscaler="slots-slots-cluster-production-rgs-worker"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SlotsRGSHPAUnableToScale
+        exp_alerts: []
+
+  - name: 无关 release 的 HPA 不得填补 Worker 缺口
+    interval: 1m
+    input_series:
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true",horizontalpodautoscaler="slots-slots-cluster-production-rgs"}'
+        values: '1x8'
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true",horizontalpodautoscaler="other-release-rgs"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SlotsRGSHPAUnableToScale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: RGS HPA 无法计算扩缩容目标
+              description: API 或 Worker HPA 的 ScalingActive 未保持为真；应检查 metrics-server、聚合 API、kube-state-metrics 与资源指标，避免流量高峰停留在暖副本下限。
+
+  - name: API HPA 重复抓取不得填补 Worker 缺口
+    interval: 1m
+    input_series:
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true",horizontalpodautoscaler="slots-slots-cluster-production-rgs",instance="ksm-a"}'
+        values: '1x8'
+      - series: 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true",horizontalpodautoscaler="slots-slots-cluster-production-rgs",instance="ksm-b"}'
+        values: '1x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SlotsRGSHPAUnableToScale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: RGS HPA 无法计算扩缩容目标
+              description: API 或 Worker HPA 的 ScalingActive 未保持为真；应检查 metrics-server、聚合 API、kube-state-metrics 与资源指标，避免流量高峰停留在暖副本下限。

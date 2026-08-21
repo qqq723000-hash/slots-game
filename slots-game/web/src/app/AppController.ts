@@ -18,7 +18,11 @@ import {
   type WheelAwardedEvent,
 } from "./state/types";
 import { PresentationQueue } from "../presentation/PresentationQueue";
-import type { GameGateway, GatewayStatus } from "../protocol/GameGateway";
+import type {
+  GameGateway,
+  GatewayStatus,
+  ResultDeliveryStage,
+} from "../protocol/GameGateway";
 import {
   createConfiguredGameGateway,
   optionalWindowSessionStorage,
@@ -556,6 +560,24 @@ interface BufferedRecoveredSpinResult {
   readonly needsVisualSpinStart: boolean;
 }
 
+type RgsResultDeliveryStage =
+  | ResultDeliveryStage
+  | "callback"
+  | "buffer-clone"
+  | "buffer-validate"
+  | "buffer-reel-guard"
+  | "buffer-release"
+  | "recovered-spin-start"
+  | "accept-validate"
+  | "autoplay-finalize"
+  | "autoplay-arm"
+  | "reel-transition"
+  | "feature-transition"
+  | "game-transition"
+  | "accepted"
+  | "rejecting"
+  | "rejected";
+
 function immutableClone<T>(value: T): T {
   if (Array.isArray(value)) {
     return Object.freeze(value.map((item) => immutableClone(item))) as T;
@@ -977,6 +999,7 @@ export class AppController {
       onSpinResult: (result, originFeatureState) => (
         this.handleSpinResult(result, originFeatureState)
       ),
+      onResultDeliveryStage: (stage) => this.markRgsResultDeliveryStage(stage),
       onSpinResultAcknowledged: () => this.refreshUi(),
       onOperatorSessionRequired: (error) => this.handleOperatorSessionRequired(error),
       onError: (error) => this.handleError(error),
@@ -1378,6 +1401,9 @@ export class AppController {
       defaultBetMinor: this.snapshot.selectedBetMinor,
       featureState: effectiveFeatureState,
     });
+    // 该标记只在经过协议解码、会话绑定并应用到玩家界面后发布。
+    // 真实浏览器验收据此区分“入口已绘制”和“权威会话已实际生效”。
+    if (this.root?.dataset) this.root.dataset.rgsSession = "online";
     if (this.launch.canEnterGame && !preserveFeatureProjection) this.syncGameMusic();
 
     if (this.machine.phase === "connecting" || this.machine.phase === "recovering") {
@@ -1396,6 +1422,7 @@ export class AppController {
     result: SpinResult,
     recoveredOriginFeatureState?: Readonly<FeatureState>,
   ): void {
+    this.markRgsResultDeliveryStage("callback");
     if (recoveredOriginFeatureState !== undefined) {
       this.bufferRecoveredSpinResult(result, recoveredOriginFeatureState);
       return;
@@ -1423,10 +1450,12 @@ export class AppController {
 
     // 在持久权威结果可以启动隐藏转轴生命周期或最终可见重放前，先将其冻结并验证。
     // acceptSpinResult 中的第二道守卫仍是最终提交边界。
+    this.markRgsResultDeliveryStage("buffer-clone");
     const bufferedResult = immutableClone(result);
     const bufferedOriginFeatureState = immutableClone({
       ...recoveredOriginFeatureState,
     });
+    this.markRgsResultDeliveryStage("buffer-validate");
     try {
       this.validateAuthoritativeSpinResult(bufferedResult, bufferedOriginFeatureState);
     } catch (error) {
@@ -1435,6 +1464,7 @@ export class AppController {
     }
 
     let needsVisualSpinStart = false;
+    this.markRgsResultDeliveryStage("buffer-reel-guard");
     const reelSnapshot = this.reelRound.snapshot;
     if (reelSnapshot.state === "Idle") {
     // 整页持久恢复没有内存中的请求侧转轴生命周期。在启动界面真正离开前，
@@ -1451,6 +1481,7 @@ export class AppController {
       originFeatureState: bufferedOriginFeatureState,
       needsVisualSpinStart,
     };
+    this.markRgsResultDeliveryStage("buffer-release");
     this.releaseBufferedRecoveredSpinResult();
   }
 
@@ -1461,6 +1492,7 @@ export class AppController {
     // 在调用表现代码前先消费，确保同步回调和重复网络投递无法二次释放该权威结果。
     this.bufferedRecoveredSpinResult = null;
     if (buffered.needsVisualSpinStart) {
+      this.markRgsResultDeliveryStage("recovered-spin-start");
       try {
         this.reelRound.transition({
           type: "SPIN_ACCEPTED",
@@ -1520,6 +1552,7 @@ export class AppController {
         ?? this.snapshot.featureState),
     };
     let authoritativeRound;
+    this.markRgsResultDeliveryStage("accept-validate");
     try {
       authoritativeRound = this.validateAuthoritativeSpinResult(result, previousFeatureState);
     } catch (error) {
@@ -1528,9 +1561,11 @@ export class AppController {
     }
     // 只有上述权威形状/来源守卫成功后，请求侧计数器减量才会永久生效。
     // 恢复的 Free Spins 和 Wheel 输入没有付费预留，因此这里对它们不执行任何操作。
+    this.markRgsResultDeliveryStage("autoplay-finalize");
     this.ui?.finalizeAcceptedPaidAutoplaySpin?.();
     // 仅在服务端结果通过所有来源/形状守卫后，才快照四项 Auto Play 停止设置。
     // 下方表现里程碑拥有实际停止权；结果解码绝不修改运行中的计数器。
+    this.markRgsResultDeliveryStage("autoplay-arm");
     this.ui?.armAutoplayStopRound?.(result);
     this.activePresentationSequence = result.sequence;
     this.emitPresentationTrace({
@@ -1541,6 +1576,7 @@ export class AppController {
       balanceMinor: result.balanceMinor,
       winCount: result.wins.length,
     });
+    this.markRgsResultDeliveryStage("reel-transition");
     this.reelRound.transition({
       type: "RESULT_RECEIVED",
       roundId: authoritativeRound.roundId,
@@ -1550,9 +1586,12 @@ export class AppController {
     // 始终使用同一时钟配置。
     const roundFastPlay = this.fastPlay === true;
     this.roundOriginFeatureState = null;
+    this.markRgsResultDeliveryStage("feature-transition");
     const featureEnded = didFeatureModeEnd(previousFeatureState, result.featureState);
     this.lastRoundId = result.roundId;
+    this.markRgsResultDeliveryStage("game-transition");
     this.machine.transition({ type: "SPIN_RESULT" });
+    this.markRgsResultDeliveryStage("accepted");
     this.balanceVisibilityBlocked = true;
     this.observeRoundPresentationState("presenting");
     this.snapshot = {
@@ -1974,6 +2013,7 @@ export class AppController {
   }
 
   private rejectSpinResult(error: unknown): void {
+    this.markRgsResultDeliveryStage("rejecting");
     this.ui.rollbackAcceptedPaidAutoplaySpin?.();
     this.roundOriginFeatureState = null;
     this.stopRoundAudio(35);
@@ -1983,6 +2023,7 @@ export class AppController {
     this.machine.transition({ type: "SPIN_FAILED" });
     this.observeRoundPresentationState("failed");
     this.refreshUi();
+    this.markRgsResultDeliveryStage("rejected");
   }
 
   private async presentPostReelFeatureEvent(
@@ -2408,6 +2449,11 @@ export class AppController {
     }
   }
 
+  private markRgsResultDeliveryStage(stage: RgsResultDeliveryStage): void {
+    // 只发布固定阶段码；不得把轮次标识、响应内容、异常文本或堆栈写入 DOM。
+    if (this.root?.dataset) this.root.dataset.rgsDeliveryStage = stage;
+  }
+
   private reportPlayerError(
     cause: unknown,
     context: PlayerFacingErrorContext,
@@ -2434,6 +2480,8 @@ export class AppController {
   }
 
   private completeLaunchFailure(error: PlayerFacingError): void {
+    // 启动失败不得保留会话成功标记，避免探针把失败页面误判为可服务。
+    if (this.root?.dataset) delete this.root.dataset.rgsSession;
     this.launch.transition({ type: "FAIL" });
     this.syncLaunchUi();
     this.presentPlayerFacingError(error);

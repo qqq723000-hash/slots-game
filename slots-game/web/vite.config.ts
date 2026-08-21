@@ -26,7 +26,9 @@ function boundedProductionChunkName(moduleID: string): string | undefined {
   if (id.includes("/src/startup/")) return "game-startup";
   if (id.includes("/src/ui/")) return "game-ui";
   if (id.includes("/src/assets/")) return "game-assets";
-  if (id.includes("/src/app/")) return "game-app";
+  // AppController 的动态入口外壳不能独占 presentation 依赖，否则外壳重导出
+  // game-app 的同时会被 game-app 反向导入，形成浏览器静态初始化循环。
+  if (id.includes("/src/app/") || id.includes("/src/presentation/")) return "game-app";
   return undefined;
 }
 

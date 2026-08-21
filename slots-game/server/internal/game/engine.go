@@ -184,7 +184,7 @@ func (e *Engine) Spin(ctx context.Context, input SpinInput) (SpinOutcome, error)
 		Grid: grid, Wins: wins, Events: events,
 		TotalWinMinor: total, NextFeature: next,
 	}
-	if err := ValidateOutcomeAgainstConfig(e.config, input, outcome); err != nil {
+	if err := validateOutcomeAgainstValidatedConfig(e.config, input, outcome); err != nil {
 		return SpinOutcome{}, fmt.Errorf("game engine produced an invalid outcome: %w", err)
 	}
 	return outcome, nil

@@ -1,4 +1,4 @@
-// Command local-operator 提供本机 production-mode RGS 所需的持久化运营商配套服务。
+// Command local-operator 提供本机集成验收所需的持久化运营商配套服务。
 // 它不是测试夹具：钱包、nonce、审计和日志都在进程重启后保留，且所有信任材料由部署注入。
 package main
 

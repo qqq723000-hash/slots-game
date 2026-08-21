@@ -29,6 +29,9 @@ func TestMetricsHaveNoHighCardinalityLabels(t *testing.T) {
 	metrics.RoundsCommitted.Add(2)
 	metrics.HTTPServerFailures.Add(3)
 	metrics.CapacityRejected.Add(4)
+	metrics.NonceReplay()
+	metrics.AccessLogEmitted()
+	metrics.AccessLogDropped()
 	var output bytes.Buffer
 	if err := metrics.WritePrometheus(&output); err != nil {
 		t.Fatal(err)
@@ -45,12 +48,21 @@ func TestMetricsHaveNoHighCardinalityLabels(t *testing.T) {
 		!strings.Contains(text, "rgs_capacity_rejected_total 4") {
 		t.Fatalf("capacity rejection counter missing from output: %s", text)
 	}
+	if !strings.Contains(text, "rgs_access_logs_emitted_total 1") ||
+		!strings.Contains(text, "rgs_access_logs_dropped_total 1") {
+		t.Fatalf("access log counters missing from output: %s", text)
+	}
+	if !strings.Contains(text, "# TYPE rgs_auth_replays_total counter") ||
+		!strings.Contains(text, "rgs_auth_replays_total 1") {
+		t.Fatalf("认证重放计数器未输出: %s", text)
+	}
 	assertNoHighCardinalityMetricLabels(t, text)
 }
 
 func TestMetricsImplementBoundedBusinessObservers(t *testing.T) {
 	metrics := &Metrics{}
 	metrics.RoundPrepared()
+	metrics.NonceReplay()
 	metrics.RoundCommitted()
 	metrics.RoundReplayed()
 	metrics.IdempotencyConflict()
@@ -63,7 +75,7 @@ func TestMetricsImplementBoundedBusinessObservers(t *testing.T) {
 		Claimed: 5, Published: 2, Failed: 2, LeaseLost: 1,
 	})
 
-	if metrics.RoundsPrepared.Load() != 1 || metrics.RoundsCommitted.Load() != 1 ||
+	if metrics.AuthReplays.Load() != 1 || metrics.RoundsPrepared.Load() != 1 || metrics.RoundsCommitted.Load() != 1 ||
 		metrics.RoundReplays.Load() != 1 || metrics.IdempotencyConflicts.Load() != 1 ||
 		metrics.RoundsManualReview.Load() != 1 || metrics.WalletCalls.Load() != 1 ||
 		metrics.RoundIntegrityQuarantines.Load() != 1 ||

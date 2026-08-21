@@ -1203,7 +1203,7 @@ select {
   color: #fff0d1;
   background:
     linear-gradient(rgba(8, 7, 6, 0.74), rgba(8, 7, 6, 0.94)),
-    url("/assets/primal-reference/10055.avif") 50% 38% / cover no-repeat;
+    url("/assets/primal-runtime/spine/spine_background/spine_background_level1.avif") 50% 38% / cover no-repeat;
   text-align: center;
   pointer-events: auto;
 }

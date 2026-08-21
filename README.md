@@ -1,12 +1,26 @@
 # Iron Colossus
 
-生产级槽位游戏交付仓库，包含权威 Go RGS、PostgreSQL、运营商/钱包适配服务、
-TypeScript/PixiJS 前端、容器编排、监控告警、日志采集、备份恢复与供应链门禁。
+面向公司正式交付的槽位游戏源码仓库。生产主线以 AWS 多可用区集群为目标：静态 Web 发布到
+Amazon S3 并通过 CloudFront OAC 分发，公共 API 经 Route 53、AWS WAF、ALB 进入 Amazon EKS，
+权威交易状态存储在 Amazon RDS for PostgreSQL Multi-AZ 实例。
 
-项目源码位于 [`slots-game/`](slots-game/)，GitHub Actions 位于 [`.github/workflows/`](.github/workflows/)。
-本机完整部署、公司 Kubernetes 集群 Helm 交付、验证、运维和双树架构说明请从
-[`slots-game/README.md`](slots-game/README.md) 开始；集群入口为
-[`slots-game/deploy/cluster-production/`](slots-game/deploy/cluster-production/)。
+项目源码位于 [`slots-game/`](slots-game/)，持续集成与受保护发布工作流源码位于
+[`.github/workflows/`](.github/workflows/)。正式评审从以下入口开始：
 
-本仓库不保存运行密码、私钥、数据库、日志、发布审批或构建产物；这些内容由部署脚本写入
-仓库外的受限状态目录。
+- [项目交付总览](slots-game/README.md)
+- [AWS 正式生产架构](slots-game/docs/aws-production-architecture.md)
+- [AWS 正式生产部署](slots-game/docs/aws-production-deployment.md)
+- [AWS 正式生产运维](slots-game/docs/aws-production-operations.md)
+- [通用 Kubernetes/Helm 应用交付](slots-game/deploy/cluster-production/README.md)
+
+macOS Docker Compose 仅用于开发、集成与端到端验收，不是公司正式生产拓扑，也不能作为 AWS
+高可用、灾难恢复或安全控制已经生效的证明。
+
+本仓库同时交付应用源码、容器构建、Helm Chart、验证门禁与应用专属 AWS Terraform。
+`slots-game/infra/terraform/` 可创建 VPC、EKS、RDS、ElastiCache Valkey、ECR、Secrets Manager
+元数据、S3/CloudFront、AMP、CloudWatch、备份与归档基线；企业落地区仍必须提供账号、
+state/部署身份、DNS/证书/WAF 和组织级安全能力。源码中存在 IaC 不等于任何 AWS
+账号已经执行 `plan`/`apply` 或通过上线验收。
+
+运行密码、私钥、数据库、日志、发布审批和构建产物不得进入 Git。正式秘密由 AWS Secrets
+Manager 管理并以最小权限注入工作负载；本机验收秘密由脚本写入仓库外受限状态目录。

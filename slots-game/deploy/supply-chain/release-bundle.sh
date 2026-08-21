@@ -38,6 +38,71 @@ config_digest() {
     "${RGS_HOST_ORIGIN-}" | sha256sum | awk '{ print $1 }'
 }
 
+validate_approval_expiry() {
+  approval_expiry=$1
+  require_future=$2
+  command -v node >/dev/null 2>&1 || fail 'node is required to validate approval expiry'
+  if ! ASSET_APPROVAL_EXPIRES_AT="$approval_expiry" REQUIRE_FUTURE="$require_future" \
+    node -e '
+      const value = process.env.ASSET_APPROVAL_EXPIRES_AT ?? "";
+      const pattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+      const timestamp = Date.parse(value);
+      const canonical = Number.isFinite(timestamp)
+        ? new Date(timestamp).toISOString().replace(".000Z", "Z")
+        : "";
+      if (!pattern.test(value) || value !== canonical) process.exit(1);
+      if (process.env.REQUIRE_FUTURE === "true" && timestamp <= Date.now()) process.exit(2);
+    '
+  then
+    if [ "$require_future" = true ]; then
+      fail 'approval has expired before bundle finalization or expiresAt is invalid'
+    fi
+    fail 'approval expiresAt is invalid'
+  fi
+}
+
+approval_metadata() {
+  test "$#" -eq 2 || fail 'usage: release-bundle.sh approval-metadata APPROVAL_FILE OUTPUT_FILE'
+  approval_file=$1
+  output_file=$2
+  test -s "$approval_file" || fail 'approval file is missing or empty'
+  test ! -L "$approval_file" || fail 'approval file must not be a symlink'
+  test ! -e "$output_file" || fail 'approval metadata output must not already exist'
+
+  # 只输出公开 expiresAt 和规范化元数据摘要；审批引用、辖区和素材明细的明文不跨权限域。
+  canonical_metadata=$(jq -ceS '
+    def trimmed:
+      if type == "string" then gsub("^[[:space:]]+|[[:space:]]+$"; "")
+      else error("metadata string is invalid") end;
+    select(type == "object" and .schemaVersion == 1 and .status == "APPROVED")
+    | (.approvalReference | trimmed) as $reference
+    | select($reference != "")
+    | select(.jurisdictions | type == "array" and length > 0)
+    | ([.jurisdictions[] | trimmed] | select(all(.[]; . != ""))) as $jurisdictions
+    | select(($jurisdictions | unique | length) == ($jurisdictions | length))
+    | select(.expiresAt | type == "string"
+        and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$"))
+    | {
+        schemaVersion: 1,
+        status: "APPROVED",
+        approvalReference: $reference,
+        jurisdictions: ($jurisdictions | sort),
+        expiresAt: (.expiresAt | sub("\\.000Z$"; "Z"))
+      }
+  ' "$approval_file") || fail 'approval metadata is invalid'
+  test -n "$canonical_metadata" || fail 'approval metadata is invalid'
+  approval_expiry=$(printf '%s' "$canonical_metadata" | jq -er '.expiresAt') || \
+    fail 'approval metadata has no canonical expiresAt'
+  validate_approval_expiry "$approval_expiry" false
+  metadata_digest=$(printf '%s' "$canonical_metadata" | sha256sum | awk '{ print $1 }')
+
+  umask 077
+  {
+    printf 'ASSET_APPROVAL_EXPIRES_AT=%s\n' "$approval_expiry"
+    printf 'ASSET_APPROVAL_METADATA_SHA256=%s\n' "$metadata_digest"
+  } > "$output_file"
+}
+
 finalize_bundle() {
   test "$#" -eq 2 || fail 'usage: release-bundle.sh finalize BUNDLE_DIR BUILD_KIND'
   bundle_dir=$1
@@ -100,11 +165,18 @@ finalize_bundle() {
     fail 'Trivy image report is invalid'
 
   approval_digest=${SUPPLY_CHAIN_APPROVAL_SHA256:-none}
+  approval_expiry=${SUPPLY_CHAIN_APPROVAL_EXPIRES_AT:-none}
+  approval_metadata_digest=${SUPPLY_CHAIN_APPROVAL_METADATA_SHA256:-none}
   if [ "$build_kind" = web-approved ]; then
     printf '%s\n' "$approval_digest" | grep -Eq '^[0-9a-f]{64}$' || \
       fail 'approved Web build must bind the exact approval SHA-256'
+    printf '%s\n' "$approval_metadata_digest" | grep -Eq '^[0-9a-f]{64}$' || \
+      fail 'approved Web build must bind normalized approval metadata SHA-256'
+    validate_approval_expiry "$approval_expiry" true
   else
     test "$approval_digest" = none || fail 'RGS build must not carry a Web approval digest'
+    test "$approval_expiry" = none || fail 'RGS build must not carry a Web approval expiry'
+    test "$approval_metadata_digest" = none || fail 'RGS build must not carry Web approval metadata'
     test -z "${RGS_BASE_URL-}${RGS_BET_OPTIONS_MINOR-}${RGS_DEFAULT_BET_MINOR-}${RGS_HOST_ORIGIN-}" || \
       fail 'RGS artifact must not carry Web runtime configuration'
   fi
@@ -127,7 +199,7 @@ finalize_bundle() {
 
   # 固定键值清单不 source 执行；发布 job 逐行精确匹配，防止制品替换或参数混淆。
   {
-    printf 'BUNDLE_SCHEMA_VERSION=1\n'
+    printf 'BUNDLE_SCHEMA_VERSION=2\n'
     printf 'SOURCE_SHA=%s\n' "$GITHUB_SHA"
     printf 'SOURCE_TREE_SHA=%s\n' "$SOURCE_TREE_SHA"
     printf 'SOURCE_REF=%s\n' "$GITHUB_REF"
@@ -140,6 +212,8 @@ finalize_bundle() {
     printf 'LOCAL_IMAGE_REF=%s\n' "$local_image_ref"
     printf 'CONFIGURATION_SHA256=%s\n' "$configuration_digest"
     printf 'ASSET_APPROVAL_SHA256=%s\n' "$approval_digest"
+    printf 'ASSET_APPROVAL_EXPIRES_AT=%s\n' "$approval_expiry"
+    printf 'ASSET_APPROVAL_METADATA_SHA256=%s\n' "$approval_metadata_digest"
     printf 'OCI_MANIFEST_DIGEST=%s\n' "$oci_manifest_digest"
     printf 'OCI_ARCHIVE_SHA256=%s\n' "$archive_digest"
     printf 'SPDX_SHA256=%s\n' "$spdx_digest"
@@ -154,6 +228,8 @@ finalize_bundle() {
       printf 'oci_archive_sha256=%s\n' "$archive_digest"
       printf 'spdx_sha256=%s\n' "$spdx_digest"
       printf 'configuration_sha256=%s\n' "$configuration_digest"
+      printf 'approval_expires_at=%s\n' "$approval_expiry"
+      printf 'approval_metadata_sha256=%s\n' "$approval_metadata_digest"
     } >> "$GITHUB_OUTPUT"
   fi
 }
@@ -161,6 +237,11 @@ finalize_bundle() {
 command -v sha256sum >/dev/null 2>&1 || fail 'sha256sum is required'
 command_name=${1-}
 case "$command_name" in
+  approval-metadata)
+    shift
+    command -v jq >/dev/null 2>&1 || fail 'jq is required'
+    approval_metadata "$@"
+    ;;
   config-digest)
     test "$#" -eq 1 || fail 'config-digest accepts no arguments'
     config_digest
@@ -171,5 +252,5 @@ case "$command_name" in
     command -v tar >/dev/null 2>&1 || fail 'tar is required'
     finalize_bundle "$@"
     ;;
-  *) fail 'usage: release-bundle.sh config-digest | finalize BUNDLE_DIR BUILD_KIND' ;;
+  *) fail 'usage: release-bundle.sh approval-metadata APPROVAL_FILE OUTPUT_FILE | config-digest | finalize BUNDLE_DIR BUILD_KIND' ;;
 esac

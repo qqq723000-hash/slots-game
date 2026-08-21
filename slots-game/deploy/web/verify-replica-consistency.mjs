@@ -4,6 +4,10 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 import { verifyReleaseManifest } from "../../web/scripts/release-manifest.mjs";
+import {
+  createReleaseContentSecurityPolicy,
+  verifyReleaseContentSecurityPolicy,
+} from "./content-security-policy.mjs";
 
 const DEFAULT_TIMEOUT_MS = 3_000;
 const DEFAULT_MAX_BYTES = 1_048_576;
@@ -74,7 +78,12 @@ async function limitedBody(response, maxBytes, label) {
   }
 }
 
-async function fetchManifest(url, index, { timeoutMs, maxBytes, fetchImpl }) {
+async function fetchManifest(url, index, {
+  timeoutMs,
+  maxBytes,
+  fetchImpl,
+  policyOptions,
+}) {
   const label = `replica ${index + 1}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -101,8 +110,15 @@ async function fetchManifest(url, index, { timeoutMs, maxBytes, fetchImpl }) {
       .map((value) => value.trim().toLowerCase());
     if (!cacheDirectives.includes("no-store")) fail(`${label} release manifest is cacheable`);
     const contentSecurityPolicy = response.headers.get("content-security-policy");
-    if (!contentSecurityPolicy || contentSecurityPolicy.includes("*")) {
-      fail(`${label} returned a missing or broad Content-Security-Policy`);
+    if (!contentSecurityPolicy) {
+      fail(`${label} returned a missing Content-Security-Policy`);
+    }
+    try {
+      verifyReleaseContentSecurityPolicy(contentSecurityPolicy, policyOptions);
+    } catch (error) {
+      fail(`${label} returned an invalid Content-Security-Policy: ${error instanceof Error
+        ? error.message
+        : "verification failed"}`);
     }
 
     let parsed;
@@ -132,6 +148,8 @@ async function fetchManifest(url, index, { timeoutMs, maxBytes, fetchImpl }) {
  */
 export async function verifyReplicaConsistency({
   urls,
+  rgsBaseUrl,
+  hostOrigin,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxBytes = DEFAULT_MAX_BYTES,
   fetchImpl = globalThis.fetch,
@@ -142,11 +160,24 @@ export async function verifyReplicaConsistency({
   if (typeof fetchImpl !== "function") fail("Fetch API is unavailable");
   const timeout = boundedInteger(timeoutMs, "timeout", 100, 30_000);
   const bodyLimit = boundedInteger(maxBytes, "max bytes", 1_024, 4_194_304);
+  const policyOptions = { rgsBaseUrl, hostOrigin };
+  try {
+    createReleaseContentSecurityPolicy(policyOptions);
+  } catch (error) {
+    fail(`expected release Content-Security-Policy is invalid: ${error instanceof Error
+      ? error.message
+      : "verification failed"}`);
+  }
   const normalizedUrls = urls.map((url, index) => manifestUrl(url, `replica ${index + 1}`));
   if (new Set(normalizedUrls).size !== normalizedUrls.length) fail("replica URLs must be distinct");
 
   const manifests = await Promise.all(normalizedUrls.map((url, index) => (
-    fetchManifest(url, index, { timeoutMs: timeout, maxBytes: bodyLimit, fetchImpl })
+    fetchManifest(url, index, {
+      timeoutMs: timeout,
+      maxBytes: bodyLimit,
+      fetchImpl,
+      policyOptions,
+    })
   )));
   const referenceManifest = JSON.stringify(manifests[0].manifest);
   if (manifests.some(({ manifest }) => JSON.stringify(manifest) !== referenceManifest)) {
@@ -163,6 +194,8 @@ function parseArguments(argv) {
   const urls = [];
   let timeoutMs = DEFAULT_TIMEOUT_MS;
   let maxBytes = DEFAULT_MAX_BYTES;
+  let rgsBaseUrl;
+  let hostOrigin;
   for (let index = 0; index < argv.length; index += 1) {
     const name = argv[index];
     const value = argv[index + 1];
@@ -170,10 +203,12 @@ function parseArguments(argv) {
     if (name === "--replica") urls.push(value);
     else if (name === "--timeout-ms") timeoutMs = value;
     else if (name === "--max-bytes") maxBytes = value;
+    else if (name === "--rgs-base-url" && rgsBaseUrl === undefined) rgsBaseUrl = value;
+    else if (name === "--host-origin" && hostOrigin === undefined) hostOrigin = value;
     else fail(`unknown argument ${name}`);
     index += 1;
   }
-  return { urls, timeoutMs, maxBytes };
+  return { urls, rgsBaseUrl, hostOrigin, timeoutMs, maxBytes };
 }
 
 async function main(argv) {

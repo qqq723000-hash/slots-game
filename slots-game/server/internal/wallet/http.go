@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,7 +23,10 @@ import (
 	"slots-game/server/internal/rgs"
 )
 
-const maxWalletResponseBytes int64 = 64 << 10
+const (
+	maxWalletResponseBytes int64 = 64 << 10
+	maxWalletRootCABytes   int64 = 1 << 20
+)
 
 var moneyPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
@@ -57,7 +62,10 @@ func NewHTTPWallet(config HTTPConfig) (*HTTPWallet, error) {
 	}
 	client := config.Client
 	if client == nil {
-		client = SecureHTTPClient(4 * time.Second)
+		client, err = SecureHTTPClient(4*time.Second, "")
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		clone := *client
 		client = &clone
@@ -75,15 +83,32 @@ func NewHTTPWallet(config HTTPConfig) (*HTTPWallet, error) {
 	}, nil
 }
 
-func SecureHTTPClient(timeout time.Duration) *http.Client {
+// SecureHTTPClient 构造钱包专用 TLS 传输。配置独立根 CA 时只在启动阶段读取一次；
+// 文件缺失、不是普通文件、超限或不含证书都会拒绝启动，绝不降级跳过验证。
+func SecureHTTPClient(timeout time.Duration, rootCAFile string) (*http.Client, error) {
 	if timeout <= 0 {
 		timeout = 4 * time.Second
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if rootCAFile != "" {
+		rootPEM, err := readWalletRootCAFile(rootCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("wallet http: load root CA: %w", err)
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil || roots == nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(rootPEM) {
+			return nil, errors.New("wallet http: root CA file contains no certificates")
+		}
+		tlsConfig.RootCAs = roots
 	}
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			Proxy:                  http.ProxyFromEnvironment,
-			TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
+			TLSClientConfig:        tlsConfig,
 			ForceAttemptHTTP2:      true,
 			DisableCompression:     true,
 			MaxResponseHeaderBytes: 32 << 10,
@@ -96,7 +121,30 @@ func SecureHTTPClient(timeout time.Duration) *http.Client {
 			TLSHandshakeTimeout:   5 * time.Second,
 			ResponseHeaderTimeout: timeout,
 		},
+	}, nil
+}
+
+func readWalletRootCAFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("wallet root CA file must be regular")
+	}
+	contents, err := io.ReadAll(io.LimitReader(file, maxWalletRootCABytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(contents)) > maxWalletRootCABytes {
+		return nil, fmt.Errorf("wallet root CA file exceeds %d-byte limit", maxWalletRootCABytes)
+	}
+	return contents, nil
 }
 
 type roundRequest struct {

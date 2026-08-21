@@ -2946,6 +2946,7 @@ describe("AppController feature orchestration seams", () => {
 
   it("keeps the pre-round feature projection across a pending-spin reconnect", () => {
     const controller = prototypeHarness();
+    const root = { dataset: {} };
     const origin: FeatureState = {
       mode: "EXPANSION",
       freeSpinsRemaining: 2,
@@ -2968,6 +2969,7 @@ describe("AppController feature orchestration seams", () => {
         currentGrid: BASE_GRID,
       },
       roundOriginFeatureState: null,
+      root,
       hasOpenedSession: true,
       visibleBalanceMinor: "10000",
       gateway: { hasPendingSpin: true },
@@ -3000,6 +3002,7 @@ describe("AppController feature orchestration seams", () => {
       balanceMinor: "10000",
       featureState: origin,
     }));
+    expect(root.dataset).toEqual({ rgsSession: "online" });
   });
 
   it("restores an initial Base level-two PPS state once without replaying EVOLVE or level-up audio", () => {
@@ -4009,6 +4012,22 @@ function createRoundHarness(previousFeatureState: FeatureState = BASE_FEATURE): 
 }
 
 describe("AppController round ordering", () => {
+  it("publishes only the fixed synchronous delivery stage when acceptance throws", () => {
+    const controller = createRoundHarness();
+    const root = { dataset: {} as Record<string, string> };
+    const ui = (controller as unknown as {
+      ui: { armAutoplayStopRound: ReturnType<typeof vi.fn> };
+    }).ui;
+    ui.armAutoplayStopRound.mockImplementation(() => {
+      throw new Error("不得进入 DOM 的内部诊断文本");
+    });
+    Object.assign(controller, { root });
+
+    expect(() => controller.handleSpinResult(roundResult())).toThrow();
+    expect(root.dataset).toEqual({ rgsDeliveryStage: "autoplay-arm" });
+    expect(JSON.stringify(root.dataset)).not.toContain("内部诊断文本");
+  });
+
   it("finalizes a paid Auto Play reservation exactly once before arming stop boundaries", async () => {
     const controller = createRoundHarness();
     const ui = (controller as unknown as {

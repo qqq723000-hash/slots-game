@@ -61,4 +61,4 @@ require_state
 "$local_production_directory/verify-static-contract.sh"
 compose config --quiet
 compose build --provenance=mode=max rgs-migrator rgs-server local-operator web
-printf '%s\n' '本机生产材料与镜像已就绪。'
+printf '%s\n' '本机集成验收材料与镜像已就绪。'

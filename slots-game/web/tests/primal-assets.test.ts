@@ -23,6 +23,16 @@ describe("Primal Rampage asset manifest", () => {
     expect(SYMBOL_ASSET_BY_ID.ORBIT).toBe(PRIMAL_ASSETS.symbols.k);
   });
 
+  it("复用运行时图集，避免相同 AVIF 以两条路径重复发布", () => {
+    expect(PRIMAL_ASSETS.atlases).toEqual({
+      promotional: "/assets/primal-runtime/interface/feature_preview_texture0_level1.avif",
+      environment: "/assets/primal-runtime/spine/spine_background/spine_background_level1.avif",
+      environmentPieces: "/assets/primal-runtime/spine/spine_background/spine_background_level1_2.avif",
+      characterAndSymbols: "/assets/primal-runtime/spine/spine_symbols/spine_symbols_level1_3.avif",
+      particles: "/assets/primal-reference/10059.avif",
+    });
+  });
+
   it("selects the authored Wild art for every supported multiplier", () => {
     expect(wildAssetForMultiplier(undefined)).toBe(PRIMAL_ASSETS.symbols.wild);
     const supported = [

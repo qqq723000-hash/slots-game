@@ -1,0 +1,167 @@
+# 该文件只展示 AWS 正式环境字段形状，不包含可部署的账号、域名、摘要或网络参数。
+images:
+  rgs:
+    repository: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/slots/rgs-runtime
+    digest: sha256:1111111111111111111111111111111111111111111111111111111111111111
+  migrator:
+    repository: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/slots/rgs-migrator
+    digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
+  # AWS 正式 Web 发布到私有 S3，并由 CloudFront OAC 读取；此镜像字段仅满足通用 Chart 模式，绝不会渲染。
+  web:
+    repository: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/slots/web-unused
+    digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
+  pullSecrets: []
+
+rgs:
+  publicBaseURL: https://rgs.production.example.com
+  allowedOrigins:
+    - https://slots.production.example.com
+  sharedAdmission:
+    endpointURL: rediss://slots-production.example.cache.amazonaws.com:6379
+
+web:
+  # Web 由 S3、CloudFront、OAC 和发布版本标识路由交付，EKS 中禁止创建 Web 工作负载。
+  enabled: false
+
+ingress:
+  className: alb
+  # 公网证书由 ACM 绑定到 ALB HTTPS 监听器；Kubernetes TLS Secret 必须关闭。
+  tlsSecretEnabled: false
+  apiHost: rgs.production.example.com
+  webHost: slots.production.example.com
+  # 通用 Chart 模式仍要求名称；关闭 tlsSecretEnabled 后它们不得出现在任何渲染资源中。
+  apiTLSSecretName: unused-by-aws-alb
+  webTLSSecretName: unused-by-s3-cloudfront
+  tlsRedirectAnnotationKey: alb.ingress.kubernetes.io/ssl-redirect
+  tlsRedirectAnnotationValue: "443"
+  annotations: {}
+  apiAnnotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/ip-address-type: ipv4
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:123456789012:certificate/00000000-0000-4000-8000-000000000000
+    alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:ap-southeast-1:123456789012:regional/webacl/slots-production/00000000-0000-4000-8000-000000000000
+    alb.ingress.kubernetes.io/subnets: subnet-00000000000000001,subnet-00000000000000002,subnet-00000000000000003
+    alb.ingress.kubernetes.io/security-groups: sg-00000000000000001
+    alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
+    # ALB 只连接公网 8080；私有 8081 的 /readyz 由 Kubernetes readiness 与监控认证访问。
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/load-balancer-attributes: deletion_protection.enabled=true,routing.http.drop_invalid_header_fields.enabled=true,routing.http2.enabled=true,access_logs.s3.enabled=true,access_logs.s3.bucket=company-alb-access-logs,access_logs.s3.prefix=slots-production
+    alb.ingress.kubernetes.io/tags: Environment=production,Service=slots-rgs
+  webAnnotations: {}
+
+externalSecrets:
+  runtimeDatabase:
+    name: slots-rgs-runtime-database-v1
+  migratorDatabase:
+    name: slots-rgs-migrator-database-v1
+  operationsBearer:
+    name: slots-rgs-operations-bearer-v1
+  # 该 Secret 由 Secrets Manager 同步；RGS 不获取 AWS API 身份，也不执行 IAM Valkey 认证。
+  sharedAdmission:
+    name: slots-rgs-shared-admission-v1
+  apiRuntimeAssets:
+    name: slots-rgs-api-runtime-assets-v1
+    additionalItems:
+      - key: operator-access-private.pem
+        path: keys/operator-access-private.pem
+      - key: operator-access-public.pem
+        path: keys/operator-access-public.pem
+      - key: operator-request-public.pem
+        path: keys/operator-request-public.pem
+      - key: operator-response-private.pem
+        path: keys/operator-response-private.pem
+      - key: operator-response-public.pem
+        path: keys/operator-response-public.pem
+      - key: wallet-request-private.pem
+        path: keys/wallet-request-private.pem
+      - key: wallet-request-public.pem
+        path: keys/wallet-request-public.pem
+      - key: wallet-response-public.pem
+        path: keys/wallet-response-public.pem
+  workerRuntimeAssets:
+    name: slots-rgs-worker-runtime-assets-v1
+    additionalItems:
+      - key: wallet-request-private.pem
+        path: keys/wallet-request-private.pem
+      - key: wallet-request-public.pem
+        path: keys/wallet-request-public.pem
+      - key: wallet-response-public.pem
+        path: keys/wallet-response-public.pem
+
+audit:
+  endpointURL: https://audit.production.example.com/rgs/events
+  hmacKeyID: rgs-audit-production-v1
+
+externalControls:
+  globalRateLimitProvider: valkey-verified-identity-and-waf-edge
+  tlsEnforcementProvider: aws-acm-alb-listener
+  logPipelineProvider: cloudwatch-observability
+  webVersionIsolationProvider: cloudfront-release-pinning
+
+release:
+  compatibilityClass: same-schema-and-definition
+  definitionIdentity:
+    gameID: iron-colossus
+    version: definition-v1
+    sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+monitoring:
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: monitoring
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-agent
+  ruleLabels:
+    prometheus: company-platform
+
+networkPolicy:
+  ingressController:
+    # AWS Load Balancer Controller 使用 IP 目标；NetworkPolicy 只接受经审批的 VPC 来源网段。
+    mode: cidrs
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: aws-load-balancer-controller
+    cidrs:
+      - 10.0.10.0/24
+      - 10.0.11.0/24
+      - 10.0.12.0/24
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  egress:
+    # RDS 故障转移可能更换地址，因此覆盖三个受控数据子网，并由安全组进一步收窄到 RDS。
+    database:
+      cidrs:
+        - 10.20.10.0/24
+        - 10.20.11.0/24
+        - 10.20.12.0/24
+    wallet:
+      cidrs:
+        - 10.30.10.0/24
+    audit:
+      cidrs:
+        - 10.40.10.0/24
+    # 仅 API Pod 可访问 ElastiCache 私有数据子网；Worker 无该出口。
+    sharedAdmission:
+      cidrs:
+        - 10.50.10.0/24
+        - 10.50.11.0/24
+        - 10.50.12.0/24
+
+scheduling:
+  nodeSelector:
+    kubernetes.io/os: linux
+    kubernetes.io/arch: amd64

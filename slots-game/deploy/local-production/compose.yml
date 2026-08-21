@@ -328,6 +328,7 @@ services:
       RGS_DEFINITION_APPROVAL_FILE: /run/local-production/definition-approval.json
       RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE: /run/local-production/definition-approval-public.pem
       RGS_LAUNCH_HMAC_KEY_FILE: /run/local-production/launch-hmac.key
+      RGS_WALLET_ROOT_CA_FILE: /run/local-production/local-production-root-ca.pem
       RGS_OPERATIONS_BEARER_TOKEN_FILE: /run/local-production/operations.token
       RGS_OUTBOX_ENDPOINT_URL: https://wallet:8443/audit
       RGS_OUTBOX_HMAC_KEY_ID: local-production-outbox-1
@@ -341,6 +342,7 @@ services:
       RGS_MAX_CONNECTIONS_PER_LISTENER: "512"
       RGS_RATE_PER_SECOND: "50"
       RGS_RATE_BURST: "100"
+      RGS_SUCCESS_ACCESS_LOG_SAMPLE_PER_MILLION: "1000000"
       PROBE_URL: http://127.0.0.1:8081/readyz
       PROBE_BEARER_FILE: /run/local-production/operations.token
     volumes:

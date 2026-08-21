@@ -17,9 +17,14 @@ images:
   pullSecrets: []
 
 rgs:
-  replicaCount: 3
+  maintenanceQuiesced: false
   publicBaseURL: ""
   allowedOrigins: []
+  sharedAdmission:
+    endpointURL: ""
+    timeout: 100ms
+    ratePerSecond: 500
+    rateBurst: 1000
   terminationGracePeriodSeconds: 45
   preStopSeconds: 5
   shutdownTimeoutSeconds: 30
@@ -46,6 +51,34 @@ rgs:
     maxConnectionsPerListener: 512
     ratePerSecondPerPod: 50
     rateBurstPerPod: 100
+    successAccessLogSamplePerMillion: 10000
+    walletTimeoutSeconds: 4
+    walletMaxAttempts: 100
+
+worker:
+  terminationGracePeriodSeconds: 45
+  preStopSeconds: 5
+  shutdownTimeoutSeconds: 30
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+      ephemeral-storage: 64Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+      ephemeral-storage: 256Mi
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  pdb:
+    minAvailable: 1
+  runtime:
+    databaseMaxOpenConnections: 10
+    databaseMaxIdleConnections: 2
+    maxConnectionsPerListener: 128
     walletTimeoutSeconds: 4
     walletMaxAttempts: 100
     outboxBatchSize: 100
@@ -68,7 +101,7 @@ migrator:
       ephemeral-storage: 128Mi
 
 web:
-  replicaCount: 3
+  enabled: true
   terminationGracePeriodSeconds: 30
   resources:
     requests:
@@ -89,6 +122,7 @@ web:
 
 ingress:
   className: ""
+  tlsSecretEnabled: true
   apiHost: ""
   webHost: ""
   apiTLSSecretName: ""
@@ -109,7 +143,14 @@ externalSecrets:
   operationsBearer:
     name: ""
     key: operations.token
-  runtimeAssets:
+  sharedAdmission:
+    name: ""
+    keys:
+      username: username
+      password: password
+      hmacKey: hmac.key
+      rootCA: root-ca.pem
+  apiRuntimeAssets:
     name: ""
     keys:
       operatorConfig: operators.json
@@ -117,6 +158,15 @@ externalSecrets:
       definitionApproval: definition-approval.json
       definitionApprovalPublicKey: definition-approval-public.pem
       launchHMAC: launch-hmac.key
+      trustBundle: trust-bundle.pem
+    additionalItems: []
+  workerRuntimeAssets:
+    name: ""
+    keys:
+      operatorConfig: operators.json
+      definition: definition.json
+      definitionApproval: definition-approval.json
+      definitionApprovalPublicKey: definition-approval-public.pem
       outboxHMAC: outbox-hmac.key
       outboxBearerToken: outbox-bearer.token
       outboxRootCA: outbox-root-ca.pem
@@ -139,6 +189,10 @@ externalControls:
 
 release:
   compatibilityClass: ""
+  definitionIdentity:
+    gameID: ""
+    version: ""
+    sha256: ""
 
 monitoring:
   enabled: true
@@ -152,10 +206,12 @@ monitoring:
 
 networkPolicy:
   ingressController:
+    mode: selectors
     namespaceSelector:
       matchLabels: {}
     podSelector:
       matchLabels: {}
+    cidrs: []
   dns:
     namespaceSelector:
       matchLabels: {}
@@ -171,6 +227,9 @@ networkPolicy:
     audit:
       cidrs: []
       port: 443
+    sharedAdmission:
+      cidrs: []
+      port: 6379
 
 scheduling:
   zoneTopologyKey: topology.kubernetes.io/zone

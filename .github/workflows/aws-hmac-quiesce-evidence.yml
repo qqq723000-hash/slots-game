@@ -1,0 +1,135 @@
+name: AWS HMAC quiesce evidence
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/aws-hmac-quiesce-evidence.yml
+      - .github/workflows/aws-infrastructure.yml
+      - slots-game/deploy/aws-production/workflow/**
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: 受保护的 HMAC 停机目标环境
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod-primary
+          - prod-dr
+      operation:
+        description: 生成短时停机证据，或按固定证据恢复 API
+        required: true
+        type: choice
+        options:
+          - quiesce
+          - resume
+      evidence_version_id:
+        description: 仅 resume 使用的固定 S3 VersionId
+        required: false
+        type: string
+      evidence_sha256:
+        description: 仅 resume 使用的规范化证据 SHA-256
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slots-aws-environment-mutation-${{ inputs.target_environment || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  static-contract:
+    name: AWS HMAC quiesce static contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: 检出无持久凭据的源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 执行无云凭据静态与危险变体门禁
+        run: |
+          set -euo pipefail
+          test -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+          slots-game/deploy/aws-production/workflow/verify-contract.sh
+          slots-game/deploy/aws-production/workflow/test-negative-contract.sh
+          slots-game/deploy/aws-production/workflow/test-hmac-quiesce-evidence.sh
+          shellcheck slots-game/deploy/aws-production/workflow/*.sh \
+            slots-game/deploy/aws-production/workflow/fixtures/*.sh
+          ruby -c slots-game/deploy/aws-production/workflow/verify-hmac-quiesce-evidence.rb
+
+  manage-evidence:
+    if: github.event_name == 'workflow_dispatch'
+    needs: static-contract
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - ${{ 'slots-aws-private-hmac-quiescer' }}
+    timeout-minutes: 30
+    environment:
+      name: aws-${{ inputs.target_environment }}-hmac-quiesce-evidence
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      INPUT_OPERATION: ${{ inputs.operation }}
+      INPUT_EVIDENCE_VERSION_ID: ${{ inputs.evidence_version_id }}
+      INPUT_EVIDENCE_SHA256: ${{ inputs.evidence_sha256 }}
+      TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_HMAC_QUIESCE_ROLE_ARN: ${{ vars.AWS_HMAC_QUIESCE_ROLE_ARN }}
+      AWS_HMAC_QUIESCE_PRODUCER_ROLE_ARN: ${{ vars.AWS_HMAC_QUIESCE_ROLE_ARN }}
+      AWS_HMAC_QUIESCE_PRODUCER_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/aws-hmac-quiesce-evidence.yml@refs/heads/main
+      AWS_EKS_CLUSTER_NAME: ${{ vars.AWS_EKS_CLUSTER_NAME }}
+      AWS_EKS_NAMESPACE: ${{ vars.AWS_EKS_NAMESPACE }}
+      AWS_HELM_RELEASE_NAME: ${{ vars.AWS_HELM_RELEASE_NAME }}
+      AWS_TERRAFORM_DELIVERY_BUCKET: ${{ vars.AWS_TERRAFORM_DELIVERY_BUCKET }}
+      AWS_TERRAFORM_DELIVERY_KEY: ${{ vars.AWS_TERRAFORM_DELIVERY_KEY }}
+      AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN }}
+      AWS_HMAC_QUIESCE_EVIDENCE_BUCKET: ${{ vars.AWS_HMAC_QUIESCE_EVIDENCE_BUCKET }}
+      AWS_HMAC_QUIESCE_EVIDENCE_KEY: ${{ vars.AWS_HMAC_QUIESCE_EVIDENCE_KEY }}
+      AWS_HMAC_QUIESCE_EVIDENCE_KMS_KEY_ARN: ${{ vars.AWS_HMAC_QUIESCE_EVIDENCE_KMS_KEY_ARN }}
+      AWS_HMAC_QUIESCE_CANCELLATION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_CANCELLATION_PREFIX }}
+      AWS_HMAC_QUIESCE_COMPLETION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_COMPLETION_PREFIX }}
+      KUBECONFIG: /tmp/slots-hmac-quiesce-kubeconfig-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: 检出证据生产者的精确源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 在申请 OIDC 凭据前验证受保护边界
+        run: |
+          set -euo pipefail
+          slots-game/deploy/aws-production/workflow/validate-hmac-quiesce-environment.sh
+
+      - name: 通过 GitHub OIDC 获取独立停机证据角色
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.AWS_HMAC_QUIESCE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: slots-hmac-quiesce-${{ github.run_id }}-${{ github.run_attempt }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: 受控停机并交付证据或按精确证据恢复
+        id: evidence
+        run: |
+          set -euo pipefail
+          slots-game/deploy/aws-production/workflow/manage-hmac-quiesce-evidence.sh
+
+      - name: 清除私网 runner 临时文件与上下文
+        if: always()
+        run: |
+          rm -f "$KUBECONFIG"

@@ -273,6 +273,9 @@ jobs:
       bundle_checksums_sha256: ${{ steps.finalize-rgs.outputs.bundle_checksums_sha256 }}
       oci_archive_sha256: ${{ steps.finalize-rgs.outputs.oci_archive_sha256 }}
       spdx_sha256: ${{ steps.finalize-rgs.outputs.spdx_sha256 }}
+      configuration_sha256: ${{ steps.finalize-rgs.outputs.configuration_sha256 }}
+      approval_expires_at: ${{ steps.finalize-rgs.outputs.approval_expires_at }}
+      approval_metadata_sha256: ${{ steps.finalize-rgs.outputs.approval_metadata_sha256 }}
     defaults:
       run:
         working-directory: slots-game
@@ -365,6 +368,8 @@ jobs:
         id: finalize-rgs
         env:
           SUPPLY_CHAIN_APPROVAL_SHA256: none
+          SUPPLY_CHAIN_APPROVAL_EXPIRES_AT: none
+          SUPPLY_CHAIN_APPROVAL_METADATA_SHA256: none
         run: ./deploy/supply-chain/release-bundle.sh finalize "$SUPPLY_CHAIN_REPORT_DIR/bundle" rgs-unprivileged
 
       - name: Upload immutable RGS release bundle for the publish boundary
@@ -410,6 +415,9 @@ jobs:
       bundle_checksums_sha256: ${{ steps.finalize-web.outputs.bundle_checksums_sha256 }}
       oci_archive_sha256: ${{ steps.finalize-web.outputs.oci_archive_sha256 }}
       spdx_sha256: ${{ steps.finalize-web.outputs.spdx_sha256 }}
+      configuration_sha256: ${{ steps.finalize-web.outputs.configuration_sha256 }}
+      approval_expires_at: ${{ steps.finalize-web.outputs.approval_expires_at }}
+      approval_metadata_sha256: ${{ steps.finalize-web.outputs.approval_metadata_sha256 }}
     defaults:
       run:
         working-directory: slots-game
@@ -425,6 +433,7 @@ jobs:
       RGS_BET_OPTIONS_MINOR: ${{ inputs.rgs_bet_options_minor }}
       RGS_DEFAULT_BET_MINOR: ${{ inputs.rgs_default_bet_minor }}
       RGS_HOST_ORIGIN: ${{ inputs.rgs_host_origin }}
+      SKOPEO_IMAGE: quay.io/skopeo/stable:v1.21.0@sha256:a585e4a3b8a045baa87c7f1b2f940d6d299ebede85ab3f2419d52d2264eefc93
 
     steps:
       - name: Check out the exact source already verified upstream
@@ -458,6 +467,11 @@ jobs:
           buildkitd-flags: --debug=false
           install: true
 
+      - name: Set up the reviewed Node.js runtime for exact Web byte verification
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.0
+
       - name: Build exact approval-gated Web result as an OCI archive
         id: build-web
         env:
@@ -467,7 +481,8 @@ jobs:
           test -n "$WEB_RELEASE_ASSET_APPROVAL" || { echo 'SUPPLY_CHAIN_WEB_RELEASE_ASSET_APPROVAL is required' >&2; exit 2; }
           mkdir -p "$SUPPLY_CHAIN_REPORT_DIR/bundle"
           approval_file=$(mktemp "${RUNNER_TEMP}/release-asset-approval.XXXXXX")
-          trap 'rm -f "$approval_file"' EXIT HUP INT TERM
+          approval_metadata_file=$(mktemp "${RUNNER_TEMP}/release-asset-approval-metadata.XXXXXX")
+          trap 'rm -f "$approval_file" "$approval_metadata_file"' EXIT HUP INT TERM
           chmod 0600 "$approval_file"
           printf '%s' "$WEB_RELEASE_ASSET_APPROVAL" > "$approval_file"
           approval_sha256=$(sha256sum "$approval_file" | awk '{ print $1 }')
@@ -489,9 +504,56 @@ jobs:
             --provenance=false \
             --metadata-file "$SUPPLY_CHAIN_REPORT_DIR/bundle/build-metadata.json" \
             --output "type=oci,dest=$SUPPLY_CHAIN_REPORT_DIR/bundle/release-image.oci.tar" .
-          rm -f "$approval_file"
+          rm -f "$approval_metadata_file"
+          ./deploy/supply-chain/release-bundle.sh approval-metadata "$approval_file" "$approval_metadata_file"
+          approval_expires_at=$(sed -n 's/^ASSET_APPROVAL_EXPIRES_AT=//p' "$approval_metadata_file")
+          approval_metadata_sha256=$(sed -n 's/^ASSET_APPROVAL_METADATA_SHA256=//p' "$approval_metadata_file")
+          printf '%s\n' "$approval_metadata_sha256" | grep -Eq '^[0-9a-f]{64}$'
+          rm -f "$approval_file" "$approval_metadata_file"
           trap - EXIT HUP INT TERM
-          printf 'approval_sha256=%s\n' "$approval_sha256" >> "$GITHUB_OUTPUT"
+          {
+            printf 'approval_sha256=%s\n' "$approval_sha256"
+            printf 'approval_expires_at=%s\n' "$approval_expires_at"
+            printf 'approval_metadata_sha256=%s\n' "$approval_metadata_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke the exact approval-gated Web bytes in a real browser
+        run: |
+          set -euo pipefail
+          local_ref="slots-release-browser-smoke:${GITHUB_SHA}"
+          static_root=$(mktemp -d "${RUNNER_TEMP%/}/slots-release-web-root.XXXXXX")
+          container_id=
+          cleanup() {
+            if [ -n "$container_id" ]; then
+              docker rm -f "$container_id" >/dev/null 2>&1 || true
+            fi
+            docker image rm "$local_ref" >/dev/null 2>&1 || true
+            case "$static_root" in
+              "${RUNNER_TEMP%/}"/slots-release-web-root.*) rm -rf -- "$static_root" ;;
+              *) echo '拒绝清理异常 Web 静态根目录' >&2 ;;
+            esac
+          }
+          trap cleanup EXIT HUP INT TERM
+          docker pull "$SKOPEO_IMAGE"
+          docker run --rm --network=none --read-only --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --env TMPDIR=/tmp \
+            --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
+            --tmpfs /var/tmp:rw,nosuid,nodev,size=256m,mode=1777 \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$SUPPLY_CHAIN_REPORT_DIR/bundle:/bundle:ro" \
+            "$SKOPEO_IMAGE" copy --all \
+            oci-archive:/bundle/release-image.oci.tar "docker-daemon:$local_ref"
+          container_id=$(docker create "$local_ref")
+          docker cp "$container_id:/usr/share/nginx/html/." "$static_root"
+          docker rm "$container_id" >/dev/null
+          container_id=
+          VITE_RGS_BASE_URL="$RGS_BASE_URL" \
+          VITE_RGS_BET_OPTIONS_MINOR="$RGS_BET_OPTIONS_MINOR" \
+          VITE_RGS_DEFAULT_BET_MINOR="$RGS_DEFAULT_BET_MINOR" \
+          VITE_RGS_HOST_ORIGIN="$RGS_HOST_ORIGIN" \
+            node web/scripts/verify-production-browser-bootstrap.mjs \
+              --distribution-root "$static_root"
 
       - name: Scan the exact approved Web OCI archive and generate dual-format SBOM
         env:
@@ -510,6 +572,8 @@ jobs:
         id: finalize-web
         env:
           SUPPLY_CHAIN_APPROVAL_SHA256: ${{ steps.build-web.outputs.approval_sha256 }}
+          SUPPLY_CHAIN_APPROVAL_EXPIRES_AT: ${{ steps.build-web.outputs.approval_expires_at }}
+          SUPPLY_CHAIN_APPROVAL_METADATA_SHA256: ${{ steps.build-web.outputs.approval_metadata_sha256 }}
         run: ./deploy/supply-chain/release-bundle.sh finalize "$SUPPLY_CHAIN_REPORT_DIR/bundle" web-approved
 
       - name: Upload immutable approved Web release bundle
@@ -571,6 +635,15 @@ jobs:
       RGS_BET_OPTIONS_MINOR: ${{ inputs.rgs_bet_options_minor }}
       RGS_DEFAULT_BET_MINOR: ${{ inputs.rgs_default_bet_minor }}
       RGS_HOST_ORIGIN: ${{ inputs.rgs_host_origin }}
+      CONFIGURATION_SHA256: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.configuration_sha256 || needs.build-rgs.outputs.configuration_sha256 }}
+      ASSET_APPROVAL_EXPIRES_AT: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.approval_expires_at || needs.build-rgs.outputs.approval_expires_at }}
+      ASSET_APPROVAL_METADATA_SHA256: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.approval_metadata_sha256 || needs.build-rgs.outputs.approval_metadata_sha256 }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_RELEASE_ROLE_ARN: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+      AWS_ECR_RGS_RUNTIME_REPOSITORY: ${{ vars.AWS_ECR_RGS_RUNTIME_REPOSITORY }}
+      AWS_ECR_RGS_MIGRATOR_REPOSITORY: ${{ vars.AWS_ECR_RGS_MIGRATOR_REPOSITORY }}
+      AWS_ECR_WEB_REPOSITORY: ${{ vars.AWS_ECR_WEB_REPOSITORY }}
       COSIGN_IMAGE: ghcr.io/sigstore/cosign/cosign:v3.1.3@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8
       SKOPEO_IMAGE: quay.io/skopeo/stable:v1.21.0@sha256:a585e4a3b8a045baa87c7f1b2f940d6d299ebede85ab3f2419d52d2264eefc93
 
@@ -590,6 +663,9 @@ jobs:
           EXPECTED_CHECKSUMS_SHA256: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.bundle_checksums_sha256 || needs.build-rgs.outputs.bundle_checksums_sha256 }}
           EXPECTED_OCI_ARCHIVE_SHA256: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.oci_archive_sha256 || needs.build-rgs.outputs.oci_archive_sha256 }}
           EXPECTED_SPDX_SHA256: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.spdx_sha256 || needs.build-rgs.outputs.spdx_sha256 }}
+          EXPECTED_CONFIGURATION_SHA256: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.configuration_sha256 || needs.build-rgs.outputs.configuration_sha256 }}
+          EXPECTED_APPROVAL_EXPIRES_AT: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.approval_expires_at || needs.build-rgs.outputs.approval_expires_at }}
+          EXPECTED_APPROVAL_METADATA_SHA256: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.approval_metadata_sha256 || needs.build-rgs.outputs.approval_metadata_sha256 }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
@@ -602,21 +678,36 @@ jobs:
           test "$GITHUB_WORKFLOW_REF" = "$expected_workflow_ref"
           test "$SUPPLY_CHAIN_EXPECTED_CERTIFICATE_IDENTITY" = "$GITHUB_SERVER_URL/$expected_workflow_ref"
           test "$SUPPLY_CHAIN_EXPECTED_OIDC_ISSUER" = https://token.actions.githubusercontent.com
-          case "$SUPPLY_CHAIN_IMAGE_REPOSITORY" in "$SUPPLY_CHAIN_REGISTRY"/*) : ;; *) exit 2 ;; esac
+          printf '%s\n' "$AWS_ACCOUNT_ID" | grep -Eq '^[0-9]{12}$'
+          printf '%s\n' "$AWS_REGION" | grep -Eq '^[a-z]{2}(-[a-z]+)+-[0-9]+$'
+          expected_registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          test "$SUPPLY_CHAIN_REGISTRY" = "$expected_registry"
+          case "$SUPPLY_CHAIN_ARTIFACT" in
+            rgs-runtime) expected_ecr_repository=$AWS_ECR_RGS_RUNTIME_REPOSITORY ;;
+            rgs-migrator) expected_ecr_repository=$AWS_ECR_RGS_MIGRATOR_REPOSITORY ;;
+            web-runtime) expected_ecr_repository=$AWS_ECR_WEB_REPOSITORY ;;
+            *) exit 2 ;;
+          esac
+          printf '%s\n' "$expected_ecr_repository" | \
+            grep -Eq '^[a-z0-9]+([._/-][a-z0-9]+)*$'
+          test "$SUPPLY_CHAIN_IMAGE_REPOSITORY" = "$expected_registry/$expected_ecr_repository"
+          printf '%s\n' "$AWS_RELEASE_ROLE_ARN" | \
+            grep -Eq "^arn:aws:iam::${AWS_ACCOUNT_ID}:role/[A-Za-z0-9+=,.@_/-]+$"
 
           printf '%s\n' "$EXPECTED_ARTIFACT_ID" | grep -Eq '^[1-9][0-9]*$'
           printf '%s\n' "$EXPECTED_ARTIFACT_DIGEST" | grep -Eq '^[0-9a-f]{64}$'
           printf '%s\n' "$EXPECTED_SOURCE_TREE_SHA" | grep -Eq '^[0-9a-f]{40}$'
           printf '%s\n' "$EXPECTED_MANIFEST_SHA256" "$EXPECTED_CHECKSUMS_SHA256" \
-            "$EXPECTED_OCI_ARCHIVE_SHA256" "$EXPECTED_SPDX_SHA256" | \
-            grep -Ec '^[0-9a-f]{64}$' | grep -Eq '^4$'
+            "$EXPECTED_OCI_ARCHIVE_SHA256" "$EXPECTED_SPDX_SHA256" \
+            "$EXPECTED_CONFIGURATION_SHA256" | \
+            grep -Ec '^[0-9a-f]{64}$' | grep -Eq '^5$'
           test "$(find "$BUNDLE_DOWNLOAD_DIR" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 8
           test -z "$(find "$BUNDLE_DOWNLOAD_DIR" -mindepth 1 -maxdepth 1 ! -type f -print -quit)"
           test "$(sha256sum "$BUNDLE_DOWNLOAD_DIR/bundle-manifest.env" | awk '{ print $1 }')" = "$EXPECTED_MANIFEST_SHA256"
           test "$(sha256sum "$BUNDLE_DOWNLOAD_DIR/bundle-checksums.sha256" | awk '{ print $1 }')" = "$EXPECTED_CHECKSUMS_SHA256"
           test "$(sha256sum "$BUNDLE_DOWNLOAD_DIR/release-image.oci.tar" | awk '{ print $1 }')" = "$EXPECTED_OCI_ARCHIVE_SHA256"
           test "$(sha256sum "$BUNDLE_DOWNLOAD_DIR/release-image.spdx.json" | awk '{ print $1 }')" = "$EXPECTED_SPDX_SHA256"
-          test "$(wc -l < "$BUNDLE_DOWNLOAD_DIR/bundle-manifest.env" | tr -d ' ')" = 17
+          test "$(wc -l < "$BUNDLE_DOWNLOAD_DIR/bundle-manifest.env" | tr -d ' ')" = 19
 
           configuration_sha256=$(printf 'RGS_BASE_URL=%s\nRGS_BET_OPTIONS_MINOR=%s\nRGS_DEFAULT_BET_MINOR=%s\nRGS_HOST_ORIGIN=%s\n' \
             "$RGS_BASE_URL" "$RGS_BET_OPTIONS_MINOR" "$RGS_DEFAULT_BET_MINOR" "$RGS_HOST_ORIGIN" | \
@@ -624,14 +715,19 @@ jobs:
           if [ "$SUPPLY_CHAIN_ARTIFACT" = web-runtime ]; then
             expected_build_kind=web-approved
             grep -Eq '^ASSET_APPROVAL_SHA256=[0-9a-f]{64}$' "$BUNDLE_DOWNLOAD_DIR/bundle-manifest.env"
+            printf '%s\n' "$EXPECTED_APPROVAL_METADATA_SHA256" | grep -Eq '^[0-9a-f]{64}$'
+            test "$EXPECTED_APPROVAL_EXPIRES_AT" = "$ASSET_APPROVAL_EXPIRES_AT"
+            test "$EXPECTED_APPROVAL_METADATA_SHA256" = "$ASSET_APPROVAL_METADATA_SHA256"
           else
             expected_build_kind=rgs-unprivileged
             test -z "$RGS_BASE_URL$RGS_BET_OPTIONS_MINOR$RGS_DEFAULT_BET_MINOR$RGS_HOST_ORIGIN"
             grep -F -x 'ASSET_APPROVAL_SHA256=none' "$BUNDLE_DOWNLOAD_DIR/bundle-manifest.env"
+            test "$EXPECTED_APPROVAL_EXPIRES_AT" = none
+            test "$EXPECTED_APPROVAL_METADATA_SHA256" = none
           fi
           local_ref="slots-release-bundle:${SUPPLY_CHAIN_ARTIFACT}-${GITHUB_SHA}"
           for expected_line in \
-            'BUNDLE_SCHEMA_VERSION=1' \
+            'BUNDLE_SCHEMA_VERSION=2' \
             "SOURCE_SHA=$GITHUB_SHA" \
             "SOURCE_TREE_SHA=$EXPECTED_SOURCE_TREE_SHA" \
             "SOURCE_REF=$GITHUB_REF" \
@@ -642,13 +738,16 @@ jobs:
             'TARGET_PLATFORM=linux/amd64' \
             "BUILD_KIND=$expected_build_kind" \
             "LOCAL_IMAGE_REF=$local_ref" \
-            "CONFIGURATION_SHA256=$configuration_sha256" \
+            "CONFIGURATION_SHA256=$EXPECTED_CONFIGURATION_SHA256" \
+            "ASSET_APPROVAL_EXPIRES_AT=$EXPECTED_APPROVAL_EXPIRES_AT" \
+            "ASSET_APPROVAL_METADATA_SHA256=$EXPECTED_APPROVAL_METADATA_SHA256" \
             "OCI_ARCHIVE_SHA256=$EXPECTED_OCI_ARCHIVE_SHA256" \
             "SPDX_SHA256=$EXPECTED_SPDX_SHA256" \
             "CHECKSUMS_SHA256=$EXPECTED_CHECKSUMS_SHA256"
           do
             grep -F -x -- "$expected_line" "$BUNDLE_DOWNLOAD_DIR/bundle-manifest.env" >/dev/null
           done
+          test "$configuration_sha256" = "$EXPECTED_CONFIGURATION_SHA256"
 
           if ! awk 'NF != 2 || $1 !~ /^[0-9a-f]{64}$/ || $2 !~ /^\*?(build-metadata\.json|release-image\.(cyclonedx\.json|oci\.tar|spdx\.json|trivy\.json)|tool-images\.env)$/ { bad = 1 } END { exit bad || NR != 6 }' \
             "$BUNDLE_DOWNLOAD_DIR/bundle-checksums.sha256"; then
@@ -687,32 +786,83 @@ jobs:
           sha256sum "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar" > \
             "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar.sha256"
 
-      - name: Require externally managed Registry credentials
-        env:
-          REGISTRY_USERNAME: ${{ secrets.SUPPLY_CHAIN_REGISTRY_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.SUPPLY_CHAIN_REGISTRY_PASSWORD }}
+      - name: Assume the release-only AWS role after offline bundle verification
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: slots-release-${{ github.run_id }}-${{ github.run_attempt }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify AWS account and fail-closed ECR repository controls
         run: |
           set -euo pipefail
-          test -n "$REGISTRY_USERNAME" || { echo 'SUPPLY_CHAIN_REGISTRY_USERNAME is required' >&2; exit 2; }
-          test -n "$REGISTRY_PASSWORD" || { echo 'SUPPLY_CHAIN_REGISTRY_PASSWORD is required' >&2; exit 2; }
+          actual_account=$(aws sts get-caller-identity --query Account --output text)
+          test "$actual_account" = "$AWS_ACCOUNT_ID"
+          case "$SUPPLY_CHAIN_ARTIFACT" in
+            rgs-runtime) repository_name=$AWS_ECR_RGS_RUNTIME_REPOSITORY ;;
+            rgs-migrator) repository_name=$AWS_ECR_RGS_MIGRATOR_REPOSITORY ;;
+            web-runtime) repository_name=$AWS_ECR_WEB_REPOSITORY ;;
+            *) exit 2 ;;
+          esac
+          repository_json=$(aws ecr describe-repositories \
+            --repository-names "$repository_name" \
+            --query 'repositories[0]' --output json)
+          jq -e --arg uri "$SUPPLY_CHAIN_IMAGE_REPOSITORY" '
+            .repositoryUri == $uri and
+            .imageTagMutability == "IMMUTABLE" and
+            .encryptionConfiguration.encryptionType == "KMS"
+          ' <<<"$repository_json" >/dev/null
+          scanning_json=$(aws ecr get-registry-scanning-configuration --output json)
+          jq -e --arg repository "$repository_name" '
+            .scanningConfiguration as $configuration |
+            $configuration.scanType == "ENHANCED" and
+            (
+              (($configuration.rules // []) | length) == 0 or
+              any($configuration.rules[]?;
+                .scanFrequency == "CONTINUOUS_SCAN" and
+                any(.repositoryFilters[]?;
+                  .filterType == "WILDCARD" and
+                  (.filter == "*" or .filter == $repository)
+                )
+              )
+            )
+          ' <<<"$scanning_json" >/dev/null
 
-      - name: Log in to the approved registry only after offline bundle verification
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - name: Log in to the approved ECR registry with temporary credentials
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
         with:
-          registry: ${{ inputs.registry }}
-          username: ${{ secrets.SUPPLY_CHAIN_REGISTRY_USERNAME }}
-          password: ${{ secrets.SUPPLY_CHAIN_REGISTRY_PASSWORD }}
+          registries: ${{ vars.AWS_ACCOUNT_ID }}
+          mask-password: true
 
       - name: Load exact OCI archive, push candidate and resolve Registry digest
         id: publish
         run: |
           set -euo pipefail
+          require_current_web_approval() {
+            if [ "$SUPPLY_CHAIN_ARTIFACT" != web-runtime ]; then
+              return 0
+            fi
+            if ! ASSET_APPROVAL_EXPIRES_AT="$ASSET_APPROVAL_EXPIRES_AT" node -e '
+              const value = process.env.ASSET_APPROVAL_EXPIRES_AT ?? "";
+              const timestamp = Date.parse(value);
+              const canonical = Number.isFinite(timestamp)
+                ? new Date(timestamp).toISOString().replace(".000Z", "Z")
+                : "";
+              if (value !== canonical || timestamp <= Date.now()) process.exit(1);
+            '; then
+              echo 'approval has expired immediately before Registry push' >&2
+              exit 2
+            fi
+          }
           mkdir -p "$PUBLISH_EVIDENCE_DIR"
           local_ref="slots-release-bundle:${SUPPLY_CHAIN_ARTIFACT}-${GITHUB_SHA}"
           candidate_ref="$SUPPLY_CHAIN_IMAGE_REPOSITORY:candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker load --input "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar"
           docker image inspect "$local_ref" >/dev/null
           docker tag "$local_ref" "$candidate_ref"
+          require_current_web_approval
           docker push "$candidate_ref"
           digest=''
           for repo_digest in $(docker image inspect --format '{{join .RepoDigests " "}}' "$candidate_ref"); do
@@ -782,6 +932,22 @@ jobs:
           SUPPLY_CHAIN_IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
         run: |
           set -euo pipefail
+          require_current_web_approval() {
+            if [ "$SUPPLY_CHAIN_ARTIFACT" != web-runtime ]; then
+              return 0
+            fi
+            if ! ASSET_APPROVAL_EXPIRES_AT="$ASSET_APPROVAL_EXPIRES_AT" node -e '
+              const value = process.env.ASSET_APPROVAL_EXPIRES_AT ?? "";
+              const timestamp = Date.parse(value);
+              const canonical = Number.isFinite(timestamp)
+                ? new Date(timestamp).toISOString().replace(".000Z", "Z")
+                : "";
+              if (value !== canonical || timestamp <= Date.now()) process.exit(1);
+            '; then
+              echo 'approval has expired immediately before Registry push' >&2
+              exit 2
+            fi
+          }
           local_ref="slots-release-bundle:${SUPPLY_CHAIN_ARTIFACT}-${GITHUB_SHA}"
           final_ref="$SUPPLY_CHAIN_IMAGE_REPOSITORY:$SUPPLY_CHAIN_IMAGE_TAG"
           if docker manifest inspect "$final_ref" >/dev/null 2>&1; then
@@ -789,6 +955,7 @@ jobs:
             exit 1
           fi
           docker tag "$local_ref" "$final_ref"
+          require_current_web_approval
           docker push "$final_ref"
           docker pull "$final_ref"
           docker image inspect --format '{{join .RepoDigests "\n"}}' "$final_ref" | \

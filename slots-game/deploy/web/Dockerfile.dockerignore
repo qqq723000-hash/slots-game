@@ -10,15 +10,21 @@
 !web/vite.config.ts
 !web/scripts/
 !web/scripts/finalize-production-assets.mjs
+!web/scripts/generate-third-party-notices.mjs
 !web/scripts/release-manifest.mjs
+!web/scripts/test-third-party-notices.mjs
 !web/scripts/verify-production-javascript-bundles.mjs
 !web/scripts/verify-release-asset-approval.mjs
 !web/src/
 !web/src/**
 !web/public/
 !web/public/**
+!web/third-party-licenses/
+!web/third-party-licenses/SPINE-LICENSE
+!web/third-party-licenses/overrides.json
 
 !deploy/
 !deploy/web/
 !deploy/web/nginx.conf
+!deploy/web/content-security-policy.mjs
 !deploy/web/render-release-nginx.mjs

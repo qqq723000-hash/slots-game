@@ -32,6 +32,8 @@ trivy_source_report_verifier="$repository_root/deploy/supply-chain/verify-trivy-
 trivy_report_sanitizer="$repository_root/deploy/supply-chain/sanitize-trivy-report.mjs"
 release_script="$repository_root/deploy/supply-chain/release-sign.sh"
 release_bundle_script="$repository_root/deploy/supply-chain/release-bundle.sh"
+web_static_verifier="$repository_root/deploy/supply-chain/verify-web-static-root.mjs"
+aws_web_extractor="$repository_root/deploy/supply-chain/extract-aws-web-static-root.sh"
 exception_file="$repository_root/deploy/supply-chain/vulnerability-exceptions.json"
 readme="$repository_root/deploy/supply-chain/README.md"
 source_workflow="$workflows_root/supply-chain.yml"
@@ -45,6 +47,7 @@ cluster_dockerfile="$repository_root/deploy/cluster-production/Dockerfile.servic
 cluster_kubeconform_contract="$repository_root/deploy/cluster-production/verify-kubeconform.sh"
 cluster_image_contract="$repository_root/deploy/cluster-production/verify-image-runtime-contract.sh"
 cluster_prometheus_rule_contract="$repository_root/deploy/cluster-production/verify-prometheus-rule-contract.sh"
+aws_deployment_guide="$repository_root/docs/aws-production-deployment.md"
 
 fail() {
   printf '%s\n' "supply-chain security contract: $*" >&2
@@ -83,6 +86,8 @@ for required_file in \
   "$trivy_report_sanitizer" \
   "$release_script" \
   "$release_bundle_script" \
+  "$web_static_verifier" \
+  "$aws_web_extractor" \
   "$exception_file" \
   "$readme" \
   "$source_workflow" \
@@ -95,7 +100,8 @@ for required_file in \
   "$cluster_dockerfile" \
   "$cluster_kubeconform_contract" \
   "$cluster_image_contract" \
-  "$cluster_prometheus_rule_contract"
+  "$cluster_prometheus_rule_contract" \
+  "$aws_deployment_guide"
 do
   require_file "$required_file"
 done
@@ -105,11 +111,16 @@ require_line 'ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256
 require_fixed 'ENTRYPOINT ["/secret-env", "RGS_DATABASE_URL", "/rgs-server"]' "$cluster_dockerfile"
 require_fixed 'COPY --from=build --chown=nonroot:nonroot /out/service-probe /service-probe' "$cluster_dockerfile"
 require_fixed 'ENTRYPOINT ["/secret-env", "RGS_MIGRATOR_DATABASE_URL", "/rgs-migrator"]' "$cluster_dockerfile"
+require_fixed 'go run ./scripts/third-party-notices --check' "$cluster_dockerfile"
+backend_notice_copy='COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt'
+test "$(grep -F -x -c "$backend_notice_copy" "$cluster_dockerfile" || true)" -eq 2 ||
+  fail 'both protected Go image targets must deliver the authoritative third-party notice'
 require_fixed 'HELM_ARCHIVE_SHA256: 3f43c0aa57243852dd542493a0f54f1396c0bc8ec7296bbb2c01e802010819ce' "$deployment_workflow"
 require_fixed 'KUBECONFORM_ARCHIVE_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3' "$deployment_workflow"
 require_line '        run: make verify-deployment-contracts' "$deployment_workflow"
 require_line '        run: make verify-cluster-prometheus-rules' "$deployment_workflow"
 require_fixed 'verify-deployment-contracts: verify-cluster-production' "$makefile"
+require_line 'verify-backend-licenses:' "$makefile"
 require_line 'verify-cluster-image-contract:' "$makefile"
 require_line 'verify-cluster-prometheus-rules:' "$makefile"
 require_fixed 'c8f4e61c63bc529749125ac566bccc6986e08d45' "$cluster_kubeconform_contract"
@@ -183,6 +194,7 @@ require_fixed '--env HOME=/tmp/syft-home' "$scan_script"
 require_fixed '--env XDG_CACHE_HOME=/tmp/syft-cache' "$scan_script"
 require_fixed '"$TRIVY_IMAGE" config /canary' "$scan_script"
 require_fixed '--config /dev/null --cache-dir /cache' "$scan_script"
+require_fixed '--timeout 30m --no-progress' "$scan_script"
 require_fixed '--checks-bundle-repository mirror.gcr.io/aquasec/trivy-checks:2' "$scan_script"
 require_fixed '--ignorefile /dev/null --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL' "$scan_script"
 require_fixed '"$trivy_asset_verifier" "$cache_dir" "$evidence_dir" >/dev/null' "$scan_script"
@@ -192,6 +204,7 @@ require_fixed '--config /dev/null --cache-dir /cache --cache-backend memory' "$s
 require_fixed '--skip-db-update --no-progress' "$scan_script"
 require_fixed '--scanners vuln --severity HIGH,CRITICAL --exit-code 1' "$scan_script"
 require_fixed '--tmpfs /scan:rw,nosuid,nodev,size=64m,mode=1777' "$scan_script"
+require_fixed '--tmpfs /terraform:rw,nosuid,nodev,size=64m,mode=1777' "$scan_script"
 require_line "      trivy config /scan \\" "$scan_script"
 require_fixed '--helm-values /scan/cluster/values.example.yaml' "$scan_script"
 require_fixed 'cp "$PROJECT_ROOT/deploy/Dockerfile" /scan/dockerfiles/root/Dockerfile' "$scan_script"
@@ -200,8 +213,39 @@ require_fixed 'cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.services" /s
 require_fixed 'cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.web" /scan/dockerfiles/local-web/Dockerfile.web' "$scan_script"
 require_fixed 'cp "$PROJECT_ROOT/deploy/web/Dockerfile" /scan/dockerfiles/web/Dockerfile' "$scan_script"
 require_fixed 'cp -R "$PROJECT_ROOT/deploy/cluster-production/chart" /scan/cluster/chart' "$scan_script"
+require_fixed 'terraform_pathspec=":(glob)$terraform_git_prefix/**/*.tf"' "$scan_script"
+require_fixed "git -C \"\$git_root\" ls-files -z -- \\" "$scan_script"
+require_fixed '"$terraform_git_prefix/environments/dev/terraform.tfvars.example"' "$scan_script"
+require_fixed '"$terraform_git_prefix/environments/staging/terraform.tfvars.example"' "$scan_script"
+require_fixed '"$terraform_git_prefix/environments/prod-primary/terraform.tfvars.example"' "$scan_script"
+require_fixed '"$terraform_git_prefix/environments/prod-dr/terraform.tfvars.example"' "$scan_script"
+require_fixed '"$terraform_git_prefix/modules/web-edge/release-request.js"' "$scan_script"
+require_fixed '"$terraform_git_prefix/modules/web-edge/release-response.js" > "$terraform_input_dir/tracked-files.nul"' "$scan_script"
+require_fixed '--mount "type=bind,src=$terraform_input_dir,dst=/terraform-input,readonly"' "$scan_script"
+require_fixed 'while IFS= read -r -d "" tracked_path' "$scan_script"
+require_fixed '"$TERRAFORM_GIT_PREFIX"/*)' "$scan_script"
+require_fixed '*.tf|environments/dev/terraform.tfvars.example|environments/staging/terraform.tfvars.example|environments/prod-primary/terraform.tfvars.example|environments/prod-dr/terraform.tfvars.example|modules/web-edge/release-request.js|modules/web-edge/release-response.js)' "$scan_script"
+require_fixed 'test ! -L "$source_path" || { echo "tracked Terraform scanner source must not be a symbolic link" >&2; exit 1; }' "$scan_script"
+require_fixed 'printf "terraform/%s\n" "$relative_path" >> /out/trivy-terraform-tracked-files.txt' "$scan_script"
+require_fixed 'find /terraform -type f -print' "$scan_script"
+require_fixed 'LC_ALL=C sort > /out/trivy-terraform-copied-files.txt' "$scan_script"
+require_fixed 'cmp -s /out/trivy-terraform-tracked-files.txt /out/trivy-terraform-copied-files.txt' "$scan_script"
+require_fixed '--env TF_VAR_valkey_password_a=ScannerOnlyPasswordA123456789' "$scan_script"
+require_fixed '--env TF_VAR_valkey_password_b=ScannerOnlyPasswordB123456789' "$scan_script"
+require_fixed "terraform_scanner_hmac_key=\$(printf '%s' 'scanner-only-hmac-input-not-a-secret-000000' | base64 | tr -d '\\n')" "$scan_script"
+require_fixed '--env "TF_VAR_shared_admission_hmac_key=$terraform_scanner_hmac_key"' "$scan_script"
+require_fixed '--env TF_VAR_valkey_root_ca_pem=SCANNER_ONLY_CA_PLACEHOLDER' "$scan_script"
+require_fixed "trivy config . \\" "$scan_script"
+require_fixed '--tf-vars "/terraform/environments/$environment/terraform.tfvars.example"' "$scan_script"
+require_fixed '--format json --output "/out/trivy-terraform-$environment.json"' "$scan_script"
 require_fixed 'node /policy/verify-trivy-source-report.mjs' "$scan_script"
 require_fixed 'expectedConfigurationTargets' "$trivy_source_report_verifier"
+require_fixed 'expectedTerraformResultTargets' "$trivy_source_report_verifier"
+require_fixed 'expectedTerraformReports' "$trivy_source_report_verifier"
+require_fixed 'requiredTerraformEnvironmentSources' "$trivy_source_report_verifier"
+require_fixed 'requiredTerraformVariableInputs' "$trivy_source_report_verifier"
+require_fixed 'requiredTerraformSupportInputs' "$trivy_source_report_verifier"
+require_fixed 'Git 跟踪 Terraform 清单与隔离复制清单不一致' "$trivy_source_report_verifier"
 require_fixed 'Trivy 源码扫描覆盖契约通过' "$trivy_source_report_verifier"
 require_fixed '--scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1' "$scan_script"
 require_fixed '"$SYFT_IMAGE" "oci-archive:/input/$archive_name"' "$scan_script"
@@ -220,6 +264,8 @@ redact_count=$(grep -F -c -- '--redact=100' "$scan_script" || true)
 test "$redact_count" -eq 3 || fail 'Gitleaks canary, complete history and worktree scans must all use redact=100'
 gitleaks_ignore_count=$(grep -F -c -- '--gitleaks-ignore-path /dev/null --ignore-gitleaks-allow' "$scan_script" || true)
 test "$gitleaks_ignore_count" -eq 3 || fail 'all Gitleaks scans must disable repository ignore and inline allow directives'
+terraform_environment_loop_count=$(grep -F -c -- 'for environment in dev staging prod-primary prod-dr' "$scan_script" || true)
+test "$terraform_environment_loop_count" -eq 1 || fail 'Terraform per-environment scans must cover the exact four environments'
 syft_source_tmpfs_count=$(grep -F -c -- '--tmpfs /tmp:rw,nosuid,nodev,size=256m,mode=1777' "$scan_script" || true)
 test "$syft_source_tmpfs_count" -eq 1 || fail 'source Syft must have one writable sticky temporary filesystem'
 syft_archive_tmpfs_count=$(grep -F -c -- '--tmpfs /tmp:rw,nosuid,nodev,size=512m,mode=1777' "$scan_script" || true)
@@ -229,11 +275,11 @@ test "$syft_home_count" -eq 3 || fail 'all three Syft modes must use an isolated
 syft_cache_count=$(grep -F -c -- '--env XDG_CACHE_HOME=/tmp/syft-cache' "$scan_script" || true)
 test "$syft_cache_count" -eq 3 || fail 'all three Syft modes must use an isolated writable cache directory'
 trivy_ignore_count=$(grep -F -c -- '--ignorefile /dev/null' "$scan_script" || true)
-test "$trivy_ignore_count" -eq 5 || fail 'Trivy canary, dependency, configuration and both image scan modes must disable repository ignore files'
+test "$trivy_ignore_count" -eq 6 || fail 'all Trivy canary, dependency, Docker/Helm, Terraform and image command definitions must disable repository ignore files'
 trivy_config_count=$(grep -F -c -- '--config /dev/null' "$scan_script" || true)
-test "$trivy_config_count" -eq 6 || fail 'all Trivy download/canary/dependency/configuration/image commands must disable repository config files'
+test "$trivy_config_count" -eq 7 || fail 'all Trivy download/canary/dependency/Docker/Helm/Terraform/image command definitions must disable repository config files'
 checks_repository_count=$(grep -F -c -- '--checks-bundle-repository mirror.gcr.io/aquasec/trivy-checks:2' "$scan_script" || true)
-test "$checks_repository_count" -eq 2 || fail 'online and offline IaC stages must use the reviewed official checks repository'
+test "$checks_repository_count" -eq 3 || fail 'online, Docker/Helm and Terraform IaC stages must use the reviewed official checks repository'
 all_checks_repository_count=$(grep -F -c -- '--checks-bundle-repository' "$scan_script" || true)
 test "$all_checks_repository_count" -eq "$checks_repository_count" || fail 'custom Trivy checks repositories are forbidden'
 trivy_database_record_count=$(grep -F -c -- 'record_trivy_database "$trivy_cache" "$output_dir"' "$scan_script" || true)
@@ -295,6 +341,11 @@ require_fixed 'tar -xOf "$bundle_dir/release-image.oci.tar" oci-layout' "$releas
 require_fixed '.manifests | select(length == 1) | .[0].digest' "$release_bundle_script"
 require_fixed 'test "$metadata_digest" = "$oci_manifest_digest"' "$release_bundle_script"
 require_fixed 'approved Web build must bind the exact approval SHA-256' "$release_bundle_script"
+require_fixed 'ASSET_APPROVAL_EXPIRES_AT=%s' "$release_bundle_script"
+require_fixed 'ASSET_APPROVAL_METADATA_SHA256=%s' "$release_bundle_script"
+require_fixed 'approval_expires_at=%s' "$release_bundle_script"
+require_fixed 'approval_metadata_sha256=%s' "$release_bundle_script"
+require_fixed 'approval has expired before bundle finalization' "$release_bundle_script"
 require_fixed 'RGS build must not carry a Web approval digest' "$release_bundle_script"
 require_fixed 'CONFIGURATION_SHA256=%s' "$release_bundle_script"
 require_fixed 'SOURCE_TREE_SHA=%s' "$release_bundle_script"
@@ -306,6 +357,54 @@ require_fixed 'bundle_manifest_sha256=%s' "$release_bundle_script"
 require_fixed 'bundle_checksums_sha256=%s' "$release_bundle_script"
 require_fixed 'oci_archive_sha256=%s' "$release_bundle_script"
 reject_fixed 'source "$bundle_dir/bundle-manifest.env"' "$release_bundle_script"
+
+# AWS 静态发布只能逐文件验证从不可变制品提取的根目录，拒绝软链接、额外文件和摘要漂移。
+require_fixed 'release-manifest.json' "$web_static_verifier"
+require_fixed 'extracted Web root contains a symbolic link' "$web_static_verifier"
+require_fixed 'extracted Web root contains a file outside release-manifest' "$web_static_verifier"
+require_fixed 'extracted Web file SHA-256 does not match release-manifest' "$web_static_verifier"
+require_fixed 'Web image must be addressed by an immutable sha256 digest, never a tag' "$aws_web_extractor"
+require_fixed 'docker image inspect "$image_reference"' "$aws_web_extractor"
+require_fixed 'docker create "$image_reference"' "$aws_web_extractor"
+require_fixed 'docker cp "$container_id:/usr/share/nginx/html/." "$static_root"' "$aws_web_extractor"
+require_fixed 'node "$static_verifier" "$static_root"' "$aws_web_extractor"
+require_fixed 'CONFIGURATION_SHA256=%s' "$aws_web_extractor"
+require_fixed 'cloudfront-content-security-policy.txt' "$aws_web_extractor"
+reject_fixed 'docker pull' "$aws_web_extractor"
+reject_fixed 'web/dist/' "$aws_web_extractor"
+require_fixed 'extract-aws-web-static-root.sh' "$aws_deployment_guide"
+require_fixed 'set -euo pipefail' "$aws_deployment_guide"
+require_fixed "SLOTS_EXISTING_OBJECT_COUNT=\$(aws s3api list-objects-v2 \\" "$aws_deployment_guide"
+require_fixed 'if [ "$SLOTS_EXISTING_OBJECT_COUNT" != 0 ]; then' "$aws_deployment_guide"
+require_fixed "echo '目标 release 前缀已存在，拒绝覆盖或合并不可变 Web 发布目录' >&2" "$aws_deployment_guide"
+require_fixed '  exit 1' "$aws_deployment_guide"
+require_fixed 'aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/"' "$aws_deployment_guide"
+require_fixed '`CONFIGURATION_SHA256`' "$aws_deployment_guide"
+require_fixed '`cloudfront-content-security-policy.txt`' "$aws_deployment_guide"
+require_fixed '逐文件通过 `release-manifest.json`' "$aws_deployment_guide"
+aws_workspace_publish=$(grep -E '^[[:space:]]*aws[[:space:]]+s3[[:space:]]+(sync|cp)[[:space:]].*(web/)?dist(/|[[:space:]])' "$aws_deployment_guide" || true)
+test -z "$aws_workspace_publish" || fail 'AWS guide must never upload a mutable workspace dist directory'
+aws_extract_line=$(grep -n -F 'sh deploy/supply-chain/extract-aws-web-static-root.sh' "$aws_deployment_guide" | head -n 1 | cut -d: -f1)
+aws_reject_line=$(grep -n -F "echo '目标 release 前缀已存在，拒绝覆盖或合并不可变 Web 发布目录' >&2" "$aws_deployment_guide" | head -n 1 | cut -d: -f1)
+aws_sync_line=$(grep -n -F 'aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/"' "$aws_deployment_guide" | head -n 1 | cut -d: -f1)
+test -n "$aws_extract_line" && test -n "$aws_reject_line" && test -n "$aws_sync_line" \
+  && test "$aws_extract_line" -lt "$aws_reject_line" && test "$aws_reject_line" -lt "$aws_sync_line" || \
+  fail 'AWS guide must extract, verify and reject an existing immutable prefix before S3 upload'
+
+# 获批 Web OCI 在扫描和上传前必须把精确静态字节装入真实 Chrome；源码目录的普通构建不能替代。
+require_fixed 'Smoke the exact approval-gated Web bytes in a real browser' "$release_workflow"
+require_fixed 'oci-archive:/bundle/release-image.oci.tar "docker-daemon:$local_ref"' "$release_workflow"
+require_fixed 'docker cp "$container_id:/usr/share/nginx/html/." "$static_root"' "$release_workflow"
+require_fixed "node web/scripts/verify-production-browser-bootstrap.mjs \\" "$release_workflow"
+require_fixed '--distribution-root "$static_root"' "$release_workflow"
+require_fixed "VITE_RGS_BASE_URL=\"\$RGS_BASE_URL\" \\" "$release_workflow"
+require_fixed "VITE_RGS_HOST_ORIGIN=\"\$RGS_HOST_ORIGIN\" \\" "$release_workflow"
+web_build_line=$(grep -n -F 'Build exact approval-gated Web result as an OCI archive' "$release_workflow" | head -n 1 | cut -d: -f1)
+web_browser_line=$(grep -n -F 'Smoke the exact approval-gated Web bytes in a real browser' "$release_workflow" | head -n 1 | cut -d: -f1)
+web_scan_line=$(grep -n -F 'Scan the exact approved Web OCI archive and generate dual-format SBOM' "$release_workflow" | head -n 1 | cut -d: -f1)
+test -n "$web_build_line" && test -n "$web_browser_line" && test -n "$web_scan_line" \
+  && test "$web_build_line" -lt "$web_browser_line" && test "$web_browser_line" -lt "$web_scan_line" || \
+  fail 'exact approved Web browser smoke must run after build and before scan/upload'
 
 # 发布必须来自受保护 tag，身份须精确绑定本工作流；Cosign 禁止弱化 Registry/TLog/身份校验。
 require_fixed 'test "$GITHUB_REF_PROTECTED" = true' "$release_script"
@@ -331,7 +430,8 @@ reject_fixed 'generate-key-pair' "$release_script"
 checkout_sha='3d3c42e5aac5ba805825da76410c181273ba90b1'
 upload_sha='043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
 attest_sha='1e69f48acb82d1966a394da916b4c1698aa569d6'
-login_sha='dbcb813823bdd20940b903addbd779551569679f'
+configure_aws_sha='61815dcd50bd041e203e49132bacad1fd04d2708'
+ecr_login_sha='03f1aad4c6c7ffd436567f42f9384779290529bd'
 setup_go_sha='d35c59abb061a4a6fb18e82ac0862c26744d6ab5'
 setup_node_sha='49933ea5288caeca8642d1e84afbd3f7d6820020'
 setup_buildx_sha='bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'
@@ -523,6 +623,9 @@ for required_control in \
   '--build-arg WEB_RELEASE_REVISION="$GITHUB_SHA"' \
   '--secret "id=release_asset_approval,src=$approval_file"' \
   'approval_sha256=$(sha256sum "$approval_file"' \
+  'release-bundle.sh approval-metadata "$approval_file"' \
+  'approval_expires_at=%s' \
+  'approval_metadata_sha256=%s' \
   'rm -f "$approval_file"' \
   'scan.sh oci-archive' \
   'release-bundle.sh finalize "$SUPPLY_CHAIN_REPORT_DIR/bundle" web-approved'
@@ -554,6 +657,8 @@ for required_control in \
   'EXPECTED_CHECKSUMS_SHA256:' \
   'EXPECTED_OCI_ARCHIVE_SHA256:' \
   'EXPECTED_SPDX_SHA256:' \
+  'EXPECTED_APPROVAL_EXPIRES_AT:' \
+  'EXPECTED_APPROVAL_METADATA_SHA256:' \
   'sha256sum --check --strict bundle-checksums.sha256' \
   'OCI archive contains an unsafe path' \
   'Trivy evidence contains forbidden secret plaintext fields' \
@@ -561,6 +666,15 @@ for required_control in \
   'oci-archive:/input/release-image.oci.tar' \
   'docker-archive:/out/release-image.docker.tar:$local_ref' \
   'docker load --input "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar"' \
+  'test "$SUPPLY_CHAIN_REGISTRY" = "$expected_registry"' \
+  'test "$SUPPLY_CHAIN_IMAGE_REPOSITORY" = "$expected_registry/$expected_ecr_repository"' \
+  'actual_account=$(aws sts get-caller-identity --query Account --output text)' \
+  '.imageTagMutability == "IMMUTABLE"' \
+  '.encryptionConfiguration.encryptionType == "KMS"' \
+  '.scanningConfiguration as $configuration' \
+  '$configuration.scanType == "ENHANCED"' \
+  '($configuration.rules // []) | length' \
+  '.scanFrequency == "CONTINUOUS_SCAN"' \
   'subject-digest: ${{ steps.publish.outputs.digest }}' \
   'sbom-path: ${{ env.BUNDLE_DOWNLOAD_DIR }}/release-image.spdx.json' \
   '"$COSIGN_IMAGE" sign --yes "$image_reference"' \
@@ -569,6 +683,28 @@ for required_control in \
 do
   printf '%s\n' "$publish_job" | grep -F -- "$required_control" >/dev/null || fail "publish job missing $required_control"
 done
+printf '%s\n' "$publish_job" | grep -F "uses: aws-actions/configure-aws-credentials@$configure_aws_sha # v5.1.1" >/dev/null || \
+  fail 'publish job must use the reviewed AWS OIDC credential action'
+printf '%s\n' "$publish_job" | grep -F "uses: aws-actions/amazon-ecr-login@$ecr_login_sha # v2.1.7" >/dev/null || \
+  fail 'publish job must use the reviewed ECR login action'
+reject_fixed 'SUPPLY_CHAIN_REGISTRY_USERNAME' "$release_workflow"
+reject_fixed 'SUPPLY_CHAIN_REGISTRY_PASSWORD' "$release_workflow"
+reject_fixed 'docker/login-action@' "$release_workflow"
+test "$(printf '%s\n' "$publish_job" | grep -F -c 'approval has expired immediately before Registry push' || true)" -eq 2 || \
+  fail 'both Registry pushes must have an independent approval-expiry failure path'
+test "$(printf '%s\n' "$publish_job" | grep -F -c 'timestamp <= Date.now()' || true)" -eq 2 || \
+  fail 'both Registry pushes must compare approval expiry with their current clock'
+test "$(printf '%s\n' "$publish_job" | grep -F -c 'ASSET_APPROVAL_EXPIRES_AT="$ASSET_APPROVAL_EXPIRES_AT" node -e' || true)" -eq 2 || \
+  fail 'both Registry pushes must validate the bundle-bound approval expiry'
+push_count=$(printf '%s\n' "$publish_job" | grep -F -c 'docker push "$' || true)
+expiry_push_count=$(printf '%s\n' "$publish_job" | awk '
+  /^[[:space:]]*require_current_web_approval[[:space:]]*$/ { armed = 1; next }
+  armed && /^[[:space:]]*docker push "\$/ { count++; armed = 0; next }
+  armed && $0 !~ /^[[:space:]]*(#|$)/ { armed = 0 }
+  END { print count + 0 }
+')
+test "$push_count" -eq 2 && test "$expiry_push_count" -eq 2 || \
+  fail 'both candidate and final Registry pushes must be immediately preceded by approval expiry validation'
 printf '%s\n' "$publish_job" | grep -F 'SKOPEO_IMAGE: quay.io/skopeo/stable:v1.21.0@sha256:a585e4a3b8a045baa87c7f1b2f940d6d299ebede85ab3f2419d52d2264eefc93' >/dev/null || fail 'offline OCI conversion tool is not digest-pinned'
 printf '%s\n' "$publish_job" | grep -F -- '--read-only --network=none' >/dev/null || fail 'offline OCI conversion must be read-only and networkless'
 printf '%s\n' "$publish_job" | grep -F 'END { exit bad || NR != 6 }' >/dev/null || \
@@ -594,8 +730,10 @@ rgs_scan_line=$(grep -n -F '      - name: Scan the exact RGS OCI archive and gen
 rgs_bundle_line=$(grep -n -F 'release-bundle.sh finalize "$SUPPLY_CHAIN_REPORT_DIR/bundle" rgs-unprivileged' "$release_workflow" | cut -d: -f1)
 download_line=$(grep -n -F "uses: actions/download-artifact@$download_sha" "$release_workflow" | cut -d: -f1)
 offline_verify_line=$(grep -n -F '      - name: Re-verify artifact channel, source identity, target, configuration and every byte' "$release_workflow" | cut -d: -f1)
-conversion_line=$(grep -n -F '"$SKOPEO_IMAGE" copy' "$release_workflow" | cut -d: -f1)
-login_line=$(grep -n -F "uses: docker/login-action@$login_sha" "$release_workflow" | cut -d: -f1)
+conversion_line=$(grep -n -F '"$SKOPEO_IMAGE" copy' "$release_workflow" | tail -n 1 | cut -d: -f1)
+aws_identity_line=$(grep -n -F "uses: aws-actions/configure-aws-credentials@$configure_aws_sha" "$release_workflow" | cut -d: -f1)
+aws_account_line=$(grep -n -F 'actual_account=$(aws sts get-caller-identity --query Account --output text)' "$release_workflow" | cut -d: -f1)
+login_line=$(grep -n -F "uses: aws-actions/amazon-ecr-login@$ecr_login_sha" "$release_workflow" | cut -d: -f1)
 load_line=$(grep -n -F 'docker load --input "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar"' "$release_workflow" | cut -d: -f1)
 attest_line=$(grep -n -F "uses: actions/attest@$attest_sha # v4.2.2" "$release_workflow" | head -n 1 | cut -d: -f1)
 sign_line=$(grep -n -F '"$COSIGN_IMAGE" sign --yes "$image_reference"' "$release_workflow" | cut -d: -f1)
@@ -606,7 +744,8 @@ test "$rgs_checkout_line" -lt "$rgs_tree_line" && test "$rgs_tree_line" -lt "$rg
   test "$rgs_build_line" -lt "$rgs_scan_line" && test "$rgs_scan_line" -lt "$rgs_bundle_line" || \
   fail 'isolated RGS context/build/scan/bundle order was weakened'
 test "$download_line" -lt "$offline_verify_line" && test "$offline_verify_line" -le "$conversion_line" && \
-  test "$conversion_line" -lt "$login_line" && \
+  test "$conversion_line" -lt "$aws_identity_line" && test "$aws_identity_line" -lt "$aws_account_line" && \
+  test "$aws_account_line" -lt "$login_line" && \
   test "$login_line" -lt "$load_line" && test "$load_line" -lt "$attest_line" && \
   test "$attest_line" -lt "$sign_line" && test "$sign_line" -lt "$promote_line" || \
   fail 'publish/sign stage order was weakened'
@@ -620,9 +759,11 @@ require_fixed '`supply-chain-release`' "$readme"
 require_fixed '启用 required reviewers' "$readme"
 require_fixed 'deployment branches/tags policy' "$readme"
 require_fixed '`SUPPLY_CHAIN_WEB_RELEASE_ASSET_APPROVAL`' "$readme"
-require_fixed '`SUPPLY_CHAIN_REGISTRY_USERNAME`' "$readme"
-require_fixed '`SUPPLY_CHAIN_REGISTRY_PASSWORD`' "$readme"
-require_fixed '不得把同名值配置成 repository/organization' "$readme"
+require_fixed '`AWS_RELEASE_ROLE_ARN`' "$readme"
+require_fixed '`AWS_ACCOUNT_ID`' "$readme"
+require_fixed '`AWS_REGION`' "$readme"
+require_fixed 'GitHub OIDC' "$readme"
+require_fixed '不得保存长期 AWS access key' "$readme"
 for documented_job in '`verify-source-conformance`' '`build-rgs`' '`build-approved-web`' '`publish-sign`'
 do
   require_fixed "$documented_job" "$readme"
@@ -641,14 +782,15 @@ require_line "${make_tab}./deploy/supply-chain/verify-contract.sh" "$makefile"
 require_line "${make_tab}./deploy/supply-chain/test-contract.sh" "$makefile"
 
 # `make verify` 的传递闭包是发布源码门禁的一部分；移除全量测试或任一后端检查均拒绝。
-require_line 'verify: verify-supply-chain-contract verify-chinese-comments test test-race vet build' "$makefile"
+require_line 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments test test-race vet build' "$makefile"
 require_line "${make_tab}cd server && go test ./..." "$makefile"
 require_line "${make_tab}cd web && npm test -- --run --fileParallelism=false" "$makefile"
 require_line "${make_tab}cd server && go test -race ./..." "$makefile"
 require_line "${make_tab}cd server && go vet ./..." "$makefile"
 require_line "${make_tab}cd server && go build ./..." "$makefile"
-require_line "${make_tab}cd web && npm run build" "$makefile"
-require_line '    "build": "tsc --noEmit && vite build && node scripts/finalize-production-assets.mjs && node scripts/verify-production-javascript-bundles.mjs",' "$web_package_json"
+require_line 'BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid' "$makefile"
+require_line "${make_tab}cd web && \$(BROWSER_SMOKE_ENV) npm run build" "$makefile"
+require_line '    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && node scripts/verify-production-javascript-bundles.mjs",' "$web_package_json"
 
 test_target=$(awk '/^test:$/ { inside = 1; next } inside && /^[A-Za-z0-9_.-]+:/ { exit } inside { print }' "$makefile")
 race_target=$(awk '/^test-race:$/ { inside = 1; next } inside && /^[A-Za-z0-9_.-]+:/ { exit } inside { print }' "$makefile")
@@ -659,6 +801,6 @@ printf '%s\n' "$test_target" | grep -F -x "${make_tab}cd web && npm test -- --ru
 printf '%s\n' "$race_target" | grep -F -x "${make_tab}cd server && go test -race ./..." >/dev/null || fail 'race target was weakened'
 printf '%s\n' "$vet_target" | grep -F -x "${make_tab}cd server && go vet ./..." >/dev/null || fail 'vet target was weakened'
 printf '%s\n' "$build_target" | grep -F -x "${make_tab}cd server && go build ./..." >/dev/null || fail 'Go build target was weakened'
-printf '%s\n' "$build_target" | grep -F -x "${make_tab}cd web && npm run build" >/dev/null || fail 'frontend build/type target was weakened'
+printf '%s\n' "$build_target" | grep -F -x "${make_tab}cd web && \$(BROWSER_SMOKE_ENV) npm run build" >/dev/null || fail 'frontend configured build/type target was weakened'
 
 printf '%s\n' 'supply-chain security contract: ok'

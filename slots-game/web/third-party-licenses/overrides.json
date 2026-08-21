@@ -1,0 +1,73 @@
+{
+  "artifactFingerprints": {
+    "rolldown-commonjs-interop": {
+      "contributor": "rolldown@1.1.5",
+      "maxSpanBytes": 4096,
+      "orderedFragments": [
+        "Object.create",
+        "Object.defineProperty",
+        "Object.getOwnPropertyDescriptor",
+        "Object.getOwnPropertyNames",
+        "Object.getPrototypeOf",
+        "Object.prototype.hasOwnProperty",
+        "{exports:{}}",
+        "__esModule",
+        "`default`"
+      ]
+    },
+    "vite-dynamic-loader": {
+      "contributor": "vite@8.1.5",
+      "maxSpanBytes": 32768,
+      "orderedFragments": [
+        "const __vite__mapDeps=",
+        "vite:preloadError"
+      ]
+    }
+  },
+  "schemaVersion": 2,
+  "packages": {
+    "@pixi-spine/base@3.1.0": {
+      "declaredLicense": "SEE SPINE-LICENSE",
+      "licenseFile": "third-party-licenses/SPINE-LICENSE",
+      "licenseSha256": "ae6ec834a618890360d86e5f576b0c69eec21309478ddc2dcc2689043d061ee4",
+      "sourceRevision": "d625529c0edbbeaec7a9209ce299eff284f015d7",
+      "sourceUrl": "https://raw.githubusercontent.com/pixijs-userland/spine/d625529c0edbbeaec7a9209ce299eff284f015d7/SPINE-LICENSE"
+    },
+    "@pixi-spine/runtime-4.1@3.1.0": {
+      "declaredLicense": "SEE SPINE-LICENSE",
+      "licenseFile": "third-party-licenses/SPINE-LICENSE",
+      "licenseSha256": "ae6ec834a618890360d86e5f576b0c69eec21309478ddc2dcc2689043d061ee4",
+      "sourceRevision": "d625529c0edbbeaec7a9209ce299eff284f015d7",
+      "sourceUrl": "https://raw.githubusercontent.com/pixijs-userland/spine/d625529c0edbbeaec7a9209ce299eff284f015d7/SPINE-LICENSE"
+    }
+  },
+  "runtimeContributors": {
+    "rolldown@1.1.5": {
+      "additionalLicenseDocuments": [
+        {
+          "licenseFile": "third-party-licenses/ROLLDOWN-THIRD-PARTY-LICENSE",
+          "licenseSha256": "743d64c1f8a673ddcfd1740aa81672eac950ad7e63f6ba2d7c39f91dd57c5b99",
+          "sourceRevision": "f09947ab017d6df74299f691853dcfc4f4f0f86e",
+          "sourceUrl": "https://raw.githubusercontent.com/rolldown/rolldown/f09947ab017d6df74299f691853dcfc4f4f0f86e/THIRD-PARTY-LICENSE"
+        }
+      ],
+      "declaredLicense": "MIT",
+      "fingerprints": [
+        "rolldown-commonjs-interop"
+      ],
+      "integrity": "sha512-t9z29cJjXf/vxQ8dyhCSpt6H6aSwHTk8cT5I3iy6SMXuFpk5mB6PL6XfC8PCwrPTx93udwKUm9HRteAlTGBLiA==",
+      "licenseSha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
+      "reason": "Rolldown 将 CommonJS 包装、属性复制和 ESM 互操作辅助代码写入生产浏览器分块。"
+    },
+    "vite@8.1.5": {
+      "additionalLicenseDocuments": [],
+      "declaredLicense": "MIT",
+      "fingerprints": [
+        "vite-dynamic-loader"
+      ],
+      "integrity": "sha512-7ULLwsCdYx/nRyrpiEwvqb5TFHrMVZyBt+rg/OAXT7rgj/z+DtTDyKFeLAdDkubDVDKD8jOsndmy7m55XcfUsw==",
+      "licenseSha256": "93d6a2bffb76c50ca1db449dc3c8f05dbd6e47bd3b0c6b7bdbdf2c33c5ca0490",
+      "reason": "Vite 将 modulepreload 与动态加载辅助代码写入生产浏览器分块。"
+    }
+  }
+}

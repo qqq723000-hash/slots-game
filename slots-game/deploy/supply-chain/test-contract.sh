@@ -10,8 +10,10 @@ repository_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 workspace_root=$(CDPATH='' cd -- "$repository_root/.." && pwd)
 verifier="$script_dir/verify-contract.sh"
 trivy_asset_verifier="$script_dir/verify-trivy-assets.sh"
+trivy_source_report_verifier="$script_dir/verify-trivy-source-report.mjs"
 trivy_report_sanitizer="$script_dir/sanitize-trivy-report.mjs"
 release_bundle="$script_dir/release-bundle.sh"
+web_static_verifier="$script_dir/verify-web-static-root.mjs"
 
 if [ -d "$repository_root/.github/workflows" ]; then
   workflows_root="$repository_root/.github/workflows"
@@ -30,9 +32,10 @@ fixture="$test_root/repository"
 
 reset_fixture() {
   rm -rf "$fixture"
-  mkdir -p "$fixture/deploy/cluster-production" "$fixture/.github" "$fixture/web"
+  mkdir -p "$fixture/deploy/cluster-production" "$fixture/.github" "$fixture/web" "$fixture/docs"
   cp "$repository_root/Makefile" "$fixture/Makefile"
   cp "$repository_root/web/package.json" "$fixture/web/package.json"
+  cp "$repository_root/docs/aws-production-deployment.md" "$fixture/docs/aws-production-deployment.md"
   cp -R "$repository_root/deploy/supply-chain" "$fixture/deploy/supply-chain"
   cp "$repository_root/deploy/cluster-production/Dockerfile.services" "$fixture/deploy/cluster-production/Dockerfile.services"
   cp "$repository_root/deploy/cluster-production/verify-kubeconform.sh" "$fixture/deploy/cluster-production/verify-kubeconform.sh"
@@ -133,6 +136,136 @@ if grep -Eq '"(Code|Match)"[[:space:]]*:' "$trivy_secret_fixture"; then
   fail 'Trivy sanitizer retained plaintext-bearing fields'
 fi
 
+# 源码报告夹具锁定 Docker/Helm 与四个 Terraform 环境的精确目标，同时证明 Git 跟踪
+# 清单、隔离复制清单、路径边界和符号链接任一失真都会失败关闭。
+trivy_source_fixture="$test_root/trivy-source-reports"
+prepare_trivy_source_fixture() {
+  rm -rf "$trivy_source_fixture"
+  mkdir -p "$trivy_source_fixture"
+  TRIVY_SOURCE_FIXTURE="$trivy_source_fixture" node <<'NODE'
+const { writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const root = process.env.TRIVY_SOURCE_FIXTURE;
+const vulnerabilityTargets = [
+  ["slots-game/server/go.mod", "lang-pkgs", "gomod"],
+  ["slots-game/web/package-lock.json", "lang-pkgs", "npm"],
+];
+const configurationTargets = [
+  ["cluster/chart/templates/autoscaling.yaml", "config", "helm"],
+  ["cluster/chart/templates/ingresses.yaml", "config", "helm"],
+  ["cluster/chart/templates/networkpolicies.yaml", "config", "helm"],
+  ["cluster/chart/templates/poddisruptionbudgets.yaml", "config", "helm"],
+  ["cluster/chart/templates/prometheusrule.yaml", "config", "helm"],
+  ["cluster/chart/templates/rgs-deployment.yaml", "config", "helm"],
+  ["cluster/chart/templates/serviceaccounts.yaml", "config", "helm"],
+  ["cluster/chart/templates/servicemonitor.yaml", "config", "helm"],
+  ["cluster/chart/templates/services.yaml", "config", "helm"],
+  ["cluster/chart/templates/web-deployment.yaml", "config", "helm"],
+  ["cluster/chart/templates/worker-deployment.yaml", "config", "helm"],
+  ["dockerfiles/cluster/Dockerfile.services", "config", "dockerfile"],
+  ["dockerfiles/local-services/Dockerfile.services", "config", "dockerfile"],
+  ["dockerfiles/local-web/Dockerfile.web", "config", "dockerfile"],
+  ["dockerfiles/root/Dockerfile", "config", "dockerfile"],
+  ["dockerfiles/web/Dockerfile", "config", "dockerfile"],
+];
+const terraformTargets = [
+  [".", "config", "terraform"],
+  ["../../modules/archive/main.tf", "config", "terraform"],
+  ["../../modules/web-edge/main.tf", "config", "terraform"],
+];
+const writeReport = (name, targets, findingField) => {
+  const Results = targets.map(([Target, Class, Type]) => ({ Target, Class, Type, [findingField]: [] }));
+  writeFileSync(join(root, name), `${JSON.stringify({ SchemaVersion: 2, Results })}\n`);
+};
+writeReport("trivy-filesystem.json", vulnerabilityTargets, "Vulnerabilities");
+writeReport("trivy-config.json", configurationTargets, "Misconfigurations");
+for (const environment of ["dev", "staging", "prod-primary", "prod-dr"]) {
+  writeReport(`trivy-terraform-${environment}.json`, terraformTargets, "Misconfigurations");
+}
+const inventory = [
+  "terraform/environments/dev/main.tf",
+  "terraform/environments/dev/terraform.tfvars.example",
+  "terraform/environments/prod-dr/main.tf",
+  "terraform/environments/prod-dr/terraform.tfvars.example",
+  "terraform/environments/prod-primary/main.tf",
+  "terraform/environments/prod-primary/terraform.tfvars.example",
+  "terraform/environments/staging/main.tf",
+  "terraform/environments/staging/terraform.tfvars.example",
+  "terraform/modules/archive/main.tf",
+  "terraform/modules/web-edge/release-request.js",
+  "terraform/modules/web-edge/release-response.js",
+  "terraform/stacks/environment/main.tf",
+].sort().join("\n") + "\n";
+writeFileSync(join(root, "trivy-terraform-tracked-files.txt"), inventory);
+writeFileSync(join(root, "trivy-terraform-copied-files.txt"), inventory);
+NODE
+}
+
+verify_trivy_source_fixture() {
+  node "$trivy_source_report_verifier" \
+    "$trivy_source_fixture/trivy-filesystem.json" \
+    "$trivy_source_fixture/trivy-config.json" \
+    "$trivy_source_fixture/trivy-terraform-tracked-files.txt" \
+    "$trivy_source_fixture/trivy-terraform-copied-files.txt" \
+    "$trivy_source_fixture/trivy-terraform-dev.json" \
+    "$trivy_source_fixture/trivy-terraform-staging.json" \
+    "$trivy_source_fixture/trivy-terraform-prod-primary.json" \
+    "$trivy_source_fixture/trivy-terraform-prod-dr.json"
+}
+
+prepare_trivy_source_fixture
+verify_trivy_source_fixture >/dev/null || fail 'valid Trivy source coverage fixture was rejected'
+
+prepare_trivy_source_fixture
+TRIVY_MUTATION_FILE="$trivy_source_fixture/trivy-config.json" node <<'NODE'
+const { readFileSync, writeFileSync } = require("node:fs");
+const file = process.env.TRIVY_MUTATION_FILE;
+const report = JSON.parse(readFileSync(file, "utf8"));
+report.Results.pop();
+writeFileSync(file, `${JSON.stringify(report)}\n`);
+NODE
+if verify_trivy_source_fixture >/dev/null 2>&1; then
+  fail 'Trivy configuration report with a deleted target was accepted'
+fi
+
+prepare_trivy_source_fixture
+TRIVY_MUTATION_FILE="$trivy_source_fixture/trivy-config.json" node <<'NODE'
+const { readFileSync, writeFileSync } = require("node:fs");
+const file = process.env.TRIVY_MUTATION_FILE;
+const report = JSON.parse(readFileSync(file, "utf8"));
+report.Results.push({ Target: "terraform/unreviewed.tf", Class: "config", Type: "terraform", Misconfigurations: [] });
+writeFileSync(file, `${JSON.stringify(report)}\n`);
+NODE
+if verify_trivy_source_fixture >/dev/null 2>&1; then
+  fail 'Trivy configuration report with an additional target was accepted'
+fi
+
+prepare_trivy_source_fixture
+TRIVY_MUTATION_FILE="$trivy_source_fixture/trivy-terraform-dev.json" node <<'NODE'
+const { readFileSync, writeFileSync } = require("node:fs");
+const file = process.env.TRIVY_MUTATION_FILE;
+const report = JSON.parse(readFileSync(file, "utf8"));
+report.Results[0].Type = "unknown";
+writeFileSync(file, `${JSON.stringify(report)}\n`);
+NODE
+if verify_trivy_source_fixture >/dev/null 2>&1; then
+  fail 'Terraform environment report with an incorrect scanner type was accepted'
+fi
+
+prepare_trivy_source_fixture
+printf '%s\n' 'terraform/environments/../../escape.tf' > \
+  "$trivy_source_fixture/trivy-terraform-tracked-files.txt"
+if verify_trivy_source_fixture >/dev/null 2>&1; then
+  fail 'Terraform tracked inventory path escape was accepted'
+fi
+
+prepare_trivy_source_fixture
+rm "$trivy_source_fixture/trivy-terraform-copied-files.txt"
+ln -s trivy-terraform-tracked-files.txt "$trivy_source_fixture/trivy-terraform-copied-files.txt"
+if verify_trivy_source_fixture >/dev/null 2>&1; then
+  fail 'symbolic-link Terraform inventory was accepted'
+fi
+
 # 最小 OCI layout 夹具验证 bundle finalizer 真正把 source tree 与逐文件摘要写入清单。
 bundle_fixture="$test_root/release-bundle"
 bundle_layout="$test_root/oci-layout"
@@ -160,6 +293,113 @@ grep -F -x 'SOURCE_TREE_SHA=abcdef0123456789abcdef0123456789abcdef01' "$bundle_f
   fail 'release bundle did not bind the real source tree'
 (cd "$bundle_fixture" && sha256sum --check --strict bundle-checksums.sha256 >/dev/null) || \
   fail 'release bundle emitted invalid checksums'
+
+# Web 审批的公开时效与规范化元数据摘要必须跨越构建/发布权限边界；原始审批仍不进入 bundle。
+approval_fixture="$test_root/release-asset-approval.json"
+approval_metadata="$test_root/release-asset-approval-metadata.env"
+printf '%s\n' \
+  '{"schemaVersion":1,"status":"APPROVED","approvalReference":" REG-2026-001 ","jurisdictions":[" GB ","MT"],"expiresAt":"2099-01-02T03:04:05.000Z","assets":[]}' > \
+  "$approval_fixture"
+"$release_bundle" approval-metadata "$approval_fixture" "$approval_metadata"
+grep -F -x 'ASSET_APPROVAL_EXPIRES_AT=2099-01-02T03:04:05Z' "$approval_metadata" >/dev/null || \
+  fail 'approval metadata did not normalize expiresAt'
+approval_metadata_sha256=$(sed -n 's/^ASSET_APPROVAL_METADATA_SHA256=//p' "$approval_metadata")
+printf '%s\n' "$approval_metadata_sha256" | grep -Eq '^[0-9a-f]{64}$' || \
+  fail 'approval metadata did not emit a canonical SHA-256'
+approval_variant="$test_root/release-asset-approval-variant.json"
+approval_variant_metadata="$test_root/release-asset-approval-variant-metadata.env"
+printf '%s\n' \
+  '{"schemaVersion":1,"status":"APPROVED","approvalReference":"REG-2026-001","jurisdictions":["MT","GB"],"expiresAt":"2099-01-02T03:04:05Z","assets":[]}' > \
+  "$approval_variant"
+"$release_bundle" approval-metadata "$approval_variant" "$approval_variant_metadata"
+grep -F -x "ASSET_APPROVAL_METADATA_SHA256=$approval_metadata_sha256" "$approval_variant_metadata" >/dev/null || \
+  fail 'equivalent approval metadata did not normalize to one digest'
+
+web_bundle_output="$test_root/web-bundle-output.env"
+env \
+  GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 \
+  SOURCE_TREE_SHA=abcdef0123456789abcdef0123456789abcdef01 \
+  GITHUB_REF=refs/tags/v1.2.3 \
+  GITHUB_WORKFLOW_REF=acme/slots/.github/workflows/supply-chain-release.yml@refs/tags/v1.2.3 \
+  SUPPLY_CHAIN_ARTIFACT=web-runtime \
+  SUPPLY_CHAIN_IMAGE_REPOSITORY=registry.example.com/acme/slots-web \
+  SUPPLY_CHAIN_IMAGE_TAG=v1.2.3 \
+  SUPPLY_CHAIN_APPROVAL_SHA256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  SUPPLY_CHAIN_APPROVAL_EXPIRES_AT=2099-01-02T03:04:05Z \
+  SUPPLY_CHAIN_APPROVAL_METADATA_SHA256="$approval_metadata_sha256" \
+  RGS_BASE_URL=https://rgs.example.com \
+  RGS_BET_OPTIONS_MINOR=10,20 \
+  RGS_DEFAULT_BET_MINOR=10 \
+  RGS_HOST_ORIGIN=https://host.example.com \
+  GITHUB_OUTPUT="$web_bundle_output" \
+  "$release_bundle" finalize "$bundle_fixture" web-approved
+grep -F -x 'ASSET_APPROVAL_EXPIRES_AT=2099-01-02T03:04:05Z' "$bundle_fixture/bundle-manifest.env" >/dev/null || \
+  fail 'Web bundle did not bind approval expiry'
+grep -F -x "ASSET_APPROVAL_METADATA_SHA256=$approval_metadata_sha256" "$bundle_fixture/bundle-manifest.env" >/dev/null || \
+  fail 'Web bundle did not bind normalized approval metadata'
+grep -F -x 'approval_expires_at=2099-01-02T03:04:05Z' "$web_bundle_output" >/dev/null || \
+  fail 'Web build job output omitted approval expiry'
+grep -F -x "approval_metadata_sha256=$approval_metadata_sha256" "$web_bundle_output" >/dev/null || \
+  fail 'Web build job output omitted approval metadata digest'
+
+if env \
+  GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 \
+  SOURCE_TREE_SHA=abcdef0123456789abcdef0123456789abcdef01 \
+  GITHUB_REF=refs/tags/v1.2.3 \
+  GITHUB_WORKFLOW_REF=acme/slots/.github/workflows/supply-chain-release.yml@refs/tags/v1.2.3 \
+  SUPPLY_CHAIN_ARTIFACT=web-runtime \
+  SUPPLY_CHAIN_IMAGE_REPOSITORY=registry.example.com/acme/slots-web \
+  SUPPLY_CHAIN_IMAGE_TAG=v1.2.3 \
+  SUPPLY_CHAIN_APPROVAL_SHA256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  SUPPLY_CHAIN_APPROVAL_EXPIRES_AT=2000-01-02T03:04:05Z \
+  SUPPLY_CHAIN_APPROVAL_METADATA_SHA256="$approval_metadata_sha256" \
+  RGS_BASE_URL=https://rgs.example.com \
+  RGS_BET_OPTIONS_MINOR=10,20 \
+  RGS_DEFAULT_BET_MINOR=10 \
+  RGS_HOST_ORIGIN=https://host.example.com \
+  "$release_bundle" finalize "$bundle_fixture" web-approved >/dev/null 2>&1; then
+  fail 'expired Web approval was accepted while finalizing the release bundle'
+fi
+
+# S3 的输入只能是从已复核 OCI digest 提取的静态根；清单必须逐文件封闭验证。
+web_static_root="$test_root/web-static-root"
+mkdir -p "$web_static_root/assets"
+printf '%s\n' '<!doctype html><title>fixture</title>' > "$web_static_root/index.html"
+printf '%s\n' 'fixture-js' > "$web_static_root/assets/index.js"
+WEB_STATIC_ROOT="$web_static_root" node <<'NODE'
+const { createHash } = require("node:crypto");
+const { readFileSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const root = process.env.WEB_STATIC_ROOT;
+const files = ["assets/index.js", "index.html"].map((path) => {
+  const bytes = readFileSync(join(root, path));
+  return { path, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+});
+const payload = JSON.stringify({ schemaVersion: 1, version: "v1.2.3", revision: "0123456789abcdef0123456789abcdef01234567", files });
+const releaseId = `sha256:${createHash("sha256").update(payload).digest("hex")}`;
+writeFileSync(join(root, "release-manifest.json"), `${JSON.stringify({ schemaVersion: 1, releaseId, version: "v1.2.3", revision: "0123456789abcdef0123456789abcdef01234567", files }, null, 2)}\n`);
+NODE
+node "$web_static_verifier" "$web_static_root" >/dev/null || fail 'valid extracted Web static root was rejected'
+printf '%s\n' 'tampered-js' > "$web_static_root/assets/index.js"
+if node "$web_static_verifier" "$web_static_root" >/dev/null 2>&1; then
+  fail 'tampered extracted Web file was accepted'
+fi
+printf '%s\n' 'fixture-js' > "$web_static_root/assets/index.js"
+printf '%s\n' 'unexpected' > "$web_static_root/unexpected.txt"
+if node "$web_static_verifier" "$web_static_root" >/dev/null 2>&1; then
+  fail 'file outside release-manifest was accepted for S3 delivery'
+fi
+rm "$web_static_root/unexpected.txt"
+rm "$web_static_root/assets/index.js"
+if node "$web_static_verifier" "$web_static_root" >/dev/null 2>&1; then
+  fail 'release-manifest file missing from the extracted Web root was accepted'
+fi
+printf '%s\n' 'fixture-js' > "$web_static_root/assets/index.js"
+ln -s index.html "$web_static_root/alias.html"
+if node "$web_static_verifier" "$web_static_root" >/dev/null 2>&1; then
+  fail 'symbolic link was accepted in the extracted Web static root'
+fi
+rm "$web_static_root/alias.html"
 
 run_release_validation() {
   protected_ref=$1
@@ -280,6 +520,10 @@ replace_once '"$trivy_asset_verifier" "$trivy_cache" "$output_dir" >/dev/null' '
 expect_rejected 'missing offline Trivy checks verification'
 
 reset_fixture
+replace_once '--timeout 30m --no-progress' '--no-progress' "$fixture/deploy/supply-chain/scan.sh"
+expect_rejected 'Trivy vulnerability DB download timeout was removed'
+
+reset_fixture
 replace_once 'mirror.gcr.io/aquasec/trivy-checks:2' 'registry.invalid/unreviewed/checks:latest' "$fixture/deploy/supply-chain/scan.sh"
 expect_rejected 'custom or mutable-source Trivy checks repository'
 
@@ -300,6 +544,30 @@ replace_once 'trivy config /scan' 'trivy config /scan/dockerfiles' "$fixture/dep
 expect_rejected 'Helm production configuration was omitted from the IaC scan'
 
 reset_fixture
+replace_once 'terraform_pathspec=":(glob)$terraform_git_prefix/**/*.tf"' 'terraform_pathspec=":(glob)$terraform_git_prefix/modules/**/*.tf"' "$fixture/deploy/supply-chain/scan.sh"
+expect_rejected 'Terraform tracked inventory was narrowed to modules only'
+
+reset_fixture
+replace_once "    \"\$terraform_git_prefix/environments/prod-dr/terraform.tfvars.example\" \\" '    : # prod-dr tfvars tracking removed' "$fixture/deploy/supply-chain/scan.sh"
+expect_rejected 'production DR Terraform tfvars was removed from the tracked inventory'
+
+reset_fixture
+replace_once 'test ! -L "$source_path" || { echo "tracked Terraform scanner source must not be a symbolic link" >&2; exit 1; }' 'true # Terraform source symlink guard removed' "$fixture/deploy/supply-chain/scan.sh"
+expect_rejected 'tracked Terraform scanner source symlink guard was removed'
+
+reset_fixture
+replace_once 'find /terraform -type f -print' 'find /terraform -type f -name "*.tf" -print' "$fixture/deploy/supply-chain/scan.sh"
+expect_rejected 'Terraform isolated-copy inventory omitted tfvars and support inputs'
+
+reset_fixture
+replace_once '--tf-vars "/terraform/environments/$environment/terraform.tfvars.example"' ': # Terraform environment variables omitted' "$fixture/deploy/supply-chain/scan.sh"
+expect_rejected 'Terraform environment scan omitted its reviewed tfvars input'
+
+reset_fixture
+replace_once 'for environment in dev staging prod-primary prod-dr' 'for environment in dev' "$fixture/deploy/supply-chain/scan.sh"
+expect_rejected 'Terraform environment scan omitted staging and production roots'
+
+reset_fixture
 replace_once 'node /policy/verify-trivy-source-report.mjs' 'node /policy/sanitize-trivy-report.mjs' "$fixture/deploy/supply-chain/scan.sh"
 expect_rejected 'Trivy source report coverage was not verified'
 
@@ -316,7 +584,7 @@ replace_once '        run: make verify' '        run: make verify-supply-chain-c
 expect_rejected 'release skipped complete source conformance'
 
 reset_fixture
-replace_once 'verify: verify-supply-chain-contract verify-chinese-comments test test-race vet build' 'verify: verify-supply-chain-contract verify-chinese-comments test vet build' "$fixture/Makefile"
+replace_once 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments test test-race vet build' 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments test vet build' "$fixture/Makefile"
 expect_rejected 'release verify closure omitted race tests'
 
 reset_fixture
@@ -344,6 +612,14 @@ expect_rejected 'protected release skipped deterministic frontend rebuild'
 reset_fixture
 replace_once '        run: make verify-cluster-image-contract' '        run: true # cluster image runtime contract removed' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'protected release skipped cluster image runtime contract'
+
+reset_fixture
+replace_once "    go run ./scripts/third-party-notices --check && \\" "    true && \\" "$fixture/deploy/cluster-production/Dockerfile.services"
+expect_rejected 'protected Go image build skipped the third-party notice graph check'
+
+reset_fixture
+replace_once 'COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt' 'COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /MISSING_FROM_ONE_IMAGE.txt' "$fixture/deploy/cluster-production/Dockerfile.services"
+expect_rejected 'one protected Go image target omitted the authoritative third-party notice'
 
 reset_fixture
 replace_once '            make verify-cluster-image-contract' '            docker build --file deploy/Dockerfile --target runtime --tag slots-rgs-runtime:supply-chain .' "$fixture/.github/workflows/supply-chain.yml"
@@ -465,7 +741,43 @@ replace_once 'SOURCE_TREE_SHA=%s' 'CLAIMED_TREE=%s' "$fixture/deploy/supply-chai
 expect_rejected 'release bundle manifest claimed rather than bound the Git tree'
 
 reset_fixture
-replace_once '不得把同名值配置成 repository/organization' '可把同名值配置成 repository/organization' "$fixture/deploy/supply-chain/README.md"
-expect_rejected 'operations guide allowed Web approval to bypass its Environment'
+replace_once 'approval has expired immediately before Registry push' 'approval was checked earlier' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'Registry push lost its just-in-time approval expiry check'
+
+reset_fixture
+replace_once 'timestamp <= Date.now()' 'false' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'Registry push stopped comparing approval expiry with its current clock'
+
+reset_fixture
+replace_once 'extracted Web root contains a file outside release-manifest' 'unexpected files are tolerated' "$fixture/deploy/supply-chain/verify-web-static-root.mjs"
+expect_rejected 'AWS static-root verifier no longer failed on extra files'
+
+reset_fixture
+replace_once 'aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/"' 'aws s3 sync web/dist/' "$fixture/docs/aws-production-deployment.md"
+expect_rejected 'AWS guide regressed to uploading mutable workspace dist'
+
+reset_fixture
+replace_once '  exit 1' '  :' "$fixture/docs/aws-production-deployment.md"
+expect_rejected 'AWS guide no longer rejected an existing immutable release prefix'
+
+reset_fixture
+replace_once '--distribution-root "$static_root"' '--distribution-root web/dist' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'approved Web browser smoke regressed to mutable workspace bytes'
+
+reset_fixture
+replace_once '不得保存长期 AWS access key' '允许保存长期 AWS access key' "$fixture/deploy/supply-chain/README.md"
+expect_rejected 'release guide allowed long-lived AWS credentials'
+
+reset_fixture
+replace_once 'aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708' 'aws-actions/configure-aws-credentials@v5' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'AWS credential action was no longer commit-pinned'
+
+reset_fixture
+replace_once '.imageTagMutability == "IMMUTABLE"' '.imageTagMutability == "MUTABLE"' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'ECR immutable-tag enforcement was weakened'
+
+reset_fixture
+replace_once '$configuration.scanType == "ENHANCED"' '$configuration.scanType == "BASIC"' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'ECR enhanced continuous scanning enforcement was weakened'
 
 printf '%s\n' 'supply-chain contract tests: ok'

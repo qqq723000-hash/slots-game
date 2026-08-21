@@ -13,10 +13,12 @@ metadata:
     {{- toYaml $apiAnnotations | nindent 4 }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tlsSecretEnabled }}
   tls:
     - hosts:
         - {{ .Values.ingress.apiHost }}
       secretName: {{ .Values.ingress.apiTLSSecretName }}
+  {{- end }}
   rules:
     - host: {{ .Values.ingress.apiHost }}
       http:
@@ -28,6 +30,7 @@ spec:
                 name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs") }}
                 port:
                   name: http
+{{- if .Values.web.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -45,10 +48,12 @@ metadata:
     {{- toYaml $webAnnotations | nindent 4 }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tlsSecretEnabled }}
   tls:
     - hosts:
         - {{ .Values.ingress.webHost }}
       secretName: {{ .Values.ingress.webTLSSecretName }}
+  {{- end }}
   rules:
     - host: {{ .Values.ingress.webHost }}
       http:
@@ -60,3 +65,4 @@ spec:
                 name: {{ include "slots.resourceName" (dict "root" . "suffix" "web") }}
                 port:
                   name: http
+{{- end }}

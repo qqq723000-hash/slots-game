@@ -73,7 +73,8 @@ prepare_trivy_database() {
     --read-only \
     --tmpfs /tmp:rw,nosuid,nodev,size=256m \
     --mount "type=bind,src=$cache_dir,dst=/cache" \
-    "$TRIVY_IMAGE" image --config /dev/null --download-db-only --cache-dir /cache --no-progress
+    "$TRIVY_IMAGE" image --config /dev/null --download-db-only --cache-dir /cache \
+      --timeout 30m --no-progress
 }
 
 record_trivy_database() {
@@ -167,13 +168,26 @@ prepare_trivy_checks() {
 run_source_scan() {
   test "$#" -eq 1 || usage
   command -v git >/dev/null 2>&1 || fail 'git is required for complete history scanning'
+  command -v base64 >/dev/null 2>&1 || fail 'base64 is required to construct the non-secret Terraform scanner input'
+  terraform_scanner_hmac_key=$(printf '%s' 'scanner-only-hmac-input-not-a-secret-000000' | base64 | tr -d '\n')
   git_root=$(git -C "$repository_root" rev-parse --show-toplevel 2>/dev/null) || fail 'source scan requires a Git checkout with history'
   git_root=$(CDPATH='' cd -- "$git_root" && pwd)
   case "$repository_root" in
-    "$git_root") container_project_root=/workspace ;;
-    "$git_root"/*) container_project_root=/workspace/${repository_root#"$git_root"/} ;;
+    "$git_root")
+      container_project_root=/workspace
+      repository_git_prefix=
+      ;;
+    "$git_root"/*)
+      repository_git_prefix=${repository_root#"$git_root"/}
+      container_project_root=/workspace/$repository_git_prefix
+      ;;
     *) fail 'project directory is outside the Git checkout' ;;
   esac
+  terraform_git_prefix=${repository_git_prefix:+$repository_git_prefix/}infra/terraform
+  case "$terraform_git_prefix" in
+    ''|/*|*//*|*'/./'*|*'/../'*|*[!A-Za-z0-9._/-]*) fail 'Terraform Git prefix is outside the reviewed path grammar' ;;
+  esac
+  terraform_pathspec=":(glob)$terraform_git_prefix/**/*.tf"
   test ! -e "$git_root/.gitleaks.toml" || fail 'repository-controlled .gitleaks.toml is forbidden'
   trivy_inline_marker='trivy:'
   trivy_inline_marker="${trivy_inline_marker}ignore"
@@ -196,7 +210,20 @@ run_source_scan() {
 
   scanner_canary_root=$(mktemp -d "${TMPDIR:-/tmp}/slots-source-canary.XXXXXX")
   trap 'rm -rf "$scanner_canary_root"' EXIT HUP INT TERM
-  mkdir -p "$scanner_canary_root/gitleaks" "$scanner_canary_root/trivy"
+  terraform_input_dir="$scanner_canary_root/terraform-input"
+  mkdir -p "$scanner_canary_root/gitleaks" "$scanner_canary_root/trivy" "$terraform_input_dir"
+  # Git 以 NUL 分隔精确列出当前提交所跟踪的 Terraform 源文件；后续隔离容器逐项拒绝
+  # 异常路径与符号链接，避免未跟踪残留、目录逃逸或链接目标混入生产 IaC 证据。
+  git -C "$git_root" ls-files -z -- \
+    "$terraform_pathspec" \
+    "$terraform_git_prefix/environments/dev/terraform.tfvars.example" \
+    "$terraform_git_prefix/environments/staging/terraform.tfvars.example" \
+    "$terraform_git_prefix/environments/prod-primary/terraform.tfvars.example" \
+    "$terraform_git_prefix/environments/prod-dr/terraform.tfvars.example" \
+    "$terraform_git_prefix/modules/web-edge/release-request.js" \
+    "$terraform_git_prefix/modules/web-edge/release-response.js" > "$terraform_input_dir/tracked-files.nul"
+  test -s "$terraform_input_dir/tracked-files.nul" || fail 'no tracked Terraform configuration was selected for Trivy'
+  chmod 0444 "$terraform_input_dir/tracked-files.nul"
   prepare_gitleaks_canary "$scanner_canary_root/gitleaks" "$output_dir"
   prepare_trivy_checks "$trivy_cache" "$output_dir" "$scanner_canary_root/trivy"
 
@@ -326,15 +353,23 @@ run_source_scan() {
     status=1
   fi
 
-  # 只复制正式 Dockerfile 与使用有效生产值渲染的 Helm Chart，输入清单由后置契约逐项核验。
+  # 只复制正式 Dockerfile、使用有效生产值渲染的 Helm Chart，以及 Git 跟踪的 Terraform
+  # 源文件；输入清单由后置契约逐项核验，任何缺失或额外结果都会失败关闭。
   if ! docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \
     --network=none \
     --tmpfs /tmp:rw,nosuid,nodev,size=512m \
     --tmpfs /scan:rw,nosuid,nodev,size=64m,mode=1777 \
+    --tmpfs /terraform:rw,nosuid,nodev,size=64m,mode=1777 \
     --env "PROJECT_ROOT=$container_project_root" \
+    --env "TERRAFORM_GIT_PREFIX=$terraform_git_prefix" \
+    --env TF_VAR_valkey_password_a=ScannerOnlyPasswordA123456789 \
+    --env TF_VAR_valkey_password_b=ScannerOnlyPasswordB123456789 \
+    --env "TF_VAR_shared_admission_hmac_key=$terraform_scanner_hmac_key" \
+    --env TF_VAR_valkey_root_ca_pem=SCANNER_ONLY_CA_PLACEHOLDER \
     --mount "type=bind,src=$git_root,dst=/workspace,readonly" \
+    --mount "type=bind,src=$terraform_input_dir,dst=/terraform-input,readonly" \
     --mount "type=bind,src=$output_dir,dst=/out" \
     --mount "type=bind,src=$trivy_cache,dst=/cache,readonly" \
     --entrypoint /bin/sh \
@@ -345,7 +380,8 @@ run_source_scan() {
         /scan/dockerfiles/local-services \
         /scan/dockerfiles/local-web \
         /scan/dockerfiles/web \
-        /scan/cluster
+        /scan/cluster \
+        /terraform
       cp "$PROJECT_ROOT/deploy/Dockerfile" /scan/dockerfiles/root/Dockerfile
       cp "$PROJECT_ROOT/deploy/cluster-production/Dockerfile.services" /scan/dockerfiles/cluster/Dockerfile.services
       cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.services" /scan/dockerfiles/local-services/Dockerfile.services
@@ -353,6 +389,43 @@ run_source_scan() {
       cp "$PROJECT_ROOT/deploy/web/Dockerfile" /scan/dockerfiles/web/Dockerfile
       cp -R "$PROJECT_ROOT/deploy/cluster-production/chart" /scan/cluster/chart
       cp "$PROJECT_ROOT/deploy/cluster-production/values.example.yaml" /scan/cluster/values.example.yaml
+      : > /out/trivy-terraform-tracked-files.txt
+      terraform_target_count=0
+      while IFS= read -r -d "" tracked_path
+      do
+        case "$tracked_path" in
+          "$TERRAFORM_GIT_PREFIX"/*) ;;
+          *) echo "unreviewed Terraform path in tracked manifest" >&2; exit 1 ;;
+        esac
+        relative_path=${tracked_path#"$TERRAFORM_GIT_PREFIX"/}
+        case "$relative_path" in
+          ""|/*|*//*|.|..|./*|../*|*/./*|*/../*|*/.|*/..|*[!A-Za-z0-9._/-]*)
+            echo "unsafe Terraform path in tracked manifest" >&2
+            exit 1
+            ;;
+        esac
+        case "$relative_path" in
+          *.tf|environments/dev/terraform.tfvars.example|environments/staging/terraform.tfvars.example|environments/prod-primary/terraform.tfvars.example|environments/prod-dr/terraform.tfvars.example|modules/web-edge/release-request.js|modules/web-edge/release-response.js) ;;
+          *) echo "unreviewed Terraform scanner source type" >&2; exit 1 ;;
+        esac
+        source_path=/workspace/$tracked_path
+        test -f "$source_path" || { echo "tracked Terraform scanner source is missing" >&2; exit 1; }
+        test ! -L "$source_path" || { echo "tracked Terraform scanner source must not be a symbolic link" >&2; exit 1; }
+        destination_path=/terraform/$relative_path
+        mkdir -p "$(dirname -- "$destination_path")"
+        cp "$source_path" "$destination_path"
+        printf "terraform/%s\n" "$relative_path" >> /out/trivy-terraform-tracked-files.txt
+        terraform_target_count=$((terraform_target_count + 1))
+      done < /terraform-input/tracked-files.nul
+      test "$terraform_target_count" -gt 0
+      LC_ALL=C sort -c /out/trivy-terraform-tracked-files.txt
+      find /terraform -type f -print |
+        sed "s#^/terraform/#terraform/#" |
+        LC_ALL=C sort > /out/trivy-terraform-copied-files.txt
+      cmp -s /out/trivy-terraform-tracked-files.txt /out/trivy-terraform-copied-files.txt || {
+        echo "isolated Terraform copy differs from tracked inventory" >&2
+        exit 1
+      }
       trivy config /scan \
         --config /dev/null --cache-dir /cache \
         --checks-bundle-repository mirror.gcr.io/aquasec/trivy-checks:2 \
@@ -361,6 +434,18 @@ run_source_scan() {
         --helm-values /scan/cluster/values.example.yaml \
         --severity HIGH,CRITICAL --exit-code 1 \
         --format json --output /out/trivy-config.json
+      for environment in dev staging prod-primary prod-dr
+      do
+        cd "/terraform/environments/$environment"
+        trivy config . \
+          --config /dev/null --cache-dir /cache \
+          --checks-bundle-repository mirror.gcr.io/aquasec/trivy-checks:2 \
+          --skip-check-update \
+          --ignorefile /dev/null \
+          --tf-vars "/terraform/environments/$environment/terraform.tfvars.example" \
+          --severity HIGH,CRITICAL --exit-code 1 \
+          --format json --output "/out/trivy-terraform-$environment.json"
+      done
     '
   then
     status=1
@@ -373,7 +458,14 @@ run_source_scan() {
     --mount "type=bind,src=$script_dir,dst=/policy,readonly" \
     --mount "type=bind,src=$output_dir,dst=/out,readonly" \
     "$NODE_IMAGE" node /policy/verify-trivy-source-report.mjs \
-      /out/trivy-filesystem.json /out/trivy-config.json
+      /out/trivy-filesystem.json \
+      /out/trivy-config.json \
+      /out/trivy-terraform-tracked-files.txt \
+      /out/trivy-terraform-copied-files.txt \
+      /out/trivy-terraform-dev.json \
+      /out/trivy-terraform-staging.json \
+      /out/trivy-terraform-prod-primary.json \
+      /out/trivy-terraform-prod-dr.json
   then
     status=1
   fi

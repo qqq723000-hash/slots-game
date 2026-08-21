@@ -502,6 +502,267 @@ describe("RgsGateway", () => {
     await vi.waitFor(() => expect(gateway.hasPendingSpin).toBe(false));
   });
 
+  it("accepts the exact no-win BASE response shape emitted by local production", async () => {
+    const operatorId = "local-production-operator";
+    const sessionId = "session_local_contract";
+    const roundId = "round-local-contract";
+    const definitionHash = "96caac1ea4f82292ba96e0e0397459687638d6ff904471a8363e69f6e824d35d";
+    const localFeature = feature("NONE", 0, 0, "0", "0", 1, 0);
+    const localResult: Record<string, unknown> = {
+      operatorId,
+      sessionId,
+      roundId,
+      gameId: "iron-colossus",
+      definitionVersion: "local-production-2026-08-16.1",
+      definitionHash,
+      currency: "CNY",
+      roundKind: "BASE",
+      serverTransactionId: "rgs-op-v1:local-contract",
+      walletTransactionId: "wtx_local_contract",
+      startRevision: "0",
+      endRevision: "1",
+      sequence: "1",
+      resultHash: "a".repeat(64),
+      betMinor: "100",
+      chargedBetMinor: "100",
+      balanceMinor: "99610",
+      totalWinMinor: "0",
+      grid: [
+        [{ symbol: "PRISM" }, { symbol: "PRISM" }, { symbol: "PRISM" }],
+        [{ symbol: "CIRCUIT" }, { symbol: "ORBIT" }, { symbol: "PRISM" }],
+        [{ symbol: "CIRCUIT" }, { symbol: "PULSE" }, { symbol: "ORBIT" }],
+      ],
+      wins: [],
+      events: [],
+      feature: localFeature,
+    };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init), {
+            operatorId,
+            sessionId,
+            gameId: "iron-colossus",
+            definitionVersion: "local-production-2026-08-16.1",
+            definitionHash,
+            currency: "CNY",
+            currencyExponent: 2,
+            jurisdiction: "CN-LOCAL",
+            balanceMinor: "99710",
+            feature: localFeature,
+          }))
+        : response(successEnvelope(requestId(init), localResult))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      operatorId,
+      sessionId,
+      betOptionsMinor: ["10", "20", "50", "100", "200", "300", "400", "600", "1000", "2000", "5000", "10000"],
+    }));
+    const observed = callbacks();
+    const deliveryStages: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: (stage) => deliveryStages.push(stage),
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin(roundId, "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(observed.log.errors).toEqual([]);
+    expect(observed.log.results[0]).toMatchObject({
+      result: { roundId, sequence: 1, balanceMinor: "99610" },
+      origin: { mode: "BASE", rageLevel: 1, rageCollected: 0 },
+    });
+    expect(deliveryStages).toEqual([
+      "post-response-before-decode",
+      "decode-envelope",
+      "decode-request-id",
+      "decode-data-shape",
+      "decode-binding",
+      "decode-metadata",
+      "decode-grid",
+      "decode-wins",
+      "decode-events",
+      "decode-feature",
+      "decode-projection",
+      "projection-round-id",
+      "projection-sequence",
+      "projection-money-fields",
+      "projection-message-input",
+      "projection-message-shape",
+      "projection-message-grid",
+      "projection-message-wins",
+      "projection-message-events",
+      "projection-message-feature",
+      "projection-invariant-win-identities",
+      "projection-invariant-award-total",
+      "projection-invariant-wheel",
+      "projection-invariant-vault",
+      "projection-invariant-reels",
+      "projection-message-output",
+      "decode-commit-metadata",
+      "decode-complete",
+      "decoded",
+      "economic-identity",
+      "sequence-guard",
+      "origin-reconstructed",
+      "origin-validated",
+      "controller-dispatch",
+      "delivered",
+    ]);
+  });
+
+  it("marks the response boundary before a committed spin decoder failure", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), {
+            ...committedResult(),
+            wins: null,
+          }))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    const deliveryStages: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: (stage) => deliveryStages.push(stage),
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.results).toEqual([]);
+    expect(deliveryStages).toEqual([
+      "post-response-before-decode",
+      "decode-envelope",
+      "decode-request-id",
+      "decode-data-shape",
+      "decode-binding",
+      "decode-metadata",
+      "decode-grid",
+      "decode-wins",
+    ]);
+  });
+
+  it("stops the fixed projection stages at the visible-award invariant", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), {
+            ...committedResult(),
+            totalWinMinor: "1",
+          }))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    const deliveryStages: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: (stage) => deliveryStages.push(stage),
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.results).toEqual([]);
+    expect(deliveryStages.at(-1)).toBe("projection-invariant-award-total");
+  });
+
+  it("stops the fixed decoder stages at a mismatched response request id", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope("foreign-request", committedResult()))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    const deliveryStages: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: (stage) => deliveryStages.push(stage),
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.results).toEqual([]);
+    expect(deliveryStages).toEqual([
+      "post-response-before-decode",
+      "decode-envelope",
+      "decode-request-id",
+    ]);
+  });
+
+  it("keeps delivery authoritative when the fixed-stage observer throws", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), committedResult()))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: () => {
+        throw new Error("诊断观察者故障");
+      },
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(observed.log.errors).toEqual([]);
+  });
+
+  it("accepts the local-production two-Rage response with mixed WILD cells", async () => {
+    const result = committedResult({
+      grid: [
+        [{ symbol: "PULSE" }, { symbol: "CIRCUIT" }, { symbol: "SURGE" }],
+        [{ symbol: "WILD", multiplier: 5 }, { symbol: "WILD" }, { symbol: "NOVA" }],
+        [{ symbol: "TANK" }, { symbol: "ORBIT" }, { symbol: "SURGE" }],
+      ],
+      events: [fullEvent("surge.collected", {
+        count: 2,
+        cells: [{ reel: 0, row: 2 }, { reel: 2, row: 2 }],
+        triggered: false,
+        guaranteed: false,
+        level: 1,
+        total: 2,
+      })],
+      nextFeature: feature("NONE", 0, 0, "0", "0", 1, 2),
+    });
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), result))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(observed.log.errors).toEqual([]);
+    expect(observed.log.results[0]?.result.featureState).toMatchObject({
+      mode: "BASE",
+      rageLevel: 1,
+      rageCollected: 2,
+    });
+  });
+
   it("binds one in-flight server acknowledgement to the delivered result before clearing locally", async () => {
     const requests: SeenRequest[] = [];
     let resolveAcknowledgement: ((response: Response) => void) | undefined;

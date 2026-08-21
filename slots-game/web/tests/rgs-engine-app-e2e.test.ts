@@ -429,6 +429,9 @@ async function startScenario(
   );
   expect(browser.controller).toBeInstanceOf(AppController);
   expect(browser.callbackWiring).toHaveBeenCalledTimes(1);
+  expect(browser.callbackWiring).toHaveBeenCalledWith(expect.objectContaining({
+    onResultDeliveryStage: expect.any(Function),
+  }));
   expect(browser.ui.setLaunchPhase).toHaveBeenCalledWith("boot", false);
   expect(browser.launchPhases).toEqual(expect.arrayContaining([
     "preloading", "intro", "ready",

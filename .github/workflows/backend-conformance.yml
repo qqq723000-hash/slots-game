@@ -2,6 +2,8 @@ name: Backend PostgreSQL conformance
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -86,6 +88,10 @@ jobs:
           trap 'docker rm -f "$runtime_container" "$migrator_container" >/dev/null 2>&1 || true' EXIT
           docker export "$runtime_container" | tar -tf - > /tmp/runtime-files.txt
           docker export "$migrator_container" | tar -tf - > /tmp/migrator-files.txt
+          docker cp "$runtime_container:/THIRD_PARTY_NOTICES.txt" /tmp/runtime-third-party-notices.txt
+          docker cp "$migrator_container:/THIRD_PARTY_NOTICES.txt" /tmp/migrator-third-party-notices.txt
+          cmp server/THIRD_PARTY_NOTICES.txt /tmp/runtime-third-party-notices.txt
+          cmp server/THIRD_PARTY_NOTICES.txt /tmp/migrator-third-party-notices.txt
           grep -Eq '(^|/)rgs-server$' /tmp/runtime-files.txt
           if grep -Eq '(^|/)rgs-migrator$' /tmp/runtime-files.txt; then
             echo "runtime target unexpectedly contains rgs-migrator" >&2

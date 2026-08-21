@@ -9,6 +9,8 @@ migrator_image=${CLUSTER_MIGRATOR_IMAGE:-slots-rgs-cluster-migrator:contract}
 temporary_root=${TMPDIR:-/tmp}
 fixture_directory=$(mktemp -d "${temporary_root%/}/slots-cluster-image-contract.XXXXXX")
 probe_server_pid=''
+runtime_container=''
+migrator_container=''
 
 fail() {
   printf '%s\n' "cluster image runtime contract: $*" >&2
@@ -16,6 +18,12 @@ fail() {
 }
 
 cleanup() {
+  if test -n "$runtime_container"; then
+    docker rm -f "$runtime_container" >/dev/null 2>&1 || true
+  fi
+  if test -n "$migrator_container"; then
+    docker rm -f "$migrator_container" >/dev/null 2>&1 || true
+  fi
   if test -n "$probe_server_pid"; then
     kill "$probe_server_pid" >/dev/null 2>&1 || true
     wait "$probe_server_pid" >/dev/null 2>&1 || true
@@ -27,7 +35,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-for command in docker python3 grep mktemp cat chmod id uname; do
+for command in docker python3 grep mktemp cat chmod id uname mkdir cmp; do
   command -v "$command" >/dev/null 2>&1 || fail "缺少命令 $command"
 done
 
@@ -54,6 +62,42 @@ test "$(docker image inspect --format '{{.Config.User}}' "$runtime_image")" = no
   fail 'RGS 运行镜像没有固定非 root 用户'
 test "$(docker image inspect --format '{{.Config.User}}' "$migrator_image")" = nonroot:nonroot ||
   fail '迁移镜像没有固定非 root 用户'
+
+runtime_container=$(docker create "$runtime_image")
+migrator_container=$(docker create "$migrator_image")
+docker cp "$runtime_container:/THIRD_PARTY_NOTICES.txt" "$fixture_directory/runtime-third-party-notices.txt"
+docker cp "$migrator_container:/THIRD_PARTY_NOTICES.txt" "$fixture_directory/migrator-third-party-notices.txt"
+cmp "$repository_root/server/THIRD_PARTY_NOTICES.txt" "$fixture_directory/runtime-third-party-notices.txt" >/dev/null ||
+  fail 'RGS 运行镜像没有交付权威 Go 第三方许可声明'
+cmp "$repository_root/server/THIRD_PARTY_NOTICES.txt" "$fixture_directory/migrator-third-party-notices.txt" >/dev/null ||
+  fail '迁移镜像没有交付权威 Go 第三方许可声明'
+
+materializer_directory="$fixture_directory/materializer"
+mkdir "$materializer_directory"
+printf '%s\n' 'materialized-secret' >"$materializer_directory/source"
+chmod 0440 "$materializer_directory/source"
+docker run --rm --platform linux/amd64 \
+  --user "$(id -u):$(id -g)" \
+  --mount "type=bind,src=$materializer_directory,dst=/run/materializer" \
+  --entrypoint /secret-materializer \
+  "$runtime_image" /run/materializer/source /run/materializer/destination
+python3 - "$materializer_directory/destination" <<'PYTHON'
+import os
+import pathlib
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if stat.S_IMODE(os.stat(path).st_mode) != 0o400 or path.read_text(encoding="utf-8") != "materialized-secret\n":
+    raise SystemExit("物化凭据不是 0400 或内容不一致")
+PYTHON
+if docker run --rm --platform linux/amd64 \
+  --user "$(id -u):$(id -g)" \
+  --mount "type=bind,src=$materializer_directory,dst=/run/materializer" \
+  --entrypoint /secret-materializer \
+  "$runtime_image" /run/materializer/source /run/materializer/destination >/dev/null 2>&1; then
+  fail '/secret-materializer 错误覆盖了已有凭据'
+fi
 
 runtime_missing_secret_log="$fixture_directory/runtime-missing-secret.log"
 if docker run --rm --platform linux/amd64 "$runtime_image" >"$runtime_missing_secret_log" 2>&1; then

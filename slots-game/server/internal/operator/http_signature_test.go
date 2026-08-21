@@ -66,6 +66,45 @@ func TestRequestAuthenticationDefersNonceConsumption(t *testing.T) {
 	}
 }
 
+type recordingNonceStore struct {
+	expiresAt time.Time
+}
+
+func (store *recordingNonceStore) Consume(_ context.Context, _, _ string, expiresAt time.Time) (bool, error) {
+	store.expiresAt = expiresAt
+	return true, nil
+}
+
+func TestConsumeNonceRetentionCoversApplicationAndDatabaseClockSkew(t *testing.T) {
+	now := fixedTestTime()
+	skew := 30 * time.Second
+	signing, verification := testKeyPair(t, "http-key-1", "operator-a", KeyPurposeHTTPRequest, now)
+	ring, err := NewMemoryKeyRing(verification)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &recordingNonceStore{}
+	verifier, err := NewRequestVerifier(ring, store, RequestVerifierOptions{
+		Now: func() time.Time { return now }, ClockSkew: skew, MaxLifetime: DefaultSignatureLifetime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"roundId":"round-1"}`)
+	request := signedTestRequest(t, signing, now, testNonce(4), body)
+	verified, err := verifier.Authenticate(context.Background(), request, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifier.ConsumeNonce(context.Background(), verified); err != nil {
+		t.Fatal(err)
+	}
+	want := verified.Expires.Add(2 * skew)
+	if !store.expiresAt.Equal(want) {
+		t.Fatalf("nonce retention deadline = %s, want %s", store.expiresAt, want)
+	}
+}
+
 func TestConsumeNonceRejectsForgedMutatedOrCrossVerifierAuthentication(t *testing.T) {
 	now := fixedTestTime()
 	signing, verification := testKeyPair(t, "http-key-1", "operator-a", KeyPurposeHTTPRequest, now)

@@ -31,7 +31,27 @@ spec:
             severity: critical
           annotations:
             summary: RGS 副本持续未就绪
-            description: 至少一个可抓取 RGS 副本的数据库、审计 outbox 或后台恢复就绪检查持续失败。
+            description: 至少一个可抓取 RGS API 副本的数据库、密钥或生命周期就绪检查持续失败。
+        - alert: SlotsRGSWorkerTargetUnavailable
+          expr: |
+            min(up{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}) < 1
+            or absent(up{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"})
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS Worker 指标目标不可用
+            description: 至少一个 Worker operations 指标目标连续两分钟不可抓取，或全部目标已从服务发现消失。
+        - alert: SlotsRGSWorkerNotReady
+          expr: |
+            min(rgs_ready{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}) < 1
+            or absent(rgs_ready{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"})
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS Worker 持续未就绪
+            description: 至少一个 Worker 的数据库、恢复依赖或审计 outbox 循环及 backlog 新鲜度检查持续失败。
         - alert: SlotsRGSServerErrorRateHigh
           expr: |
             (
@@ -55,9 +75,36 @@ spec:
           annotations:
             summary: RGS 进程并发闸门持续拒绝请求
             description: RGS 已因进程级并发容量上限拒绝公网请求；应核对 HPA、Pod 资源和上游全局限流。
+        - alert: SlotsRGSHPAUnableToScale
+          expr: |
+            count(max by (horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="{{ .Release.Namespace }}",condition="ScalingActive",status="true",horizontalpodautoscaler=~"{{ include "slots.resourceName" (dict "root" . "suffix" "rgs") }}|{{ include "slots.resourceName" (dict "root" . "suffix" "rgs-worker") }}"} == 1)) < 2
+            or absent(kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="{{ .Release.Namespace }}",condition="ScalingActive",status="true",horizontalpodautoscaler=~"{{ include "slots.resourceName" (dict "root" . "suffix" "rgs") }}|{{ include "slots.resourceName" (dict "root" . "suffix" "rgs-worker") }}"} == 1)
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS HPA 无法计算扩缩容目标
+            description: API 或 Worker HPA 的 ScalingActive 未保持为真；应检查 metrics-server、聚合 API、kube-state-metrics 与资源指标，避免流量高峰停留在暖副本下限。
+        - alert: SlotsRGSSharedAdmissionErrors
+          expr: |
+            sum(increase(rgs_shared_admission_errors_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS 共享准入后端持续故障
+            description: Valkey 准入错误持续发生；新启动和 Spin 会失败关闭，但已提交结果恢复路径仍保持就绪，应立即检查 TLS、ACL、NetworkPolicy 和集群健康。
+        - alert: SlotsRGSAuthReplay
+          expr: |
+            sum(increase(rgs_auth_replays_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: RGS 检测到认证随机数重放
+            description: 已验证签名的运营商请求重复使用随机数并被拒绝；应检查调用方重试实现、凭据泄漏风险及相关安全日志。
         - alert: SlotsRGSWalletUnknownOutcome
           expr: |
-            sum(increase(rgs_wallet_unknown_outcomes_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+            sum(increase(rgs_wallet_unknown_outcomes_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])) > 0
           labels:
             severity: critical
           annotations:
@@ -65,8 +112,8 @@ spec:
             description: 钱包操作需要状态对账；必须确认恢复任务、钱包幂等查询和资金结果最终一致。
         - alert: SlotsRGSIntegrityQuarantine
           expr: |
-            sum(increase(rgs_round_integrity_quarantines_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m]))
-            + sum(increase(rgs_session_integrity_quarantines_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+            sum(increase(rgs_round_integrity_quarantines_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m]))
+            + sum(increase(rgs_session_integrity_quarantines_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])) > 0
           labels:
             severity: critical
           annotations:
@@ -74,7 +121,7 @@ spec:
             description: 新的轮次或会话被持久化隔离；不得自动解封，必须保留证据并执行人工审查。
         - alert: SlotsRGSOutboxDeferred
           expr: |
-            sum(increase(rgs_outbox_deferred_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[10m])) > 0
+            sum(increase(rgs_outbox_deferred_total{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[10m])) > 0
           for: 5m
           labels:
             severity: critical
@@ -83,7 +130,7 @@ spec:
             description: 审计事件发布失败并进入重试；应核对接收端、TLS、NetworkPolicy 和 backlog 新鲜度。
         - alert: SlotsRGSOutboxLeaseLost
           expr: |
-            sum(increase(rgs_outbox_lease_lost_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[10m])) > 0
+            sum(increase(rgs_outbox_lease_lost_total{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[10m])) > 0
           for: 5m
           labels:
             severity: warning
@@ -93,9 +140,9 @@ spec:
         - alert: SlotsRGSDatabasePoolSaturated
           expr: |
             max(
-              rgs_db_pool_in_use_connections{job="slots-rgs",namespace="{{ .Release.Namespace }}"}
+              rgs_db_pool_in_use_connections{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}
               /
-              clamp_min(rgs_db_pool_max_open_connections{job="slots-rgs",namespace="{{ .Release.Namespace }}"}, 1)
+              clamp_min(rgs_db_pool_max_open_connections{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}, 1)
             ) > 0.9
           for: 10m
           labels:
@@ -105,7 +152,7 @@ spec:
             description: 至少一个副本的运行时数据库连接池使用率持续超过百分之九十。
         - alert: SlotsRGSDatabasePoolWaits
           expr: |
-            sum(rate(rgs_db_pool_wait_count_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+            sum(rate(rgs_db_pool_wait_count_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])) > 0
           for: 10m
           labels:
             severity: warning
