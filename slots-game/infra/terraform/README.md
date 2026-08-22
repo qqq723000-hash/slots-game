@@ -52,7 +52,9 @@ infra/terraform
   运行资产分别使用 `api-runtime-assets` 和 `worker-runtime-assets`，Worker 不再获得 launch HMAC 或
   API operator 私钥。共享准入固定创建 A/B 两个 Valkey ACL 用户并始终保留在同一 user group；两个密码、
   HMAC key 与显式根证书通过 Terraform 1.15 ephemeral 变量进入 provider write-only 参数，不写入普通
-  tfvars、plan 或 state。活动槽位的用户名和密码共同写入版本化 Secrets Manager Secret。
+  tfvars、plan 或 state。活动槽位的用户名和密码共同写入版本化 Secrets Manager Secret。两个用户的
+  ACL 都只允许 `rgs:shared-admission:v2:*`、`EVAL/EVALSHA`、脚本内部 `GET/PTTL/SET`、readiness
+  `PING` 与客户端认证/命名握手；v1 的 `TIME/HMGET/HSET/PEXPIRE`、命令类别和其他 keyspace 均不授权。
 - EKS API 默认只开放私网端点，业务 Pod 不获得 AWS IAM 权限；平台插件通过 Pod Identity 获取最小权限。
   RDS 与 Valkey 的入口引用 EKS 托管节点实际持有的集群安全组，再由 Chart 的默认拒绝 NetworkPolicy
   限制到需要访问的 Pod，不再创建没有 SecurityGroupPolicy 绑定的占位安全组。
@@ -112,6 +114,71 @@ Secret 只同步一次并设置 `immutable=true`，任何值轮换都必须先�
 `configuration.application_namespace` 和 `configuration.helm_release_name` 必须分别与受保护
 Environment 的 `AWS_EKS_NAMESPACE` 和 `AWS_HELM_RELEASE_NAME` 精确一致；它们会进入持久化
 `rotation_guard.target_identity`，使 HMAC 证据不能在其他 namespace 或 release 之间复用。
+
+## Valkey 容量告警与阈值校准
+
+三节点 Valkey replication group 对每个固定节点创建以下 CloudWatch 告警：
+
+- `EngineCPUUtilization`：引擎线程负载；
+- `CurrConnections`：当前客户端连接数；
+- `TrafficManagementActive`：ElastiCache 已开始主动整形无法及时处理的命令；
+- `ReplicationLag`：只读副本复制延迟；告警覆盖三个节点，主节点没有该指标时按不违规处理，从而在
+  自动故障转移后仍覆盖新的副本角色；
+- `EvalBasedCmdsLatency`：共享准入实际使用的 `EVAL`/`EVALSHA` 命令平均延迟。
+
+节点指标严格使用 `CacheClusterId + CacheNodeId`。`DatabaseCapacityUsageCountedForEvictPercentage`
+按照 AWS 发布的指标维度只创建一个 replication-group 级告警并使用 `ReplicationGroupId`；不得把它
+伪装成三个节点指标，否则 CloudWatch 会得到没有数据的维度组合。指标名称、单位和可用性以
+[AWS Valkey/Redis OSS 指标文档](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/CacheMetrics.Redis.html)
+及 [CloudWatch ElastiCache 维度清单](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/SupportedMetricsForResourceTagsForTelemetry.html)
+为准。
+
+除已有安全事件告警外，容量告警均要求 3 个 60 秒窗口中的 2 个越界才触发，以过滤单点抖动；
+`TrafficManagementActive` 的固定阈值为 0，即连续两个窗口出现值 1 才报警。告警与恢复都发送到值班
+SNS topic，缺少指标按不违规处理。`ReplicationLag` 只对副本发布，因此该缺失策略是角色感知所必需；
+监控系统本身无数据仍需由独立 CloudWatch/通知链路健康检查覆盖。
+
+`valkey_alarm_thresholds` 是必须显式填写的非秘密容量合同，分别约束引擎 CPU 百分比、可逐出容量
+百分比、单节点连接数、复制延迟秒数和 EVAL 平均延迟微秒数。示例中的 `65% / 70% / 1000 / 1s /
+25000us` 只是初始保护值，不是生产认证结果。上线前必须用目标节点类型、目标区域和真实 TLS/ACL 脚本
+执行稳态、阶梯、热 key、拒绝风暴与故障转移压测，再用实测饱和拐点和应用连接池总预算提交阈值变更。
+CloudWatch 的 EVAL 指标是时间窗平均值，不能代替客户端 p95/p99 和 slow log。告警也不会自动扩容；
+当前非 cluster-mode 架构的主写压力需要扩节点规格或经单独数据分片设计评审，不能靠增加只读副本消除。
+
+## 共享准入 v1 到 v2 一次性维护迁移
+
+当前 ACL 只授权 v2 的 string token-bucket keyspace 和 `GET/PTTL/SET`。它与旧镜像使用的 v1 hash
+keyspace 及 `TIME/HMGET/HSET/PEXPIRE` 不滚动兼容：先改 ACL 会使仍在运行的旧 Pod 失败，先发布新镜像
+也会被旧 ACL 拒绝。因此该协议迁移禁止作为普通 Helm rolling upgrade，且禁止临时放宽到双 keyspace 或
+命令类别来制造“零停机”。为让维护事实进入同一个保存 plan 的机器校验，唯一支持的升级路径复用
+`hmac-maintenance` 入口：API 零副本证据、HMAC 更新、Secret 版本精确加二以及 A/B 两个 ACL 的 v1→v2
+更新必须在同一计划完成。两个 Valkey 密码、活动槽、网络和容量不得改变；普通 `steady` 或
+`password-rotation` plan 中出现 ACL 变更会失败关闭。
+
+`valkey_rotation_contract` 把该状态机固定为 `acl_schema_transition=maintenance-quiesced`，同时声明
+`acl_schema_rolling_compatible=false`、`acl_schema_dual_permissions_allowed=false` 和完整迁移顺序；
+基础设施发布与应用发布都必须校验这些字段。这里的 `maintenanceQuiesced` 是一次性协议迁移状态，
+不是可跳过的说明文字，也不授权在迁移完成后长期保留 v1 权限。
+
+受保护生产变更必须按以下失败关闭顺序执行：
+
+1. 冻结新 launch/spin 入口，保存当前 delivery、Deployment、HPA、镜像 digest、ACL 和可恢复 manifest；
+   删除 API HPA、等待在途请求及旧连接排空，再把 API 缩到零。Worker 保持健康，因为资金恢复不得随
+   准入维护停止。证据必须包含 API 零副本、旧 ReplicaSet 零副本和 Valkey 旧客户端连接已排空。
+2. 以相同静默证据进入 `hmac-maintenance`，审核并应用精确包含 rotation guard、版本化 Secret、
+   SecretVersion 以及两个 ACL 用户的保存 Terraform plan。校验器只接受两个用户的 `access_string`
+   从唯一 v1 契约变成唯一 v2 契约，并拒绝密码、身份、标签、网络或容量夹带变化。随后用独立 plan
+   退出 HMAC 维护，但保持 API 静默。保留上一签名基础设施制品生成的 v1 ACL 回退 plan，禁止把 v1
+   或双协议权限重新提交到当前主线。
+3. 以 API 零副本、无 HPA 发布 v2 镜像和配置，再受控启动一个 canary。live verify 必须证明 TLS/ACL
+   认证、真实 `EVALSHA`（含 `NOSCRIPT` 后受限 `EVAL`）成功、只出现 v2 key，且 v1 keyspace 和旧命令
+   继续被拒绝；同时核对 CloudWatch 认证/授权失败、EVAL 延迟和流量管理告警。
+4. 只有 canary、钱包状态查询/ACK 绕行和 Worker 恢复全部通过后，才恢复已保存的 API 副本与 HPA，
+   并完成全量 rollout/live gate。失败时维持入口冻结和 API 零副本；若必须回退，先应用受审批的 v1 ACL
+   回退 plan，再恢复旧镜像，严禁只回退其中一侧。
+
+该一次性迁移完成并保留 live evidence 后，后续 A/B 密码轮换仍按下一节执行；密码轮换不会再次改变
+脚本协议或 keyspace。
 
 ## Valkey A/B 零停机密码轮换
 

@@ -20,7 +20,7 @@ var (
 	ErrRuntimePrivileges   = errors.New("postgres runtime privileges invalid")
 )
 
-const frozenSchemaManifestSHA256 = "bdfef08c7e2619492ea8a56ce4612cd7a97567b4eac1d87799c7807b102cb518"
+const frozenSchemaManifestSHA256 = "856304eb1796eb81f54f6d41e12c6bbe071f17b69e665f381dfc55d410b7ae6e"
 
 const schemaLedgerSQL = `
 SELECT version, checksum

@@ -117,10 +117,49 @@ reject_mutation reject-normal-terraform-data-computed-fields scripts/verify-valk
 reject_mutation allow-extra-resource-in-hmac-plan scripts/verify-valkey-rotation-plan.rb \
   'assert(actual_addresses.sort == expected_addresses.sort, "HMAC #{transition == :hmac_entry ? "入口" : "出口"} plan 的非 no-op 资源集合不符合精确 allowlist")' \
   'assert(true, "HMAC #{transition == :hmac_entry ? "入口" : "出口"} plan 的非 no-op 资源集合不符合精确 allowlist")'
+reject_mutation allow-steady-valkey-acl-schema-change scripts/verify-valkey-rotation-plan.rb \
+  'assert(transition == :hmac_entry, "Valkey ACL schema 迁移只能进入有静默证据的 HMAC 维护计划")' \
+  'assert(true, "Valkey ACL schema 迁移只能进入有静默证据的 HMAC 维护计划")'
 reject_mutation broad-valkey-keyspace modules/cache/main.tf \
-  '~rgs:shared-admission:v1:*' '~*'
+  '~rgs:shared-admission:v2:*' '~*'
+reject_mutation legacy-valkey-keyspace modules/cache/main.tf \
+  '~rgs:shared-admission:v2:*' '~rgs:shared-admission:v1:*'
+reject_mutation missing-valkey-pttl modules/cache/main.tf \
+  '+evalsha +eval +get +pttl +set' '+evalsha +eval +get +set'
+reject_mutation reintroduce-legacy-valkey-commands modules/cache/main.tf \
+  '+evalsha +eval +get +pttl +set' '+evalsha +eval +get +pttl +set +time +hmget +hset +pexpire'
+reject_mutation bypass-valkey-acl-maintenance-transition modules/cache/outputs.tf \
+  'acl_schema_transition                         = "maintenance-quiesced"' 'acl_schema_transition                         = "rolling"'
+reject_mutation allow-rolling-valkey-acl-schema modules/cache/outputs.tf \
+  'acl_schema_rolling_compatible                 = false' 'acl_schema_rolling_compatible                 = true'
+reject_mutation allow-dual-valkey-acl-schema modules/cache/outputs.tf \
+  'acl_schema_dual_permissions_allowed           = false' 'acl_schema_dual_permissions_allowed           = true'
+reject_mutation bypass-valkey-acl-quiesce modules/cache/outputs.tf \
+  'acl_schema_migration_requires_quiesced        = true' 'acl_schema_migration_requires_quiesced        = false'
+reject_mutation omit-valkey-acl-contract-from-handoff stacks/application-platform/outputs.tf \
+  'valkey_rotation_contract        = module.cache.rotation_contract' 'removed_valkey_rotation_contract = module.cache.rotation_contract'
 reject_mutation invalid-valkey-alarm-dimension modules/cache/main.tf \
   'CacheClusterId = "${aws_elasticache_replication_group.this.id}-${format("%03d", count.index + 1)}"' 'ReplicationGroupId = aws_elasticache_replication_group.this.id'
+reject_mutation invalid-valkey-capacity-alarm-dimension modules/cache/main.tf \
+  'ReplicationGroupId = aws_elasticache_replication_group.this.id' 'CacheClusterId = aws_elasticache_replication_group.this.id'
+reject_mutation disable-valkey-traffic-management-alarm modules/cache/main.tf \
+  'metric_name         = "TrafficManagementActive"' 'metric_name         = "TrafficManagementInactive"'
+reject_mutation disable-valkey-eval-latency-alarm modules/cache/main.tf \
+  'metric_name         = "EvalBasedCmdsLatency"' 'metric_name         = "EvalBasedCmds"'
+reject_mutation weaken-valkey-binary-alarm-threshold modules/cache/main.tf \
+  'threshold           = 0' 'threshold           = 1'
+reject_mutation weaken-valkey-alarm-debounce modules/cache/main.tf \
+  'datapoints_to_alarm = 2' 'datapoints_to_alarm = 1'
+reject_mutation remove-valkey-alarm-recovery-notification modules/cache/main.tf \
+  'ok_actions          = [var.alert_topic_arn]' 'ok_actions          = []'
+reject_mutation bypass-valkey-engine-cpu-threshold-validation modules/cache/variables.tf \
+  'var.valkey_alarm_thresholds.engine_cpu_utilization_percent <= 100' 'true'
+reject_mutation omit-explicit-valkey-connection-threshold environments/dev/terraform.tfvars.example \
+  '    current_connections                               = 100' '    removed_connections                               = 100'
+reject_mutation allow-rolling-valkey-v1-v2-migration README.md \
+  '该协议迁移禁止作为普通 Helm rolling upgrade' '该协议迁移允许作为普通 Helm rolling upgrade'
+reject_mutation remove-valkey-acl-maintenance-state README.md \
+  '`acl_schema_transition=maintenance-quiesced`' '`acl_schema_transition=rolling`'
 reject_mutation mutable-valkey-secret-name modules/cache/main.tf \
   'rgs-shared-admission-v${var.secret_version}' 'rgs-shared-admission-v1'
 reject_mutation mutable-application-secret-name modules/secrets/main.tf \

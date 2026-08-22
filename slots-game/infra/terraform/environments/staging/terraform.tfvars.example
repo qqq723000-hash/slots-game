@@ -51,6 +51,13 @@ configuration = {
 
   valkey_engine_version = "7.2"
   valkey_node_type      = "cache.m7g.large"
+  valkey_alarm_thresholds = {
+    engine_cpu_utilization_percent                    = 65
+    database_capacity_usage_counted_for_evict_percent = 70
+    current_connections                               = 500
+    replication_lag_seconds                           = 1
+    eval_based_commands_latency_microseconds          = 25000
+  }
   valkey_active_slot    = "a"
   valkey_rotation_mode  = "steady"
   valkey_password_fingerprint_a = "REPLACE_WITH_SHA256_OF_VALKEY_PASSWORD_A"

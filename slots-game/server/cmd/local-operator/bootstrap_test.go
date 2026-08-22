@@ -113,17 +113,27 @@ func TestPostgresBootstrapCreatesSeparatedOwnerAndRuntimeRoles(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("runtime account insert privilege: %v", err)
 	}
-	request, err := validateRound(roundRequest{
+	request, err := validateRound(bindWalletV2(t, roundRequest{
 		OperationID: "bootstrap-operation",
 		Fingerprint: "rgs-fp-v2:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		OperatorID:  "local-operator", PlayerID: "bootstrap-player",
-		WalletAccountID: "bootstrap-wallet", SessionID: "bootstrap-session",
-		RoundID: "bootstrap-round", GameID: "iron-colossus", DefinitionVersion: "math-v1",
+		WalletAccountID: "bootstrap-wallet", WalletSessionRef: "bootstrap-wallet-session",
+		SessionID: "bootstrap-session",
+		RoundID:   "bootstrap-round", GameID: "iron-colossus", DefinitionVersion: "math-v1",
 		DefinitionHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		RoundKind:      "BASE", Currency: "CNY", DebitMinor: "100", CreditMinor: "0",
-	}, nil)
+	}), nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := store.RegisterWalletSession(ctx, walletSessionSeed{
+		OperatorID: request.OperatorID, WalletSessionRef: request.WalletSessionRef,
+		PlayerID: request.PlayerID, WalletAccountID: request.WalletAccountID,
+		SessionID: request.SessionID, GameID: request.GameID,
+		DefinitionVersion: request.DefinitionVersion, DefinitionHash: request.DefinitionHash,
+		Currency: request.Currency, ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("runtime wallet session insert privilege: %v", err)
 	}
 	if operation, err := store.Apply(ctx, request); err != nil || operation.BalanceMinor != 900 {
 		t.Fatalf("runtime wallet DML = %+v, %v", operation, err)

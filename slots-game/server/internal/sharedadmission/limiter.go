@@ -32,51 +32,70 @@ import (
 const (
 	maximumSecretBytes = 4 << 10
 	maximumRootCABytes = 1 << 20
-	keyPrefix          = "rgs:shared-admission:v1:"
+	// v2 使用单字符串状态，避免与旧 hash 状态发生 WRONGTYPE；花括号使每个身份及其
+	// 未来的关联键在 Valkey Cluster 中稳定落到同一 slot，而不同 HMAC 仍均匀分布。
+	keyPrefix = "rgs:shared-admission:v2:{"
 	// valkey-go 的单节点客户端会把 0 解释为按 GOMAXPROCS 扩展连接；-1 会
 	// 规范化为一条管线连接，避免每个 API Pod 在故障时放大连接风暴。
 	singlePipelineConnectionMultiplex = -1
 	// ElastiCache 端点使用关闭集群模式的单节点协议；显式关闭集群探测，
 	// 避免客户端发送 ACL 未授权的 CLUSTER SLOTS 并制造误告警。
 	forceSingleValkeyClient = true
+	maximumBucketTTL        = 24 * time.Hour
 )
 
 const tokenBucketScriptBody = `
-local clock = redis.call('TIME')
-local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
 local capacity = tonumber(ARGV[1])
 local rate = tonumber(ARGV[2])
-local state = redis.call('HMGET', KEYS[1], 'tokens', 'updated')
-local tokens = capacity
-local updated = now
-if state[1] and state[2] then
-  tokens = tonumber(state[1])
-  updated = tonumber(state[2])
+if not capacity or not rate or capacity < 1000 or capacity > 1000000000 or
+  rate < 1 or rate > 100000000 then
+  return redis.error_reply('invalid token bucket configuration')
 end
-local elapsed = now - updated
-if elapsed < 0 then elapsed = 0 end
 local fill_time = math.ceil(capacity * 1000 / rate)
-if elapsed > fill_time then elapsed = fill_time end
-tokens = math.min(capacity, tokens + math.floor(elapsed * rate / 1000))
+if fill_time + 1000 > 86400000 then
+  return redis.error_reply('invalid token bucket configuration')
+end
+local state = redis.call('GET', KEYS[1])
+local tokens = capacity
+local elapsed = 0
+if state then
+  local decoded_ok, decoded = pcall(cmsgpack.unpack, state)
+  local ttl = redis.call('PTTL', KEYS[1])
+  if not decoded_ok or type(decoded) ~= 'table' then
+    return redis.error_reply('invalid token bucket state')
+  end
+  tokens = tonumber(decoded[1])
+  local ttl_base = tonumber(decoded[2])
+  if not tokens or tokens ~= tokens or tokens < 0 or not ttl_base or
+    ttl_base ~= math.floor(ttl_base) or ttl_base < 1000 or ttl_base > 86400000 or
+    ttl < 0 or ttl > ttl_base or decoded[3] ~= nil then
+    return redis.error_reply('invalid token bucket state')
+  end
+  tokens = math.min(capacity, tokens)
+  elapsed = ttl_base - ttl
+  if elapsed < 0 then elapsed = 0 end
+  if elapsed > fill_time then elapsed = fill_time end
+end
+tokens = math.min(capacity, tokens + elapsed * rate / 1000)
 local allowed = 0
 local retry_ms = 0
 if tokens >= 1000 then
   tokens = tokens - 1000
   allowed = 1
+  local ttl_base = math.max(1000, fill_time + 1000)
+  redis.call('SET', KEYS[1], cmsgpack.pack({tokens, ttl_base}), 'PX', ttl_base)
 else
   retry_ms = math.max(1, math.ceil((1000 - tokens) * 1000 / rate))
 end
-redis.call('HSET', KEYS[1], 'tokens', tokens, 'updated', now)
-redis.call('PEXPIRE', KEYS[1], math.max(1000, fill_time + 1000))
 return {allowed, retry_ms}
 `
 
 // SHA-1 只作为 Valkey SCRIPT 协议规定的内容地址，不承担任何密码学安全判断。
 // 使用预计算值可避免 FIPS 140-only 进程在启动时调用被禁止的 SHA-1 实现。
-const tokenBucketScriptSHA1 = "f1a41759cc" +
-	"9b880a66f7" +
-	"b83a8a50bb" +
-	"26454dcffe"
+const tokenBucketScriptSHA1 = "8058bf83ba" +
+	"86e36cf118" +
+	"3596a03259" +
+	"d1b818058b"
 
 type Config struct {
 	URL          string
@@ -96,17 +115,68 @@ type scriptExecutor interface {
 }
 
 type valkeyExecutor struct {
-	client valkey.Client
+	client           valkey.Client
+	scriptReload     chan struct{}
+	scriptGeneration atomic.Uint64
+	noScriptMisses   atomic.Uint64
 }
 
 func (executor *valkeyExecutor) Evaluate(ctx context.Context, key string, args []string) ([]int64, error) {
-	result := executor.client.Do(ctx, executor.client.B().Evalsha().Sha1(tokenBucketScriptSHA1).
-		Numkeys(1).Key(key).Arg(args...).Build())
-	if valkeyError, ok := valkey.IsValkeyErr(result.Error()); ok && valkeyError.IsNoScript() {
-		result = executor.client.Do(ctx, executor.client.B().Eval().Script(tokenBucketScriptBody).
-			Numkeys(1).Key(key).Arg(args...).Build())
+	evalsha := func() scriptCallResult {
+		return parseScriptCallResult(executor.client.Do(ctx, executor.client.B().Evalsha().Sha1(tokenBucketScriptSHA1).
+			Numkeys(1).Key(key).Arg(args...).Build()))
 	}
-	return result.AsIntSlice()
+	eval := func() scriptCallResult {
+		return parseScriptCallResult(executor.client.Do(ctx, executor.client.B().Eval().Script(tokenBucketScriptBody).
+			Numkeys(1).Key(key).Arg(args...).Build()))
+	}
+	return executor.evaluateCached(ctx, evalsha, eval)
+}
+
+type scriptCallResult struct {
+	values   []int64
+	err      error
+	noScript bool
+}
+
+func parseScriptCallResult(result valkey.ValkeyResult) scriptCallResult {
+	resultError := result.Error()
+	valkeyError, isValkeyError := valkey.IsValkeyErr(resultError)
+	values, err := result.AsIntSlice()
+	return scriptCallResult{values: values, err: err, noScript: isValkeyError && valkeyError.IsNoScript()}
+}
+
+func (executor *valkeyExecutor) evaluateCached(
+	ctx context.Context,
+	evalsha func() scriptCallResult,
+	eval func() scriptCallResult,
+) ([]int64, error) {
+	for {
+		generation := executor.scriptGeneration.Load()
+		result := evalsha()
+		if !result.noScript {
+			return result.values, result.err
+		}
+		executor.noScriptMisses.Add(1)
+		// 故障转移会清空服务端脚本缓存。只允许一个并发请求携带完整 Lua body；
+		// 其余请求等待该次装载后重试 EVALSHA，避免 N 个并发请求放大脚本文本流量。
+		// 获取闸门必须响应调用方 deadline，不能让缓存恢复突破准入超时。
+		select {
+		case executor.scriptReload <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if executor.scriptGeneration.Load() != generation {
+			<-executor.scriptReload
+			continue
+		}
+		result = eval()
+		if result.err == nil {
+			executor.scriptGeneration.Add(1)
+		}
+		<-executor.scriptReload
+		return result.values, result.err
+	}
 }
 
 func (executor *valkeyExecutor) Ping(ctx context.Context) error {
@@ -167,13 +237,17 @@ func New(config Config, metrics *platform.Metrics) (*Limiter, error) {
 		clear(hmacKey)
 		return nil, fmt.Errorf("construct shared admission client: %w", err)
 	}
-	limiter, err := newLimiter(&valkeyExecutor{client: client}, config, hmacKey, metrics)
+	limiter, err := newLimiter(newValkeyExecutor(client), config, hmacKey, metrics)
 	if err != nil {
 		client.Close()
 		clear(hmacKey)
 		return nil, err
 	}
 	return limiter, nil
+}
+
+func newValkeyExecutor(client valkey.Client) *valkeyExecutor {
+	return &valkeyExecutor{client: client, scriptReload: make(chan struct{}, 1)}
 }
 
 func newLimiter(executor scriptExecutor, config Config, hmacKey []byte, metrics *platform.Metrics) (*Limiter, error) {
@@ -187,6 +261,10 @@ func newLimiter(executor scriptExecutor, config Config, hmacKey []byte, metrics 
 	rateMilli := math.Round(config.Rate * 1_000)
 	if rateMilli < 1 || rateMilli > math.MaxInt64 || float64(config.Burst)*1_000 > math.MaxInt64 {
 		return nil, errors.New("shared admission rate cannot be represented safely")
+	}
+	fillMilliseconds := math.Ceil(float64(config.Burst) * 1_000 * 1_000 / rateMilli)
+	if fillMilliseconds+1_000 > float64(maximumBucketTTL/time.Millisecond) {
+		return nil, errors.New("shared admission full-refill TTL exceeds 24 hours")
 	}
 	return &Limiter{
 		executor: executor,
@@ -216,15 +294,20 @@ func (limiter *Limiter) Admit(parent context.Context, identity string, _ time.Ti
 		}
 		defer limiter.probeInFlight.Store(false)
 	}
-	// 客户端时间只用于旧的进程内限制器；共享桶必须使用 Valkey TIME，避免 Pod 时钟漂移。
+	// 客户端时间只用于旧的进程内限制器；共享桶从 Valkey PTTL 推导经过时间，
+	// 避免 Pod 时钟漂移并保持故障转移后的服务端 TTL 语义。
 	ctx, cancel := context.WithTimeout(parent, limiter.timeout)
 	defer cancel()
 	mac := hmac.New(sha256.New, limiter.hmacKey)
 	_, _ = mac.Write([]byte(identity))
-	key := keyPrefix + hex.EncodeToString(mac.Sum(nil))
+	key := keyPrefix + hex.EncodeToString(mac.Sum(nil)) + "}"
 	result, err := limiter.executor.Evaluate(ctx, key, limiter.arguments)
 	if err != nil || len(result) != 2 || (result[0] != 0 && result[0] != 1) || result[1] < 0 {
-		limiter.unavailableUntil.Store(now.Add(time.Second).UnixNano())
+		// 调用方主动取消不代表共享后端故障；本次仍 fail-closed，但不能让单个取消请求
+		// 打开全局熔断并隔离其他运营商/会话。内部超时和真实协议错误仍开启熔断。
+		if parent.Err() == nil {
+			limiter.unavailableUntil.Store(now.Add(time.Second).UnixNano())
+		}
 		return limiter.backendUnavailable()
 	}
 	limiter.unavailableUntil.Store(0)

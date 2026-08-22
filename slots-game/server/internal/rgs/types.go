@@ -30,6 +30,9 @@ var (
 	ErrWalletPending          = errors.New("rgs: wallet result is pending")
 	ErrWalletRejected         = errors.New("rgs: wallet rejected round")
 	ErrWalletReceiptInvalid   = errors.New("rgs: wallet receipt is invalid")
+	// ErrStaleWalletClaim 表示调用方持有的 wallet_lease_until 已被续租、调度或终态转换取代。
+	// 收到此错误后只能读取最新轮次，禁止使用旧钱包结果继续写入。
+	ErrStaleWalletClaim = errors.New("rgs: stale wallet claim")
 )
 
 const (
@@ -179,13 +182,20 @@ type RoundRecord struct {
 	// InputFeatureState 与预备结果在同一事务中持久化，是恢复展示的局前权威状态。
 	InputFeatureState game.FeatureState
 	WalletCommand     WalletRound
-	WalletReceipt     *WalletReceipt
-	OutcomeHash       string
-	WalletLeaseUntil  time.Time
-	FailureReason     string
-	RetryCount        int
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// WalletProfile 与预备结果同事务持久化；恢复必须使用该快照，而不是把旧轮次
+	// 重新解释为发布后适配器临时报告的新能力。
+	WalletProfile        Profile
+	WalletReceipt        *WalletReceipt
+	OutcomeHash          string
+	WalletPhase          WalletRecoveryAction
+	NextAttemptAt        time.Time
+	WalletApplyAttempts  int
+	WalletLookupAttempts int
+	WalletLeaseUntil     time.Time
+	FailureReason        string
+	RetryCount           int
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 func validateSession(session Session) error {

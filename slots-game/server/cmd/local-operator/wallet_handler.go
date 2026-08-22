@@ -19,8 +19,10 @@ const maxWalletRequestBytes int64 = 64 << 10
 type walletStore interface {
 	Apply(context.Context, validatedRound) (storedOperation, error)
 	Lookup(context.Context, string, string) (storedOperation, bool, error)
+	LookupRejection(context.Context, string, string) (storedRejection, bool, error)
 	Rollback(context.Context, validatedRollback) (storedOperation, error)
 	EnsureAccount(context.Context, accountSeed) error
+	RegisterWalletSession(context.Context, walletSessionSeed) error
 	Ping(context.Context) error
 }
 
@@ -44,17 +46,19 @@ type walletHandlerConfig struct {
 	Store              walletStore
 	Verifier           *operator.RequestVerifier
 	ResponseSigningKey operator.SigningKey
+	AllowLegacyV1      bool
 	Now                func() time.Time
 	Metrics            *serviceMetrics
 }
 
 type walletHandler struct {
-	operatorID string
-	store      walletStore
-	verifier   *operator.RequestVerifier
-	signing    operator.SigningKey
-	now        func() time.Time
-	metrics    *serviceMetrics
+	operatorID    string
+	store         walletStore
+	verifier      *operator.RequestVerifier
+	signing       operator.SigningKey
+	allowLegacyV1 bool
+	now           func() time.Time
+	metrics       *serviceMetrics
 }
 
 func newWalletHandler(config walletHandlerConfig) http.Handler {
@@ -63,7 +67,8 @@ func newWalletHandler(config walletHandlerConfig) http.Handler {
 	}
 	return &walletHandler{
 		operatorID: config.OperatorID, store: config.Store, verifier: config.Verifier,
-		signing: config.ResponseSigningKey, now: config.Now, metrics: config.Metrics,
+		signing: config.ResponseSigningKey, allowLegacyV1: config.AllowLegacyV1,
+		now: config.Now, metrics: config.Metrics,
 	}
 }
 
@@ -115,17 +120,17 @@ func (h *walletHandler) handleApply(
 	var payload roundRequest
 	if decodeStrictJSON(body, &payload) != nil || payload.OperatorID != verified.OperatorID ||
 		payload.OperationID != verified.IdempotencyKey {
-		h.write(writer, request, http.StatusBadRequest, walletResponse{Status: "REJECTED", Code: "INVALID_REQUEST"})
+		h.write(writer, request, http.StatusConflict, walletResponse{Status: "CONFLICT", Code: "INVALID_REQUEST_BINDING"})
 		return
 	}
-	validated, err := validateRound(payload, body)
+	validated, err := validateRoundWithPolicy(payload, body, h.allowLegacyV1)
 	if err != nil {
-		h.write(writer, request, http.StatusUnprocessableEntity, walletResponse{Status: "REJECTED", Code: "INVALID_ROUND"})
+		h.write(writer, request, http.StatusConflict, walletResponse{Status: "CONFLICT", Code: "INVALID_COMMAND_BINDING"})
 		return
 	}
 	operation, err := h.store.Apply(request.Context(), validated)
 	if err != nil {
-		h.writeStoreError(writer, request, err)
+		h.writeApplyError(writer, request, validated, err)
 		return
 	}
 	h.metrics.walletApplies.Add(1)
@@ -141,7 +146,7 @@ func (h *walletHandler) handleLookup(
 	var payload lookupRequest
 	if decodeStrictJSON(body, &payload) != nil || validateLookup(payload) != nil ||
 		payload.OperatorID != verified.OperatorID || payload.OperationID != verified.IdempotencyKey {
-		h.write(writer, request, http.StatusBadRequest, walletResponse{Status: "REJECTED", Code: "INVALID_REQUEST"})
+		h.write(writer, request, http.StatusConflict, walletResponse{Status: "CONFLICT", Code: "INVALID_REQUEST_BINDING"})
 		return
 	}
 	operation, found, err := h.store.Lookup(request.Context(), payload.OperatorID, payload.OperationID)
@@ -149,16 +154,49 @@ func (h *walletHandler) handleLookup(
 		h.writeStoreError(writer, request, err)
 		return
 	}
-	h.metrics.walletLookups.Add(1)
-	if !found {
-		h.write(writer, request, http.StatusNotFound, walletResponse{Status: "NOT_FOUND", Code: "OPERATION_NOT_FOUND"})
+	if found {
+		if lookupUsesV2Binding(payload) &&
+			(operation.Fingerprint != payload.Fingerprint || operation.CommandDigest != payload.CommandDigest) {
+			h.write(writer, request, http.StatusConflict, walletResponse{Status: "CONFLICT", Code: "IDEMPOTENCY_CONFLICT"})
+			return
+		}
+		h.metrics.walletLookups.Add(1)
+		status := "SUCCEEDED"
+		if operation.RolledBack {
+			status = "ROLLED_BACK"
+		}
+		h.write(writer, request, http.StatusOK, operationResponse(status, operation))
 		return
 	}
-	status := "SUCCEEDED"
-	if operation.RolledBack {
-		status = "ROLLED_BACK"
+	rejection, found, err := h.store.LookupRejection(
+		request.Context(), payload.OperatorID, payload.OperationID,
+	)
+	if err != nil {
+		h.writeStoreError(writer, request, err)
+		return
 	}
-	h.write(writer, request, http.StatusOK, operationResponse(status, operation))
+	h.metrics.walletLookups.Add(1)
+	if found {
+		if lookupUsesV2Binding(payload) &&
+			(rejection.Fingerprint != payload.Fingerprint || rejection.CommandDigest != payload.CommandDigest) {
+			h.write(writer, request, http.StatusConflict, walletResponse{Status: "CONFLICT", Code: "IDEMPOTENCY_CONFLICT"})
+			return
+		}
+		h.write(writer, request, http.StatusUnprocessableEntity, walletResponse{
+			Status: "REJECTED", Code: rejection.Code, OperationID: rejection.OperationID,
+			Fingerprint: rejection.Fingerprint, OperatorID: rejection.OperatorID,
+			CommandDigest: rejection.CommandDigest,
+		})
+		return
+	}
+	response := walletResponse{Status: "NOT_FOUND", Code: "OPERATION_NOT_FOUND"}
+	if lookupUsesV2Binding(payload) {
+		response.OperatorID = payload.OperatorID
+		response.OperationID = payload.OperationID
+		response.Fingerprint = payload.Fingerprint
+		response.CommandDigest = payload.CommandDigest
+	}
+	h.write(writer, request, http.StatusNotFound, response)
 }
 
 func (h *walletHandler) handleRollback(
@@ -185,7 +223,9 @@ func (h *walletHandler) handleRollback(
 		return
 	}
 	h.metrics.walletRollbacks.Add(1)
-	h.write(writer, request, http.StatusOK, operationResponse("ROLLED_BACK", operation))
+	response := operationResponse("ROLLED_BACK", operation)
+	response.RollbackID = payload.RollbackID
+	h.write(writer, request, http.StatusOK, response)
 }
 
 func (h *walletHandler) writeStoreError(writer http.ResponseWriter, request *http.Request, err error) {
@@ -194,11 +234,30 @@ func (h *walletHandler) writeStoreError(writer http.ResponseWriter, request *htt
 		h.write(writer, request, http.StatusConflict, walletResponse{Status: "CONFLICT", Code: "IDEMPOTENCY_CONFLICT"})
 	case errors.Is(err, errInsufficientFunds):
 		h.write(writer, request, http.StatusUnprocessableEntity, walletResponse{Status: "REJECTED", Code: "INSUFFICIENT_FUNDS"})
+	case errors.Is(err, errWalletSessionInvalid):
+		h.write(writer, request, http.StatusUnprocessableEntity, walletResponse{Status: "REJECTED", Code: "WALLET_SESSION_INVALID"})
 	case errors.Is(err, errOperationNotFound), errors.Is(err, errAccountNotFound):
 		h.write(writer, request, http.StatusUnprocessableEntity, walletResponse{Status: "REJECTED", Code: "NOT_FOUND"})
 	default:
 		h.write(writer, request, http.StatusServiceUnavailable, walletResponse{Status: "PENDING", Code: "STORE_UNAVAILABLE"})
 	}
+}
+
+func (h *walletHandler) writeApplyError(
+	writer http.ResponseWriter,
+	request *http.Request,
+	command validatedRound,
+	err error,
+) {
+	if code, terminal := rejectionCode(err); terminal {
+		h.write(writer, request, http.StatusUnprocessableEntity, walletResponse{
+			Status: "REJECTED", Code: code, OperationID: command.OperationID,
+			Fingerprint: command.Fingerprint, OperatorID: command.OperatorID,
+			CommandDigest: command.CommandDigest,
+		})
+		return
+	}
+	h.writeStoreError(writer, request, err)
 }
 
 func (h *walletHandler) write(writer http.ResponseWriter, request *http.Request, status int, payload walletResponse) {

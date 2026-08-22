@@ -36,6 +36,7 @@ module "platform" {
   rds_backup_retention_days             = var.configuration.rds_backup_retention_days
   valkey_engine_version                 = var.configuration.valkey_engine_version
   valkey_node_type                      = var.configuration.valkey_node_type
+  valkey_alarm_thresholds               = var.configuration.valkey_alarm_thresholds
   valkey_active_slot                    = var.configuration.valkey_active_slot
   valkey_rotation_mode                  = var.configuration.valkey_rotation_mode
   valkey_password_a                     = var.valkey_password_a

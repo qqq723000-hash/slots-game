@@ -325,6 +325,59 @@ variable "node_type" {
   type        = string
 }
 
+variable "valkey_alarm_thresholds" {
+  description = "经容量测试批准的 Valkey CloudWatch 告警阈值；延迟单位分别为秒和微秒"
+  type = object({
+    engine_cpu_utilization_percent                    = number
+    database_capacity_usage_counted_for_evict_percent = number
+    current_connections                               = number
+    replication_lag_seconds                           = number
+    eval_based_commands_latency_microseconds          = number
+  })
+
+  validation {
+    condition = (
+      var.valkey_alarm_thresholds.engine_cpu_utilization_percent > 0 &&
+      var.valkey_alarm_thresholds.engine_cpu_utilization_percent <= 100
+    )
+    error_message = "Valkey 引擎 CPU 告警阈值必须大于 0 且不超过 100%。"
+  }
+
+  validation {
+    condition = (
+      var.valkey_alarm_thresholds.database_capacity_usage_counted_for_evict_percent > 0 &&
+      var.valkey_alarm_thresholds.database_capacity_usage_counted_for_evict_percent < 100
+    )
+    error_message = "Valkey 可逐出容量告警阈值必须大于 0 且小于 100%。"
+  }
+
+  validation {
+    condition = (
+      var.valkey_alarm_thresholds.current_connections >= 1 &&
+      var.valkey_alarm_thresholds.current_connections <= 1000000 &&
+      floor(var.valkey_alarm_thresholds.current_connections) == var.valkey_alarm_thresholds.current_connections
+    )
+    error_message = "Valkey 连接数告警阈值必须是 1 到 1000000 的整数。"
+  }
+
+  validation {
+    condition = (
+      var.valkey_alarm_thresholds.replication_lag_seconds > 0 &&
+      var.valkey_alarm_thresholds.replication_lag_seconds <= 60
+    )
+    error_message = "Valkey 复制延迟告警阈值必须大于 0 且不超过 60 秒。"
+  }
+
+  validation {
+    condition = (
+      var.valkey_alarm_thresholds.eval_based_commands_latency_microseconds >= 1 &&
+      var.valkey_alarm_thresholds.eval_based_commands_latency_microseconds <= 1000000 &&
+      floor(var.valkey_alarm_thresholds.eval_based_commands_latency_microseconds) == var.valkey_alarm_thresholds.eval_based_commands_latency_microseconds
+    )
+    error_message = "Valkey EVAL 命令延迟告警阈值必须是 1 到 1000000 微秒的整数。"
+  }
+}
+
 variable "log_retention_days" {
   description = "Valkey engine/slow log 保留天数"
   type        = number

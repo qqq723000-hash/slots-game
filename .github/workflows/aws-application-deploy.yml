@@ -526,6 +526,15 @@ jobs:
             $rotation.hmac_maintenance_attestation_schema == "slots-game/hmac-quiesce-attestation/v1" and
             $rotation.hmac_maintenance_evidence_maximum_ttl_seconds == 3600 and
             $rotation.hmac_maintenance_persistent_lock_name == "slots-hmac-maintenance-lock" and
+            $rotation.acl_schema_version == "v2" and
+            $rotation.acl_schema_transition == "maintenance-quiesced" and
+            $rotation.acl_schema_migration_requires_quiesced == true and
+            $rotation.acl_schema_rolling_compatible == false and
+            $rotation.acl_schema_dual_permissions_allowed == false and
+            $rotation.acl_schema_migration_order == [
+              "stop-new-intents", "drain-old-api-pods", "apply-v2-acl",
+              "start-v2-runtime", "verify-v2-shared-admission", "resume-new-intents"
+            ] and
             $rotation.hmac_maintenance_target_identity == {
               environment: $target, aws_account_id: $account, aws_region: $region,
               eks_cluster_name: $cluster, kubernetes_namespace: env.AWS_EKS_NAMESPACE,

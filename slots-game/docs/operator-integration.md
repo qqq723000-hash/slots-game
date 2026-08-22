@@ -130,7 +130,7 @@ JSON 前校验摘要与签名。不要在摘要计算与传输间重新生成或
 body。运营商准入控制错误（含 HTTP 429）留在该签名响应边界内。
 
 进程级容量闸门是明确的例外：它在运营商身份、签名和 nonce 解析前，可能返回通用、未签名、无
-业务数据的 HTTP 503 `SERVICE_UNAVAILABLE` 与 `Retry-After`。这只是 transport/admission 背压，
+业务数据的 HTTP 503 `CAPACITY_UNAVAILABLE` 与 `Retry-After`。这只是 transport/admission 背压，
 不是已认证业务响应；绝不能据此推断请求是否在别处被接受、nonce 是否被消费或 launch/round 是否
 产生副作用。等待 `Retry-After` 后，按不确定传输规则优先查询可查询状态，或保持业务 body 与
 `Idempotency-Key` 不变并使用新的 `X-Nonce`、`X-Request-Id`、`created`/`expires` 和签名重试；
@@ -211,11 +211,23 @@ launch，HTTP 410 表示持久会话过期，HTTP 423 表示会话 BLOCKED/`MANU
 每个运营商需要一个适配器并必须通过一致性套件；仅有相同 JSON 形状不充分。RGS 仅发 `POST` 请
 求：
 
+当前准入档案固定为 `rgs-wallet-contract-v2` / `atomic-http-v2`。URL 中的 `/wallet/v1/` 是为现有
+路由保留的传输路径版本，不代表请求仍可省略 v2 命令绑定。档案要求原子 round、按
+`operationId` 查询、权威余额、`walletSessionRef` 与 `commandDigest`；只有权威 `NOT_FOUND`
+持续至少一秒后，才允许以完全相同的 operation ID 和命令摘要重提。该等待窗口是下界，不是保证
+外部钱包已完成最终一致的上界。
+
 | 路径                               | 用途                               | 必需幂等                             |
 | ---------------------------------- | ---------------------------------- | ------------------------------------ |
-| `/wallet/v1/rounds/apply`          | 原子应用一个已准备结果的扣款与收款 | `operationId` 加不可变 `fingerprint` |
+| `/wallet/v1/rounds/apply`          | 原子应用一个已准备结果的扣款与收款 | `operationId` 加不可变 `commandDigest` |
 | `/wallet/v1/transactions/status`   | 不重复经济意图地解析模糊 apply     | 确切 `operationId`                   |
-| `/wallet/v1/transactions/rollback` | 显式运维控制的补偿                 | 唯一 `rollbackId`；超时后绝不自动    |
+| `/wallet/v1/transactions/rollback` | 未认证的人工补偿接口               | 唯一 `rollbackId`；超时后绝不自动    |
+
+当前 `atomic-http-v2` 能力档案明确发布 `explicitRollback=false`。rollback 只允许经过认证、
+有人工审批和审计记录的补偿工具调用，自动结算/恢复状态机不得调用。成功响应必须原样绑定
+`operatorId`、`operationId`、`rollbackId`；若原操作使用 v2 `commandDigest`，响应也必须返回
+该原始摘要。客户端对任一身份漂移、摘要格式损坏或未认证响应都必须失败关闭，超时后只能查询和
+人工核对，不得自动重复补偿。
 
 `/wallet/v1/rounds/apply` 请求字段为：
 
@@ -226,6 +238,7 @@ launch，HTTP 410 表示持久会话过期，HTTP 423 表示会话 BLOCKED/`MANU
   "operatorId": "operator-a",
   "playerId": "player-ref",
   "walletAccountId": "wallet-ref",
+  "walletSessionRef": "wallet-session-ref",
   "rgsSessionId": "session-ref",
   "roundId": "round-ref",
   "gameId": "iron-colossus",
@@ -234,12 +247,49 @@ launch，HTTP 410 表示持久会话过期，HTTP 423 表示会话 BLOCKED/`MANU
   "roundKind": "BASE",
   "currency": "EUR",
   "debitMinor": "100",
-  "creditMinor": "250"
+  "creditMinor": "250",
+  "commandDigest": "rgs-wallet-cmd-v1:<64-lowercase-hex-characters>"
 }
 ```
 
-钱包必须在一个账本事务中应用扣款与收款。重放相同 `operationId` 与 fingerprint 返回原始收据而
-无新账本条目。用任何不同经济字段复用操作 ID 返回 HTTP 409 并触发人工审核。
+钱包必须在一个账本事务中应用扣款与收款。重放相同 `operationId`、`fingerprint` 与
+`commandDigest` 返回原始收据而无新账本条目。用任何不同绑定字段复用操作 ID 返回 HTTP 409 并
+触发人工审核。
+
+`commandDigest` 不是可直接信任的客户端声明。钱包必须先严格解析所有字段，再从完整命令重算并
+恒定时间比较。规范投影使用 SHA-256；每个字段依次写入字段名八字节大端长度、字段名、字段值八
+字节大端长度、字段值。字段顺序固定为 `schema=rgs-wallet-command-v1`、
+`walletContractVersion=rgs-wallet-contract-v2`、`walletProfileId=atomic-http-v2`、`operationId`、
+`fingerprint`、`operatorId`、`playerId`、`walletAccountId`、`walletSessionRef`、
+`rgsSessionId`、`roundId`、`gameId`、`definitionVersion`、`definitionHash`、`roundKind`、
+`currency`、规范十进制 `debitMinor`、规范十进制 `creditMinor`；结果以前缀
+`rgs-wallet-cmd-v1:` 编码。缺少任一 v2 字段、只发送其中一个字段、摘要格式错误或任一已绑定字段
+漂移，都必须在账本副作用前拒绝。
+
+仓库自带的 local operator 默认严格执行 v2。迁移旧 RGS 时只能显式设置
+`LOCAL_OPERATOR_ALLOW_LEGACY_WALLET_V1=true` 临时接受同时缺少两个绑定字段的完整 v1 请求；
+半升级请求始终拒绝。此开关是降级窗口，不是生产推荐值，升级完成后必须恢复为 `false`。历史
+v1 账本行保持可查询，新 v2 行会单独持久化会话引用和命令摘要以便审计。local operator 还会在
+launch 成功交付前持久化 wallet session 到玩家、钱包账户、RGS 会话、游戏定义和货币的权威绑定；
+apply 即使携带自洽的新摘要，只要引用不存在或跨玩家/账户/会话串用，仍会在账本副作用前拒绝。
+
+这次 v2 迁移不支持新旧 local operator 写入实例混跑。旧二进制既不查询终态拒绝表，也不参与新
+版本的 operation 决策锁；新实例持久化拒绝后，同一 operation 若被路由到旧实例，仍可能在余额
+变化后成功，形成两个相互冲突的终态。local-production Compose 只部署单实例；升级时必须先停止
+并排空全部旧写入实例，再执行迁移并一次性替换全部实例，验证拒绝状态查询后才重新开放 RGS
+流量。需要多副本无中断切换的外部钱包必须使用版本化流量切换或等效的运营商认证方案，不能把
+本地适配器视为混合版本滚动升级安全。
+
+资金不足、钱包会话绑定无效、账户不存在等可声明 `REJECTED_FINAL` 的确定拒绝，也必须按
+`operationId` 与完整命令身份原子持久化，不能只发送一次 422。相同命令重放返回原始拒绝；不同
+命令复用 operation ID 返回 409；status 查询返回签名 422、`status=REJECTED`、稳定 `code` 以及
+匹配的 operation、fingerprint、command digest、operator 身份。这样即使首个 422 在网络中丢
+失，后续余额变化也不能让同一 operation 从拒绝变为成功。
+
+v2 status 请求必须同时携带 `operatorId`、`operationId`、`fingerprint` 与 `commandDigest`。
+签名 `NOT_FOUND` 响应也必须逐字段原样回显这四项身份；缺失或不一致一律按协议冲突处理，绝不
+授权重新 APPLY。旧 v1 Lookup 仍保持仅 `operatorId`/`operationId` 的既有线协议，但其无绑定
+`NOT_FOUND` 不能进入 atomic-http-v2 的自动重提决策。
 
 成功为 HTTP 200 带签名、严格 JSON 收据：
 
@@ -253,12 +303,15 @@ launch，HTTP 410 表示持久会话过期，HTTP 423 表示会话 BLOCKED/`MANU
   "currency": "EUR",
   "debitMinor": "100",
   "creditMinor": "250",
-  "balanceMinor": "10450"
+  "balanceMinor": "10450",
+  "commandDigest": "rgs-wallet-cmd-v1:<64-lowercase-hex-characters>"
 }
 ```
 
-RGS 在提交前针对已准备指令校验每个回显字段。资金始终为最小单位的非负十进制字符串，必须适合
-有符号 64 位存储。不接受小数点、指数、符号或 JSON 数字。
+RGS 在提交前针对已准备指令校验每个回显字段。v2 apply 与 status 成功响应都必须回显持久化的
+`commandDigest`；缺失或不一致会被隔离为协议冲突，只有显式 legacy 降级路径可以省略。资金始终
+为最小单位的非负十进制字符串，必须适合有符号 64 位存储。不接受小数点、指数、符号或 JSON
+数字。
 
 钱包状态含义：
 
@@ -291,6 +344,16 @@ RGS 在提交前针对已准备指令校验每个回显字段。资金始终为�
    响应审批记录于变更控制。
 
 仅通过仓库单元测试不是运营商一致性，也不是监管认证。
+
+本地可执行线协议回归门禁为：
+
+```bash
+go test -count=1 ./server/cmd/local-operator ./server/internal/wallet
+```
+
+它覆盖仓库内 HTTP 适配器、本地 operator、请求/响应签名、完整命令绑定、重复提交与状态查询；
+它不覆盖第三方平台的实际网络、账本实现、保留期、灾备或监管认证，因此不能替代外部钱包的独立
+一致性套件与签署产物。
 
 ## 8. 生产切换清单
 

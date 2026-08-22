@@ -145,6 +145,42 @@ if KUBECTL_BIN=$mock_kubectl \
   fail 'Valkey B 槽 password fingerprint 缺失未被拒绝'
 fi
 
+missing_acl_transition_delivery="$fixture_root/missing-acl-transition-delivery.json"
+jq 'del(.valkey_rotation_contract.acl_schema_transition)' \
+  "$delivery_file" > "$missing_acl_transition_delivery"
+if KUBECTL_BIN=$mock_kubectl \
+  "$verifier" "$values_file" "$chart_defaults" slots-production "$missing_acl_transition_delivery" \
+  >/dev/null 2>&1; then
+  fail 'Valkey ACL v2 维护迁移模式缺失未被拒绝'
+fi
+
+rolling_acl_delivery="$fixture_root/rolling-acl-delivery.json"
+jq '.valkey_rotation_contract.acl_schema_rolling_compatible = true' \
+  "$delivery_file" > "$rolling_acl_delivery"
+if KUBECTL_BIN=$mock_kubectl \
+  "$verifier" "$values_file" "$chart_defaults" slots-production "$rolling_acl_delivery" \
+  >/dev/null 2>&1; then
+  fail 'Valkey ACL v1 到 v2 被篡改为普通 rolling 兼容后未被拒绝'
+fi
+
+dual_acl_delivery="$fixture_root/dual-acl-delivery.json"
+jq '.valkey_rotation_contract.acl_schema_dual_permissions_allowed = true' \
+  "$delivery_file" > "$dual_acl_delivery"
+if KUBECTL_BIN=$mock_kubectl \
+  "$verifier" "$values_file" "$chart_defaults" slots-production "$dual_acl_delivery" \
+  >/dev/null 2>&1; then
+  fail 'Valkey ACL v1/v2 永久双权限被启用后未被拒绝'
+fi
+
+reordered_acl_delivery="$fixture_root/reordered-acl-delivery.json"
+jq '.valkey_rotation_contract.acl_schema_migration_order[1:3] |= reverse' \
+  "$delivery_file" > "$reordered_acl_delivery"
+if KUBECTL_BIN=$mock_kubectl \
+  "$verifier" "$values_file" "$chart_defaults" slots-production "$reordered_acl_delivery" \
+  >/dev/null 2>&1; then
+  fail 'Valkey ACL v2 在排空旧 Pod 前应用的迁移顺序未被拒绝'
+fi
+
 hmac_maintenance_delivery="$fixture_root/hmac-maintenance-delivery.json"
 jq '.valkey_rotation_mode = "hmac-maintenance" |
   .valkey_rotation_contract.rotation_mode = "hmac-maintenance"' \

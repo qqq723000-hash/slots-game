@@ -27,8 +27,14 @@
 {{- if and .Values.web.enabled (lt (int .Values.web.autoscaling.maxReplicas) (int .Values.web.autoscaling.minReplicas)) -}}
 {{- fail "Web HPA maxReplicas 不得小于 minReplicas" -}}
 {{- end -}}
+{{- if and .Values.worker.maintenanceQuiesced (not .Values.rgs.maintenanceQuiesced) -}}
+{{- fail "Worker 数据库维护静默必须同时静默 RGS API" -}}
+{{- end -}}
 {{- if gt (int .Values.rgs.runtime.databaseMaxIdleConnections) (int .Values.rgs.runtime.databaseMaxOpenConnections) -}}
 {{- fail "RGS 数据库空闲连接上限不得大于总连接上限" -}}
+{{- end -}}
+{{- if ge (int .Values.rgs.runtime.databaseCriticalReserveConnections) (int .Values.rgs.runtime.databaseMaxOpenConnections) -}}
+{{- fail "RGS 关键结果路径数据库保留连接必须小于总连接上限" -}}
 {{- end -}}
 {{- if gt (int .Values.worker.runtime.databaseMaxIdleConnections) (int .Values.worker.runtime.databaseMaxOpenConnections) -}}
 {{- fail "Worker 数据库空闲连接上限不得大于总连接上限" -}}

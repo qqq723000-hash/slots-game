@@ -110,10 +110,9 @@ func TestSpinQuarantinesInvalidSessionBeforeEngineOrWallet(t *testing.T) {
 	fixture.pendingRoundID = "round-existing"
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+`
-		WHERE operator_id=$1 AND session_id=$2 FOR UPDATE`)).
+	mock.ExpectQuery(regexp.QuoteMeta(prepareSessionLockSQL)).
 		WithArgs(fixture.operatorID, fixture.sessionID).
-		WillReturnRows(fixture.rows())
+		WillReturnRows(fixture.prepareRows())
 	expectSessionQuarantineLocked(mock, fixture, false)
 
 	spinner := &sessionIntegritySpinner{}
@@ -188,7 +187,9 @@ func TestPostgresConcurrentSessionIntegrityQuarantinePreservesEconomicEvidence(t
 		BetMinor: 100, StartRevision: 0,
 	}
 	_, prepared, err := repositoryA.PrepareRound(
-		ctx, request, rgs.FingerprintFor(request), func(locked rgs.Session) (rgs.SpinResult, error) {
+		ctx, request, rgs.FingerprintFor(request),
+		rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget("https://wallet.test.invalid/ledger")),
+		func(locked rgs.Session) (rgs.SpinResult, error) {
 			return validPreparedSessionIntegrityResult(request, locked.Sequence+1), nil
 		},
 	)
@@ -310,6 +311,19 @@ func (fixture sessionRowFixture) rows() *sqlmock.Rows {
 	)
 }
 
+func (fixture sessionRowFixture) prepareRows() *sqlmock.Rows {
+	columns := append(append([]string(nil), sessionRowColumns...),
+		"result_delivery_pending", "database_now")
+	return sqlmock.NewRows(columns).AddRow(
+		fixture.operatorID, fixture.sessionID, "player-a", "wallet-account-a",
+		"wallet-session-a", "game-a", "math-v1", fixture.definitionHash,
+		"USD", 2, "MT", fixture.status, fixture.balanceMinor,
+		fixture.sequence, fixture.revision, fixture.featureJSON,
+		fixture.pendingRoundID, time.Now().Add(time.Hour), fixture.quarantinedAt,
+		false, time.Now().UTC(),
+	)
+}
+
 func expectGetSessionRow(mock sqlmock.Sqlmock, fixture sessionRowFixture) {
 	mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+` WHERE operator_id=$1 AND session_id=$2`)).
 		WithArgs(fixture.operatorID, fixture.sessionID).
@@ -378,6 +392,30 @@ func (spinner *sessionIntegritySpinner) Spin(context.Context, game.SpinInput) (g
 
 type sessionIntegrityWallet struct {
 	calls atomic.Int64
+}
+
+func (wallet *sessionIntegrityWallet) ProfileFor(string) (rgs.Profile, error) {
+	// 档案解析是无网络、无经济副作用的本地路由读取；Spin 必须先取得它，才能把
+	// 恢复契约与准备记录原子绑定。损坏会话仍不得到达 Submit/Resolve/旧钱包调用。
+	return rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
+		"https://wallet.test.invalid/session-integrity",
+	)), nil
+}
+
+func (wallet *sessionIntegrityWallet) SubmitRound(context.Context, rgs.WalletRound) rgs.Resolution {
+	wallet.calls.Add(1)
+	return rgs.Resolution{
+		Status: rgs.ResolutionUnknown,
+		Cause:  errors.New("session integrity test: wallet must not be called"),
+	}
+}
+
+func (wallet *sessionIntegrityWallet) Resolve(context.Context, rgs.OperationRef) rgs.Resolution {
+	wallet.calls.Add(1)
+	return rgs.Resolution{
+		Status: rgs.ResolutionUnknown,
+		Cause:  errors.New("session integrity test: wallet must not be called"),
+	}
 }
 
 func (wallet *sessionIntegrityWallet) ApplyRound(context.Context, rgs.WalletRound) (rgs.WalletReceipt, error) {

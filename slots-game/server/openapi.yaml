@@ -53,7 +53,7 @@ paths:
         different request data is rejected. Every
         response after the pre-authentication capacity gate is signed when a
         tenant response key can be selected. At process capacity, the gate may
-        return a generic unsigned, data-free 503 SERVICE_UNAVAILABLE with
+        return a generic unsigned, data-free 503 CAPACITY_UNAVAILABLE with
         Retry-After before identity, signature, or nonce parsing. It is transport
         backpressure, not an authenticated business result; retain the body and
         idempotency key and follow the uncertain-transport retry/status contract
@@ -757,7 +757,7 @@ components:
       description: |
         Dependency, capacity, or response-signing failure. Normally signed. The
         process-wide pre-authentication capacity gate returns an intentionally
-        unsigned SERVICE_UNAVAILABLE response with Retry-After because no tenant
+        unsigned CAPACITY_UNAVAILABLE response with Retry-After because no tenant
         identity is trusted yet. If a safe tenant response key cannot be selected,
         the minimal RESPONSE_SIGNING_UNAVAILABLE envelope is also intentionally
         unsigned. Neither unsigned response is an authoritative business outcome:

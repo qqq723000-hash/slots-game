@@ -220,6 +220,35 @@ variable "valkey_node_type" {
   type        = string
 }
 
+variable "valkey_alarm_thresholds" {
+  description = "经容量测试批准的 Valkey CloudWatch 告警阈值；延迟单位分别为秒和微秒"
+  type = object({
+    engine_cpu_utilization_percent                    = number
+    database_capacity_usage_counted_for_evict_percent = number
+    current_connections                               = number
+    replication_lag_seconds                           = number
+    eval_based_commands_latency_microseconds          = number
+  })
+
+  validation {
+    condition = (
+      var.valkey_alarm_thresholds.engine_cpu_utilization_percent > 0 &&
+      var.valkey_alarm_thresholds.engine_cpu_utilization_percent <= 100 &&
+      var.valkey_alarm_thresholds.database_capacity_usage_counted_for_evict_percent > 0 &&
+      var.valkey_alarm_thresholds.database_capacity_usage_counted_for_evict_percent < 100 &&
+      var.valkey_alarm_thresholds.current_connections >= 1 &&
+      var.valkey_alarm_thresholds.current_connections <= 1000000 &&
+      floor(var.valkey_alarm_thresholds.current_connections) == var.valkey_alarm_thresholds.current_connections &&
+      var.valkey_alarm_thresholds.replication_lag_seconds > 0 &&
+      var.valkey_alarm_thresholds.replication_lag_seconds <= 60 &&
+      var.valkey_alarm_thresholds.eval_based_commands_latency_microseconds >= 1 &&
+      var.valkey_alarm_thresholds.eval_based_commands_latency_microseconds <= 1000000 &&
+      floor(var.valkey_alarm_thresholds.eval_based_commands_latency_microseconds) == var.valkey_alarm_thresholds.eval_based_commands_latency_microseconds
+    )
+    error_message = "Valkey 告警阈值必须使用有效百分比、正整数连接预算、最多 60 秒复制延迟及最多 1000000 微秒 EVAL 延迟。"
+  }
+}
+
 variable "valkey_active_slot" {
   description = "当前发布给新工作负载的 Valkey ACL 凭据槽位"
   type        = string

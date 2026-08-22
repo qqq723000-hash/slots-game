@@ -150,6 +150,11 @@ export interface RgsGatewayConfig {
   readonly timers?: RgsGatewayTimers;
   readonly now?: () => number;
   readonly requestId?: () => string;
+  /**
+   * 仅用于把协议重试分散到时间窗内，不能改变 Retry-After 下界、轮次身份或
+   * 最大尝试次数。测试可以注入确定性样本；生产默认使用 Math.random。
+   */
+  readonly retryJitter?: () => number;
   readonly requestTimeoutMs?: number;
   readonly pollDelayMs?: number;
   readonly maxPollAttempts?: number;
@@ -178,6 +183,7 @@ interface ValidatedConfig {
   readonly timers: RgsGatewayTimers;
   readonly now: () => number;
   readonly requestId: () => string;
+  readonly retryJitter: () => number;
   readonly requestTimeoutMs: number;
   readonly pollDelayMs: number;
   readonly maxPollAttempts: number;
@@ -193,7 +199,11 @@ interface PendingRound {
   readonly roundKind: Exclude<RgsRoundKind, "BONUS">;
   originFeatureState: Readonly<FeatureState> | null;
   pollAttempts: number;
-  spinAttempts: number;
+  /**
+   * 只有可证明本轮尚未进入 RGS 交易边界时，status=404 才能消费此凭证并
+   * 复用同一账本身份重提。普通 202/5xx 不得借 404 扩大重试范围。
+   */
+  resubmitOnNotFound: boolean;
   blocked: boolean;
   deliveredSequence: number | null;
   deliveredResultHash: string | null;
@@ -389,6 +399,7 @@ function validateConfig(config: RgsGatewayConfig): ValidatedConfig {
     timers: config.timers ?? nativeTimers,
     now: config.now ?? Date.now,
     requestId: config.requestId ?? (() => createRequestId("rgs")),
+    retryJitter: config.retryJitter ?? Math.random,
     requestTimeoutMs: configuredInteger(
       config.requestTimeoutMs,
       DEFAULT_REQUEST_TIMEOUT_MS,
@@ -422,6 +433,28 @@ function validateConfig(config: RgsGatewayConfig): ValidatedConfig {
     acknowledgementRetryWindowMs,
     bindingFingerprint: config.bindingFingerprint ?? sha256BindingFingerprint,
   });
+}
+
+/**
+ * 在不早于协议下界的前提下附加最多一秒的抖动。抖动只平滑客户端重试波峰，
+ * 不参与任何资金、幂等或状态判断。注入器异常时取区间中点，避免故障恢复本身崩溃。
+ */
+export function distributedRetryDelayMs(
+  exponentialDelayMs: number,
+  minimumDelayMs: number,
+  sample: () => number,
+): number {
+  const floor = Math.max(0, exponentialDelayMs, minimumDelayMs);
+  if (floor === 0) return 0;
+  let unit = 0.5;
+  try {
+    const candidate = sample();
+    if (Number.isFinite(candidate)) unit = Math.min(1 - Number.EPSILON, Math.max(0, candidate));
+  } catch {
+    // 调度抖动不是安全熵源；注入器故障只能退化为确定性中点，不能阻断恢复。
+  }
+  const spread = Math.min(1_000, Math.max(1, Math.floor(floor)));
+  return Math.min(MAX_TIMER_DELAY_MS, floor + Math.floor(spread * unit));
 }
 
 function cloneFeatureState(state: Readonly<FeatureState>): Readonly<FeatureState> {
@@ -811,6 +844,15 @@ function retryableHttp(error: RgsHttpError): boolean {
   return error.status === 202 || error.status === 429 || error.status >= 500;
 }
 
+function provablyPreTransaction(error: RgsHttpError): boolean {
+  return error.status === 429 && error.code === "RATE_LIMITED"
+    || error.status === 503 && (
+      error.code === "ADMISSION_UNAVAILABLE"
+      || error.code === "WALLET_UNAVAILABLE"
+      || error.code === "CAPACITY_UNAVAILABLE"
+    );
+}
+
 function unrecoverableRefreshAuthorization(error: RgsHttpError): boolean {
   return error.status === 401 || error.status === 403
     || error.status === 410 || error.status === 423;
@@ -937,7 +979,7 @@ export class RgsGateway implements GameGateway {
       roundKind: activeFeature ? "FREE_SPIN" : "BASE",
       originFeatureState,
       pollAttempts: 0,
-      spinAttempts: 0,
+      resubmitOnNotFound: false,
       blocked: false,
       deliveredSequence: null,
       deliveredResultHash: null,
@@ -1075,9 +1117,10 @@ export class RgsGateway implements GameGateway {
       this.config.acknowledgementRetryBaseDelayMs
         * 2 ** Math.min(pending.acknowledgementAttempts - 1, 10),
     );
-    const delay = Math.max(
+    const delay = distributedRetryDelayMs(
       exponentialDelay,
       error instanceof RgsHttpError ? error.retryAfterMs ?? 0 : 0,
+      this.config.retryJitter,
     );
     const now = this.config.now();
     const deadline = startedAt + this.config.acknowledgementRetryWindowMs;
@@ -1306,7 +1349,8 @@ export class RgsGateway implements GameGateway {
       roundKind: originMode === "BASE" ? "BASE" : "FREE_SPIN",
       originFeatureState,
       pollAttempts: 0,
-      spinAttempts: 0,
+      // 浏览器可能在持久化账本后、提交请求前退出；权威状态确认不存在后可精确重提。
+      resubmitOnNotFound: revisionDelta === 0n,
       blocked: false,
       deliveredSequence: null,
       deliveredResultHash: null,
@@ -1371,7 +1415,7 @@ export class RgsGateway implements GameGateway {
       roundKind: expectedRoundKind,
       originFeatureState: origin,
       pollAttempts: 0,
-      spinAttempts: 0,
+      resubmitOnNotFound: false,
       blocked: false,
       deliveredSequence: null,
       deliveredResultHash: null,
@@ -1385,7 +1429,8 @@ export class RgsGateway implements GameGateway {
 
   private async submitPending(pending: PendingRound): Promise<void> {
     if (!this.isPending(pending) || pending.blocked) return;
-    pending.spinAttempts += 1;
+    // 每次请求都必须重新取得 404 重提凭证，禁止沿用上一次响应的授权。
+    pending.resubmitOnNotFound = false;
     try {
       const decoded = await this.authorizedPost(
         this.config.spinUrl,
@@ -1409,13 +1454,26 @@ export class RgsGateway implements GameGateway {
     } catch (error) {
       if (!this.isPending(pending)) return;
       if (error instanceof RgsHttpError && error.status === 202 && error.code === "ROUND_PENDING") {
-        this.schedulePoll(pending);
+        this.schedulePoll(pending, error.retryAfterMs ?? undefined);
+        return;
+      }
+      if (error instanceof RgsHttpError
+        && error.status === 409
+        && error.code === "ROUND_REJECTED") {
+        this.finishRejectedRound(pending, error.code, error.message);
         return;
       }
       if (error instanceof RgsNetworkError
         || (error instanceof RgsHttpError && retryableHttp(error))) {
+        // WALLET_UNAVAILABLE 明确发生在钱包/RGS 交易前；网络失败则必须先由
+        // 权威状态接口证明轮次不存在。两者都只能复用既有 ledger，不能新建 round。
+        pending.resubmitOnNotFound = error instanceof RgsNetworkError
+          || error instanceof RgsHttpError && provablyPreTransaction(error);
         this.reportError(error, pending);
-        this.schedulePoll(pending);
+        this.schedulePoll(
+          pending,
+          error instanceof RgsHttpError ? error.retryAfterMs ?? undefined : undefined,
+        );
         return;
       }
       if (error instanceof RgsDeliveryError) {
@@ -1428,25 +1486,24 @@ export class RgsGateway implements GameGateway {
     }
   }
 
-  private schedulePoll(pending: PendingRound, explicitDelayMs?: number): void {
+  private schedulePoll(pending: PendingRound, minimumDelayMs?: number): void {
     if (!this.isPending(pending) || pending.blocked || this.pollTimer !== null) return;
     if (pending.pollAttempts >= this.config.maxPollAttempts) {
-      pending.blocked = true;
-      this.callbacks.onError({
-        type: "error",
-        protocolVersion: 1,
-        sessionId: this.session?.binding.sessionId,
-        roundId: pending.ledger.roundId,
-        code: "ROUND_RECOVERY_EXHAUSTED",
-        message: "Round recovery polling is exhausted; obtain a fresh operator relaunch",
-        retryable: true,
-      });
+      this.exhaustRoundRecovery(pending);
       return;
     }
-    const delay = explicitDelayMs ?? Math.min(
+    const exponentialDelayMs = Math.min(
       8_000,
       this.config.pollDelayMs * 2 ** Math.min(pending.pollAttempts, 5),
     );
+    // 显式 0 仅供启动恢复立即核验；非零 Retry-After 是服务端下限，不能缩短指数退避。
+    const delay = minimumDelayMs === 0
+      ? 0
+      : distributedRetryDelayMs(
+        exponentialDelayMs,
+        minimumDelayMs ?? 0,
+        this.config.retryJitter,
+      );
     this.pollTimer = this.config.timers.setTimeout(() => {
       this.pollTimer = null;
       void this.pollPending(pending);
@@ -1470,6 +1527,8 @@ export class RgsGateway implements GameGateway {
         || status.roundId !== pending.ledger.roundId) {
         throw new RgsProtocolError("round status returned a foreign binding or round");
       }
+      // 一旦权威接口观察到轮次存在，后续 404 就不能再沿用提交阶段的安全重提凭证。
+      pending.resubmitOnNotFound = false;
       switch (status.status) {
         case "COMMITTED":
           if (!status.result) throw new RgsProtocolError("COMMITTED status omitted its result");
@@ -1489,16 +1548,24 @@ export class RgsGateway implements GameGateway {
     } catch (error) {
       if (!this.isPending(pending)) return;
       if (error instanceof RgsHttpError && error.status === 404
-        && pending.spinAttempts < 2
+        && pending.resubmitOnNotFound
         && this.session?.revision === pending.ledger.startRevision) {
-        // 原请求可能未到达 RGS；重试必须复用字节等价的经济身份，绝不创建新轮次。
+        if (pending.pollAttempts >= this.config.maxPollAttempts) {
+          this.exhaustRoundRecovery(pending);
+          return;
+        }
+        // 消费一次性凭证后，复用字节等价的经济身份；新请求不得创建新轮次或 RNG 身份。
+        pending.resubmitOnNotFound = false;
         void this.submitPending(pending);
         return;
       }
       if (error instanceof RgsNetworkError
         || (error instanceof RgsHttpError && retryableHttp(error))) {
         this.reportError(error, pending);
-        this.schedulePoll(pending);
+        this.schedulePoll(
+          pending,
+          error instanceof RgsHttpError ? error.retryAfterMs ?? undefined : undefined,
+        );
         return;
       }
       if (error instanceof RgsDeliveryError) {
@@ -1509,6 +1576,21 @@ export class RgsGateway implements GameGateway {
       pending.blocked = true;
       this.reportError(error, pending);
     }
+  }
+
+  private exhaustRoundRecovery(pending: PendingRound): void {
+    if (!this.isPending(pending) || pending.blocked) return;
+    pending.blocked = true;
+    pending.resubmitOnNotFound = false;
+    this.callbacks.onError({
+      type: "error",
+      protocolVersion: 1,
+      sessionId: this.session?.binding.sessionId,
+      roundId: pending.ledger.roundId,
+      code: "ROUND_RECOVERY_EXHAUSTED",
+      message: "Round recovery polling is exhausted; obtain a fresh operator relaunch",
+      retryable: true,
+    });
   }
 
   private acceptCommitted(pending: PendingRound, decoded: DecodedRgsSpin): void {

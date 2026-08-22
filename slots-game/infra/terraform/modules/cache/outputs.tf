@@ -62,6 +62,19 @@ output "rotation_contract" {
     hmac_maintenance_evidence_maximum_ttl_seconds = 3600
     hmac_maintenance_persistent_lock_name         = "slots-hmac-maintenance-lock"
     hmac_maintenance_target_identity              = local.target_identity
+    acl_schema_version                            = "v2"
+    acl_schema_transition                         = "maintenance-quiesced"
+    acl_schema_migration_requires_quiesced        = true
+    acl_schema_rolling_compatible                 = false
+    acl_schema_dual_permissions_allowed           = false
+    acl_schema_migration_order = [
+      "stop-new-intents",
+      "drain-old-api-pods",
+      "apply-v2-acl",
+      "start-v2-runtime",
+      "verify-v2-shared-admission",
+      "resume-new-intents",
+    ]
   }
 }
 

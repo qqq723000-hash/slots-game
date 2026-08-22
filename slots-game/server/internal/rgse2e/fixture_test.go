@@ -109,6 +109,41 @@ func (w *idempotentWallet) ApplyRound(ctx context.Context, command rgs.WalletRou
 	return receipt, nil
 }
 
+func (w *idempotentWallet) ProfileFor(operatorID string) (rgs.Profile, error) {
+	if operatorID != testOperatorID {
+		return rgs.Profile{}, rgs.ErrWalletUnavailable
+	}
+	return rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget("https://wallet.fixture.invalid/ledger")), nil
+}
+
+func (w *idempotentWallet) SubmitRound(ctx context.Context, command rgs.WalletRound) rgs.Resolution {
+	receipt, err := w.ApplyRound(ctx, command)
+	switch {
+	case err == nil:
+		return rgs.Resolution{Status: rgs.ResolutionSucceeded, Receipt: receipt}
+	case errors.Is(err, rgs.ErrWalletRejected):
+		return rgs.Resolution{Status: rgs.ResolutionRejectedFinal, Cause: err}
+	case errors.Is(err, rgs.ErrIdempotencyConflict), errors.Is(err, rgs.ErrWalletReceiptInvalid):
+		return rgs.Resolution{Status: rgs.ResolutionConflict, Cause: err}
+	default:
+		return rgs.Resolution{Status: rgs.ResolutionUnknown, Cause: err}
+	}
+}
+
+func (w *idempotentWallet) Resolve(ctx context.Context, reference rgs.OperationRef) rgs.Resolution {
+	receipt, found, err := w.Lookup(ctx, reference.OperatorID, reference.OperationID)
+	switch {
+	case err == nil && found:
+		return rgs.Resolution{Status: rgs.ResolutionSucceeded, Receipt: receipt}
+	case err == nil:
+		return rgs.Resolution{Status: rgs.ResolutionNotFound}
+	case errors.Is(err, rgs.ErrIdempotencyConflict), errors.Is(err, rgs.ErrWalletReceiptInvalid):
+		return rgs.Resolution{Status: rgs.ResolutionConflict, Cause: err}
+	default:
+		return rgs.Resolution{Status: rgs.ResolutionUnknown, Cause: err}
+	}
+}
+
 func (w *idempotentWallet) Lookup(ctx context.Context, operatorID, operationID string) (rgs.WalletReceipt, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return rgs.WalletReceipt{}, false, err

@@ -22,6 +22,8 @@ func TestDevelopmentConfigHasSafeBoundedDefaults(t *testing.T) {
 		config.DatabaseStatementTimeout.String() != "10s" ||
 		config.DatabaseLockTimeout.String() != "2s" ||
 		config.DatabaseMaxOpenConns != 40 || config.DatabaseMaxIdleConns != 10 ||
+		config.DatabaseCriticalReserveConns != 5 ||
+		config.WalletTimeout.String() != "4s" || config.WalletFastPathTimeout.String() != "1s" ||
 		config.MaxInFlightRequests != 256 ||
 		config.MaxConnectionsPerListener != 1_024 ||
 		config.SuccessAccessLogSamplePerMillion != 1_000_000 ||
@@ -235,6 +237,19 @@ func TestSharedAdmissionConfigFailsClosed(t *testing.T) {
 		config.SharedAdmissionRateBurst != 300 || config.RatePerSecond != 50 || config.RateBurst != 100 {
 		t.Fatalf("shared admission timeout = %s", config.SharedAdmissionTimeout)
 	}
+	boundary := make(map[string]string, len(valid))
+	for key, value := range valid {
+		boundary[key] = value
+	}
+	boundary["RGS_SHARED_ADMISSION_RATE_PER_SECOND"] = "1"
+	boundary["RGS_SHARED_ADMISSION_RATE_BURST"] = "86399"
+	if _, err := LoadConfigFrom(lookup(boundary)); err != nil {
+		t.Fatalf("exact 24-hour shared admission TTL rejected: %v", err)
+	}
+	boundary["RGS_SHARED_ADMISSION_RATE_BURST"] = "86400"
+	if _, err := LoadConfigFrom(lookup(boundary)); err == nil || !strings.Contains(err.Error(), "TTL") {
+		t.Fatalf("over-24-hour shared admission TTL error = %v", err)
+	}
 
 	for name, mutate := range map[string]func(map[string]string){
 		"plain scheme": func(values map[string]string) { values["RGS_SHARED_ADMISSION_URL"] = "redis://valkey.example:6379" },
@@ -245,6 +260,10 @@ func TestSharedAdmissionConfigFailsClosed(t *testing.T) {
 		"missing root CA":   func(values map[string]string) { delete(values, "RGS_SHARED_ADMISSION_ROOT_CA_FILE") },
 		"excess timeout":    func(values map[string]string) { values["RGS_SHARED_ADMISSION_TIMEOUT"] = "501ms" },
 		"zero rate":         func(values map[string]string) { values["RGS_SHARED_ADMISSION_RATE_PER_SECOND"] = "0" },
+		"unbounded key ttl": func(values map[string]string) {
+			values["RGS_SHARED_ADMISSION_RATE_PER_SECOND"] = "0.001"
+			values["RGS_SHARED_ADMISSION_RATE_BURST"] = "100"
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			values := make(map[string]string, len(valid))
@@ -466,6 +485,12 @@ func TestConfigRejectsUnboundedRuntimeTimeouts(t *testing.T) {
 		"wallet reaches request timeout": {
 			"RGS_WALLET_TIMEOUT": "15s",
 		},
+		"fast path is zero": {
+			"RGS_WALLET_FAST_PATH_TIMEOUT": "0s",
+		},
+		"fast path reaches wallet timeout": {
+			"RGS_WALLET_FAST_PATH_TIMEOUT": "4s",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := LoadConfigFrom(lookup(values)); err == nil {
@@ -487,6 +512,17 @@ func TestConfigRejectsUnboundedRuntimeTimeouts(t *testing.T) {
 		config.DatabaseLockTimeout.String() != "1.5s" {
 		t.Fatalf("runtime timeouts = request:%s statement:%s lock:%s", config.RequestTimeout, config.DatabaseStatementTimeout, config.DatabaseLockTimeout)
 	}
+
+	config, err = LoadConfigFrom(lookup(map[string]string{
+		"RGS_WALLET_FAST_PATH_TIMEOUT": "750ms",
+		"RGS_WALLET_TIMEOUT":           "4s",
+	}))
+	if err != nil {
+		t.Fatalf("valid wallet fast-path timeout rejected: %v", err)
+	}
+	if config.WalletFastPathTimeout != 750_000_000 {
+		t.Fatalf("wallet fast-path timeout = %s, want 750ms", config.WalletFastPathTimeout)
+	}
 }
 
 func TestConfigBoundsPerReplicaDatabasePool(t *testing.T) {
@@ -507,6 +543,13 @@ func TestConfigBoundsPerReplicaDatabasePool(t *testing.T) {
 		"malformed max open": {
 			"RGS_DB_MAX_OPEN_CONNS": "many",
 		},
+		"zero new intent reserve": {
+			"RGS_DB_CRITICAL_RESERVE_CONNS": "0",
+		},
+		"reserve reaches max open": {
+			"RGS_DB_MAX_OPEN_CONNS":         "8",
+			"RGS_DB_CRITICAL_RESERVE_CONNS": "8",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := LoadConfigFrom(lookup(values)); err == nil {
@@ -516,14 +559,17 @@ func TestConfigBoundsPerReplicaDatabasePool(t *testing.T) {
 	}
 
 	config, err := LoadConfigFrom(lookup(map[string]string{
-		"RGS_DB_MAX_OPEN_CONNS": "24",
-		"RGS_DB_MAX_IDLE_CONNS": "6",
+		"RGS_DB_MAX_OPEN_CONNS":         "24",
+		"RGS_DB_MAX_IDLE_CONNS":         "6",
+		"RGS_DB_CRITICAL_RESERVE_CONNS": "7",
 	}))
 	if err != nil {
 		t.Fatalf("valid database pool configuration rejected: %v", err)
 	}
-	if config.DatabaseMaxOpenConns != 24 || config.DatabaseMaxIdleConns != 6 {
-		t.Fatalf("database pool = open:%d idle:%d", config.DatabaseMaxOpenConns, config.DatabaseMaxIdleConns)
+	if config.DatabaseMaxOpenConns != 24 || config.DatabaseMaxIdleConns != 6 ||
+		config.DatabaseCriticalReserveConns != 7 {
+		t.Fatalf("database pool = open:%d idle:%d reserve:%d", config.DatabaseMaxOpenConns,
+			config.DatabaseMaxIdleConns, config.DatabaseCriticalReserveConns)
 	}
 }
 

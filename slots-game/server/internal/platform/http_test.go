@@ -28,6 +28,9 @@ func TestMiddlewareAppliesSecurityCORSAndAdmissionLimits(t *testing.T) {
 	if recorder.Code != http.StatusNoContent || recorder.Header().Get("X-Content-Type-Options") != "nosniff" || recorder.Header().Get("Access-Control-Allow-Origin") == "" {
 		t.Fatalf("unexpected response: %d %#v", recorder.Code, recorder.Header())
 	}
+	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != "Retry-After" {
+		t.Fatalf("exposed CORS headers = %q, want Retry-After", got)
+	}
 	second := httptest.NewRecorder()
 	handler.ServeHTTP(second, request)
 	if second.Code != http.StatusTooManyRequests || metrics.RateLimited.Load() != 1 {
@@ -36,6 +39,27 @@ func TestMiddlewareAppliesSecurityCORSAndAdmissionLimits(t *testing.T) {
 	if second.Header().Get("Content-Type") != "application/json" ||
 		!bytes.Contains(second.Body.Bytes(), []byte(`"code":"RATE_LIMITED"`)) {
 		t.Fatalf("rate-limit envelope = headers:%v body:%s", second.Header(), second.Body.Bytes())
+	}
+}
+
+func TestMiddlewareDoesNotExposeRetryAfterToRejectedOrigin(t *testing.T) {
+	middleware := Middleware{
+		AllowedOrigins: map[string]struct{}{"https://casino.example": {}},
+	}
+	handler := middleware.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "2")
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/client/v1/rounds/status", nil)
+	request.Header.Set("Origin", "https://rejected.example")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("rejected origin received Access-Control-Allow-Origin %q", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != "" {
+		t.Fatalf("rejected origin received exposed CORS headers %q", got)
 	}
 }
 

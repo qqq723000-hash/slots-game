@@ -1,7 +1,7 @@
 # 轮次幂等性与故障恢复
 
 状态：生产协议设计
-最后更新：2026-07-26
+最后更新：2026-08-22
 
 本文档描述 RGS 如何在客户端重试、并发副本、进程崩溃、数据库故障转移与模糊钱包响应间避免重
 复经济效应。它不承诺分布式"恰好一次"投递。系统使用持久状态加幂等效应使重复投递安全。
@@ -10,12 +10,14 @@
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PREPARED: Persist request fingerprint, outcome, wallet command
-    PREPARED --> WALLET_PENDING: Claim durable wallet lease
+    [*] --> PREPARED: Persist fingerprint, outcome, command, phase=APPLY
+    PREPARED --> WALLET_PENDING: Claim APPLY and persist phase=LOOKUP
     WALLET_PENDING --> COMMITTED: Validate signed wallet receipt and commit session
     WALLET_PENDING --> REJECTED: Deterministic wallet rejection
     WALLET_PENDING --> MANUAL_REVIEW: Conflict or invalid economic receipt
-    WALLET_PENDING --> WALLET_PENDING: Timeout/202; lookup same operationId
+    WALLET_PENDING --> WALLET_PENDING: PENDING/UNKNOWN; schedule LOOKUP
+    WALLET_PENDING --> WALLET_PENDING: Proven NOT_SENT; schedule same action
+    WALLET_PENDING --> WALLET_PENDING: Authoritative NOT_FOUND; wait then APPLY same operation
     PREPARED --> MANUAL_REVIEW: Corrupt/mismatched persisted state
     COMMITTED --> COMMITTED: Exact idempotent replay
     REJECTED --> REJECTED: Terminal replay
@@ -25,8 +27,14 @@ stateDiagram-v2
 `PREPARED` 在任何钱包副作用前写入。它包含不可变请求指纹、完整规范游戏结果、其 SHA-256 结果
 哈希与确切钱包命令。因此恢复绝不再为该轮次调用 RNG。
 
-`WALLET_PENDING` 意味着钱包命令可能已提交也可能未提交。一个 worker 认领一个时间有界的租约，
-使多个 RGS 副本可安全执行至少一次恢复。租约过期允许另一 worker 用相同操作 ID 继续。
+`WALLET_PENDING` 意味着钱包命令可能已提交也可能未提交。轮次额外持久化 `wallet_phase`、
+`next_attempt_at`、独立的 apply/lookup 次数和完整 `wallet_command_digest`。一个 worker 只能领取存储
+层指定的 `APPLY` 或 `LOOKUP` 动作；领取 `APPLY` 时，PostgreSQL 在外呼前先把后续阶段推进为
+`LOOKUP`。因此进程在发出资金请求后崩溃，接管者也只能查询原操作，不能盲目重扣。
+
+领取结果携带数据库生成的租约到期值作为 fencing token。调度下一次动作必须原样匹配该 token；
+旧 worker 的迟到写入不能覆盖新领取或终态。租约、首次到期时间、到期判断与相对延迟统一使用
+PostgreSQL `clock_timestamp()`，容器时钟偏差不参与资金调度裁决。
 
 `COMMITTED` 是唯一暴露可赔付结果的状态。事务原子地存储钱包收据、更新会话余额快照、版本、序
 号、特性状态与待处理轮次标记，并追加发件箱事件。
@@ -60,6 +68,7 @@ Rage 等级/计数。因此重启不能重置 Free Spins 获胜计数器或把�
 |---|---|---|
 | HTTP 200 + `COMMITTED` | 按序号持久化/投影结果；动画一次 | 本地重算获胜 |
 | HTTP 202 + `ROUND_PENDING` | 有界退避（在存在时遵守 `Retry-After`），然后用相同 session/round 查状态 | 开始另一轮次 |
+| HTTP 503 + `WALLET_UNAVAILABLE` | 至少等待合法 `Retry-After`，查询同一 round；仅当权威状态为 404 时用字节等价账本身份重提 | 换 `roundId`、投注或起始版本 |
 | 网络超时/重置 | 用相同 `roundId` 重试确切旋转，或查状态 | 生成替换 `roundId` |
 | HTTP 409 过期版本 | 拉取/恢复当前状态并停止控件 | 改版本并重提旧意图 |
 | HTTP 409 幂等冲突 | 停止会话并升级 | 猜测哪个请求赢了 |
@@ -72,21 +81,34 @@ Rage 等级/计数。因此重启不能重置 Free Spins 获胜计数器或把�
 
 ## 4. 钱包模糊协议
 
-HTTP 超时意味着"未知"，绝不意味着"失败"。钱包可能已提交并丢失响应。因此恢复遵循此确切顺序：
+HTTP 超时意味着 `UNKNOWN`，绝不意味着失败；只有能证明在 HTTP 请求发出前失败，才能返回
+`NOT_SENT`。钱包 v2 适配器不得从错误字符串或状态码猜测经济终态，只有通过签名认证并严格解码的
+响应才能产生供应商语义：
 
-1. 保持已准备结果与操作 ID 不变。
-2. 用该操作 ID 调用 `/wallet/v1/transactions/status`。
-3. 若状态为终态成功，校验每个签名收据字段并提交原始存储结果。
-4. 若状态为 202/pending，通过有界恢复计划续约并向调用方返回 RGS HTTP 202。
-5. 若状态为 404，遵循运营商专属一致性规则：仅在钱包保证 apply 与 status 间操作 ID 幂等时才重
-   复 `apply`。绝不生成新操作 ID。
-6. 若钱包返回冲突数据、丢失其幂等记录，或无法在获批运维截止内确定结果，把轮次/会话移至
-   `MANUAL_REVIEW`。
+| v2 结果 | 持久恢复动作 | 资金含义 |
+| --- | --- | --- |
+| `SUCCEEDED` | 校验收据并提交原始结果 | 唯一成功终态 |
+| `REJECTED_FINAL` | 拒绝轮次 | 供应商明确未执行的业务终态 |
+| `PENDING` / `UNKNOWN` | `LOOKUP` | 可能已执行，不得再次写入 |
+| `NOT_SENT` | 保持本次 claim 的动作 | 已证明未跨过网络发送边界 |
+| `NOT_FOUND` | 仅查询阶段可处理；等待能力档案的最短一致性窗口后，以相同命令重排 `APPLY` | 不能把瞬时 404 直接当作未执行 |
+| `CONFLICT` 或无效结果 | `MANUAL_REVIEW` | 身份或协议不再可信 |
 
-每次持久钱包租约认领都递增持久化尝试计数器。`RGS_WALLET_MAX_ATTEMPTS` 是一轮次允许的最大钱
-包尝试数（默认 `100`，有效 `1..10000`）。在进一步经济调用可超过该预算前，协调器原子地把轮次
-/会话标记为 `MANUAL_REVIEW`。进程重启或不同副本不重置计数器。运营商必须调查现有操作 ID；他
-们绝不能临时提高限额、删除轮次或创建替换经济意图。
+当前已实现的能力档案是 `rgs-wallet-contract-v2` / `atomic-http-v2`。它要求原子扣款与派彩、按完整
+`operationId` 查询、权威余额、`walletSessionRef`、`commandDigest` 和签名响应；同一操作在权威
+`NOT_FOUND` 后允许重提，但必须至少等待一秒一致性窗口并复用原始命令。能力档案在准入时锁定，
+不能在一次恢复过程中根据错误动态降级。
+
+`apply_attempts` 与 `lookup_attempts` 分开持久化。`RGS_WALLET_MAX_ATTEMPTS` 是进一步资金写调用的
+最大 apply 预算（默认 `100`，有效 `1..10000`）；超过预算前进入 `MANUAL_REVIEW`。查询不会消耗新
+经济意图，但仍受单次超时、Worker 批量/并发上限、持久指数退避与运维截止约束。只有适配器能够
+证明请求未越过发送边界的 `NOT_SENT` 才归还预占的 `apply_attempts`；持久调度计数不归还，继续驱
+动指数退避，防止熔断或本地配置故障形成数据库热循环。进程重启或不同副本不重置这些调度证据。
+运营商必须调查现有操作 ID；绝不能临时提高限额、删除轮次或创建替换经济意图。
+
+该能力只覆盖**原子轮次钱包**。转账钱包、分离 debit/credit、预授权/捕获、跨账户转移或外部两阶
+段事务均未实现；它们需要独立的持久 saga/补偿状态机、步骤级幂等键、对账和认证，不能伪装成
+`atomic-http-v2` 或在失败时拆成两个普通 HTTP 调用。
 
 在任何恢复轮次可到达钱包前，仓库严格解码持久化结果并交叉校验其请求指纹、已准备结果哈希、事
 务身份、投注、扣费金额、获胜金额、版本、序号与收据派生列。未知 JSON 字段与部分钱包收据列失
@@ -112,14 +134,19 @@ HTTP 超时意味着"未知"，绝不意味着"失败"。钱包可能已提交�
 | 崩溃点 | 持久证据 | 恢复 |
 |---|---|---|
 | `PREPARED` 提交前 | 无轮次行 | 确切客户端重试可创建轮次 |
-| `PREPARED` 后、钱包调用前 | 规范结果 + 命令 | 认领租约并应用原始命令 |
-| 钱包调用期间/后、收据提交前 | `WALLET_PENDING`；经济结果未知 | 按相同操作 ID 查状态 |
+| `PREPARED` 后、领取前 | 规范结果 + `phase=APPLY` | 认领租约并应用原始命令 |
+| `APPLY` 领取后、钱包调用前 | 已持久推进 `phase=LOOKUP` | 保守查询；权威 `NOT_FOUND` 经窗口后才恢复原 `APPLY` |
+| 钱包调用期间/后、收据提交前 | `WALLET_PENDING` + `phase=LOOKUP`；经济结果未知 | 按完整持久身份查询同一操作 ID |
 | 收据/会话提交后、客户端响应前 | `COMMITTED` 规范结果 | 确切重放返回存储结果 |
 | 领域提交后、事件发布前 | 未发布发件箱行 | 分发器重试事件；绝不重复钱包效应 |
 
-恢复 worker 必须在每个副本都可安全运行。它按状态与年龄选择合格行、使用有界租约、递增重试计
-数器、应用带抖动退避、强制配置的钱包尝试上限，并仅发出有界基数指标。恢复必须在关闭期间干净
-停止并通过过期而非不安全删除释放租约。
+恢复 worker 必须在每个副本都可安全运行。PostgreSQL 只选择 `next_attempt_at` 已到期且租约空闲
+的行，按运营商内顺序排名后跨运营商轮转，并以 `FOR UPDATE ... SKIP LOCKED` 让副本分摊工作。
+Worker 每波最多领取 `MaxParallel` 条，在 `BatchSize` 总预算内并行处理；非终态以独立动作次数计算
+有上限的指数退避，并从 `[0, upperBound]` 选择 full-jitter。能力档案一致性窗口和合法
+显式 not-before（若某适配器未来提供）都是下界，不能被抖动缩短；当前原子 HTTP v2 只使用前者，
+不宣称已经消费供应商 `Retry-After`。恢复必须在关闭期间干净停止，并通过租约过期而非不安全删除
+释放执行权。
 
 ## 6. 发件箱与下游消费者
 
@@ -142,8 +169,11 @@ HTTP 超时意味着"未知"，绝不意味着"失败"。钱包可能已提交�
   `rgs_idempotency_conflicts_total` 计数可靠分类的轮次或钱包幂等冲突；普通状态读取既非重放
   也非冲突。
 - `rgs_wallet_calls_total` 计数实际钱包适配器方法调用。
-  `rgs_wallet_unknown_outcomes_total` 计数结果经济模糊因此需要查找的 `ApplyRound` 尝试；显
-  式拒绝、冲突、无效收据与成功被排除。
+  `rgs_wallet_unknown_outcomes_total` 计数返回 `UNKNOWN` 的 v2 submit/resolve 调用；显式未发送、
+  拒绝、冲突、无效收据与成功被排除。
+- `rgs_wallet_request_duration_seconds`、`rgs_wallet_inflight`、
+  `rgs_wallet_isolation_rejected_total` 与 `rgs_wallet_breakers` 只使用固定 method/outcome/reason/state
+  枚举，分别观察外呼时延、执行中请求、非阻塞舱壁拒绝和 apply/lookup 熔断状态。
 - `rgs_round_integrity_quarantines_total` 在 PostgreSQL 提交一轮次的首次持久完整性隔离标记
   时递增。它也覆盖 `COMMITTED`/`ROLLED_BACK` 状态必须保留的腐败经济终态轮次；重复读取同一
   腐败行不递增它。
@@ -177,6 +207,9 @@ HTTP 超时意味着"未知"，绝不意味着"失败"。钱包可能已提交�
 - 相同 round ID 加改变的投注、类型、定义哈希或版本；
 - 在每个迁移点与提交期间故障转移的数据库断连；
 - 钱包处理前、账本提交后与返回 body 期间超时；损坏/过期响应签名；畸形与超大响应；
+- `NOT_SENT` 保持原动作、`UNKNOWN` 转查询、权威 `NOT_FOUND` 一致性窗口和不同命令摘要冲突；
+- 多副本按数据库时钟领取、`SKIP LOCKED` 不重复并发执行、旧 fencing token 无法覆盖新调度、运营商
+  公平排序和 full-jitter 上下界；
 - prepare 后、apply 期间、钱包成功后与数据库提交后 RGS 终止；
 - launch code 双交换与跨独立副本 nonce 重放；
 - 发件箱重复发布与消费者重启；以及

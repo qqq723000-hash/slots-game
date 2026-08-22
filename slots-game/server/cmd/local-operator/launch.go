@@ -272,6 +272,17 @@ func (h *launcher) create(ctx context.Context, input launchInput) (launchResult,
 	if err != nil {
 		return launchResult{}, err
 	}
+	// RGS launch 已成功但尚未把代码交给浏览器；此时先持久化 operator 权威的钱包
+	// 会话绑定，确保任何随后到达的资金命令都不能伪造或串用 walletSessionRef。
+	if err := h.config.Store.RegisterWalletSession(ctx, walletSessionSeed{
+		OperatorID: h.config.OperatorID, WalletSessionRef: walletSessionID,
+		PlayerID: playerID, WalletAccountID: walletAccountID, SessionID: sessionID,
+		GameID: h.config.GameID, DefinitionVersion: h.config.DefinitionVersion,
+		DefinitionHash: h.config.DefinitionHash, Currency: h.config.Currency,
+		ExpiresAt: time.Now().UTC().Add(h.config.SessionTTL),
+	}); err != nil {
+		return launchResult{}, err
+	}
 	webURL, err := url.Parse(h.config.WebBaseURL)
 	if err != nil {
 		return launchResult{}, err

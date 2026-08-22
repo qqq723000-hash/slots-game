@@ -22,15 +22,17 @@ func TestRuntimeWritePolicyMatchesRepositorySQL(t *testing.T) {
 			"operator_id", "session_id", "round_id", "server_transaction_id", "request_fingerprint",
 			"status", "round_kind", "game_id", "definition_version", "definition_hash", "currency",
 			"bet_minor", "input_feature_state", "charged_minor", "win_minor", "starting_revision",
-			"resulting_revision", "sequence", "result_json", "outcome_hash", "created_at", "updated_at",
+			"resulting_revision", "sequence", "result_json", "outcome_hash", "wallet_phase",
+			"wallet_command_digest", "wallet_profile", "next_attempt_at", "created_at", "updated_at",
 		},
 		"rgs_wallet_transactions": {
 			"operator_id", "transaction_id", "session_id", "round_id", "kind", "status", "currency",
 			"amount_minor", "request_fingerprint", "created_at", "updated_at",
 		},
-		"rgs_outbox":          {"operator_id", "aggregate_type", "aggregate_id", "event_type", "payload"},
-		"rgs_operator_nonces": {"operator_id", "key_id", "nonce_hash", "expires_at", "created_at"},
-		"rgs_launch_codes":    {"code_hash", "operator_id", "claims_json", "expires_at", "created_at"},
+		"rgs_outbox":                    {"operator_id", "aggregate_type", "aggregate_id", "event_type", "payload"},
+		"rgs_operator_nonces":           {"operator_id", "key_id", "nonce_hash", "expires_at", "created_at"},
+		"rgs_launch_codes":              {"code_hash", "operator_id", "claims_json", "expires_at", "created_at"},
+		"rgs_wallet_recovery_operators": {"operator_id"},
 	}
 	wantUpdate := map[string][]string{
 		"rgs_sessions": {
@@ -39,6 +41,7 @@ func TestRuntimeWritePolicyMatchesRepositorySQL(t *testing.T) {
 		},
 		"rgs_rounds": {
 			"status", "result_json", "wallet_transaction_id", "wallet_balance_minor", "wallet_lease_until",
+			"wallet_phase", "next_attempt_at", "apply_attempts", "lookup_attempts",
 			"failure_code", "retry_count", "updated_at", "committed_at", "integrity_quarantined_at",
 			"result_delivery_required", "result_hash", "result_acknowledged_at",
 		},
@@ -46,8 +49,9 @@ func TestRuntimeWritePolicyMatchesRepositorySQL(t *testing.T) {
 		"rgs_outbox": {
 			"available_at", "lease_owner", "lease_token", "lease_until", "published_at", "attempts", "last_error",
 		},
-		"rgs_operator_nonces": {"expires_at", "created_at"},
-		"rgs_launch_codes":    {"consumed_at"},
+		"rgs_operator_nonces":           {"expires_at", "created_at"},
+		"rgs_launch_codes":              {"consumed_at"},
+		"rgs_wallet_recovery_operators": {"last_claimed_at"},
 	}
 	if !reflect.DeepEqual(runtimeInsertColumns, wantInsert) {
 		t.Fatalf("runtimeInsertColumns = %#v", runtimeInsertColumns)

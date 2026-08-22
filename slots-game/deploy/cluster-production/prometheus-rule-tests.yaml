@@ -98,3 +98,78 @@ tests:
             exp_annotations:
               summary: RGS HPA 无法计算扩缩容目标
               description: API 或 Worker HPA 的 ScalingActive 未保持为真；应检查 metrics-server、聚合 API、kube-state-metrics 与资源指标，避免流量高峰停留在暖副本下限。
+
+  - name: 新经济意图触发数据库保留容量时必须告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_new_intent_capacity_rejected_total{job="slots-rgs",namespace="slots-production"}'
+        values: '0 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SlotsRGSNewIntentCapacityRejected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: RGS 新经济意图因数据库保留容量被拒绝
+              description: 新 launch 或 spin 已为保护状态查询、待交付结果和确认路径而返回容量错误；应核对数据库池、HPA 和入口流量，且只能在 PostgreSQL 总连接预算允许时扩容。
+
+  - name: 钱包隔离拒绝必须触发告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_wallet_isolation_rejected_total{job="slots-rgs",namespace="slots-production",method="apply",reason="backend_bulkhead"}'
+        values: '0 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SlotsRGSWalletIsolationRejected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: 钱包隔离闸门拒绝请求
+              description: 钱包调用被后端容量、运营商容量或熔断器非阻塞拒绝；应检查外部钱包延迟、单租户流量和隔离预算。
+
+  - name: 钱包熔断持续打开必须触发告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_wallet_breakers{job="slots-rgs",namespace="slots-production",method="apply",state="open"}'
+        values: '1x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SlotsRGSWalletCircuitOpen
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: 钱包熔断器持续打开
+              description: 至少一个 Apply 或 Lookup 钱包熔断器持续打开；恢复查询容量仍保持独立，Pod 就绪状态不会掩盖该依赖故障。
+
+  - name: 钱包待定结果持续出现必须触发告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_wallet_request_duration_seconds_count{job="slots-rgs-worker",namespace="slots-production",method="lookup",outcome="pending"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: SlotsRGSWalletPendingSustained
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: 钱包待定结果持续出现
+              description: 钱包持续返回待定结果；应核对恢复吞吐、Lookup 延迟和积压，禁止盲目重提经济指令。
+
+  - name: 新增人工审查轮次必须触发告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_rounds_manual_review_total{job="slots-rgs-worker",namespace="slots-production"}'
+        values: '0 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SlotsRGSRoundManualReview
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: 轮次进入人工审查
+              description: 新轮次已持久化转入人工审查；必须保留证据并由受控运维流程处置，禁止自动重算或补账。

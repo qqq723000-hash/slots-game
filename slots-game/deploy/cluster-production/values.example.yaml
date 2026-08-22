@@ -12,11 +12,15 @@ images:
     - name: company-registry
 
 rgs:
+  maintenanceQuiesced: false
   publicBaseURL: https://rgs.example.com
   allowedOrigins:
     - https://slots.example.com
   sharedAdmission:
     endpointURL: rediss://valkey.example.internal:6379
+
+worker:
+  maintenanceQuiesced: false
 
 web:
   enabled: true

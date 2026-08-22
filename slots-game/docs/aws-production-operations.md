@@ -99,7 +99,7 @@ code、nonce 原文、私钥、签名、DSN、请求/响应正文、原始 URL/q
 
 ### 5.2 经济正确性
 
-- 钱包请求、确认、未知结果、查询恢复、超时和签名失败；
+- 钱包 apply/lookup 请求、确认、未知/未发送结果、隔离拒绝、熔断状态、查询恢复、超时和签名失败；
 - round 准备/提交/待恢复、人工复核和完整性 quarantine；
 - outbox backlog、最旧未发布年龄、deferred、lease lost、sink 回执；
 - 每日按运营商/货币的受控离线对账结果。高基数明细进入审计系统，不进入 Prometheus label。
@@ -127,7 +127,7 @@ code、nonce 原文、私钥、签名、DSN、请求/响应正文、原始 URL/q
 | P2 | 单区/副本丢失、DB pool 接近饱和、容量拒绝、认证随机数重放、日志/规则管道降级 | 30 分钟 | 恢复冗余和容量，核查调用方重试与凭据泄漏风险，避免演化为 P1 |
 | P3 | 成本、版本老化、备份趋势、容量预测、非紧急证书/Secret 到期 | 工作日 | 进入有负责人和截止期的维护队列 |
 
-Chart 内置的十五条集群规则必须在 AMP 或等价求值器中存在：
+Chart 内置的二十条集群规则必须在 AMP 或等价求值器中存在：
 
 - `SlotsRGSTargetUnavailable`
 - `SlotsRGSNotReady`
@@ -135,10 +135,15 @@ Chart 内置的十五条集群规则必须在 AMP 或等价求值器中存在：
 - `SlotsRGSWorkerNotReady`
 - `SlotsRGSServerErrorRateHigh`
 - `SlotsRGSCapacityRejected`
+- `SlotsRGSNewIntentCapacityRejected`
 - `SlotsRGSHPAUnableToScale`
 - `SlotsRGSSharedAdmissionErrors`
 - `SlotsRGSAuthReplay`
 - `SlotsRGSWalletUnknownOutcome`
+- `SlotsRGSWalletIsolationRejected`
+- `SlotsRGSWalletCircuitOpen`
+- `SlotsRGSWalletPendingSustained`
+- `SlotsRGSRoundManualReview`
 - `SlotsRGSIntegrityQuarantine`
 - `SlotsRGSOutboxDeferred`
 - `SlotsRGSOutboxLeaseLost`
@@ -189,10 +194,16 @@ aws elbv2 describe-target-health --target-group-arn "$SLOTS_RGS_TARGET_GROUP_ARN
 
 ### 8.3 钱包未知结果增长
 
-1. 保留原 round、request 与稳定 `operationId`，检查钱包网络、签名、超时和状态查询接口。
-2. RGS 恢复工作器只能查询同一操作；禁止手工重试新的借贷命令。
-3. 若钱包查询也不可用，停止受影响运营商新流量，保留其他隔离租户的可用性。
-4. 与运营商按钱包 receipt、round 和审计事件对账；任何歧义按 P0 处理。
+1. 保留原 round、request、`commandDigest` 与稳定 `operationId`，检查钱包网络、签名、超时和状态
+   查询接口；不得从未认证响应推断资金终态。
+2. 核对持久 `wallet_phase`、`next_attempt_at`、apply/lookup 次数和租约，而不是手工调用钱包。
+   `UNKNOWN/PENDING` 只能查询；`NOT_SENT` 保持原动作；权威 `NOT_FOUND` 仅在能力档案允许且等待
+   一致性窗口后由 Worker 重排相同命令。
+3. 检查 `rgs_wallet_isolation_rejected_total`、`rgs_wallet_breakers`、inflight 与请求时延，区分本地
+   容量拒绝、共享后端故障和单一运营商故障。熔断打开时不要通过扩容制造更多跨 Pod 探针。
+4. 若查询也不可用，停止受影响运营商的新经济意图，保留状态恢复以及其他隔离租户的可用性。
+5. 与运营商按钱包 receipt、round 和审计事件对账；任何歧义按 P0 处理。不得创建新的借贷命令，
+   也不得把 split/transfer 钱包临时映射为原子轮次接口。
 
 ### 8.4 outbox 延迟或审计 sink 故障
 
@@ -301,6 +312,26 @@ Kubernetes 滚动期间，终止中的 Pod 可能让实际总数短时超过 `re
 failover 重连风暴留余量。RDS Proxy 启用后仍按数据库端连接、固定比例和 Proxy 指标核算，不能只
 看客户端连接数。
 
+API 的 `RGS_DB_CRITICAL_RESERVE_CONNS` 默认是 5，且必须小于本 Pod 的
+`RGS_DB_MAX_OPEN_CONNS`。新 launch/spin 的本机 permit 数等于两者之差；数据库 `InUse` 达到该阈值
+时也会快速拒绝新意图，而 status、pending result、ACK 与 refresh 继续使用保留容量。该检查与 permit
+共同限制突发穿透，但仍是每 Pod 边界：多 Pod、终止中 Pod 和其他数据库客户端必须继续计入发布峰值
+公式。`rgs_new_intent_capacity_rejected_total` 增长表示保护已生效，也表示当前放量超过已批准容量；
+禁止只提高 HPA 或连接池来消除告警，除非新的 RDS/钱包/入口总预算和压测证据同时获批。
+
+钱包并发也必须用滚动峰值计算。当前每个 RGS 进程的基线是后端 apply 24、lookup 8，以及每运营商
+apply 8；这是非阻塞的本机隔离，不是全局限额。容量评审至少计算：
+
+```text
+钱包峰值并发上界
+= (API 滚动峰值 Pod + Worker 滚动峰值 Pod) × 每 Pod 对应 lane 许可
++ 半开熔断探针与终止中请求的实测重叠
+```
+
+正式钱包合同容量、出口/NAT 端口、连接池和压测批准值必须高于该上界，或相应降低 HPA/每 Pod
+许可。状态查询 lane 必须保留，不能为提高 apply 峰值而借走全部 lookup 容量，否则未知结果无法
+收敛。
+
 ### 12.2 压测场景
 
 每个正式候选至少覆盖：
@@ -308,12 +339,16 @@ failover 重连风暴留余量。RDS Proxy 启用后仍按数据库端连接、�
 - 稳态、预期高峰、2 倍突发和缓慢客户端；
 - HPA 从最小到最大副本，单区容量丢失和节点替换；
 - 钱包延迟/超时/未知结果、审计 sink 变慢、RDS failover；
+- apply 舱壁饱和、lookup 保留容量、熔断 open/half-open、单运营商故障与共享后端故障；
 - connection、in-flight、DB pool、WAF 和身份级全局限流同时接近上限；
 - Web 冷缓存、多个 release 并存、不同网络质量和移动设备；
 - 日志/指标出口限流，证明业务不会因无界遥测缓冲耗尽资源。
 
 压测数据必须使用隔离账号、模拟钱包和不可兑付数据，不能通过 `local-operator` 的单机结果推断
 AWS 容量。HPA 只按 CPU/内存扩缩时，下游容量先到顶应降低 `maxReplicas` 或背压，而不是继续扩容。
+本机 `atomic-http-v2` conformance 也不能替代真实第三方钱包的签名、幂等保留期、`NOT_FOUND`
+一致性、慢响应、故障转移、对账和容量认证。转账或拆分 debit/credit 钱包尚未实现，接入前必须另
+行交付持久 saga 与专项认证。
 
 ### 12.3 成本控制
 
@@ -381,6 +416,7 @@ AWS 容量。HPA 只按 CPU/内存扩缩时，下游容量先到顶应降低 `ma
 - [事务性发件箱](outbox-delivery.md)
 - [访问令牌密钥轮换](access-token-key-rotation.md)
 - [安全与合规边界](security-compliance.md)
+- [前后端核心架构评估](core-architecture-assessment.md)
 - [通用集群生产部署](../deploy/cluster-production/README.md)
 
 ## 17. AWS 官方参考

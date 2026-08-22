@@ -18,7 +18,7 @@ fi
 artifact_dir=${RGS_CONFORMANCE_ARTIFACT_DIR:-"$repository_dir/.artifacts/postgres-conformance"}
 evidence_file="$artifact_dir/postgres-conformance.jsonl"
 migration_evidence_file="$artifact_dir/postgres-migration.jsonl"
-test_pattern='^(TestPostgresProductionRoundAndCredentialConcurrency|TestPostgresFeatureRoundInputStateRecovery|TestPostgresOutboxConcurrentClaimsOrderingAndFencing|TestPostgresConcurrentSessionIntegrityQuarantinePreservesEconomicEvidence)$'
+test_pattern=$(cd -- "$server_dir" && go run ./scripts/verify-postgres-conformance.go --pattern)
 
 umask 077
 mkdir -p -- "$artifact_dir"

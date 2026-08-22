@@ -29,6 +29,7 @@ func TestMetricsHaveNoHighCardinalityLabels(t *testing.T) {
 	metrics.RoundsCommitted.Add(2)
 	metrics.HTTPServerFailures.Add(3)
 	metrics.CapacityRejected.Add(4)
+	metrics.NewIntentCapacityRejected.Add(5)
 	metrics.NonceReplay()
 	metrics.AccessLogEmitted()
 	metrics.AccessLogDropped()
@@ -47,6 +48,10 @@ func TestMetricsHaveNoHighCardinalityLabels(t *testing.T) {
 		!strings.Contains(text, "# TYPE rgs_capacity_rejected_total counter") ||
 		!strings.Contains(text, "rgs_capacity_rejected_total 4") {
 		t.Fatalf("capacity rejection counter missing from output: %s", text)
+	}
+	if !strings.Contains(text, "# TYPE rgs_new_intent_capacity_rejected_total counter") ||
+		!strings.Contains(text, "rgs_new_intent_capacity_rejected_total 5") {
+		t.Fatalf("new-intent capacity rejection counter missing from output: %s", text)
 	}
 	if !strings.Contains(text, "rgs_access_logs_emitted_total 1") ||
 		!strings.Contains(text, "rgs_access_logs_dropped_total 1") {
@@ -139,6 +144,49 @@ func TestRequestTelemetryUsesFixedCumulativeBuckets(t *testing.T) {
 	assertNoHighCardinalityMetricLabels(t, text)
 }
 
+func TestWalletIsolationTelemetryUsesOnlyBoundedLabels(t *testing.T) {
+	metrics := &Metrics{}
+	metrics.WalletBreakerStateChanged("apply", "", "closed")
+	metrics.WalletBreakerStateChanged("apply", "closed", "open")
+	metrics.WalletBreakerStateChanged("lookup", "", "closed")
+	metrics.WalletInFlight("lookup", 1)
+	metrics.ObserveWalletRequest("lookup", "pending", 7*time.Millisecond)
+	metrics.WalletIsolationRejected("apply", "backend_bulkhead")
+	metrics.ObserveWalletRequest("apply", "isolated", time.Millisecond)
+
+	// 非法值模拟请求派生输入；实现必须静默丢弃，绝不能生成新时序。
+	metrics.WalletInFlight("operator-secret", 1)
+	metrics.ObserveWalletRequest("apply", "player-secret", time.Second)
+	metrics.WalletIsolationRejected("apply", "round-secret")
+	metrics.WalletBreakerStateChanged("operator-secret", "", "open")
+
+	var output bytes.Buffer
+	if err := metrics.WritePrometheus(&output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, metric := range []string{
+		`rgs_wallet_inflight{method="lookup"} 1`,
+		`rgs_wallet_isolation_rejected_total{method="apply",reason="backend_bulkhead"} 1`,
+		`rgs_wallet_breakers{method="apply",state="closed"} 0`,
+		`rgs_wallet_breakers{method="apply",state="open"} 1`,
+		`rgs_wallet_breakers{method="lookup",state="closed"} 1`,
+		`rgs_wallet_request_duration_seconds_bucket{method="lookup",outcome="pending",le="0.010"} 1`,
+		`rgs_wallet_request_duration_seconds_count{method="lookup",outcome="pending"} 1`,
+		`rgs_wallet_request_duration_seconds_count{method="apply",outcome="isolated"} 1`,
+	} {
+		if !strings.Contains(text, metric) {
+			t.Fatalf("metrics output does not contain %q:\n%s", metric, text)
+		}
+	}
+	for _, leaked := range []string{"operator-secret", "player-secret", "round-secret"} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("wallet metrics leaked unbounded value %q:\n%s", leaked, text)
+		}
+	}
+	assertNoHighCardinalityMetricLabels(t, text)
+}
+
 func TestMetricsExposeAttachedDatabasePoolGauges(t *testing.T) {
 	metrics := &Metrics{}
 	metrics.SetDatabasePool(&sql.DB{})
@@ -225,7 +273,23 @@ func TestMetricsEndpointReportsBoundedReadinessWithoutChangingHTTPStatus(t *test
 func assertNoHighCardinalityMetricLabels(t *testing.T, text string) {
 	t.Helper()
 	for _, line := range strings.Split(text, "\n") {
-		if strings.Contains(line, "{") && !strings.Contains(line, `rgs_http_request_duration_seconds_bucket{le="`) {
+		if !strings.Contains(line, "{") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, `rgs_http_request_duration_seconds_bucket{le="`):
+		case strings.HasPrefix(line, `rgs_wallet_inflight{method="`):
+			assertContainsOneLabelValue(t, line, "method", walletMetricMethods[:])
+		case strings.HasPrefix(line, `rgs_wallet_isolation_rejected_total{method="`):
+			assertContainsOneLabelValue(t, line, "method", walletMetricMethods[:])
+			assertContainsOneLabelValue(t, line, "reason", walletRejectionReasons[:])
+		case strings.HasPrefix(line, `rgs_wallet_breakers{method="`):
+			assertContainsOneLabelValue(t, line, "method", walletBreakerMethods[:])
+			assertContainsOneLabelValue(t, line, "state", walletBreakerStates[:])
+		case strings.HasPrefix(line, `rgs_wallet_request_duration_seconds_`):
+			assertContainsOneLabelValue(t, line, "method", walletMetricMethods[:])
+			assertContainsOneLabelValue(t, line, "outcome", walletMetricOutcomes[:])
+		default:
 			t.Fatalf("unexpected metric label set: %s", line)
 		}
 	}
@@ -233,5 +297,18 @@ func assertNoHighCardinalityMetricLabels(t *testing.T, text string) {
 		if strings.Contains(text, forbidden+"=") {
 			t.Fatalf("high-cardinality label %q is exposed:\n%s", forbidden, text)
 		}
+	}
+}
+
+func assertContainsOneLabelValue(t *testing.T, line, label string, allowed []string) {
+	t.Helper()
+	matches := 0
+	for _, value := range allowed {
+		if strings.Contains(line, label+`="`+value+`"`) {
+			matches++
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("metric label %q is not a single bounded value: %s", label, line)
 	}
 }

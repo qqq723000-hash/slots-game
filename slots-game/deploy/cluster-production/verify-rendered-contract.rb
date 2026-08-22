@@ -96,10 +96,15 @@ expected_alerts = %w[
   SlotsRGSWorkerNotReady
   SlotsRGSServerErrorRateHigh
   SlotsRGSCapacityRejected
+  SlotsRGSNewIntentCapacityRejected
   SlotsRGSHPAUnableToScale
   SlotsRGSSharedAdmissionErrors
   SlotsRGSAuthReplay
   SlotsRGSWalletUnknownOutcome
+  SlotsRGSWalletIsolationRejected
+  SlotsRGSWalletCircuitOpen
+  SlotsRGSWalletPendingSustained
+  SlotsRGSRoundManualReview
   SlotsRGSIntegrityQuarantine
   SlotsRGSOutboxDeferred
   SlotsRGSOutboxLeaseLost
@@ -149,9 +154,14 @@ required_metrics = %w[
   rgs_http_server_failures_total
   rgs_http_requests_total
   rgs_capacity_rejected_total
+  rgs_new_intent_capacity_rejected_total
   rgs_shared_admission_errors_total
   rgs_auth_replays_total
   rgs_wallet_unknown_outcomes_total
+  rgs_wallet_isolation_rejected_total
+  rgs_wallet_breakers
+  rgs_wallet_request_duration_seconds_count
+  rgs_rounds_manual_review_total
   rgs_round_integrity_quarantines_total
   rgs_session_integrity_quarantines_total
   rgs_outbox_deferred_total
@@ -195,6 +205,12 @@ abort "Worker 没有绑定候选数学定义身份" unless worker_environment.sl
       annotations["slots-game.io/definition-sha256"] == expected_definition_identity["RGS_EXPECTED_DEFINITION_SHA256"]
 end
 abort "RGS API 没有显式固定 api 角色" unless api_environment["RGS_RUNTIME_ROLE"] == "api"
+abort "RGS API 没有固定独立的一秒钱包快速路径预算" unless
+  api_environment["RGS_WALLET_FAST_PATH_TIMEOUT"] == "1s" &&
+    api_environment["RGS_WALLET_TIMEOUT"] == "4s"
+abort "RGS API 没有为结果闭环固定数据库保留连接" unless
+  api_environment["RGS_DB_MAX_OPEN_CONNS"] == "20" &&
+    api_environment["RGS_DB_CRITICAL_RESERVE_CONNS"] == "5"
 abort "RGS API 被错误授予 outbox 配置" if api_environment.keys.any? { |name| name.start_with?("RGS_OUTBOX_") }
 required_shared_environment = %w[
   RGS_SHARED_ADMISSION_URL
@@ -215,6 +231,9 @@ abort "RGS API 没有从独立共享准入 Secret 读取 ACL 用户名" unless
     shared_username.dig("valueFrom", "secretKeyRef", "name") == "slots-rgs-shared-admission-v1" &&
     shared_username.dig("valueFrom", "secretKeyRef", "key") == "username"
 abort "RGS Worker 没有显式固定 worker 角色" unless worker_environment["RGS_RUNTIME_ROLE"] == "worker"
+abort "RGS Worker 被错误授予 API 新意图数据库保留配置" if
+  worker_environment.key?("RGS_DB_CRITICAL_RESERVE_CONNS")
+abort "RGS Worker 被错误授予 API 快速路径预算" if worker_environment.key?("RGS_WALLET_FAST_PATH_TIMEOUT")
 abort "RGS Worker 缺少 outbox 所有者身份" unless worker_environment.key?("RGS_OUTBOX_OWNER")
 abort "RGS Worker 被错误授予共享准入配置" if
   worker_environment.keys.any? { |name| name.start_with?("RGS_SHARED_ADMISSION_") }

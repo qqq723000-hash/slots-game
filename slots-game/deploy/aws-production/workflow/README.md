@@ -134,6 +134,12 @@ Terraform delivery 只发布非秘密的 `valkey_active_slot`、`valkey_user_nam
 期间不得顺带重置 HMAC 限流桶。轮换契约只携带 A/B 密码与 HMAC key 的 SHA-256 fingerprint，不携带原值。
 正常应用发布只接受 `steady` 或 `password-rotation`；`hmac-maintenance` 必须在独立停机维护中把工作负载缩到
 零副本，且禁止与普通 Helm 滚动并行，应用部署工作流会失败闭合拒绝该模式。
+共享准入 ACL 从 v1 切到 v2 也不是普通滚动：delivery 固定声明
+`acl_schema_transition=maintenance-quiesced`、禁止 rolling/双权限并携带严格步骤。运维必须先设置 API
+`maintenanceQuiesced` 停止新 launch/spin、排空旧 API Pod，再用同一 API 零副本证据进入
+`hmac-maintenance`；基础设施 plan 校验器只允许 rotation guard、版本化 Secret/SecretVersion 和 A/B
+两个用户的精确 v1→v2 ACL 更新。退出 HMAC 维护后才启动 v2 镜像并验证，最后恢复新意图；普通
+`steady`/密码轮换 plan 会拒绝 ACL 变化，Worker 资金恢复和既有状态/ACK 绕行不得随该维护停止。
 应用实时门禁会验证 delivery 的活动用户名与 A/B 槽位一致，并要求不可变
 共享准入 Secret 同时包含 `username`、`password`、`hmac.key`、`root-ca.pem` 四个非空 key；Helm 渲染
 门禁还会确认 `RGS_SHARED_ADMISSION_USERNAME` 精确引用该版本化 Secret 的 `username` key。合并后的

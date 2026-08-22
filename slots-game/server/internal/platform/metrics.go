@@ -11,7 +11,14 @@ import (
 	"slots-game/server/internal/rgs"
 )
 
-const requestLatencyBucketCount = 11
+const (
+	requestLatencyBucketCount = 11
+	walletMethodCount         = 3
+	walletOutcomeCount        = 9
+	walletRejectionCount      = 3
+	walletBreakerMethodCount  = 2
+	walletBreakerStateCount   = 3
+)
 
 var requestLatencyBoundaries = [...]time.Duration{
 	5 * time.Millisecond,
@@ -26,6 +33,14 @@ var requestLatencyBoundaries = [...]time.Duration{
 	5 * time.Second,
 	10 * time.Second,
 }
+
+var (
+	walletMetricMethods    = [...]string{"apply", "lookup", "rollback"}
+	walletMetricOutcomes   = [...]string{"success", "pending", "rejected", "not_found", "not_sent", "conflict", "invalid", "unknown", "isolated"}
+	walletRejectionReasons = [...]string{"backend_bulkhead", "operator_bulkhead", "circuit"}
+	walletBreakerMethods   = [...]string{"apply", "lookup"}
+	walletBreakerStates    = [...]string{"closed", "open", "half_open"}
+)
 
 // Metrics 只暴露有界基数的计数器、仪表盘和固定桶直方图。运营商、玩家、会话、
 // 轮次和交易标识绝不能成为标签，避免不可信输入耗尽监控系统的索引空间。
@@ -45,8 +60,11 @@ type Metrics struct {
 	SharedAdmissionErrors  atomic.Uint64
 	// CapacityRejected 只计进程级公网并发硬闸门拒绝；不得与租户/速率限流混用，
 	// 以便值班人员区分资源饱和与攻击或调用方超额。
-	CapacityRejected   atomic.Uint64
-	HTTPActiveRequests atomic.Int64
+	CapacityRejected atomic.Uint64
+	// NewIntentCapacityRejected 只计为 PostgreSQL 关键读取、结果恢复和 ACK 预留连接
+	// 而被非阻塞拒绝的新 launch/spin；不能与公网总 in-flight 闸门混用。
+	NewIntentCapacityRejected atomic.Uint64
+	HTTPActiveRequests        atomic.Int64
 	// HTTPActiveConnections 覆盖公网监听器从 Accept 到 Close 或 Hijack 的完整生命周期，
 	// 包括尚未进入处理器的慢请求头、未读正文回收和空闲长连接。
 	HTTPActiveConnections       atomic.Int64
@@ -60,6 +78,12 @@ type Metrics struct {
 	IdempotencyConflicts        atomic.Uint64
 	WalletCalls                 atomic.Uint64
 	WalletUnknownOutcomes       atomic.Uint64
+	WalletActiveRequests        [walletMethodCount]atomic.Int64
+	WalletRequestDurations      [walletMethodCount][walletOutcomeCount][requestLatencyBucketCount]atomic.Uint64
+	WalletRequestDurationCount  [walletMethodCount][walletOutcomeCount]atomic.Uint64
+	WalletRequestDurationNanos  [walletMethodCount][walletOutcomeCount]atomic.Uint64
+	WalletIsolationRejections   [walletMethodCount][walletRejectionCount]atomic.Uint64
+	WalletBreakers              [walletBreakerMethodCount][walletBreakerStateCount]atomic.Int64
 	Reconciliations             atomic.Uint64
 	RoundsManualReview          atomic.Uint64
 	RoundIntegrityQuarantines   atomic.Uint64
@@ -92,6 +116,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 		{"rgs_shared_admission_limited_total", "Verified-identity requests rejected by shared admission control.", m.SharedAdmissionLimited.Load()},
 		{"rgs_shared_admission_errors_total", "Shared admission backend or protocol failures.", m.SharedAdmissionErrors.Load()},
 		{"rgs_capacity_rejected_total", "Public requests rejected by the process-wide in-flight capacity gate.", m.CapacityRejected.Load()},
+		{"rgs_new_intent_capacity_rejected_total", "New launch or spin intents rejected to preserve PostgreSQL critical result capacity.", m.NewIntentCapacityRejected.Load()},
 		{"rgs_rounds_prepared_total", "Durably prepared game rounds.", m.RoundsPrepared.Load()},
 		{"rgs_rounds_committed_total", "Wallet-confirmed committed rounds.", m.RoundsCommitted.Load()},
 		{"rgs_round_replays_total", "Idempotent committed round replays.", m.RoundReplays.Load()},
@@ -113,6 +138,9 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 		}
 	}
 	if err := m.writeRequestLatencyHistogram(w); err != nil {
+		return err
+	}
+	if err := m.writeWalletIsolationMetrics(w); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(
@@ -180,6 +208,95 @@ func (m *Metrics) writeRequestLatencyHistogram(w io.Writer) error {
 		count,
 	); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (m *Metrics) writeWalletIsolationMetrics(w io.Writer) error {
+	if _, err := fmt.Fprint(
+		w,
+		"# HELP rgs_wallet_inflight Wallet requests currently executing beyond the isolation gates.\n"+
+			"# TYPE rgs_wallet_inflight gauge\n",
+	); err != nil {
+		return err
+	}
+	for methodIndex, method := range walletMetricMethods {
+		if _, err := fmt.Fprintf(
+			w, "rgs_wallet_inflight{method=\"%s\"} %d\n",
+			method, m.WalletActiveRequests[methodIndex].Load(),
+		); err != nil {
+			return err
+		}
+	}
+
+	if _, err := fmt.Fprint(
+		w,
+		"# HELP rgs_wallet_isolation_rejected_total Wallet requests rejected without waiting by a bounded isolation gate.\n"+
+			"# TYPE rgs_wallet_isolation_rejected_total counter\n",
+	); err != nil {
+		return err
+	}
+	for methodIndex, method := range walletMetricMethods {
+		for reasonIndex, reason := range walletRejectionReasons {
+			if _, err := fmt.Fprintf(
+				w, "rgs_wallet_isolation_rejected_total{method=\"%s\",reason=\"%s\"} %d\n",
+				method, reason, m.WalletIsolationRejections[methodIndex][reasonIndex].Load(),
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err := fmt.Fprint(
+		w,
+		"# HELP rgs_wallet_breakers Wallet circuit breakers in each bounded state.\n"+
+			"# TYPE rgs_wallet_breakers gauge\n",
+	); err != nil {
+		return err
+	}
+	for methodIndex, method := range walletBreakerMethods {
+		for stateIndex, state := range walletBreakerStates {
+			if _, err := fmt.Fprintf(
+				w, "rgs_wallet_breakers{method=\"%s\",state=\"%s\"} %d\n",
+				method, state, m.WalletBreakers[methodIndex][stateIndex].Load(),
+			); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err := fmt.Fprint(
+		w,
+		"# HELP rgs_wallet_request_duration_seconds Wallet request duration after isolation admission in seconds.\n"+
+			"# TYPE rgs_wallet_request_duration_seconds histogram\n",
+	); err != nil {
+		return err
+	}
+	for methodIndex, method := range walletMetricMethods {
+		for outcomeIndex, outcome := range walletMetricOutcomes {
+			for bucketIndex, boundary := range requestLatencyBoundaries {
+				if _, err := fmt.Fprintf(
+					w,
+					"rgs_wallet_request_duration_seconds_bucket{method=\"%s\",outcome=\"%s\",le=\"%s\"} %d\n",
+					method, outcome, formatPrometheusSeconds(boundary),
+					m.WalletRequestDurations[methodIndex][outcomeIndex][bucketIndex].Load(),
+				); err != nil {
+					return err
+				}
+			}
+			count := m.WalletRequestDurationCount[methodIndex][outcomeIndex].Load()
+			if _, err := fmt.Fprintf(
+				w,
+				"rgs_wallet_request_duration_seconds_bucket{method=\"%s\",outcome=\"%s\",le=\"+Inf\"} %d\n"+
+					"rgs_wallet_request_duration_seconds_sum{method=\"%s\",outcome=\"%s\"} %.9f\n"+
+					"rgs_wallet_request_duration_seconds_count{method=\"%s\",outcome=\"%s\"} %d\n",
+				method, outcome, count,
+				method, outcome, float64(m.WalletRequestDurationNanos[methodIndex][outcomeIndex].Load())/float64(time.Second),
+				method, outcome, count,
+			); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -318,6 +435,110 @@ func (m *Metrics) WalletUnknownOutcome() {
 	if m != nil {
 		m.WalletUnknownOutcomes.Add(1)
 	}
+}
+
+// ObserveWalletRequest 仅接受 wallet 隔离层提供的固定 method/outcome，
+// 通过固定数组避免任何请求派生标签或动态映射。
+func (m *Metrics) ObserveWalletRequest(method, outcome string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	methodIndex, methodOK := walletMethodIndex(method)
+	outcomeIndex, outcomeOK := walletOutcomeIndex(outcome)
+	if !methodOK || !outcomeOK {
+		return
+	}
+	if duration < 0 {
+		duration = 0
+	}
+	m.WalletRequestDurationCount[methodIndex][outcomeIndex].Add(1)
+	m.WalletRequestDurationNanos[methodIndex][outcomeIndex].Add(uint64(duration))
+	for bucketIndex, boundary := range requestLatencyBoundaries {
+		if duration <= boundary {
+			m.WalletRequestDurations[methodIndex][outcomeIndex][bucketIndex].Add(1)
+		}
+	}
+}
+
+func (m *Metrics) WalletInFlight(method string, delta int64) {
+	if m == nil {
+		return
+	}
+	if methodIndex, ok := walletMethodIndex(method); ok {
+		m.WalletActiveRequests[methodIndex].Add(delta)
+	}
+}
+
+func (m *Metrics) WalletIsolationRejected(method, reason string) {
+	if m == nil {
+		return
+	}
+	methodIndex, methodOK := walletMethodIndex(method)
+	reasonIndex, reasonOK := walletRejectionIndex(reason)
+	if methodOK && reasonOK {
+		m.WalletIsolationRejections[methodIndex][reasonIndex].Add(1)
+	}
+}
+
+func (m *Metrics) WalletBreakerStateChanged(method, previous, current string) {
+	if m == nil {
+		return
+	}
+	methodIndex, ok := walletBreakerMethodIndex(method)
+	if !ok {
+		return
+	}
+	if previousIndex, previousOK := walletBreakerStateIndex(previous); previousOK {
+		m.WalletBreakers[methodIndex][previousIndex].Add(-1)
+	}
+	if currentIndex, currentOK := walletBreakerStateIndex(current); currentOK {
+		m.WalletBreakers[methodIndex][currentIndex].Add(1)
+	}
+}
+
+func walletMethodIndex(method string) (int, bool) {
+	for index, candidate := range walletMetricMethods {
+		if method == candidate {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func walletOutcomeIndex(outcome string) (int, bool) {
+	for index, candidate := range walletMetricOutcomes {
+		if outcome == candidate {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func walletRejectionIndex(reason string) (int, bool) {
+	for index, candidate := range walletRejectionReasons {
+		if reason == candidate {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func walletBreakerMethodIndex(method string) (int, bool) {
+	for index, candidate := range walletBreakerMethods {
+		if method == candidate {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func walletBreakerStateIndex(state string) (int, bool) {
+	for index, candidate := range walletBreakerStates {
+		if state == candidate {
+			return index, true
+		}
+	}
+	return 0, false
 }
 
 func (m *Metrics) ObserveOutboxDispatch(result outbox.BatchResult) {

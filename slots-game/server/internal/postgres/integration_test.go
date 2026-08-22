@@ -78,8 +78,14 @@ func TestPostgresProductionRoundAndCredentialConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinatorA, _ := rgs.NewCoordinator(rgs.CoordinatorConfig{}, repositoryA, wallet, registry)
-	coordinatorB, _ := rgs.NewCoordinator(rgs.CoordinatorConfig{}, repositoryB, wallet, registry)
+	coordinatorA, err := rgs.NewCoordinator(rgs.CoordinatorConfig{}, repositoryA, wallet, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinatorB, err := rgs.NewCoordinator(rgs.CoordinatorConfig{}, repositoryB, wallet, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := rgs.SpinRequest{
 		OperatorID: session.OperatorID, SessionID: session.SessionID,
 		RoundID: "round-a", GameID: session.GameID,
@@ -246,6 +252,7 @@ func TestPostgresFeatureRoundInputStateRecovery(t *testing.T) {
 			result := recoverableFeatureResult(request, test.next, test.events)
 			record, prepared, err := repository.PrepareRound(
 				ctx, request, rgs.FingerprintFor(request),
+				rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget("https://wallet.test.invalid/ledger")),
 				func(locked rgs.Session) (rgs.SpinResult, error) {
 					if locked.Feature != test.input {
 						t.Fatalf("locked input feature = %+v, want %+v", locked.Feature, test.input)
@@ -274,15 +281,16 @@ func TestPostgresFeatureRoundInputStateRecovery(t *testing.T) {
 				t.Fatalf("persisted input feature = %+v, want %+v", restored, test.input)
 			}
 
-			now := time.Now().UTC()
-			claimed, ownsWallet, err := repository.ClaimWallet(ctx, request.Key(), now, now.Add(time.Minute))
-			if err != nil || !ownsWallet || claimed.Status != rgs.RoundWalletPending {
-				t.Fatalf("ClaimWallet() = record:%+v owns:%v error:%v", claimed, ownsWallet, err)
+			claim, ownsWallet, err := repository.ClaimWallet(ctx, request.Key(), time.Minute)
+			if err != nil || !ownsWallet || claim.Record.Status != rgs.RoundWalletPending {
+				t.Fatalf("ClaimWallet() = claim:%+v owns:%v error:%v", claim, ownsWallet, err)
 			}
 
 			prepareCalled := false
 			replayed, prepared, err := repository.PrepareRound(
-				ctx, request, rgs.FingerprintFor(request), func(rgs.Session) (rgs.SpinResult, error) {
+				ctx, request, rgs.FingerprintFor(request),
+				rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget("https://wallet.test.invalid/ledger")),
+				func(rgs.Session) (rgs.SpinResult, error) {
 					prepareCalled = true
 					return rgs.SpinResult{}, errors.New("replay evaluated outcome")
 				},
@@ -345,6 +353,35 @@ type integrationWallet struct {
 	balance    int64
 	receipts   map[string]rgs.WalletReceipt
 	applyCalls atomic.Int64
+}
+
+func (*integrationWallet) ProfileFor(string) (rgs.Profile, error) {
+	return rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget("https://wallet.test.invalid/ledger")), nil
+}
+
+func (w *integrationWallet) SubmitRound(
+	ctx context.Context,
+	command rgs.WalletRound,
+) rgs.Resolution {
+	receipt, err := w.ApplyRound(ctx, command)
+	if err != nil {
+		return rgs.Resolution{Status: rgs.ResolutionUnknown, Cause: err}
+	}
+	return rgs.Resolution{Status: rgs.ResolutionSucceeded, Receipt: receipt}
+}
+
+func (w *integrationWallet) Resolve(
+	ctx context.Context,
+	reference rgs.OperationRef,
+) rgs.Resolution {
+	receipt, found, err := w.Lookup(ctx, reference.OperatorID, reference.OperationID)
+	if err != nil {
+		return rgs.Resolution{Status: rgs.ResolutionUnknown, Cause: err}
+	}
+	if !found {
+		return rgs.Resolution{Status: rgs.ResolutionNotFound}
+	}
+	return rgs.Resolution{Status: rgs.ResolutionSucceeded, Receipt: receipt}
 }
 
 func (w *integrationWallet) ApplyRound(
@@ -494,7 +531,8 @@ func truncateIntegrationTables(t *testing.T, database *sql.DB) {
 	_, err := database.Exec(`
 		TRUNCATE TABLE
 			rgs_operator_nonces, rgs_launch_codes, rgs_outbox,
-			rgs_wallet_transactions, rgs_rounds, rgs_sessions
+			rgs_wallet_transactions, rgs_rounds, rgs_sessions,
+			rgs_wallet_recovery_operators
 		RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatalf("truncate integration tables: %v", err)

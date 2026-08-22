@@ -155,7 +155,8 @@ func serve(getenv func(string) string) error {
 	}
 	wallet := newWalletHandler(walletHandlerConfig{
 		OperatorID: runtime.Keys.OperatorID, Store: store, Verifier: walletVerifier,
-		ResponseSigningKey: runtime.Keys.WalletResponseSigningKey, Metrics: metrics,
+		ResponseSigningKey: runtime.Keys.WalletResponseSigningKey,
+		AllowLegacyV1:      runtime.Config.AllowLegacyWalletV1, Metrics: metrics,
 	})
 	launchClient, err := newLaunchClient(
 		runtime.Keys.OperatorID, runtime.Config.RGSBaseURL,
@@ -224,6 +225,9 @@ func serve(getenv func(string) string) error {
 	mux.Handle("/", launcherHandler)
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	if runtime.Config.AllowLegacyWalletV1 {
+		logger.Warn("legacy wallet v1 compatibility is enabled; v2 command binding is not enforced for legacy requests")
+	}
 	handler := requestMiddleware(logger, metrics, runtime.Config.RequestTimeout, mux)
 	server := &http.Server{
 		Addr: runtime.Config.ListenAddress, Handler: handler,

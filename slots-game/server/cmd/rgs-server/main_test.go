@@ -579,7 +579,7 @@ func TestPublicInFlightGateRejectsWithoutBlockingAndBypassesHealth(t *testing.T)
 	}
 	if secondResponse.Code != http.StatusServiceUnavailable ||
 		secondResponse.Header().Get("Retry-After") != "1" ||
-		!strings.Contains(secondResponse.Body.String(), `"code":"SERVICE_UNAVAILABLE"`) {
+		!strings.Contains(secondResponse.Body.String(), `"code":"CAPACITY_UNAVAILABLE"`) {
 		t.Fatalf(
 			"capacity response = status:%d headers:%v body:%s",
 			secondResponse.Code,
@@ -606,6 +606,56 @@ func TestPublicInFlightGateRejectsWithoutBlockingAndBypassesHealth(t *testing.T)
 			metrics.HTTPRequestDurationCount.Load(),
 		)
 	}
+}
+
+func TestPublicInFlightGateAppliesCorsToClientCapacityResponseOnlyForAllowedOrigin(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	api := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		writer.WriteHeader(http.StatusNoContent)
+	})
+	allowedOrigins := map[string]struct{}{"https://casino.example": {}}
+	handler := newPublicInFlightGate(
+		1, &platform.Metrics{}, newPublicHandler(api, api), allowedOrigins,
+	)
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		handler.ServeHTTP(
+			httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodPost, "/operator/v1/launches", nil),
+		)
+	}()
+	<-started
+
+	allowed := httptest.NewRequest(http.MethodPost, "/client/v1/spins", nil)
+	allowed.Header.Set("Origin", "https://casino.example")
+	allowedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(allowedResponse, allowed)
+	if allowedResponse.Code != http.StatusServiceUnavailable ||
+		allowedResponse.Header().Get("Access-Control-Allow-Origin") != "https://casino.example" ||
+		allowedResponse.Header().Get("Access-Control-Expose-Headers") != "Retry-After" ||
+		allowedResponse.Header().Get("Retry-After") != "1" ||
+		!strings.Contains(allowedResponse.Body.String(), `"code":"CAPACITY_UNAVAILABLE"`) {
+		t.Fatalf("allowed capacity CORS response = status:%d headers:%v body:%s",
+			allowedResponse.Code, allowedResponse.Header(), allowedResponse.Body.String())
+	}
+
+	rejected := httptest.NewRequest(http.MethodPost, "/client/v1/spins", nil)
+	rejected.Header.Set("Origin", "https://rejected.example")
+	rejectedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(rejectedResponse, rejected)
+	if rejectedResponse.Code != http.StatusServiceUnavailable ||
+		rejectedResponse.Header().Get("Access-Control-Allow-Origin") != "" ||
+		rejectedResponse.Header().Get("Access-Control-Expose-Headers") != "" {
+		t.Fatalf("rejected capacity CORS response = status:%d headers:%v",
+			rejectedResponse.Code, rejectedResponse.Header())
+	}
+
+	close(release)
+	<-firstDone
 }
 
 type shutdownOrderRecorder struct {

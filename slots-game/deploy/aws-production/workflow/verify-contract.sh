@@ -320,7 +320,13 @@ for valkey_delivery_contract in \
   '$rotation.rotation_mode == $rotation_mode' \
   '($rotation.password_fingerprints | keys | sort) == ["a", "b"]' \
   '($rotation.hmac_key_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))' \
-  '$rotation.published_secret_version == $secret_version'
+  '$rotation.published_secret_version == $secret_version' \
+  '$rotation.acl_schema_version == "v2"' \
+  '$rotation.acl_schema_transition == "maintenance-quiesced"' \
+  '$rotation.acl_schema_migration_requires_quiesced == true' \
+  '$rotation.acl_schema_rolling_compatible == false' \
+  '$rotation.acl_schema_dual_permissions_allowed == false' \
+  '$rotation.acl_schema_migration_order == ['
 do
   valkey_contract_count=$(awk -v needle="$valkey_delivery_contract" '
     index($0, needle) { count += 1 }

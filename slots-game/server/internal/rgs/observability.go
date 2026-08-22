@@ -31,15 +31,17 @@ type IntegrityObserver interface {
 
 // ObservedWallet 装饰钱包端口，但不改变其经济或幂等行为。
 type ObservedWallet struct {
-	next     WalletPort
-	observer WalletObserver
+	next           WalletPort
+	nextResolution WalletResolutionPort
+	observer       WalletObserver
 }
 
 func NewObservedWallet(next WalletPort, observer WalletObserver) (*ObservedWallet, error) {
 	if next == nil || observer == nil {
 		return nil, errors.New("rgs: wallet and observer are required")
 	}
-	return &ObservedWallet{next: next, observer: observer}, nil
+	resolution, _ := next.(WalletResolutionPort)
+	return &ObservedWallet{next: next, nextResolution: resolution, observer: observer}, nil
 }
 
 func (w *ObservedWallet) ApplyRound(ctx context.Context, command WalletRound) (WalletReceipt, error) {
@@ -59,6 +61,37 @@ func (w *ObservedWallet) Lookup(ctx context.Context, operatorID, operationID str
 func (w *ObservedWallet) Rollback(ctx context.Context, rollback WalletRollback) (WalletReceipt, error) {
 	notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletCall() })
 	return w.next.Rollback(ctx, rollback)
+}
+
+func (w *ObservedWallet) ProfileFor(operatorID string) (Profile, error) {
+	if w == nil || w.nextResolution == nil {
+		return Profile{}, ErrWalletUnavailable
+	}
+	return w.nextResolution.ProfileFor(operatorID)
+}
+
+func (w *ObservedWallet) SubmitRound(ctx context.Context, command WalletRound) Resolution {
+	if w == nil || w.nextResolution == nil {
+		return Resolution{Status: ResolutionNotSent, Cause: ErrWalletUnavailable}
+	}
+	notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletCall() })
+	result := w.nextResolution.SubmitRound(ctx, command)
+	if result.Status == ResolutionUnknown {
+		notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletUnknownOutcome() })
+	}
+	return result
+}
+
+func (w *ObservedWallet) Resolve(ctx context.Context, reference OperationRef) Resolution {
+	if w == nil || w.nextResolution == nil {
+		return Resolution{Status: ResolutionNotSent, Cause: ErrWalletUnavailable}
+	}
+	notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletCall() })
+	result := w.nextResolution.Resolve(ctx, reference)
+	if result.Status == ResolutionUnknown {
+		notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletUnknownOutcome() })
+	}
+	return result
 }
 
 func unknownWalletApplyOutcome(err error) bool {
@@ -85,3 +118,4 @@ func notifyWalletObserver(observer WalletObserver, notify func(WalletObserver)) 
 }
 
 var _ WalletPort = (*ObservedWallet)(nil)
+var _ WalletResolutionPort = (*ObservedWallet)(nil)

@@ -202,6 +202,10 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("construct wallet HTTP client: %w", err)
 	}
+	walletIsolation, err := wallet.NewIsolationRegistry(wallet.DefaultIsolationConfig(), metrics)
+	if err != nil {
+		return fmt.Errorf("construct wallet isolation: %w", err)
+	}
 	for operatorID, loaded := range operators.Operators {
 		port, err := wallet.NewHTTPWallet(wallet.HTTPConfig{
 			BaseURL: loaded.Wallet.BaseURL, OperatorID: operatorID,
@@ -216,15 +220,20 @@ func run(logger *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("instrument wallet adapter for %s: %w", operatorID, err)
 		}
-		walletPorts[operatorID] = observedPort
+		isolatedPort, err := walletIsolation.Wrap(loaded.Wallet.BaseURL, operatorID, observedPort)
+		if err != nil {
+			return fmt.Errorf("isolate wallet adapter for %s: %w", operatorID, err)
+		}
+		walletPorts[operatorID] = isolatedPort
 	}
 	walletRouter, err := wallet.NewRouter(walletPorts)
 	if err != nil {
 		return err
 	}
 	coordinator, err := rgs.NewCoordinator(rgs.CoordinatorConfig{
-		WalletLease: config.WalletTimeout + time.Second,
-		PendingWait: time.Second, PollInterval: 20 * time.Millisecond,
+		WalletLease:           config.WalletTimeout + time.Second,
+		WalletFastPathTimeout: config.WalletFastPathTimeout,
+		PendingWait:           time.Second, PollInterval: 20 * time.Millisecond,
 		MaxWalletAttempts: config.WalletMaxAttempts,
 	}, repository, walletRouter, definitions, metrics)
 	if err != nil {
@@ -238,6 +247,15 @@ func run(logger *slog.Logger) error {
 
 	apiHandler := http.NotFoundHandler()
 	if config.RuntimeRole.ServesPublicAPI() {
+		newIntentCapacity, capacityErr := newDatabaseIntentCapacity(
+			database,
+			config.DatabaseMaxOpenConns,
+			config.DatabaseCriticalReserveConns,
+			metrics,
+		)
+		if capacityErr != nil {
+			return fmt.Errorf("configure database intent capacity: %w", capacityErr)
+		}
 		apiHandler, err = newRGSAPIHandler(
 			config,
 			logger,
@@ -252,6 +270,7 @@ func run(logger *slog.Logger) error {
 			repository,
 			coordinator,
 			sharedLimiter,
+			newIntentCapacity,
 		)
 		if err != nil {
 			return err
@@ -291,6 +310,7 @@ func run(logger *slog.Logger) error {
 		config.MaxInFlightRequests,
 		metrics,
 		newPublicHandler(apiHandler, clientHandler),
+		allowedOrigins,
 	)
 	operationsHandler := newOperationsHandler(readinessChecks, metrics, operationsBearerToken)
 
@@ -457,6 +477,7 @@ func newRGSAPIHandler(
 	repository *postgres.Repository,
 	coordinator *rgs.Coordinator,
 	sharedLimiter *sharedadmission.Limiter,
+	newIntentCapacity rgsapi.NewIntentCapacity,
 ) (http.Handler, error) {
 	launchService, err := launch.NewService(launchStore, launch.Options{TTL: config.LaunchTTL})
 	if err != nil {
@@ -537,8 +558,9 @@ func newRGSAPIHandler(
 		Spins: coordinator, Rounds: coordinator, Admission: localOperatorLimiter,
 		ClientAdmission: localClientLimiter,
 		LaunchAdmission: sharedLimiter, SpinAdmission: sharedLimiter,
-		SecurityEvents:  newSecurityEventObserver(logger, metrics),
-		MaxRequestBytes: config.MaxRequestBytes, ResponseSignatureTTL: time.Minute,
+		NewIntentCapacity: newIntentCapacity,
+		SecurityEvents:    newSecurityEventObserver(logger, metrics),
+		MaxRequestBytes:   config.MaxRequestBytes, ResponseSignatureTTL: time.Minute,
 	})
 }
 
@@ -575,8 +597,17 @@ func newPublicHandler(apiHandler, clientHandler http.Handler) http.Handler {
 	return mux
 }
 
-func newPublicInFlightGate(limit int, metrics *platform.Metrics, next http.Handler) http.Handler {
+func newPublicInFlightGate(
+	limit int,
+	metrics *platform.Metrics,
+	next http.Handler,
+	allowedOrigins ...map[string]struct{},
+) http.Handler {
 	semaphore := make(chan struct{}, limit)
+	var browserOrigins map[string]struct{}
+	if len(allowedOrigins) > 0 {
+		browserOrigins = allowedOrigins[0]
+	}
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL != nil && request.URL.Path == "/healthz" {
 			next.ServeHTTP(writer, request)
@@ -598,6 +629,9 @@ func newPublicInFlightGate(limit int, metrics *platform.Metrics, next http.Handl
 			if requestID == "" {
 				requestID = "unavailable"
 			}
+			if request.URL != nil && strings.HasPrefix(request.URL.Path, "/client/") {
+				platform.ApplyCORSHeaders(writer, request, browserOrigins)
+			}
 			writer.Header().Set(operator.HeaderRequestID, requestID)
 			writer.Header().Set("Content-Type", "application/json")
 			writer.Header().Set("Cache-Control", "no-store")
@@ -606,7 +640,7 @@ func newPublicInFlightGate(limit int, metrics *platform.Metrics, next http.Handl
 			writer.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = fmt.Fprintf(
 				writer,
-				`{"error":{"code":"SERVICE_UNAVAILABLE","message":"service unavailable"},"requestId":"%s"}`+"\n",
+				`{"error":{"code":"CAPACITY_UNAVAILABLE","message":"service unavailable"},"requestId":"%s"}`+"\n",
 				requestID,
 			)
 		}

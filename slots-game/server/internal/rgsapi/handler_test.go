@@ -516,8 +516,10 @@ func TestOperatorAdmissionBackendFailureReturnsSignedServiceUnavailable(t *testi
 func TestSharedAdmissionFailureBlocksOnlyNewEconomicIntents(t *testing.T) {
 	security := newSecurityFixture(t)
 	sharedCalls := 0
-	unavailable := AdmissionResultFunc(func(context.Context, string, time.Time) AdmissionResult {
+	var sharedKey string
+	unavailable := AdmissionResultFunc(func(_ context.Context, key string, _ time.Time) AdmissionResult {
 		sharedCalls++
+		sharedKey = key
 		return AdmissionResult{Decision: AdmissionBackendUnavailable, RetryAfter: time.Second}
 	})
 	ackCalls := 0
@@ -543,8 +545,9 @@ func TestSharedAdmissionFailureBlocksOnlyNewEconomicIntents(t *testing.T) {
 
 	spinRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(spinRecorder, clientRequest(ClientSpinPath, clientSpinBody(testDefinitionHash), token))
-	if spinRecorder.Code != http.StatusServiceUnavailable || sharedCalls != 1 || spins.calls != 0 {
-		t.Fatalf("spin status/shared/coordinator = %d/%d/%d, body = %s", spinRecorder.Code, sharedCalls, spins.calls, spinRecorder.Body.Bytes())
+	if spinRecorder.Code != http.StatusServiceUnavailable || sharedCalls != 1 || spins.calls != 0 ||
+		sharedKey != "spin-operator:"+testOperatorID {
+		t.Fatalf("spin status/shared/coordinator/key = %d/%d/%d/%q, body = %s", spinRecorder.Code, sharedCalls, spins.calls, sharedKey, spinRecorder.Body.Bytes())
 	}
 
 	statusRecorder := httptest.NewRecorder()
@@ -800,6 +803,21 @@ func TestClientAdmissionKeyCannotCollideAcrossColonBearingClaims(t *testing.T) {
 	}
 }
 
+func TestSharedNewIntentAdmissionUsesIndependentOperatorBuckets(t *testing.T) {
+	if launchAdmissionKey("operator:a") != "launch-operator:operator:a" {
+		t.Fatalf("launch admission key = %q", launchAdmissionKey("operator:a"))
+	}
+	if spinAdmissionKey("operator:a") != "spin-operator:operator:a" {
+		t.Fatalf("spin admission key = %q", spinAdmissionKey("operator:a"))
+	}
+	if launchAdmissionKey("operator:a") == spinAdmissionKey("operator:a") {
+		t.Fatal("launch and spin share one operator quota")
+	}
+	if spinAdmissionKey("operator:a") == spinAdmissionKey("operator:b") {
+		t.Fatal("distinct verified operators share one spin quota")
+	}
+}
+
 func TestChunkedBodyRejectedByOuterLimitKeepsBodyTooLargeEnvelope(t *testing.T) {
 	security := newSecurityFixture(t)
 	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
@@ -846,6 +864,19 @@ func TestDatabaseTimeoutsUseExistingServiceUnavailableContract(t *testing.T) {
 		if status != http.StatusServiceUnavailable || code != "SERVICE_UNAVAILABLE" || message == "" {
 			t.Fatalf("mapError(%s) = (%d, %q, %q)", state, status, code, message)
 		}
+	}
+}
+
+func TestWalletUnavailableUsesExplicitRetryableContract(t *testing.T) {
+	t.Parallel()
+
+	recorder := httptest.NewRecorder()
+	(&Handler{}).writeMappedError(recorder, "request-wallet-unavailable", rgs.ErrWalletUnavailable)
+	response := recorder.Result()
+	if response.StatusCode != http.StatusServiceUnavailable || response.Header.Get("Retry-After") != "1" ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"WALLET_UNAVAILABLE"`)) {
+		t.Fatalf("status = %d, retry-after = %q, body = %s",
+			response.StatusCode, response.Header.Get("Retry-After"), recorder.Body.Bytes())
 	}
 }
 

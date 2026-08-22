@@ -166,6 +166,7 @@ module "cache" {
   alert_topic_arn                       = module.observability.alert_topic_arn
   engine_version                        = var.valkey_engine_version
   node_type                             = var.valkey_node_type
+  valkey_alarm_thresholds               = var.valkey_alarm_thresholds
   valkey_active_slot                    = var.valkey_active_slot
   valkey_rotation_mode                  = var.valkey_rotation_mode
   valkey_password_a                     = var.valkey_password_a

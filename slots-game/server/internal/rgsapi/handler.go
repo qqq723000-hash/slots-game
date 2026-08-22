@@ -44,6 +44,7 @@ type Handler struct {
 	clientAdmission      Admission
 	launchAdmission      Admission
 	spinAdmission        Admission
+	newIntentCapacity    NewIntentCapacity
 	securityEvents       SecurityEventObserver
 	maxRequestBytes      int64
 	responseSignatureTTL time.Duration
@@ -93,6 +94,7 @@ func NewHandler(config Config) (*Handler, error) {
 		clientAdmission:      config.ClientAdmission,
 		launchAdmission:      config.LaunchAdmission,
 		spinAdmission:        config.SpinAdmission,
+		newIntentCapacity:    config.NewIntentCapacity,
 		securityEvents:       config.SecurityEvents,
 		maxRequestBytes:      config.MaxRequestBytes,
 		responseSignatureTTL: config.ResponseSignatureTTL,
@@ -199,10 +201,15 @@ func (h *Handler) handleOperatorLaunch(writer http.ResponseWriter, request *http
 		return
 	}
 	if h.launchAdmission != nil && !h.writeAdmissionResult(writer, requestID, h.launchAdmission.Admit(
-		request.Context(), "operator:"+verified.OperatorID, h.now(),
+		request.Context(), launchAdmissionKey(verified.OperatorID), h.now(),
 	)) {
 		return
 	}
+	releaseCapacity, ok := h.acquireNewIntentCapacity(request.Context(), writer, requestID)
+	if !ok {
+		return
+	}
+	defer releaseCapacity()
 	if err := h.operatorRequests.ConsumeNonce(request.Context(), verified); err != nil {
 		h.writeOperatorNonceError(writer, requestID, err)
 		return
@@ -355,10 +362,15 @@ func (h *Handler) handleClientSpin(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if h.spinAdmission != nil && !h.writeAdmissionResult(writer, requestID, h.spinAdmission.Admit(
-		request.Context(), clientAdmissionKey(claims.OperatorID, claims.SessionID), h.now(),
+		request.Context(), spinAdmissionKey(claims.OperatorID), h.now(),
 	)) {
 		return
 	}
+	releaseCapacity, ok := h.acquireNewIntentCapacity(request.Context(), writer, requestID)
+	if !ok {
+		return
+	}
+	defer releaseCapacity()
 	spinRequest := rgs.SpinRequest{
 		OperatorID: payload.OperatorID, SessionID: payload.SessionID, RoundID: payload.RoundID,
 		GameID: payload.GameID, DefinitionVersion: payload.DefinitionVersion,
@@ -592,6 +604,10 @@ func (h *Handler) writeAdmissionResult(writer http.ResponseWriter, requestID str
 	}
 	seconds := int64((retryAfter + time.Second - 1) / time.Second)
 	writer.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	if result.Decision == AdmissionCapacityUnavailable {
+		h.writeError(writer, requestID, http.StatusServiceUnavailable, "CAPACITY_UNAVAILABLE", "service capacity is temporarily unavailable")
+		return false
+	}
 	if result.Decision != AdmissionRateLimited {
 		h.writeError(writer, requestID, http.StatusServiceUnavailable, "ADMISSION_UNAVAILABLE", "request admission service is unavailable")
 		return false
@@ -600,12 +616,35 @@ func (h *Handler) writeAdmissionResult(writer http.ResponseWriter, requestID str
 	return false
 }
 
+func (h *Handler) acquireNewIntentCapacity(
+	ctx context.Context,
+	writer http.ResponseWriter,
+	requestID string,
+) (func(), bool) {
+	if h.newIntentCapacity == nil {
+		return func() {}, true
+	}
+	release, result := h.newIntentCapacity.TryAcquire(ctx)
+	if result.Decision != AdmissionAllowed || release == nil {
+		if result.Decision == AdmissionAllowed {
+			result.Decision = AdmissionCapacityUnavailable
+		}
+		h.writeAdmissionResult(writer, requestID, result)
+		return nil, false
+	}
+	return release, true
+}
+
 func clientAdmissionKey(operatorID, sessionID string) string {
 	// 合法标识允许冒号，因此必须转义元组的每个分量；反斜杠本身不在合法字符集内，
 	// 可保证 (a:b,c) 与 (a,b:c) 不会误共享限流桶，同时保留常规键的可读形式。
 	escape := func(value string) string { return strings.ReplaceAll(value, ":", `\:`) }
 	return "client:" + escape(operatorID) + ":" + escape(sessionID)
 }
+
+func launchAdmissionKey(operatorID string) string { return "launch-operator:" + operatorID }
+
+func spinAdmissionKey(operatorID string) string { return "spin-operator:" + operatorID }
 
 func (h *Handler) readBody(writer http.ResponseWriter, request *http.Request, requestID string) ([]byte, bool) {
 	if request.ContentLength > h.maxRequestBytes {
@@ -670,6 +709,9 @@ func (h *Handler) writeError(writer http.ResponseWriter, requestID string, statu
 }
 
 func (h *Handler) writeMappedError(writer http.ResponseWriter, requestID string, err error) {
+	if errors.Is(err, rgs.ErrWalletUnavailable) {
+		writer.Header().Set("Retry-After", "1")
+	}
 	status, code, message := mapError(err)
 	h.writeError(writer, requestID, status, code, message)
 }
@@ -698,6 +740,8 @@ func (h *Handler) writeJSON(writer http.ResponseWriter, requestID string, status
 
 func mapError(err error) (int, string, string) {
 	switch {
+	case errors.Is(err, rgs.ErrWalletUnavailable):
+		return http.StatusServiceUnavailable, "WALLET_UNAVAILABLE", "wallet is temporarily unavailable"
 	case errors.Is(err, operator.ErrNonceStore), errors.Is(err, ErrUnavailable):
 		return http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "service is temporarily unavailable"
 	case errors.Is(err, operator.ErrTenantMismatch):

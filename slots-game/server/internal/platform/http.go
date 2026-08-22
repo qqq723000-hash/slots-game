@@ -100,14 +100,21 @@ func writeMiddlewareError(writer http.ResponseWriter, requestID string, status i
 }
 
 func (m Middleware) applyCORS(w http.ResponseWriter, r *http.Request) {
+	ApplyCORSHeaders(w, r, m.AllowedOrigins)
+}
+
+// ApplyCORSHeaders 统一公开 API 与最外层容量闸门的浏览器响应策略。调用方只能传
+// 启动时已校验的精确来源白名单，绝不能回显任意 Origin 或开启凭据共享。
+func ApplyCORSHeaders(w http.ResponseWriter, r *http.Request, allowedOrigins map[string]struct{}) {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		return
 	}
-	if _, allowed := m.AllowedOrigins[origin]; !allowed {
+	if _, allowed := allowedOrigins[origin]; !allowed {
 		return
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Access-Control-Expose-Headers", "Retry-After")
 	w.Header().Set("Vary", "Origin")
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Content-Digest, Idempotency-Key, X-Operator-Id, X-Request-Id, X-Nonce, Signature, Signature-Input")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")

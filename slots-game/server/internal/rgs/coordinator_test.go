@@ -243,9 +243,12 @@ func TestWalletCommittedButResponseTimedOutRecoversWithoutSecondApply(t *testing
 	}
 
 	wallet.lookupAllowed.Store(true)
-	result, err := coordinator.Spin(context.Background(), request)
+	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("client retry error = %v, want ErrWalletPending", err)
+	}
+	result, err := coordinator.Reconcile(context.Background(), request.Key())
 	if err != nil {
-		t.Fatalf("recovery Spin error = %v", err)
+		t.Fatalf("worker recovery error = %v", err)
 	}
 	if result.BalanceMinor != 9_950 || result.EndRevision != 1 {
 		t.Fatalf("recovered result = %+v", result)
@@ -367,6 +370,96 @@ func TestBlockedSessionFailsAsManualReviewBeforeEngineAndWallet(t *testing.T) {
 	}
 }
 
+func TestWalletAdmissionRejectsBeforeRNGAndRoundPersistence(t *testing.T) {
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	wallet := newTestWallet(10_000)
+	wallet.admitError = ErrWalletUnavailable
+	coordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
+	request := baseRequest("round-admission-rejected", 100, 0)
+
+	_, err := coordinator.Spin(context.Background(), request)
+	if !errors.Is(err, ErrWalletUnavailable) {
+		t.Fatalf("Spin() error = %v, want ErrWalletUnavailable", err)
+	}
+	if spinner.calls.Load() != 0 || wallet.applyCalls.Load() != 0 || wallet.admitCalls.Load() != 1 {
+		t.Fatalf("rejected admission reached side effects: engine=%d apply=%d admit=%d",
+			spinner.calls.Load(), wallet.applyCalls.Load(), wallet.admitCalls.Load())
+	}
+	if _, err := repository.GetRound(context.Background(), request.Key()); !errors.Is(err, ErrRoundNotFound) {
+		t.Fatalf("GetRound() error = %v, want ErrRoundNotFound", err)
+	}
+}
+
+func TestNotSentApplyRemainsApplyWithoutLookup(t *testing.T) {
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	wallet := newTestWallet(10_000)
+	wallet.applyError = ErrWalletUnavailable
+	coordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
+	request := baseRequest("round-not-sent", 100, 0)
+
+	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("Spin() error = %v, want ErrWalletPending", err)
+	}
+	record, err := repository.GetRound(context.Background(), request.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.WalletPhase != WalletRecoveryApply || wallet.lookupCalls.Load() != 0 ||
+		wallet.applyCalls.Load() != 1 || wallet.economicApplyCount() != 0 {
+		t.Fatalf("not-sent state = phase:%s apply:%d lookup:%d economic:%d",
+			record.WalletPhase, wallet.applyCalls.Load(), wallet.lookupCalls.Load(), wallet.economicApplyCount())
+	}
+}
+
+func TestSlowWalletLeavesFastPathAsDurableLookup(t *testing.T) {
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	wallet := newTestWallet(10_000)
+	wallet.applyDelay = 100 * time.Millisecond
+	registry := DefinitionResolverFunc(func(context.Context, string, string, string) (game.Spinner, error) {
+		return spinner, nil
+	})
+	coordinator, err := NewCoordinator(CoordinatorConfig{
+		WalletLease: 100 * time.Millisecond, WalletFastPathTimeout: 5 * time.Millisecond,
+		PendingWait: 5 * time.Millisecond, PollInterval: time.Millisecond,
+	}, repository, wallet, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := baseRequest("round-slow-fast-path", 100, 0)
+	started := time.Now()
+	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("Spin() error = %v, want ErrWalletPending", err)
+	}
+	if elapsed := time.Since(started); elapsed >= 50*time.Millisecond {
+		t.Fatalf("fast path elapsed = %s, want below 50ms", elapsed)
+	}
+	record, err := repository.GetRound(context.Background(), request.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.WalletPhase != WalletRecoveryLookup || wallet.applyCalls.Load() != 1 {
+		t.Fatalf("slow-wallet state = phase:%s apply:%d", record.WalletPhase, wallet.applyCalls.Load())
+	}
+	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("client replay error = %v, want ErrWalletPending", err)
+	}
+	if wallet.applyCalls.Load() != 1 {
+		t.Fatalf("client replay repeated apply: %d", wallet.applyCalls.Load())
+	}
+}
+
 func TestWalletRetryLimitBlocksBeforeAnotherEconomicAttempt(t *testing.T) {
 	repository := NewMemoryRepository()
 	createTestSession(t, repository, baseSession())
@@ -375,6 +468,7 @@ func TestWalletRetryLimitBlocksBeforeAnotherEconomicAttempt(t *testing.T) {
 	}}
 	wallet := newTestWallet(10_000)
 	wallet.applyError = errors.New("wallet temporarily unavailable")
+	wallet.profile = AtomicHTTPProfile(testWalletRouteBindingID())
 	registry := DefinitionResolverFunc(func(context.Context, string, string, string) (game.Spinner, error) {
 		return spinner, nil
 	})
@@ -389,12 +483,72 @@ func TestWalletRetryLimitBlocksBeforeAnotherEconomicAttempt(t *testing.T) {
 	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
 		t.Fatalf("first Spin error = %v", err)
 	}
-	time.Sleep(3 * time.Millisecond)
-	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrManualReview) {
-		t.Fatalf("retry Spin error = %v", err)
+	if _, err := coordinator.Reconcile(context.Background(), request.Key()); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("lookup recovery error = %v", err)
+	}
+	entry, err := repository.lookupSession(context.Background(), request.OperatorID, request.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.mu.Lock()
+	due := entry.rounds[request.RoundID]
+	due.NextAttemptAt = time.Now().Add(-time.Millisecond)
+	entry.rounds[request.RoundID] = due
+	entry.mu.Unlock()
+	if _, err := coordinator.Reconcile(context.Background(), request.Key()); !errors.Is(err, ErrManualReview) {
+		t.Fatalf("apply retry error = %v", err)
 	}
 	if wallet.applyCalls.Load() != 1 {
 		t.Fatalf("wallet attempts = %d, want 1", wallet.applyCalls.Load())
+	}
+}
+
+func TestPreparedClaimFinishesNotSentScheduleAfterClientCancellation(t *testing.T) {
+	baseRepository := NewMemoryRepository()
+	clientCtx, cancelClient := context.WithCancel(context.Background())
+	repository := &cancelAfterClaimRepository{Repository: baseRepository, cancel: cancelClient}
+	createTestSession(t, repository, baseSession())
+	wallet := newTestWallet(10_000)
+	wallet.applyError = ErrWalletUnavailable
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	coordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
+	request := baseRequest("round-cancel-after-claim", 100, 0)
+	if _, err := coordinator.Spin(clientCtx, request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("Spin() error = %v, want ErrWalletPending", err)
+	}
+	persisted, err := baseRepository.GetRound(context.Background(), request.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.WalletApplyAttempts != 0 || persisted.RetryCount != 1 ||
+		persisted.WalletPhase != WalletRecoveryApply || !persisted.WalletLeaseUntil.IsZero() {
+		t.Fatalf("client cancellation stranded NOT_SENT claim: %+v", persisted)
+	}
+}
+
+func TestCommittedReplayDoesNotRequireCurrentWalletProfile(t *testing.T) {
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	wallet := newTestWallet(10_000)
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	coordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
+	request := baseRequest("round-profile-offline-replay", 100, 0)
+	first, err := coordinator.Spin(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet.profileError = ErrWalletUnavailable
+	replayed, err := coordinator.Spin(context.Background(), request)
+	if err != nil {
+		t.Fatalf("committed replay failed with profile offline: %v", err)
+	}
+	if replayed.ServerTransactionID != first.ServerTransactionID ||
+		replayed.BalanceMinor != first.BalanceMinor || wallet.applyCalls.Load() != 1 {
+		t.Fatalf("replayed result = %+v first=%+v applyCalls=%d", replayed, first, wallet.applyCalls.Load())
 	}
 }
 
@@ -486,9 +640,13 @@ func TestFreeSpinStateSurvivesAmbiguousWalletAndCoordinatorRestart(t *testing.T)
 	// 新的 Coordinator 实例表示进程重启。持久化存储状态及钱包查询已足够，引擎绝不能再次运行。
 	wallet.lookupAllowed.Store(true)
 	secondCoordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
-	result, err := secondCoordinator.Spin(context.Background(), request)
+	result, err := secondCoordinator.Reconcile(context.Background(), request.Key())
 	if err != nil {
 		t.Fatalf("recovered free Spin error = %v", err)
+	}
+	replayed, err := secondCoordinator.Spin(context.Background(), request)
+	if err != nil || !reflect.DeepEqual(replayed, result) {
+		t.Fatalf("replayed recovered free Spin = %+v, error=%v", replayed, err)
 	}
 	if result.ChargedBetMinor != 0 || result.BalanceMinor != 6_000 ||
 		result.EndRevision != 8 || result.Sequence != 13 || result.FeatureState.Remaining != 1 ||
@@ -715,6 +873,28 @@ type testWallet struct {
 	applyBlock          chan struct{}
 	applyError          error
 	enteredOnce         sync.Once
+	profile             Profile
+	profileError        error
+	admitCalls          atomic.Int64
+	admitError          error
+}
+
+type cancelAfterClaimRepository struct {
+	Repository
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (repository *cancelAfterClaimRepository) ClaimWallet(
+	ctx context.Context,
+	key RoundKey,
+	lease time.Duration,
+) (WalletRecoveryClaim, bool, error) {
+	claim, claimed, err := repository.Repository.ClaimWallet(ctx, key, lease)
+	if claimed {
+		repository.once.Do(repository.cancel)
+	}
+	return claim, claimed, err
 }
 
 func newTestWallet(balance int64) *testWallet {
@@ -777,6 +957,61 @@ func (w *testWallet) ApplyRound(ctx context.Context, command WalletRound) (Walle
 		return WalletReceipt{}, errors.New("wallet transport timed out after commit")
 	}
 	return receipt, nil
+}
+
+func (w *testWallet) ProfileFor(operatorID string) (Profile, error) {
+	if operatorID != "operator-a" {
+		return Profile{}, ErrWalletUnavailable
+	}
+	if w.profileError != nil {
+		return Profile{}, w.profileError
+	}
+	if w.profile.ProfileID != "" {
+		return w.profile, nil
+	}
+	return AtomicHTTPProfile(testWalletRouteBindingID()), nil
+}
+
+func (w *testWallet) AdmitNewIntent(operatorID string) error {
+	w.admitCalls.Add(1)
+	if operatorID != "operator-a" {
+		return ErrWalletUnavailable
+	}
+	return w.admitError
+}
+
+func (w *testWallet) SubmitRound(ctx context.Context, command WalletRound) Resolution {
+	receipt, err := w.ApplyRound(ctx, command)
+	return testApplyResolution(receipt, err)
+}
+
+func (w *testWallet) Resolve(ctx context.Context, reference OperationRef) Resolution {
+	receipt, found, err := w.Lookup(ctx, reference.OperatorID, reference.OperationID)
+	switch {
+	case err == nil && found:
+		return Resolution{Status: ResolutionSucceeded, Receipt: receipt}
+	case err == nil:
+		return Resolution{Status: ResolutionNotFound}
+	case errors.Is(err, ErrIdempotencyConflict), errors.Is(err, ErrWalletReceiptInvalid):
+		return Resolution{Status: ResolutionConflict, Cause: err}
+	default:
+		return Resolution{Status: ResolutionUnknown, Cause: err}
+	}
+}
+
+func testApplyResolution(receipt WalletReceipt, err error) Resolution {
+	switch {
+	case err == nil:
+		return Resolution{Status: ResolutionSucceeded, Receipt: receipt}
+	case errors.Is(err, ErrWalletRejected):
+		return Resolution{Status: ResolutionRejectedFinal, Cause: err}
+	case errors.Is(err, ErrIdempotencyConflict), errors.Is(err, ErrWalletReceiptInvalid):
+		return Resolution{Status: ResolutionConflict, Cause: err}
+	case errors.Is(err, ErrWalletUnavailable):
+		return Resolution{Status: ResolutionNotSent, Cause: err}
+	default:
+		return Resolution{Status: ResolutionUnknown, Cause: err}
+	}
 }
 
 func (w *testWallet) Lookup(_ context.Context, operatorID, operationID string) (WalletReceipt, bool, error) {
@@ -856,6 +1091,10 @@ func baseSession() Session {
 		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT", Status: SessionActive,
 		ExpiresAt: time.Now().Add(time.Hour), BalanceMinor: 10_000, Feature: game.EmptyFeatureState(),
 	}
+}
+
+func testWalletRouteBindingID() string {
+	return WalletRouteBindingIDForCanonicalTarget("https://wallet.test.invalid/ledger-a")
 }
 
 func baseRequest(roundID string, bet int64, revision uint64) SpinRequest {

@@ -1,3 +1,6 @@
+{{- if ge (int .Values.rgs.runtime.walletFastPathTimeoutSeconds) (int .Values.rgs.runtime.walletTimeoutSeconds) }}
+{{- fail "rgs.runtime.walletFastPathTimeoutSeconds must be shorter than walletTimeoutSeconds" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -193,6 +196,8 @@ spec:
               value: {{ .Values.rgs.runtime.databaseMaxOpenConnections | quote }}
             - name: RGS_DB_MAX_IDLE_CONNS
               value: {{ .Values.rgs.runtime.databaseMaxIdleConnections | quote }}
+            - name: RGS_DB_CRITICAL_RESERVE_CONNS
+              value: {{ .Values.rgs.runtime.databaseCriticalReserveConnections | quote }}
             - name: RGS_MAX_IN_FLIGHT_REQUESTS
               value: {{ .Values.rgs.runtime.maxInFlightRequests | quote }}
             - name: RGS_MAX_CONNECTIONS_PER_LISTENER
@@ -224,6 +229,8 @@ spec:
               value: {{ .Values.rgs.sharedAdmission.rateBurst | quote }}
             - name: RGS_WALLET_TIMEOUT
               value: {{ printf "%ds" (int .Values.rgs.runtime.walletTimeoutSeconds) | quote }}
+            - name: RGS_WALLET_FAST_PATH_TIMEOUT
+              value: {{ printf "%ds" (int .Values.rgs.runtime.walletFastPathTimeoutSeconds) | quote }}
             - name: RGS_WALLET_MAX_ATTEMPTS
               value: {{ .Values.rgs.runtime.walletMaxAttempts | quote }}
             - name: SSL_CERT_FILE
