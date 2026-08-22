@@ -41,6 +41,156 @@ import {
   wheelBonusRoundSummaryPresentation,
   UiPanelLifecycle,
 } from "../src/ui/DomOverlay";
+import { PRIMAL_WAY_WINS_COPY } from "../src/ui/presentationRules";
+import {
+  MoneyDisplayBindingError,
+  createMinorUnitFormatter,
+  type MinorUnitFormatter,
+} from "../src/protocol/moneyFormatter";
+
+describe("browser form-field diagnostics", () => {
+  it("gives every rendered input and select a stable id or name", () => {
+    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
+    const fields = [...source.matchAll(/<(?:input|select|textarea)\b[\s\S]*?>/g)]
+      .map(([field]) => field);
+
+    expect(fields.length).toBeGreaterThan(0);
+    for (const field of fields) {
+      expect(field).toMatch(/\b(?:id|name)\s*=/);
+    }
+  });
+});
+
+describe("session money display contract", () => {
+  it.each([
+    { exponent: 0, minor: "1234", grouped: "1,234", plain: "1234", small: "5" },
+    { exponent: 2, minor: "123456", grouped: "1,234.56", plain: "1234.56", small: "0.05" },
+    { exponent: 3, minor: "1234567", grouped: "1,234.567", plain: "1234.567", small: "0.005" },
+  ])("formats integer minor units exactly for exponent=$exponent", ({
+    exponent, minor, grouped, plain, small,
+  }) => {
+    const formatter = createMinorUnitFormatter({ currency: "EUR", currencyExponent: exponent });
+    expect(formatter).toMatchObject({ currency: "EUR", currencyExponent: exponent });
+    expect(formatter.format(minor)).toBe(grouped);
+    expect(formatter.format(minor, false)).toBe(plain);
+    expect(formatter.format("5")).toBe(small);
+  });
+
+  it.each([
+    { exponent: 0, balance: "1234", bet: "5", win: "6789" },
+    { exponent: 2, balance: "12.34", bet: "0.05", win: "67.89" },
+    { exponent: 3, balance: "1.234", bet: "0.005", win: "6.789" },
+  ])("uses exponent=$exponent consistently for Balance, Bet, and Win", ({
+    exponent, balance: expectedBalance, bet: expectedBet, win: expectedWin,
+  }) => {
+    const formatter = createMinorUnitFormatter({ currency: "EUR", currencyExponent: exponent });
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    const balance = { textContent: "" };
+    const bet = { value: "5" };
+    const betStatus = { textContent: "" };
+    const betTriggerValue = { textContent: "" };
+    const lastWin = { textContent: "", dataset: {} as Record<string, string> };
+    const statusPanel = { dataset: {} as Record<string, string> };
+    Object.assign(overlay as unknown as Record<string, unknown>, {
+      moneySessionId: "session-money",
+      moneyFormatter: formatter,
+      balance,
+      bet,
+      betStatus,
+      betTriggerValue,
+      betTrigger: { setAttribute: vi.fn() },
+      lastWin,
+      statusPanel,
+      betOptions: ["5"],
+      betDecrease: { disabled: false },
+      betIncrease: { disabled: false },
+      host: { querySelectorAll: () => [] },
+      renderBetTicker: vi.fn(),
+      showFeatureState: vi.fn(),
+    });
+
+    overlay.applySnapshot({
+      currency: "EUR",
+      currencyExponent: exponent,
+      balanceMinor: "1234",
+      selectedBetMinor: "5",
+      betOptionsMinor: ["5"],
+      featureState: { mode: "BASE", freeSpinsRemaining: 0, rageLevel: 1, rageCollected: 0 },
+      lastWinMinor: "6789",
+      currentGrid: [],
+    });
+
+    expect(balance.textContent).toBe(expectedBalance);
+    expect(betStatus.textContent).toBe(expectedBet);
+    expect(lastWin.textContent).toBe(expectedWin);
+  });
+
+  it("rejects a same-session binding drift before changing the active formatter", () => {
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    const statusPanel = { dataset: {} as Record<string, string> };
+    Object.assign(overlay as unknown as Record<string, unknown>, { statusPanel });
+    const bind = (overlay as unknown as {
+      bindSessionMoneyFormatter(session: {
+        sessionId: string;
+        currency: string;
+        currencyExponent: number;
+      }): void;
+    }).bindSessionMoneyFormatter.bind(overlay);
+    bind({ sessionId: "session-money", currency: "EUR", currencyExponent: 2 });
+
+    expect(() => bind({
+      sessionId: "session-money",
+      currency: "EUR",
+      currencyExponent: 3,
+    })).toThrow(MoneyDisplayBindingError);
+    expect((overlay as unknown as { moneyFormatter: MinorUnitFormatter }).moneyFormatter)
+      .toMatchObject({ currency: "EUR", currencyExponent: 2 });
+    expect(statusPanel.dataset).toEqual({ currency: "EUR", currencyExponent: "2" });
+  });
+
+  it("publishes an unabridged extreme-density state for three maximum int64 values", () => {
+    const maximum = "9223372036854775807";
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    const balance = { textContent: "" };
+    const bet = { value: maximum };
+    const betStatus = { textContent: "" };
+    const lastWin = { textContent: "", dataset: {} as Record<string, string> };
+    const statusPanel = { dataset: {} as Record<string, string> };
+    Object.assign(overlay as unknown as Record<string, unknown>, {
+      moneySessionId: "session-int64",
+      moneyFormatter: createMinorUnitFormatter({ currency: "EUR", currencyExponent: 2 }),
+      balance,
+      bet,
+      betStatus,
+      betTriggerValue: { textContent: "" },
+      betTrigger: { setAttribute: vi.fn() },
+      lastWin,
+      statusPanel,
+      betOptions: [maximum],
+      betDecrease: { disabled: false },
+      betIncrease: { disabled: false },
+      host: { querySelectorAll: () => [] },
+      renderBetTicker: vi.fn(),
+      showFeatureState: vi.fn(),
+    });
+
+    overlay.applySnapshot({
+      currency: "EUR",
+      currencyExponent: 2,
+      balanceMinor: maximum,
+      selectedBetMinor: maximum,
+      betOptionsMinor: [maximum],
+      featureState: { mode: "BASE", freeSpinsRemaining: 0, rageLevel: 1, rageCollected: 0 },
+      lastWinMinor: maximum,
+      currentGrid: [],
+    });
+
+    expect(balance.textContent).toBe("92233720368547758.07");
+    expect(betStatus.textContent).toBe("92233720368547758.07");
+    expect(lastWin.textContent).toBe("92233720368547758.07");
+    expect(statusPanel.dataset.moneyDensity).toBe("extreme");
+  });
+});
 
 function autoplayStopResult(
   sequence: number,
@@ -913,23 +1063,20 @@ describe("game control configuration", () => {
     ]);
   });
 
-  it("describes the base game as 27 left-to-right Ways, never a fixed payline", () => {
-    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
-
-    expect(source).toContain("Base game · 27 ways");
-    expect(source).toContain("The 3×3 base grid evaluates all 27 left-to-right Ways");
-    expect(source).toContain("there is no fixed single payline");
-    expect(source).not.toContain("commercial payline evaluation");
+  it("uses the exact official Way Wins description instead of a derived payline claim", () => {
+    expect(PRIMAL_WAY_WINS_COPY).toBe(
+      "Way Wins are awarded for 3 adjacent symbol combinations from left to right except Vault Bonus and Rage Symbols.",
+    );
   });
 });
 
 describe("captured desktop HUD geometry", () => {
-  it("describes the final 16px footer and authored info-line projection", () => {
+  it("describes the final 24px footer and authored info-line projection", () => {
     const { stageScale, statusbar, infoLine } = PRIMAL_DESKTOP_UI_GEOMETRY;
 
     expect(stageScale).toBe(0.8);
-    expect(statusbar.height).toBe(16);
-    expect(statusbar.fontSize).toBe(12.8);
+    expect(statusbar.height).toBe(24);
+    expect(statusbar.fontSize).toBe(14.4);
     expect(statusbar.gameNameFontSize).toBe(8);
     expect(statusbar.atlasWidth).toBe(1_865);
     expect(statusbar.atlasHeight).toBe(60);
@@ -1011,8 +1158,9 @@ describe("captured desktop HUD geometry", () => {
 
     expect(finalCascade).toContain("width: var(--utility-hit-size, 35px);");
     expect(finalCascade).toContain(
-      "--utility-hit-trim: max(0px, calc((var(--utility-hit-size, 35px) - 44px) / 2));",
+      "var(--mobile-utility-control-size, 44px) + var(--mobile-control-gap, 0px)",
     );
+    expect(finalCascade).toContain("var(--utility-hit-size, 35px) - var(--utility-hit-step)");
     expect(finalCascade).toContain(
       "clip-path: inset(0 var(--utility-hit-trim) 0 var(--utility-hit-trim));",
     );
@@ -1039,7 +1187,7 @@ describe("captured desktop HUD geometry", () => {
       /\.game-frame\[data-channel="mobile"\]\[data-mobile-layout="ls"\] \.status-metric--win\s*\{[^}]*right:\s*var\(--mobile-status-win-right, 8\.5%\);/,
     );
     expect(finalCascade).toMatch(
-      /\.game-frame\[data-channel="mobile"\]:not\(\[data-mobile-layout="ls"\]\) \.status-metric--win\s*\{[^}]*right:\s*max\(env\(safe-area-inset-right, 0px\), 12px\);/,
+      /\.game-frame\[data-channel="mobile"\]:not\(\[data-mobile-layout="ls"\]\) \.status-metric--win\s*\{[^}]*right:\s*12px;/,
     );
     expect(finalCascade).not.toMatch(
       /\.status-panel\[data-zero-win="true"\] \.status-panel__game/,
@@ -1240,15 +1388,35 @@ describe("ordinary-win information-line state machine", () => {
     overlay.setPhase("ready", baseIdle);
     overlay.resetWinCounter("0");
     expect(lastWin).toEqual({ textContent: "0.00", dataset: { zero: "true" } });
-    expect(statusPanel.dataset).toEqual({ zeroWin: "true", gameNameVisible: "true" });
+    expect(statusPanel.dataset).toEqual({
+      zeroWin: "true",
+      gameNameVisible: "true",
+      moneyDensity: "normal",
+    });
 
     overlay.resetWinCounter("125");
     expect(lastWin).toEqual({ textContent: "1.25", dataset: { zero: "false" } });
-    expect(statusPanel.dataset).toEqual({ zeroWin: "false", gameNameVisible: "false" });
+    expect(statusPanel.dataset).toEqual({
+      zeroWin: "false",
+      gameNameVisible: "false",
+      moneyDensity: "normal",
+    });
+
+    overlay.resetWinCounter("9223372036854775807");
+    expect(lastWin.textContent).toBe("92233720368547758.07");
+    expect(statusPanel.dataset).toEqual({
+      zeroWin: "false",
+      gameNameVisible: "false",
+      moneyDensity: "extreme",
+    });
 
     overlay.resetWinCounter("0");
     expect(lastWin).toEqual({ textContent: "0.00", dataset: { zero: "true" } });
-    expect(statusPanel.dataset).toEqual({ zeroWin: "true", gameNameVisible: "true" });
+    expect(statusPanel.dataset).toEqual({
+      zeroWin: "true",
+      gameNameVisible: "true",
+      moneyDensity: "normal",
+    });
 
     for (const phase of ["requesting", "presenting", "recovering", "failed"] as const) {
       overlay.setPhase(phase, baseIdle);

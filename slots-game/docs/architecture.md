@@ -1,5 +1,16 @@
 # 生产架构
 
+AWS 是本仓库唯一正式生产主线。正式云架构、部署和运行责任分别以
+[AWS 正式生产架构](aws-production-architecture.md)、
+[AWS 正式生产部署](aws-production-deployment.md)和
+[AWS 正式生产运维](aws-production-operations.md)为准。
+高并发缓存、异步边界、日志、弹性、数学版本和冷热数据治理必须同时遵守
+[高并发性能与数据生命周期契约](performance-optimization-contract.md)。
+
+本文保留应用级不变量、macOS Compose 本地集成验收细节和可移植 Kubernetes Chart 契约，便于开发
+排障与跨环境评审。下面的 Compose 树不是公司生产拓扑；“公司集群”章节描述的是通用应用交付
+能力，不代表 AWS 账号、VPC、EKS、RDS、CloudFront、WAF 或监控平台已经创建。
+
 ## 系统边界
 
 ```mermaid
@@ -24,9 +35,9 @@ flowchart LR
 浏览器是不可信的表现层。RGS 是会话、余额、RNG、轮次、派彩、特性状态和结果顺序的唯一事实
 来源。入口只允许 HTTPS RGS，不提供开发传输回退。
 
-## 生产部署树
+## 本地集成验收部署树
 
-下面的树以 `slots-game-production` Compose 项目为根，描述本机生产实例的实际端口、网络、服务、
+下面的树以 `slots-game-production` Compose 项目为根，描述本地集成验收实例的实际端口、网络、服务、
 初始化顺序和持久化边界。只有标为“宿主机回环入口”的端口会发布到 macOS；数据库、业务服务和
 运维监听器均不直接发布。网络分支表示允许的连接路径，不代表多网卡容器按端口绑定接口；这类容器
 在全部已加入网络上监听，并依靠内部网络、TLS、Bearer、签名和应用鉴权共同限制访问。
@@ -193,10 +204,12 @@ service-volume-init（成功退出）
 `DAC_OVERRIDE`、`FOWNER`、`SETGID`、`SETUID`，初始化容器只获得其任务所需的精确 capability。
 `host_access` 网络关闭 IP masquerade，只承担回环端口发布，不给容器提供通用公网出口。
 
-## 公司集群生产拓扑树
+## 通用 Kubernetes 应用拓扑树
 
-下面的树与 `deploy/cluster-production/chart` 一一对应。标为“公司平台外部能力”的节点是部署前置
-条件，Chart 只引用或记录它们，不会伪造入口全局限流、外部数据库、钱包、审计、密钥同步、
+下面的树与 `deploy/cluster-production/chart` 一一对应，并作为 AWS EKS 应用层的可移植基础。AWS
+正式落地还必须叠加 [AWS 正式生产架构](aws-production-architecture.md) 的边缘、S3/CloudFront、
+身份、RDS、监控和灾备能力。标为“公司平台外部能力”的节点是部署前置
+条件，Chart 只引用或记录它们，不会伪造 WAF 粗粒度保护、外部 Valkey/数据库、钱包、审计、密钥同步、
 Prometheus Operator 或 Web 蓝绿控制器已经落地。集群 Chart 不部署 `local-operator`、本机
 PostgreSQL 或本机 Compose 观测栈。
 
@@ -205,11 +218,12 @@ PostgreSQL 或本机 Compose 观测栈。
 ├── 公司平台外部能力（不由本 Chart 创建）
 │   ├── DNS、证书系统与 Ingress Controller
 │   ├── API Gateway / WAF
-│   │   └── 跨 RGS 副本的运营商、客户端身份与攻击面全局限流
+│   │   └── 未认证攻击面、IP/路径和粗粒度容量保护，不承担已验证身份精确限流
 │   ├── 三个及以上带 topology.kubernetes.io/zone 的可用区
 │   ├── Metrics Server 与 Prometheus Operator
 │   ├── 节点级日志管道：stdout/stderr 脱敏、有界缓冲、集中归档与管道告警
 │   ├── 外部高可用 PostgreSQL
+│   ├── 外部高可用 Valkey：仅供 API 跨副本身份共享准入，不是资金幂等权威
 │   ├── 外部幂等钱包与外部幂等审计接收端
 │   ├── 外部密钥同步器：发布前创建版本化、建议 immutable 的 Secret
 │   └── Web 蓝绿控制器或带 release ID 前缀的版本隔离 CDN
@@ -218,7 +232,7 @@ PostgreSQL 或本机 Compose 观测栈。
 │   ├── API Ingress（ingress.apiHost）
 │   │   ├── 引用独立 apiTLSSecretName
 │   │   ├── 强制写入入口实现真实支持的 HTTP→HTTPS 策略注解
-│   │   ├── 记录 globalRateLimitProvider 与 tlsEnforcementProvider 审计标签
+│   │   ├── 记录共享准入/WAF 责任方与 tlsEnforcementProvider 审计标签
 │   │   └── HTTPS / → RGS 公共 Service:80 → Pod:8080
 │   ├── Web Ingress（ingress.webHost）
 │   │   ├── 引用独立 webTLSSecretName
@@ -227,19 +241,32 @@ PostgreSQL 或本机 Compose 观测栈。
 │   │   └── HTTPS / → Web Service:80 → Pod:8080
 │   └── operations Service 没有 Ingress、LoadBalancer 或 NodePort
 │
-├── RGS 无状态计算树
-│   ├── RGS Deployment（默认 3 副本，RollingUpdate maxUnavailable=0/maxSurge=1）
+├── RGS API 无状态计算树
+│   ├── RGS API Deployment（默认 3 个暖副本，RollingUpdate maxUnavailable=0/maxSurge=1）
 │   │   ├── HPA：3..12，CPU 65% 与内存 75% 双指标
 │   │   ├── PDB：minAvailable=2
 │   │   ├── 三可用区 DoNotSchedule、主机拓扑分散、主机反亲和偏好
 │   │   ├── startup/readiness：/service-probe → 私有 8081/readyz + operations Bearer
 │   │   ├── liveness：公共 8080/healthz，仅证明进程存活
 │   │   ├── preStop 5 秒摘流 + 应用 shutdown 30 秒 + 至少 5 秒调度余量
-│   │   ├── Pod 身份进入 RGS_OUTBOX_OWNER；多副本共享 PostgreSQL 租约/围栏
+│   │   ├── 不启动钱包恢复、Outbox 投递或 nonce/launch 清理循环
 │   │   ├── logPipelineProvider 标签记录公司节点日志责任方
 │   │   └── 非 root 65532、只读根、RuntimeDefault seccomp、ALL capability drop
-│   ├── RGS 公共 ClusterIP Service
-│   └── RGS operations ClusterIP Service:8081
+│   ├── RGS API 公共 ClusterIP Service
+│   └── RGS API operations ClusterIP Service:8081
+│
+├── RGS Worker 恢复与投递树
+│   ├── RGS Worker Deployment（默认 2 副本，RollingUpdate maxUnavailable=0/maxSurge=1）
+│   │   ├── HPA：2..6，CPU 70% 与内存 80% 双指标，扩缩窗口比 API 更保守
+│   │   ├── PDB：minAvailable=1
+│   │   ├── 与 API 独立的资源、数据库连接池和终止预算
+│   │   ├── 运行钱包 pending/unknown 恢复、Outbox 投递和 nonce/launch 有界清理
+│   │   ├── Pod 名进入 RGS_OUTBOX_OWNER；多副本共享 PostgreSQL 租约/围栏
+│   │   ├── startup/readiness：/service-probe → 私有 8081/readyz + operations Bearer
+│   │   ├── readiness 额外验证 Outbox 循环新鲜度、存储访问和 backlog 最大年龄
+│   │   ├── liveness：运维 8081/healthz；没有公网监听器或公网 Service
+│   │   └── 与 API 相同的非 root、只读根、seccomp、capability 与拓扑边界
+│   └── RGS Worker operations ClusterIP Service:8081
 │
 ├── Web 无状态表现树
 │   ├── Web Deployment（默认 3 副本，RollingUpdate maxUnavailable=0/maxSurge=1）
@@ -253,39 +280,45 @@ PostgreSQL 或本机 Compose 观测栈。
 │   └── Web ClusterIP Service
 │
 ├── 监控树
-│   ├── ServiceMonitor（由 Chart 创建，CRD/控制器由公司平台提供）
-│   │   ├── selector 精确匹配 RGS operations Service 的 name/instance/component labels
-│   │   ├── jobLabel 读取 operations Service 的 slots-game.io/metrics-job=slots-rgs
+│   ├── 两个 ServiceMonitor（由 Chart 创建，CRD/控制器由公司平台提供）
+│   │   ├── selector 分别精确匹配 API 与 Worker operations Service
+│   │   ├── jobLabel 分别读取 slots-game.io/metrics-job=slots-rgs 与 slots-rgs-worker
 │   │   ├── /metrics、HTTP 私网、Bearer SecretKeySelector
 │   │   └── 只引用 operationsBearer Secret，不读取钱包/签名/数据库材料
 │   ├── PrometheusRule（由 Chart 创建，CRD/求值器/Alertmanager 由公司平台提供）
 │   │   ├── ruleLabels 必须匹配公司 Prometheus 规则发现策略
-│   │   ├── 固定 job=slots-rgs + 当前 namespace，避免跨环境串告警
-│   │   └── 目标/就绪、5xx、容量、钱包未知、完整性、outbox、DB 池十条规则
+│   │   ├── 固定 API/Worker job + 当前 namespace，避免跨角色或跨环境串告警
+│   │   └── API/Worker 目标与就绪、5xx、容量、HPA 失效、共享准入、认证重放、钱包未知、完整性、outbox、DB 池十五条规则
 │   └── Prometheus Pod → NetworkPolicy 允许 → operations Service:8081 → Alertmanager 外部路由
 │
-├── 外部 Secret 引用树（四个职责 Secret 名称强制互异）
-│   ├── runtimeDatabase → RGS：rgs_runtime verify-full DSN 与可选数据库 CA
+├── 外部 Secret 引用树（六个职责 Secret 名称强制互异）
+│   ├── runtimeDatabase → RGS API/Worker：rgs_runtime verify-full DSN 与可选数据库 CA
 │   ├── migratorDatabase → migrator：rgs_migrator DSN
-│   ├── operationsBearer → RGS 单文件 + ServiceMonitor credentials
-│   └── runtimeAssets → RGS
-│       ├── operators v2、定义、签名定义批准与独立批准公钥
-│       ├── launch HMAC、outbox HMAC/Bearer/专用根 CA
-│       ├── 系统公开根与钱包私有根组成的 trust bundle
-│       └── 逐运营商/钱包的请求签名、响应验证与 access-token 密钥白名单
+│   ├── operationsBearer → RGS API/Worker 单文件 + ServiceMonitor credentials
+│   ├── sharedAdmission → 仅 RGS API：活动 ACL username/password、键摘要 HMAC、精确 TLS 根 CA
+│   ├── apiRuntimeAssets → 仅 RGS API
+│   │   ├── operators v2、定义、定义批准与独立批准公钥
+│   │   ├── launch HMAC、access-token 签发、运营请求验证/响应签名与钱包密钥
+│   │   └── 系统公开根与钱包私有根组成的 trust bundle
+│   └── workerRuntimeAssets → 仅 Worker
+│       ├── 钱包视图 operators v2、定义、定义批准与独立批准公钥
+│       ├── 钱包请求签名/响应验证、outbox HMAC/Bearer/专用根 CA 与 trust bundle
+│       └── 明确不含 launch HMAC、access-token 签发和运营请求/响应私钥
 │
 ├── NetworkPolicy 树
 │   ├── 全部 Chart Pod 默认 ingress+egress deny
 │   ├── Web ingress：仅入口 namespaceSelector AND podSelector → 8080
 │   ├── Web egress：无允许规则
-│   ├── RGS ingress
+│   ├── RGS API ingress
 │   │   ├── 入口控制器 → 8080
 │   │   └── 受标记 Prometheus → 8081
-│   ├── RGS egress
+│   ├── RGS Worker ingress：仅受标记 Prometheus → 8081
+│   ├── RGS API/Worker 公共 egress
 │   │   ├── 精确 CoreDNS selectors → TCP/UDP 53
 │   │   ├── 外部 PostgreSQL IPv4 /24..32 → 配置端口
-│   │   ├── 外部钱包 IPv4 /24..32 → 配置端口
-│   │   └── 外部审计 IPv4 /24..32 → 配置端口
+│   │   └── 外部钱包 IPv4 /24..32 → 配置端口
+│   ├── RGS API 专属 egress：共享 Valkey IPv4 /24..32 → TLS 6379
+│   ├── RGS Worker 专属 egress：外部审计 IPv4 /24..32 → 配置端口
 │   └── migrator 临时策略：默认拒绝，仅 DNS + PostgreSQL；成功后 post hook 删除
 │
 ├── 数据库 pre-deploy hook 树
@@ -296,14 +329,15 @@ PostgreSQL 或本机 Compose 观测栈。
 │
 ├── 容量与安全树
 │   ├── 每容器 CPU、内存、ephemeral-storage requests/limits
-│   ├── 每 Pod DB open<=200、in-flight<=4096、listener connections<=16384
-│   ├── HPA 最大连接预算 = maxReplicas × 每 Pod DB open + migrator/平台保留量
+│   ├── API/Worker 分别约束 DB open、in-flight 和 listener connections
+│   ├── 发布峰值连接预算 = API 滚动峰值 + Worker 滚动峰值
+│   │   + 两类 terminating Pod 重叠 + migrator/平台/应急保留量
 │   ├── 禁用 ServiceAccount token、service links、hostNetwork/PID/IPC 与进程共享
 │   └── 所有镜像必须 repository@sha256；Chart 不接受可变 tag
 │
 └── 发布与版本边界
-    ├── install：migrator up → RGS/Web 创建
-    ├── 普通 upgrade：schema/数学定义身份完全相同 → migrator verify → RGS 滚动
+    ├── install：migrator up → RGS API/Worker 与 Web 创建
+    ├── 普通 upgrade：schema/数学定义身份完全相同 → migrator verify → API/Worker 滚动
     ├── schema 变化：维护窗口或已验证的扩展—兼容—收缩协议，禁止普通零停机滚动
     ├── 数学定义变化：明确入口分群并排空旧会话，或先实现多定义加载协议
     ├── Web stable public 素材：必填版本隔离提供方并审计标记，原生混部滚动不能作证明
@@ -314,7 +348,8 @@ PostgreSQL 或本机 Compose 观测栈。
 
 | 组件 | 职责 | 禁止事项 |
 | --- | --- | --- |
-| `rgs-server` | 认证、会话、轮次协调、恢复、运维探针 | 不执行迁移，不在日志输出凭据 |
+| `rgs-server` API 角色 | 认证、会话、轮次协调、首次钱包调用、公网与运维探针 | 不执行迁移、恢复或 Outbox 投递，不在日志输出凭据 |
+| `rgs-server` Worker 角色 | 钱包未知结果恢复、Outbox 投递、凭据清理与独立运维探针 | 不开放公网监听器，不接收玩家请求 |
 | `rgs-migrator` | 有序执行并验证 PostgreSQL schema | 不承载业务流量 |
 | `local-operator` | 本机运营入口、签名钱包、审计/日志接收 | 不接管 RGS 结算 |
 | Web | 校验并展示权威结果 | 不生成网格、派彩或余额 |
@@ -327,21 +362,24 @@ PostgreSQL 或本机 Compose 观测栈。
 ```mermaid
 sequenceDiagram
     participant B as 浏览器
-    participant R as RGS
+    participant A as RGS API
+    participant K as RGS Worker
     participant D as PostgreSQL
     participant W as 钱包
 
-    B->>R: 签名会话请求 / spin
-    R->>D: PrepareRound（固定输入、结果、哈希）
-    R->>W: Apply(operationId，DEBIT+CREDIT)
-    W-->>R: 幂等收据或未知状态
+    B->>A: 签名会话请求 / spin
+    A->>D: PrepareRound（固定输入、结果、哈希）
+    A->>W: Apply(operationId，DEBIT+CREDIT)
+    W-->>A: 幂等收据或未知状态
     alt 已确认
-        R->>D: CommitRound + outbox
-        R-->>B: 已提交结果
-        B->>R: 展示消费 ACK
+        A->>D: CommitRound + outbox
+        A-->>B: 已提交结果
+        B->>A: 展示消费 ACK
     else 未知
-        R->>W: 查询同一 operationId
-        R-->>B: 可恢复状态；不重复 RNG/扣款
+        A-->>B: 可恢复状态；不重复 RNG/扣款
+        K->>D: 租约认领同一 pending 轮次
+        K->>W: 查询同一 operationId
+        K->>D: 按同一结果提交或进入人工审查
     end
 ```
 

@@ -1,0 +1,73 @@
+externalSecrets:
+  runtimeDatabase:
+    name: slots-rgs-runtime-database-v1
+    urlKey: database-url
+  migratorDatabase:
+    name: slots-rgs-migrator-database-v1
+    urlKey: database-url
+  operationsBearer:
+    name: slots-rgs-operations-bearer-v1
+    key: operations.token
+  sharedAdmission:
+    name: slots-rgs-shared-admission-v1
+    keys:
+      username: username
+      password: password
+      hmacKey: hmac.key
+      rootCA: root-ca.pem
+  apiRuntimeAssets:
+    name: slots-rgs-api-runtime-assets-v2
+    keys:
+      operatorConfig: operators.json
+      definition: definition.json
+      definitionApproval: definition-approval.json
+      definitionApprovalPublicKey: definition-approval-public.pem
+      launchHMAC: launch-hmac.key
+      trustBundle: trust-bundle.pem
+    additionalItems:
+      - key: operator-access-private.pem
+        path: keys/operator-access-private.pem
+      - key: operator-access-public.pem
+        path: keys/operator-access-public.pem
+      - key: operator-request-public.pem
+        path: keys/operator-request-public.pem
+      - key: operator-response-private.pem
+        path: keys/operator-response-private.pem
+      - key: operator-response-public.pem
+        path: keys/operator-response-public.pem
+      - key: wallet-request-private.pem
+        path: keys/wallet-request-private.pem
+      - key: wallet-request-public.pem
+        path: keys/wallet-request-public.pem
+      - key: wallet-response-public.pem
+        path: keys/wallet-response-public.pem
+
+  workerRuntimeAssets:
+    name: slots-rgs-worker-runtime-assets-v3
+    keys:
+      operatorConfig: operators.json
+      definition: definition.json
+      definitionApproval: definition-approval.json
+      definitionApprovalPublicKey: definition-approval-public.pem
+      outboxHMAC: outbox-hmac.key
+      outboxBearerToken: outbox-bearer.token
+      outboxRootCA: outbox-root-ca.pem
+      trustBundle: trust-bundle.pem
+    additionalItems:
+      - key: wallet-request-private.pem
+        path: keys/wallet-request-private.pem
+      - key: wallet-request-public.pem
+        path: keys/wallet-request-public.pem
+      - key: wallet-response-public.pem
+        path: keys/wallet-response-public.pem
+
+rgs:
+  sharedAdmission:
+    endpointURL: rediss://slots-valkey.example.cache.amazonaws.com:6379
+
+release:
+  compatibilityClass: same-schema-and-definition
+  definitionIdentity:
+    gameID: iron-colossus
+    version: definition-v1
+    sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

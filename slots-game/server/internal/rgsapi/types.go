@@ -58,17 +58,46 @@ func (f ResponseSigningKeyResolverFunc) ResolveResponseSigningKey(ctx context.Co
 	return f(ctx, operatorID)
 }
 
+// AdmissionDecision 明确区分配额耗尽和共享后端故障，避免把基础设施异常误报为 429。
+type AdmissionDecision uint8
+
+const (
+	AdmissionAllowed AdmissionDecision = iota + 1
+	AdmissionRateLimited
+	AdmissionBackendUnavailable
+)
+
+type AdmissionResult struct {
+	Decision   AdmissionDecision
+	RetryAfter time.Duration
+}
+
 // Admission 是可选的非阻塞准入控制。生产实现必须限制键数量；需要跨副本限流时，
-// 还应由边缘或共享设施实施。Admission 用于已验证的运营商签名请求，ClientAdmission
+// 还应由共享设施实施。Admission 用于已验证的运营商签名请求，ClientAdmission
 // 则只在访问令牌验证成功后按其不可变会话绑定调用。
 type Admission interface {
-	Allow(key string, now time.Time) bool
+	Admit(context.Context, string, time.Time) AdmissionResult
 }
 
 type AdmissionFunc func(string, time.Time) bool
 
-func (f AdmissionFunc) Allow(key string, now time.Time) bool {
-	return f(key, now)
+func (f AdmissionFunc) Admit(_ context.Context, key string, now time.Time) AdmissionResult {
+	if f(key, now) {
+		return AdmissionResult{Decision: AdmissionAllowed}
+	}
+	return AdmissionResult{Decision: AdmissionRateLimited, RetryAfter: time.Second}
+}
+
+type AdmissionResultFunc func(context.Context, string, time.Time) AdmissionResult
+
+func (f AdmissionResultFunc) Admit(ctx context.Context, key string, now time.Time) AdmissionResult {
+	return f(ctx, key, now)
+}
+
+// SecurityEventObserver 只接收已经完成分类的固定安全事件。实现不得附加运营商、
+// 密钥、随机数、玩家、会话或请求标识，避免安全日志与监控时序泄漏敏感信息。
+type SecurityEventObserver interface {
+	NonceReplay()
 }
 
 type LaunchService interface {
@@ -104,7 +133,12 @@ type Config struct {
 	Admission           Admission
 	// ClientAdmission 的键只能来自已验证声明，禁止使用请求头、RemoteAddr
 	// 或 X-Forwarded-For 构造，避免伪造键和反向代理后的跨玩家误限流。
-	ClientAdmission      Admission
+	ClientAdmission Admission
+	// LaunchAdmission 与 SpinAdmission 只保护创建新经济意图的路径。共享后端故障时，
+	// 状态查询、待交付结果、确认和令牌续期仍由进程内准入保护并保持可用。
+	LaunchAdmission      Admission
+	SpinAdmission        Admission
+	SecurityEvents       SecurityEventObserver
 	MaxRequestBytes      int64
 	ResponseSignatureTTL time.Duration
 	Now                  func() time.Time

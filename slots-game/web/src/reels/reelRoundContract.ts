@@ -72,10 +72,16 @@ export interface SpinStripVisualSource {
   }>;
 }
 
-function deepFreeze<T>(value: T): DeepReadonly<T> {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
-    Object.freeze(value);
+function cloneAndDeepFreeze<T>(value: T): DeepReadonly<T> {
+  if (Array.isArray(value)) {
+    const clone = value.map((item) => cloneAndDeepFreeze(item));
+    return Object.freeze(clone) as DeepReadonly<T>;
+  }
+  if (value !== null && typeof value === "object") {
+    const clone = Object.fromEntries(Object.entries(value).map(([key, item]) => (
+      [key, cloneAndDeepFreeze(item)]
+    )));
+    return Object.freeze(clone) as DeepReadonly<T>;
   }
   return value as DeepReadonly<T>;
 }
@@ -89,11 +95,13 @@ export function authoritativeReelRoundFromV1(result: SpinResult): AuthoritativeR
     || result.grid.some((reel) => reel.length !== rows)) {
     throw new Error("Cannot adapt malformed authoritative reel grid");
   }
-  const immutableProjection = deepFreeze(structuredClone({
+  // 协议投影必须在不依赖浏览器 structuredClone 的环境中同样可用。
+  // 逐项复制保留已解码树中的 undefined 等值，同时避免 JSON 序列化的语义损失。
+  const immutableProjection = cloneAndDeepFreeze({
     grid: result.grid,
     wins: result.wins,
     events: result.events,
-  }));
+  });
   return Object.freeze({
     roundId: result.roundId,
     rows,

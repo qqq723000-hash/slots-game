@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FeatureEvent } from "../src/app/state/types";
+import { createMinorUnitFormatter } from "../src/protocol/moneyFormatter";
 import {
   VisualTelemetryReporter,
   type VisualTelemetryEvent,
@@ -154,7 +155,12 @@ describe("feature effect planning", () => {
     expect(featureEffectLabel({
       type: "free_spins.completed", mode: "EXPANSION",
       awarded: 9, cumulativeWinMinor: "12500",
-    })).toBe("FREE SPINS COMPLETE // 12500");
+    })).toBe("FREE SPINS COMPLETE // 125.00");
+    expect(featureEffectLabel({
+      type: "free_spins.completed", mode: "OVERDRIVE",
+      awarded: 8, cumulativeWinMinor: "12500",
+    }, createMinorUnitFormatter({ currency: "EUR", currencyExponent: 3 })))
+      .toBe("FREE SPINS COMPLETE // 12.500");
   });
 
   it("shortens every authored effect under reduced motion", () => {

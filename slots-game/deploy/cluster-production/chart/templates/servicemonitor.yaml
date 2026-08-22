@@ -28,4 +28,34 @@ spec:
         credentials:
           name: {{ .Values.externalSecrets.operationsBearer.name }}
           key: {{ .Values.externalSecrets.operationsBearer.key }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-worker") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs-worker-operations
+spec:
+  jobLabel: slots-game.io/metrics-job
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "slots.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: rgs-worker-operations
+  endpoints:
+    - port: operations
+      path: /metrics
+      scheme: http
+      interval: {{ .Values.monitoring.interval }}
+      scrapeTimeout: {{ .Values.monitoring.scrapeTimeout }}
+      honorLabels: false
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ .Values.externalSecrets.operationsBearer.name }}
+          key: {{ .Values.externalSecrets.operationsBearer.key }}
 {{- end }}

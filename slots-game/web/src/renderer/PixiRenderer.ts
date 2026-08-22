@@ -16,6 +16,7 @@ import type {
   FreeSpinAwardedEvent,
   FreeSpinCapReachedEvent,
   InstantWheelAwardedEvent,
+  MoneyDisplayBinding,
   MoneyMinor,
   VaultAwardedEvent,
   VaultUnlockedEvent,
@@ -23,6 +24,7 @@ import type {
   WheelAwardedEvent,
   Win,
 } from "../app/state/types";
+import { createMinorUnitFormatter } from "../protocol/moneyFormatter";
 import {
   ReelSetView,
 } from "../reels/ReelSetView";
@@ -228,7 +230,7 @@ export function resolveInitialRendererSize(
 ): Readonly<{ width: number; height: number }> {
   const dimension = (value: number | undefined, fallback: number): number => (
     value !== undefined && Number.isFinite(value) && value > 0
-      ? Math.max(1, Math.round(value))
+      ? Math.max(1, value)
       : fallback
   );
   return Object.freeze({
@@ -538,6 +540,13 @@ export class PixiRenderer {
   /** 保留直至正版Wheel登陆；从不驱动服务器状态。 */
   private pendingWheelAward: WheelAwardedEvent | null = null;
   private pendingFeatureExit: Promise<void> | null = null;
+  /**
+   * Pixi 6 独占帧缓冲量化：round(logical * DPR)。单独保留连续请求值，因为
+   * renderer.screen 返回量化后的 backing/DPR，不能直接与带小数的设计表面比较
+   * 来判断 resize 幂等性。
+   */
+  private rendererRequestedWidth = Number.NaN;
+  private rendererRequestedHeight = Number.NaN;
   private anticipationVisualOperation: VisualTelemetryOperation | null = null;
   private launchIntroVisualOperation: VisualTelemetryOperation | null = null;
   private backgroundIntroVisualOperation: VisualTelemetryOperation | null = null;
@@ -1206,11 +1215,28 @@ export class PixiRenderer {
   /** 将一个不可变的桌面/移动快照路由到每个独立布局的 Z 层。 */
   setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
     this.featurePreview.setResponsiveLayout(snapshot);
+    this.freeSpinHud.setResponsiveLayout(snapshot);
+    this.launchScene.setResponsiveTransitionLayout(
+      snapshot.viewportRegion,
+      snapshot.mobileProfile,
+    );
+    this.resizeRenderer(
+      snapshot.viewportRegion.width,
+      snapshot.viewportRegion.height,
+      snapshot.pixelRatio,
+    );
+    this.camera.setViewportSize(
+      snapshot.viewportRegion.width,
+      snapshot.viewportRegion.height,
+    );
+    this.featureEffects.setResponsiveLayoutTrack(
+      snapshot.viewportRegion.width > snapshot.viewportRegion.height
+        ? "layout/horizontal"
+        : "layout/vertical",
+    );
     if (snapshot.channel === "desktop") {
       const frame = snapshot.desktopFrame;
       if (!frame) return;
-      this.resizeRenderer(LOGICAL_WIDTH, LOGICAL_HEIGHT);
-      this.camera.setViewportSize(LOGICAL_WIDTH, LOGICAL_HEIGHT);
       this.featureEffects.setWheelOverlayRegion({
         left: 0,
         top: 0,
@@ -1232,11 +1258,6 @@ export class PixiRenderer {
     const transforms = snapshot.mobileTransforms;
     const profile = snapshot.mobileProfile;
     if (!transforms || !profile) return;
-    this.resizeRenderer(snapshot.viewportRegion.width, snapshot.viewportRegion.height);
-    this.camera.setViewportSize(
-      snapshot.viewportRegion.width,
-      snapshot.viewportRegion.height,
-    );
     this.featureEffects.setWheelOverlayRegion(snapshot.gameplayRegion);
     this.bigWin.setResponsiveLayout(snapshot.gameplayRegion);
     this.backdrop.setResponsiveNodeTransform(transforms.background);
@@ -1254,12 +1275,25 @@ export class PixiRenderer {
     this.syncAnticipationComposition();
   }
 
-  private resizeRenderer(width: number, height: number): void {
-    const safeWidth = Math.max(1, Math.round(width));
-    const safeHeight = Math.max(1, Math.round(height));
-    if (this.app.renderer.screen.width === safeWidth
-      && this.app.renderer.screen.height === safeHeight) return;
+  private resizeRenderer(width: number, height: number, pixelRatio: number): void {
+    const safeWidth = Number.isFinite(width) && width > 0 ? Math.max(1, width) : 1;
+    const safeHeight = Number.isFinite(height) && height > 0 ? Math.max(1, height) : 1;
+    const resolution = Math.max(1, Math.min(
+      2,
+      Number.isFinite(pixelRatio) ? pixelRatio : 1,
+    ));
+    const resolutionChanged = Math.abs(this.app.renderer.resolution - resolution) > 1e-9;
+    if (this.rendererRequestedWidth === safeWidth
+      && this.rendererRequestedHeight === safeHeight
+      && !resolutionChanged) return;
+    if (resolutionChanged) {
+      this.app.renderer.resolution = resolution;
+      this.reels.setPerspectiveCoordinateScale(resolution);
+      this.anticipation.setPerspectiveCoordinateScale(resolution);
+    }
     this.app.renderer.resize(safeWidth, safeHeight);
+    this.rendererRequestedWidth = safeWidth;
+    this.rendererRequestedHeight = safeHeight;
   }
 
   private syncAnticipationComposition(): void {
@@ -1268,6 +1302,16 @@ export class PixiRenderer {
 
   setJackpotBet(betMinor: MoneyMinor): void {
     this.jackpotTower.setBet(betMinor);
+  }
+
+  /** 将一次会话交换的同一不可变格式器同步给所有 Pixi 金额表面。 */
+  setMoneyDisplayBinding(binding: Readonly<MoneyDisplayBinding>): void {
+    const formatter = createMinorUnitFormatter(binding);
+    this.jackpotTower.setMoneyFormatter(formatter);
+    this.bigWin.setMoneyFormatter(formatter);
+    this.winCelebration.setMoneyFormatter(formatter);
+    this.wheelBonusWinLabel.setMoneyFormatter(formatter);
+    this.featureEffects.setMoneyFormatter(formatter);
   }
 
   restoreFeatureState(state: FeatureState): void {
@@ -1953,8 +1997,26 @@ export class PixiRenderer {
   async exitFeatureMode(state: FeatureState, reducedMotion = false): Promise<void> {
     this.beginFeatureExitAtSummaryHide(state, reducedMotion);
     const pending = this.pendingFeatureExit;
-    if (pending) await pending;
-    if (this.pendingFeatureExit === pending) this.pendingFeatureExit = null;
+    const failures: unknown[] = [];
+    try {
+      if (pending) await pending;
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      try {
+        this.backdrop.settleFeatureExit();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        this.launchScene.settleFeatureExit();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (this.pendingFeatureExit === pending) this.pendingFeatureExit = null;
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "Feature exit cleanup failed");
   }
 
   /** FREESPIN_END 在摘要隐藏处触发，因此所有退出分支一起启动。 */
@@ -2236,10 +2298,7 @@ function createEagerPixiRendererOwners(options: PixiRendererOptions): PixiRender
     onCapClose: (reason) => freeSpinCallbacks.onCapClose(reason),
     onCapInputReadyCheckpoint: () => freeSpinCallbacks.onCapInputReadyCheckpoint(),
   });
-  const bigWin = new BigWinView({
-    formatAmount: formatMinorAmount,
-    visualTelemetry,
-  });
+  const bigWin = new BigWinView({ visualTelemetry });
   const anticipation = new AnticipationView();
   const backdrop = new CityBackdrop();
   const winCelebration = new WinCelebration(camera.fxLayer, reels, visualTelemetry);
@@ -2405,7 +2464,6 @@ function pixiRendererOwnerConstructionStages(
       id: "big-win-overlay",
       build: () => {
         const bigWin = new BigWinView({
-          formatAmount: formatMinorAmount,
           visualTelemetry: requiredOwner(state, "visualTelemetry"),
         });
         state.bigWin = bigWin;
@@ -2729,9 +2787,4 @@ function exposeForOffscreenWarmup(root: Container): () => void {
       state.view.visible = state.visible;
     }
   };
-}
-
-function formatMinorAmount(amount: bigint): string {
-  const digits = amount.toString().padStart(3, "0");
-  return `${digits.slice(0, -2)}.${digits.slice(-2)}`;
 }

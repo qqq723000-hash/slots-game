@@ -274,6 +274,62 @@ describe("LaunchScene Wheel character state", () => {
     expect(monster.tint).toBe(tint);
   });
 
+  it.each([
+    ["EXPANSION", "fire", "reel_stretch_waiting"],
+    ["OVERDRIVE", "snow", "feature_idle"],
+  ] as const)(
+    "hard-settles %s character residue only at the final feature-exit boundary",
+    (_mode, palette, body) => {
+      const { scene, monster } = createHarness();
+      scene.playCharacterAnimation(body, true, PRIMAL_CHARACTER_TRACK.body);
+      scene.playCharacterAnimation("aura_2", true, PRIMAL_CHARACTER_TRACK.aura);
+      scene.playCharacterAnimation("particles_loop", true, PRIMAL_CHARACTER_TRACK.particles);
+      scene.playCharacterAnimation(
+        palette === "fire" ? "Fs_bg_fire_color" : "Fs_bg_snow_color",
+        false,
+        PRIMAL_CHARACTER_TRACK.palette,
+      );
+      scene.setCharacterPersistentPresentation({
+        body: "base",
+        auraLevel: null,
+        palette: "main",
+      });
+      monster.state.clearTrack.mockClear();
+      monster.state.setEmptyAnimation.mockClear();
+      monster.skeleton.setToSetupPose.mockClear();
+
+      scene.settleFeatureExit();
+
+      expect(monster.state.clearTrack.mock.calls.map(([track]) => track)).toEqual([
+        PRIMAL_CHARACTER_TRACK.overlay,
+        PRIMAL_CHARACTER_TRACK.body,
+        PRIMAL_CHARACTER_TRACK.aura,
+        PRIMAL_CHARACTER_TRACK.particles,
+        PRIMAL_CHARACTER_TRACK.palette,
+      ]);
+      expect(monster.skeleton.setToSetupPose).toHaveBeenCalledOnce();
+      expect(monster.state.setEmptyAnimation).not.toHaveBeenCalled();
+      expect(monster.state.getCurrent(PRIMAL_CHARACTER_TRACK.body)).toMatchObject({
+        animation: { name: "idle" },
+        mixDuration: 0,
+        mixingFrom: null,
+      });
+      expect(monster.state.getCurrent(PRIMAL_CHARACTER_TRACK.aura)).toBeNull();
+      expect(monster.state.getCurrent(PRIMAL_CHARACTER_TRACK.particles)).toBeNull();
+      expect(monster.state.getCurrent(PRIMAL_CHARACTER_TRACK.palette)).toBeNull();
+      expect(monster.tint).toBe(0xffffff);
+
+      advance(scene, 200);
+      expect(scene.getCharacterTrackDiagnostics()).toEqual([
+        expect.objectContaining({ track: 0, animation: null, mixingFrom: null }),
+        expect.objectContaining({ track: 1, animation: "idle", mixingFrom: null }),
+        expect.objectContaining({ track: 2, animation: null, mixingFrom: null }),
+        expect.objectContaining({ track: 3, animation: null, mixingFrom: null }),
+        expect.objectContaining({ track: 4, animation: null, mixingFrom: null }),
+      ]);
+    },
+  );
+
   it("owns exactly three fresh chest entries through the normal S9800 landing", () => {
     const { scene, monster, listener } = createHarness();
     scene.playCharacterAnimation("rage_collect", true, PRIMAL_CHARACTER_TRACK.overlay);

@@ -44,6 +44,15 @@ describe("Pass 127 official responsive loading brand", () => {
     expect(loadingCss).toMatch(/\.launch-loading-host\s*\{[^}]*pointer-events:\s*none;/s);
   });
 
+  it("only intercepts player input while the loading barrier is visible", () => {
+    expect(loadingCss).toMatch(
+      /\.launch-loading\s*\{[^}]*pointer-events:\s*none;/s,
+    );
+    expect(loadingCss).toMatch(
+      /\.launch-loading\[data-visible="true"\]\s*\{[^}]*pointer-events:\s*auto;/s,
+    );
+  });
+
   it("locks the official colour, track geometry and 500ms progress easing", () => {
     expect(loadingCss).toContain("background: radial-gradient(#002448, #000e20);");
     expect(loadingCss).toContain("width: 26%;");

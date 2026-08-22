@@ -263,7 +263,10 @@ func (v *RequestVerifier) ConsumeNonce(ctx context.Context, verified VerifiedReq
 		return fmt.Errorf("%w: invalid verified request", ErrMalformed)
 	}
 	scope := string(KeyPurposeHTTPRequest) + "\x00" + verified.OperatorID + "\x00" + verified.KeyID
-	consumed, err := v.nonces.Consume(ctx, scope, verified.Nonce, verified.Expires.Add(v.clockSkew))
+	// 应用时钟最晚会在 expires+skew 前接受请求；PostgreSQL 时钟又可能领先应用
+	// 一个允许偏差，因此随机数必须保留到 expires+2*skew 才能覆盖完整接受窗口。
+	nonceRetentionDeadline := verified.Expires.Add(v.clockSkew).Add(v.clockSkew)
+	consumed, err := v.nonces.Consume(ctx, scope, verified.Nonce, nonceRetentionDeadline)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrNonceStore, err)
 	}

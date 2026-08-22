@@ -1,17 +1,22 @@
+// @ts-expect-error Vitest 在 Node 中运行，而浏览器 tsconfig 故意不声明 Node 内置模块。
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   FREE_SPIN_HUD_ANIMATION,
   FREE_SPIN_HUD_ANIMATION_MS,
   FREE_SPIN_CAP_COPY,
   FREE_SPIN_HUD_DESKTOP_LAYOUT,
+  FREE_SPIN_HUD_MOBILE_LAYOUTS,
   FREE_SPIN_HUD_REDUCED_MOTION_MS,
   FREE_SPIN_HUD_TEXT_SLOTS,
   FREE_SPIN_HUD_TRACK,
   FreeSpinHudView,
+  freeSpinHudResponsiveLayout,
   formatFreeSpinCounter,
   projectFreeSpinHud,
   type FreeSpinHudFeatureState,
 } from "../src/renderer/FreeSpinHudView";
+import { computeResponsiveLayoutSnapshot } from "../src/renderer/ResponsiveLayout";
 import {
   PRIMAL_SPINE_SPECS,
   primalSpineSkeletonUrl,
@@ -23,6 +28,49 @@ const ACTIVE_STATE: FreeSpinHudFeatureState = {
   freeSpinsPlayed: 2,
   freeSpinsWinMinor: "1234",
 };
+
+const OFFICIAL_MOBILE_CONFIG = JSON.parse(readFileSync(
+  new URL("../public/assets/primal-runtime/mobile/config/config_mobile.json", import.meta.url),
+  "utf8",
+)) as {
+  bundle: Array<{
+    data?: {
+      layouts?: Record<string, {
+        content?: Record<string, {
+          minBound?: string;
+          halign?: string;
+          valign?: string;
+        }>;
+      }>;
+    };
+  }>;
+};
+
+function officialFreeSpinNode(
+  profile: "pt" | "iPad_pt" | "ls",
+  handMode: "left" | "right",
+  key: "fsCounter" | "freespinRetrigger",
+): { minBound: { left: number; top: number; width: number; height: number }; horizontalAlign: number; verticalAlign: number } {
+  const handLayout = OFFICIAL_MOBILE_CONFIG.bundle
+    .find((entry) => entry.data?.layouts?.[`${profile}_${handMode}`])
+    ?.data?.layouts?.[`${profile}_${handMode}`]?.content?.[key];
+  const baseLayout = OFFICIAL_MOBILE_CONFIG.bundle
+    .find((entry) => entry.data?.layouts?.[profile])
+    ?.data?.layouts?.[profile]?.content?.[key];
+  const node = handLayout ?? baseLayout;
+  if (!node?.minBound || node.halign === undefined || node.valign === undefined) {
+    throw new Error(`Missing official ${profile}_${handMode}/${key} layout`);
+  }
+  const [left, top, width, height] = node.minBound.split(",").map(Number);
+  if ([left, top, width, height].some((value) => !Number.isFinite(value))) {
+    throw new Error(`Invalid official ${profile}_${handMode}/${key} minBound`);
+  }
+  return {
+    minBound: { left: left!, top: top!, width: width!, height: height! },
+    horizontalAlign: Number(node.halign),
+    verticalAlign: Number(node.valign),
+  };
+}
 
 interface SpineStub {
   readonly state: {
@@ -125,6 +173,97 @@ describe("native Free Spins HUD", () => {
       counter: { x: 260, y: 124, scale: 0.8 },
       retrigger: { x: 640, y: 280, scale: 0.8 },
     });
+  });
+
+  it("projects the captured mobile HUD nodes into every continuous gameplay surface", () => {
+    for (const handMode of ["left", "right"] as const) {
+      for (const profile of ["pt", "iPad_pt", "ls"] as const) {
+        expect(FREE_SPIN_HUD_MOBILE_LAYOUTS[handMode][profile].counter).toEqual(
+          officialFreeSpinNode(profile, handMode, "fsCounter"),
+        );
+        expect(FREE_SPIN_HUD_MOBILE_LAYOUTS[handMode][profile].retrigger).toEqual(
+          officialFreeSpinNode(profile, handMode, "freespinRetrigger"),
+        );
+      }
+    }
+
+    for (const [width, height, profile] of [
+      [390, 844, "pt"],
+      [844, 390, "ls"],
+      [768, 1_024, "iPad_pt"],
+      [1_024, 768, "ls"],
+    ] as const) {
+      const snapshot = computeResponsiveLayoutSnapshot(width, height, { channel: "mobile" });
+      const layout = freeSpinHudResponsiveLayout(snapshot);
+      expect(snapshot.mobileProfile).toBe(profile);
+      expect(layout.counter.scale).toBeGreaterThan(0);
+      expect(layout.retrigger.scale).toBeGreaterThan(0);
+      expect(layout.counter.x).toBeGreaterThanOrEqual(snapshot.gameplayRegion.left);
+      expect(layout.counter.x).toBeLessThanOrEqual(
+        snapshot.gameplayRegion.left + snapshot.gameplayRegion.width,
+      );
+      expect(layout.counter.y).toBeGreaterThanOrEqual(snapshot.gameplayRegion.top);
+      expect(layout.counter.y).toBeLessThanOrEqual(
+        snapshot.gameplayRegion.top + snapshot.gameplayRegion.height,
+      );
+      expect(layout.retrigger.x).toBeGreaterThanOrEqual(snapshot.gameplayRegion.left);
+      expect(layout.retrigger.x).toBeLessThanOrEqual(
+        snapshot.gameplayRegion.left + snapshot.gameplayRegion.width,
+      );
+      expect(layout.retrigger.y).toBeGreaterThanOrEqual(snapshot.gameplayRegion.top);
+      expect(layout.retrigger.y).toBeLessThanOrEqual(
+        snapshot.gameplayRegion.top + snapshot.gameplayRegion.height,
+      );
+    }
+
+    const portraitRight = computeResponsiveLayoutSnapshot(390, 844, {
+      channel: "mobile",
+      handMode: "right",
+    });
+    const portraitLeft = computeResponsiveLayoutSnapshot(390, 844, {
+      channel: "mobile",
+      handMode: "left",
+    });
+    expect(freeSpinHudResponsiveLayout(portraitLeft).counter.x)
+      .not.toBe(freeSpinHudResponsiveLayout(portraitRight).counter.x);
+  });
+
+  it("reflows an active HUD across phone and tablet rotation without mutating state", () => {
+    const hud = new FreeSpinHudView();
+    hud.restoreFeatureState(ACTIVE_STATE);
+    const projection = hud.projection;
+    const counterHost = hud.children[0]!;
+    const retriggerHost = hud.children[1]!;
+
+    for (const [width, height] of [
+      [390, 844],
+      [844, 390],
+      [768, 1_024],
+      [1_024, 768],
+    ] as const) {
+      const snapshot = computeResponsiveLayoutSnapshot(width, height, { channel: "mobile" });
+      const expected = freeSpinHudResponsiveLayout(snapshot);
+      hud.setResponsiveLayout(snapshot);
+      expect(counterHost.position).toMatchObject({ x: expected.counter.x, y: expected.counter.y });
+      expect(counterHost.scale).toMatchObject({ x: expected.counter.scale, y: expected.counter.scale });
+      expect(retriggerHost.position).toMatchObject({
+        x: expected.retrigger.x,
+        y: expected.retrigger.y,
+      });
+      expect(retriggerHost.scale).toMatchObject({
+        x: expected.retrigger.scale,
+        y: expected.retrigger.scale,
+      });
+      expect(hud.projection).toBe(projection);
+      expect(hud.visible).toBe(true);
+      expect(counterHost.visible).toBe(true);
+    }
+
+    hud.setResponsiveLayout(computeResponsiveLayoutSnapshot(1_280, 720));
+    expect(counterHost.position).toMatchObject({ x: 260, y: 124 });
+    expect(counterHost.scale).toMatchObject({ x: 0.8, y: 0.8 });
+    expect(hud.projection).toBe(projection);
+    hud.destroy({ children: true });
   });
 
   it("projects current, remaining, total, and running win from FeatureState", () => {

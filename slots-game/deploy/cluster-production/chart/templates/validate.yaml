@@ -9,34 +9,41 @@
 {{- if eq .Values.ingress.apiHost .Values.ingress.webHost -}}
 {{- fail "API 与 Web 必须使用不同主机名以隔离安全边界" -}}
 {{- end -}}
-{{- if ne (int .Values.rgs.replicaCount) (int .Values.rgs.autoscaling.minReplicas) -}}
-{{- fail "rgs.replicaCount 必须等于 HPA minReplicas" -}}
-{{- end -}}
-{{- if ne (int .Values.web.replicaCount) (int .Values.web.autoscaling.minReplicas) -}}
-{{- fail "web.replicaCount 必须等于 HPA minReplicas" -}}
-{{- end -}}
 {{- if ge (int .Values.rgs.pdb.minAvailable) (int .Values.rgs.autoscaling.minReplicas) -}}
 {{- fail "RGS PDB minAvailable 必须小于 HPA minReplicas" -}}
 {{- end -}}
-{{- if ge (int .Values.web.pdb.minAvailable) (int .Values.web.autoscaling.minReplicas) -}}
+{{- if ge (int .Values.worker.pdb.minAvailable) (int .Values.worker.autoscaling.minReplicas) -}}
+{{- fail "Worker PDB minAvailable 必须小于 HPA minReplicas" -}}
+{{- end -}}
+{{- if and .Values.web.enabled (ge (int .Values.web.pdb.minAvailable) (int .Values.web.autoscaling.minReplicas)) -}}
 {{- fail "Web PDB minAvailable 必须小于 HPA minReplicas" -}}
 {{- end -}}
 {{- if lt (int .Values.rgs.autoscaling.maxReplicas) (int .Values.rgs.autoscaling.minReplicas) -}}
 {{- fail "RGS HPA maxReplicas 不得小于 minReplicas" -}}
 {{- end -}}
-{{- if lt (int .Values.web.autoscaling.maxReplicas) (int .Values.web.autoscaling.minReplicas) -}}
+{{- if lt (int .Values.worker.autoscaling.maxReplicas) (int .Values.worker.autoscaling.minReplicas) -}}
+{{- fail "Worker HPA maxReplicas 不得小于 minReplicas" -}}
+{{- end -}}
+{{- if and .Values.web.enabled (lt (int .Values.web.autoscaling.maxReplicas) (int .Values.web.autoscaling.minReplicas)) -}}
 {{- fail "Web HPA maxReplicas 不得小于 minReplicas" -}}
 {{- end -}}
 {{- if gt (int .Values.rgs.runtime.databaseMaxIdleConnections) (int .Values.rgs.runtime.databaseMaxOpenConnections) -}}
-{{- fail "数据库空闲连接上限不得大于总连接上限" -}}
+{{- fail "RGS 数据库空闲连接上限不得大于总连接上限" -}}
+{{- end -}}
+{{- if gt (int .Values.worker.runtime.databaseMaxIdleConnections) (int .Values.worker.runtime.databaseMaxOpenConnections) -}}
+{{- fail "Worker 数据库空闲连接上限不得大于总连接上限" -}}
 {{- end -}}
 {{- $requiredTerminationGrace := add (int .Values.rgs.shutdownTimeoutSeconds) (int .Values.rgs.preStopSeconds) 5 -}}
 {{- if lt (int .Values.rgs.terminationGracePeriodSeconds) $requiredTerminationGrace -}}
 {{- fail "RGS 终止宽限必须覆盖应用关闭、preStop 摘流及至少五秒调度余量" -}}
 {{- end -}}
-{{- $outboxWaves := div (add (int .Values.rgs.runtime.outboxBatchSize) (sub (int .Values.rgs.runtime.outboxMaxParallel) 1)) (int .Values.rgs.runtime.outboxMaxParallel) -}}
-{{- $outboxPublishWindow := mul (int .Values.rgs.runtime.outboxPublishTimeoutSeconds) $outboxWaves -}}
-{{- if le (int .Values.rgs.runtime.outboxLeaseSeconds) $outboxPublishWindow -}}
+{{- $requiredWorkerTerminationGrace := add (int .Values.worker.shutdownTimeoutSeconds) (int .Values.worker.preStopSeconds) 5 -}}
+{{- if lt (int .Values.worker.terminationGracePeriodSeconds) $requiredWorkerTerminationGrace -}}
+{{- fail "Worker 终止宽限必须覆盖应用关闭、preStop 摘流及至少五秒调度余量" -}}
+{{- end -}}
+{{- $outboxWaves := div (add (int .Values.worker.runtime.outboxBatchSize) (sub (int .Values.worker.runtime.outboxMaxParallel) 1)) (int .Values.worker.runtime.outboxMaxParallel) -}}
+{{- $outboxPublishWindow := mul (int .Values.worker.runtime.outboxPublishTimeoutSeconds) $outboxWaves -}}
+{{- if le (int .Values.worker.runtime.outboxLeaseSeconds) $outboxPublishWindow -}}
 {{- fail "outbox 租约必须长于最坏批次发布窗口" -}}
 {{- end -}}
 {{- if ge (int .Values.migrator.migrationTimeoutSeconds) (int .Values.migrator.activeDeadlineSeconds) -}}
@@ -45,26 +52,42 @@
 {{- if and .Values.audit.mtls.enabled (or (empty .Values.audit.mtls.clientCertKey) (empty .Values.audit.mtls.clientKeyKey)) -}}
 {{- fail "启用审计 mTLS 时必须同时配置客户端证书和私钥 Secret key" -}}
 {{- end -}}
-{{- $knownPaths := dict
+{{- $knownAPIPaths := dict
   "operators.json" true
   "definition.json" true
   "definition-approval.json" true
   "definition-approval-public.pem" true
   "launch-hmac.key" true
+  "trust-bundle.pem" true
+-}}
+{{- range .Values.externalSecrets.apiRuntimeAssets.additionalItems -}}
+{{- if hasKey $knownAPIPaths .path -}}
+{{- fail (printf "apiRuntimeAssets additionalItems 路径重复: %s" .path) -}}
+{{- end -}}
+{{- $_ := set $knownAPIPaths .path true -}}
+{{- end -}}
+{{- $knownWorkerPaths := dict
+  "operators.json" true
+  "definition.json" true
+  "definition-approval.json" true
+  "definition-approval-public.pem" true
   "outbox-hmac.key" true
   "outbox-bearer.token" true
   "outbox-root-ca.pem" true
   "trust-bundle.pem" true
 -}}
 {{- if .Values.audit.mtls.enabled -}}
-{{- $_ := set $knownPaths "outbox-client.pem" true -}}
-{{- $_ := set $knownPaths "outbox-client-key.pem" true -}}
+{{- $_ := set $knownWorkerPaths "outbox-client.pem" true -}}
+{{- $_ := set $knownWorkerPaths "outbox-client-key.pem" true -}}
 {{- end -}}
-{{- range .Values.externalSecrets.runtimeAssets.additionalItems -}}
-{{- if hasKey $knownPaths .path -}}
-{{- fail (printf "runtimeAssets additionalItems 路径重复: %s" .path) -}}
+{{- range .Values.externalSecrets.workerRuntimeAssets.additionalItems -}}
+{{- if hasKey $knownWorkerPaths .path -}}
+{{- fail (printf "workerRuntimeAssets additionalItems 路径重复: %s" .path) -}}
 {{- end -}}
-{{- $_ := set $knownPaths .path true -}}
+{{- if or (contains "access" (lower .path)) (contains "operator-response" (lower .path)) (contains "launch" (lower .path)) -}}
+{{- fail (printf "Worker 禁止挂载 API 专属签发材料: %s" .path) -}}
+{{- end -}}
+{{- $_ := set $knownWorkerPaths .path true -}}
 {{- end -}}
 {{- if .Values.audit.mtls.enabled -}}
 {{- if eq .Values.audit.mtls.clientCertKey .Values.audit.mtls.clientKeyKey -}}
@@ -81,14 +104,27 @@
 {{- if empty .Values.externalControls.globalRateLimitProvider -}}
 {{- fail "必须声明入口网关的跨副本全局限流提供方" -}}
 {{- end -}}
+{{- if and (eq .Values.networkPolicy.ingressController.mode "cidrs") (empty .Values.networkPolicy.ingressController.cidrs) -}}
+{{- fail "入口采用 CIDR 模式时必须声明受控来源网段" -}}
+{{- end -}}
+{{- if and (eq .Values.networkPolicy.ingressController.mode "selectors") (not (empty .Values.networkPolicy.ingressController.cidrs)) -}}
+{{- fail "入口采用 selector 模式时不得同时声明 CIDR" -}}
+{{- end -}}
+{{- range .Values.networkPolicy.ingressController.cidrs -}}
+{{- if eq . "0.0.0.0/0" -}}
+{{- fail "入口来源禁止使用全网 CIDR" -}}
+{{- end -}}
+{{- end -}}
 {{- $secretNames := list
   .Values.externalSecrets.runtimeDatabase.name
   .Values.externalSecrets.migratorDatabase.name
-  .Values.externalSecrets.runtimeAssets.name
+  .Values.externalSecrets.apiRuntimeAssets.name
+  .Values.externalSecrets.workerRuntimeAssets.name
   .Values.externalSecrets.operationsBearer.name
+  .Values.externalSecrets.sharedAdmission.name
 -}}
 {{- if ne (len (uniq $secretNames)) (len $secretNames) -}}
-{{- fail "runtime 数据库、迁移数据库、运行密钥与 operations Bearer 必须使用四个不同 Secret" -}}
+{{- fail "runtime 数据库、迁移数据库、API 密钥、Worker 密钥、operations Bearer 与共享准入必须使用六个不同 Secret" -}}
 {{- end -}}
 {{- if ne (index .Values.scheduling.nodeSelector "kubernetes.io/os") "linux" -}}
 {{- fail "集群发布节点选择必须固定 kubernetes.io/os=linux" -}}
@@ -98,4 +134,42 @@
 {{- end -}}
 {{- if ne .Values.release.compatibilityClass "same-schema-and-definition" -}}
 {{- fail "原生滚动仅接受数据库模式与数学定义均未变化的发布" -}}
+{{- end -}}
+{{- $expectedDefinition := dict
+  "slots-game.io/definition-game-id" .Values.release.definitionIdentity.gameID
+  "slots-game.io/definition-version" .Values.release.definitionIdentity.version
+  "slots-game.io/definition-sha256" .Values.release.definitionIdentity.sha256
+-}}
+{{- $currentByComponent := dict -}}
+{{- $deploymentList := lookup "apps/v1" "Deployment" .Release.Namespace "" -}}
+{{- range $current := dig "items" (list) $deploymentList -}}
+{{- $labels := dig "metadata" "labels" (dict) $current -}}
+{{- if eq (get $labels "app.kubernetes.io/instance") $.Release.Name -}}
+{{- $component := get $labels "app.kubernetes.io/component" -}}
+{{- if or (eq $component "rgs") (eq $component "rgs-worker") -}}
+{{- if hasKey $currentByComponent $component -}}
+{{- fail (printf "现网 Helm release 包含重复 %s Deployment" $component) -}}
+{{- end -}}
+{{- $_ := set $currentByComponent $component $current -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $hasAPI := hasKey $currentByComponent "rgs" -}}
+{{- $hasWorker := hasKey $currentByComponent "rgs-worker" -}}
+{{- if ne $hasAPI $hasWorker -}}
+{{- fail "现网 RGS API 与 Worker Deployment 必须同时存在或同时不存在；拒绝在不完整发布拓扑上继续升级" -}}
+{{- end -}}
+{{- range $workload := list
+  (dict "name" "rgs" "current" (get $currentByComponent "rgs"))
+  (dict "name" "rgs-worker" "current" (get $currentByComponent "rgs-worker"))
+-}}
+{{- $current := get $workload "current" -}}
+{{- if not (empty $current) -}}
+{{- $annotations := dig "spec" "template" "metadata" "annotations" (dict) $current -}}
+{{- range $key, $expected := $expectedDefinition -}}
+{{- if ne (get $annotations $key) $expected -}}
+{{- fail (printf "%s 当前数学定义身份与候选不一致；禁止普通滚动，必须走维护窗口或版本分群" (get $workload "name")) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}

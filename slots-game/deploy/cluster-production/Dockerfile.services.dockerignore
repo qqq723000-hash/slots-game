@@ -1,7 +1,6 @@
 *
 !server/
 !server/**
-!deploy/
-!deploy/local-production/
-!deploy/local-production/secret-env.go
-!deploy/local-production/service-probe.go
+!tools/container-helpers/secret-env/main.go
+!tools/container-helpers/service-probe/main.go
+!tools/container-helpers/secret-materializer/main.go

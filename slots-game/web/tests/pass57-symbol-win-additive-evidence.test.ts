@@ -33,6 +33,14 @@ const SYMBOLS = Object.freeze([
   Object.freeze({ name: "Wild x50", file: "Symbol6.skel", sha256: "22b6ccae468e3d04b7c0dabf2a59c3dfcf00ed1d4f96fc4ee6a15c10ef3fc87d", expected: [[23, 5], [24, 7], [24, 8], [27, 10], [26, 7]] }),
 ]);
 
+/** 官方四个低标的 stop -> idle NORMAL/ADD 附件矩阵，采样时间与 WIN 证据一致。 */
+const IDLE_SYMBOLS = Object.freeze([
+  Object.freeze({ name: "Helmet", file: "Symbol2.skel", sha256: "45443fd00e66109bc0a24d99d33539c284e8ea2dd2a36393ceabcc87d7b85922", expected: [[1, 1], [9, 2], [9, 2], [9, 3], [9, 3]] }),
+  Object.freeze({ name: "Radio", file: "Symbol3.skel", sha256: "f9a5fb119d5e4a1b2597bfc41a27ec3eb47d2416d335a8be4b1ac18190a114dd", expected: [[1, 0], [9, 1], [9, 1], [9, 1], [9, 1]] }),
+  Object.freeze({ name: "Tank", file: "Symbol4.skel", sha256: "73b6c53598756d8bef9ea7f9377c4e3fa47791760354180dd0187dce93bddec9", expected: [[41, 0], [41, 1], [41, 1], [41, 1], [41, 1]] }),
+  Object.freeze({ name: "Jet", file: "Symbol5.skel", sha256: "db5c84e80ab35321cb1d1c05315ff4f5f345287d9bfc24b00ce40ef4987a3f52", expected: [[15, 2], [15, 3], [15, 3], [15, 3], [15, 3]] }),
+]);
+
 /**
  * Pass58 原本验证了普通符号和 Wild 的 WIN 路径。以下是 SymbolView 中实际的
  * 特殊符号命令形态：转轴透视滤镜启用时，每种情况都可能暴露一个不透明且
@@ -379,6 +387,51 @@ describe("Pass57 real symbol win additive evidence", () => {
       }
       expect(sawRegionAdd, "region add/ classification evidence").toBe(true);
       expect(sawAuthoredAddOnNormalRegion, "authored ADD classification evidence").toBe(true);
+    } finally {
+      atlas.dispose();
+    }
+  });
+
+  it("keeps every real Helmet/Radio/Tank/Jet idle pose split across NORMAL and ADD", async () => {
+    const atlasBytes = readFileSync(resolve(DIRECTORY, "spine_symbols.atlas"));
+    expect(createHash("sha256").update(atlasBytes).digest("hex"))
+      .toBe("dfb243e5f91182705bbd06266cb865984d6ab4e43ac3c9dd1b98102cdbdea6bc");
+    const atlas = await loadAtlas(atlasBytes.toString("utf8"));
+
+    try {
+      for (const symbol of IDLE_SYMBOLS) {
+        const bytes = readFileSync(resolve(DIRECTORY, symbol.file));
+        expect(createHash("sha256").update(bytes).digest("hex"), symbol.file)
+          .toBe(symbol.sha256);
+        const data = new SkeletonBinary(new AtlasAttachmentLoader(atlas))
+          .readSkeletonData(new Uint8Array(bytes));
+        const skeleton = new Skeleton(data);
+        const stateData = new AnimationStateData(data);
+        stateData.defaultMix = 0.15;
+        const state = new AnimationState(stateData);
+
+        state.setAnimation(0, "stop", false);
+        state.apply(skeleton);
+        const idle = state.setAnimation(0, "idle", false);
+        expect(idle.mixDuration, `${symbol.name} stop -> idle mix`).toBe(0.15);
+        state.apply(skeleton);
+
+        const actual: Array<[number, number]> = [
+          assertRealPoseSplitsIntoNormalAndAdditivePasses(skeleton, `${symbol.name} idle 0ms`),
+        ];
+        for (let index = 1; index < SAMPLE_MS.length; index += 1) {
+          advanceAt60Hz(state, skeleton, SAMPLE_MS[index - 1], SAMPLE_MS[index]);
+          actual.push(assertRealPoseSplitsIntoNormalAndAdditivePasses(
+            skeleton,
+            `${symbol.name} idle ${SAMPLE_MS[index]}ms`,
+          ));
+        }
+
+        expect(actual, `${symbol.name} idle NORMAL/ADD at ${SAMPLE_MS.join("/")}ms`)
+          .toEqual(symbol.expected);
+        expect(Math.max(...actual.map(([, additive]) => additive)), `${symbol.name} idle ADD`)
+          .toBeGreaterThan(0);
+      }
     } finally {
       atlas.dispose();
     }

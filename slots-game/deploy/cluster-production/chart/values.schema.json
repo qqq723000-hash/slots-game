@@ -7,6 +7,7 @@
     "fullnameOverride",
     "images",
     "rgs",
+    "worker",
     "migrator",
     "web",
     "ingress",
@@ -45,9 +46,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "replicaCount",
+        "maintenanceQuiesced",
         "publicBaseURL",
         "allowedOrigins",
+        "sharedAdmission",
         "terminationGracePeriodSeconds",
         "preStopSeconds",
         "shutdownTimeoutSeconds",
@@ -57,7 +59,7 @@
         "runtime"
       ],
       "properties": {
-        "replicaCount": {"type": "integer", "minimum": 3, "maximum": 100},
+        "maintenanceQuiesced": {"type": "boolean"},
         "publicBaseURL": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]+)?$", "maxLength": 253},
         "allowedOrigins": {
           "type": "array",
@@ -65,6 +67,17 @@
           "maxItems": 32,
           "uniqueItems": true,
           "items": {"type": "string", "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]+)?$", "maxLength": 253}
+        },
+        "sharedAdmission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["endpointURL", "timeout", "ratePerSecond", "rateBurst"],
+          "properties": {
+            "endpointURL": {"type": "string", "pattern": "^rediss://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/?$", "maxLength": 300},
+            "timeout": {"type": "string", "pattern": "^(?:[1-9][0-9]|[1-4][0-9]{2}|500)ms$"},
+            "ratePerSecond": {"type": "number", "minimum": 0.001, "maximum": 100000},
+            "rateBurst": {"type": "integer", "minimum": 1, "maximum": 1000000}
+          }
         },
         "terminationGracePeriodSeconds": {"type": "integer", "minimum": 10, "maximum": 300},
         "preStopSeconds": {"type": "integer", "minimum": 5, "maximum": 30},
@@ -82,6 +95,55 @@
             "maxConnectionsPerListener",
             "ratePerSecondPerPod",
             "rateBurstPerPod",
+            "successAccessLogSamplePerMillion",
+            "walletTimeoutSeconds",
+            "walletMaxAttempts"
+          ],
+          "properties": {
+            "databaseMaxOpenConnections": {"type": "integer", "minimum": 2, "maximum": 200},
+            "databaseMaxIdleConnections": {"type": "integer", "minimum": 1, "maximum": 200},
+            "maxInFlightRequests": {"type": "integer", "minimum": 1, "maximum": 4096},
+            "maxConnectionsPerListener": {"type": "integer", "minimum": 16, "maximum": 16384},
+            "ratePerSecondPerPod": {"type": "number", "exclusiveMinimum": 0, "maximum": 100000},
+            "rateBurstPerPod": {"type": "integer", "minimum": 1, "maximum": 1000000},
+            "successAccessLogSamplePerMillion": {"type": "integer", "minimum": 0, "maximum": 1000000},
+            "walletTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 14},
+            "walletMaxAttempts": {"type": "integer", "minimum": 1, "maximum": 1000}
+          }
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "terminationGracePeriodSeconds",
+        "preStopSeconds",
+        "shutdownTimeoutSeconds",
+        "resources",
+        "autoscaling",
+        "pdb",
+        "runtime"
+      ],
+      "properties": {
+        "terminationGracePeriodSeconds": {"type": "integer", "minimum": 10, "maximum": 300},
+        "preStopSeconds": {"type": "integer", "minimum": 5, "maximum": 30},
+        "shutdownTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 290},
+        "resources": {"$ref": "#/definitions/resources"},
+        "autoscaling": {"$ref": "#/definitions/workerAutoscaling"},
+        "pdb": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minAvailable"],
+          "properties": {"minAvailable": {"type": "integer", "minimum": 1, "maximum": 19}}
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "databaseMaxOpenConnections",
+            "databaseMaxIdleConnections",
+            "maxConnectionsPerListener",
             "walletTimeoutSeconds",
             "walletMaxAttempts",
             "outboxBatchSize",
@@ -92,10 +154,7 @@
           "properties": {
             "databaseMaxOpenConnections": {"type": "integer", "minimum": 2, "maximum": 200},
             "databaseMaxIdleConnections": {"type": "integer", "minimum": 1, "maximum": 200},
-            "maxInFlightRequests": {"type": "integer", "minimum": 1, "maximum": 4096},
             "maxConnectionsPerListener": {"type": "integer", "minimum": 16, "maximum": 16384},
-            "ratePerSecondPerPod": {"type": "number", "exclusiveMinimum": 0, "maximum": 100000},
-            "rateBurstPerPod": {"type": "integer", "minimum": 1, "maximum": 1000000},
             "walletTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 14},
             "walletMaxAttempts": {"type": "integer", "minimum": 1, "maximum": 1000},
             "outboxBatchSize": {"type": "integer", "minimum": 1, "maximum": 1000},
@@ -120,9 +179,9 @@
     "web": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["replicaCount", "terminationGracePeriodSeconds", "resources", "autoscaling", "pdb"],
+      "required": ["enabled", "terminationGracePeriodSeconds", "resources", "autoscaling", "pdb"],
       "properties": {
-        "replicaCount": {"type": "integer", "minimum": 3, "maximum": 100},
+        "enabled": {"type": "boolean"},
         "terminationGracePeriodSeconds": {"type": "integer", "minimum": 15, "maximum": 300},
         "resources": {"$ref": "#/definitions/resources"},
         "autoscaling": {"$ref": "#/definitions/autoscaling"},
@@ -134,6 +193,7 @@
       "additionalProperties": false,
       "required": [
         "className",
+        "tlsSecretEnabled",
         "apiHost",
         "webHost",
         "apiTLSSecretName",
@@ -146,6 +206,7 @@
       ],
       "properties": {
         "className": {"$ref": "#/definitions/nonEmpty"},
+        "tlsSecretEnabled": {"type": "boolean"},
         "apiHost": {"$ref": "#/definitions/dnsName"},
         "webHost": {"$ref": "#/definitions/dnsName"},
         "apiTLSSecretName": {"$ref": "#/definitions/dnsName"},
@@ -160,7 +221,7 @@
     "externalSecrets": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runtimeDatabase", "migratorDatabase", "operationsBearer", "runtimeAssets"],
+      "required": ["runtimeDatabase", "migratorDatabase", "operationsBearer", "sharedAdmission", "apiRuntimeAssets", "workerRuntimeAssets"],
       "properties": {
         "runtimeDatabase": {"$ref": "#/definitions/databaseSecret"},
         "migratorDatabase": {"$ref": "#/definitions/databaseSecret"},
@@ -173,54 +234,27 @@
             "key": {"$ref": "#/definitions/secretKey"}
           }
         },
-        "runtimeAssets": {
+        "sharedAdmission": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["name", "keys", "additionalItems"],
+          "required": ["name", "keys"],
           "properties": {
             "name": {"$ref": "#/definitions/dnsName"},
             "keys": {
               "type": "object",
               "additionalProperties": false,
-              "required": [
-                "operatorConfig",
-                "definition",
-                "definitionApproval",
-                "definitionApprovalPublicKey",
-                "launchHMAC",
-                "outboxHMAC",
-                "outboxBearerToken",
-                "outboxRootCA",
-                "trustBundle"
-              ],
+              "required": ["username", "password", "hmacKey", "rootCA"],
               "properties": {
-                "operatorConfig": {"$ref": "#/definitions/secretKey"},
-                "definition": {"$ref": "#/definitions/secretKey"},
-                "definitionApproval": {"$ref": "#/definitions/secretKey"},
-                "definitionApprovalPublicKey": {"$ref": "#/definitions/secretKey"},
-                "launchHMAC": {"$ref": "#/definitions/secretKey"},
-                "outboxHMAC": {"$ref": "#/definitions/secretKey"},
-                "outboxBearerToken": {"$ref": "#/definitions/secretKey"},
-                "outboxRootCA": {"$ref": "#/definitions/secretKey"},
-                "trustBundle": {"$ref": "#/definitions/secretKey"}
-              }
-            },
-            "additionalItems": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 128,
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["key", "path"],
-                "properties": {
-                  "key": {"$ref": "#/definitions/secretKey"},
-                  "path": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$", "maxLength": 240}
-                }
+                "username": {"$ref": "#/definitions/secretKey"},
+                "password": {"$ref": "#/definitions/secretKey"},
+                "hmacKey": {"$ref": "#/definitions/secretKey"},
+                "rootCA": {"$ref": "#/definitions/secretKey"}
               }
             }
           }
-        }
+        },
+        "apiRuntimeAssets": {"$ref": "#/definitions/apiRuntimeAssetSecret"},
+        "workerRuntimeAssets": {"$ref": "#/definitions/workerRuntimeAssetSecret"}
       }
     },
     "audit": {
@@ -271,9 +305,19 @@
     "release": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["compatibilityClass"],
+      "required": ["compatibilityClass", "definitionIdentity"],
       "properties": {
-        "compatibilityClass": {"const": "same-schema-and-definition"}
+        "compatibilityClass": {"const": "same-schema-and-definition"},
+        "definitionIdentity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["gameID", "version", "sha256"],
+          "properties": {
+            "gameID": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+            "version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+            "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+          }
+        }
       }
     },
     "monitoring": {
@@ -294,16 +338,17 @@
       "additionalProperties": false,
       "required": ["ingressController", "dns", "egress"],
       "properties": {
-        "ingressController": {"$ref": "#/definitions/networkPeer"},
+        "ingressController": {"$ref": "#/definitions/ingressNetworkPeer"},
         "dns": {"$ref": "#/definitions/networkPeer"},
         "egress": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["database", "wallet", "audit"],
+          "required": ["database", "wallet", "audit", "sharedAdmission"],
           "properties": {
             "database": {"$ref": "#/definitions/egressTarget"},
             "wallet": {"$ref": "#/definitions/egressTarget"},
-            "audit": {"$ref": "#/definitions/egressTarget"}
+            "audit": {"$ref": "#/definitions/egressTarget"},
+            "sharedAdmission": {"$ref": "#/definitions/egressTarget"}
           }
         }
       }
@@ -376,6 +421,25 @@
         "podSelector": {"$ref": "#/definitions/selector"}
       }
     },
+    "ingressNetworkPeer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "namespaceSelector", "podSelector", "cidrs"],
+      "properties": {
+        "mode": {"enum": ["selectors", "cidrs"]},
+        "namespaceSelector": {"$ref": "#/definitions/selector"},
+        "podSelector": {"$ref": "#/definitions/selector"},
+        "cidrs": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:[89]|1[0-9]|2[0-9]|3[0-2])$"
+          }
+        }
+      }
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,
@@ -417,6 +481,17 @@
         "targetMemoryUtilizationPercentage": {"type": "integer", "minimum": 20, "maximum": 95}
       }
     },
+    "workerAutoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minReplicas", "maxReplicas", "targetCPUUtilizationPercentage", "targetMemoryUtilizationPercentage"],
+      "properties": {
+        "minReplicas": {"type": "integer", "minimum": 2, "maximum": 20},
+        "maxReplicas": {"type": "integer", "minimum": 3, "maximum": 50},
+        "targetCPUUtilizationPercentage": {"type": "integer", "minimum": 20, "maximum": 95},
+        "targetMemoryUtilizationPercentage": {"type": "integer", "minimum": 20, "maximum": 95}
+      }
+    },
     "pdb": {
       "type": "object",
       "additionalProperties": false,
@@ -430,6 +505,66 @@
       "properties": {
         "name": {"$ref": "#/definitions/dnsName"},
         "urlKey": {"$ref": "#/definitions/secretKey"}
+      }
+    },
+    "runtimeAssetAdditionalItems": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "path"],
+        "properties": {
+          "key": {"$ref": "#/definitions/secretKey"},
+          "path": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$", "maxLength": 240}
+        }
+      }
+    },
+    "apiRuntimeAssetSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "keys", "additionalItems"],
+      "properties": {
+        "name": {"$ref": "#/definitions/dnsName"},
+        "keys": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operatorConfig", "definition", "definitionApproval", "definitionApprovalPublicKey", "launchHMAC", "trustBundle"],
+          "properties": {
+            "operatorConfig": {"$ref": "#/definitions/secretKey"},
+            "definition": {"$ref": "#/definitions/secretKey"},
+            "definitionApproval": {"$ref": "#/definitions/secretKey"},
+            "definitionApprovalPublicKey": {"$ref": "#/definitions/secretKey"},
+            "launchHMAC": {"$ref": "#/definitions/secretKey"},
+            "trustBundle": {"$ref": "#/definitions/secretKey"}
+          }
+        },
+        "additionalItems": {"$ref": "#/definitions/runtimeAssetAdditionalItems"}
+      }
+    },
+    "workerRuntimeAssetSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "keys", "additionalItems"],
+      "properties": {
+        "name": {"$ref": "#/definitions/dnsName"},
+        "keys": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operatorConfig", "definition", "definitionApproval", "definitionApprovalPublicKey", "outboxHMAC", "outboxBearerToken", "outboxRootCA", "trustBundle"],
+          "properties": {
+            "operatorConfig": {"$ref": "#/definitions/secretKey"},
+            "definition": {"$ref": "#/definitions/secretKey"},
+            "definitionApproval": {"$ref": "#/definitions/secretKey"},
+            "definitionApprovalPublicKey": {"$ref": "#/definitions/secretKey"},
+            "outboxHMAC": {"$ref": "#/definitions/secretKey"},
+            "outboxBearerToken": {"$ref": "#/definitions/secretKey"},
+            "outboxRootCA": {"$ref": "#/definitions/secretKey"},
+            "trustBundle": {"$ref": "#/definitions/secretKey"}
+          }
+        },
+        "additionalItems": {"$ref": "#/definitions/runtimeAssetAdditionalItems"}
       }
     },
     "egressTarget": {

@@ -46,15 +46,17 @@ func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win,
 			return nil, 0, fmt.Errorf("ways: invalid paytable value for %s", target)
 		}
 
-		matches := [3][]int{}
+		var matches [3][8]int
+		var matchCounts [3]int
 		for reel := range 3 {
 			for row, cell := range grid[reel] {
 				if cell.Symbol == target || cell.Symbol == SymbolWild {
-					matches[reel] = append(matches[reel], row)
+					matches[reel][matchCounts[reel]] = row
+					matchCounts[reel]++
 				}
 			}
 		}
-		if len(matches[0]) == 0 || len(matches[1]) == 0 || len(matches[2]) == 0 {
+		if matchCounts[0] == 0 || matchCounts[1] == 0 || matchCounts[2] == 0 {
 			continue
 		}
 
@@ -62,13 +64,17 @@ func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win,
 		if err != nil {
 			return nil, 0, fmt.Errorf("ways: %s base award: %w", target, err)
 		}
-		cellSet := make(map[Position]struct{})
-		pathAwards := make([]PathAward, 0, len(matches[0])*len(matches[1])*len(matches[2]))
+		var usedCells [3][8]bool
+		pathCapacity := matchCounts[0] * matchCounts[1] * matchCounts[2]
+		pathAwards := make([]PathAward, 0, pathCapacity)
+		// 所有路径位置使用一个连续后备数组；每条路径的容量被截到自身长度，调用方即使
+		// 追加也不会覆盖相邻路径。相比逐路径分配，这在八行展开时可消除数百次堆分配。
+		pathCells := make([]Position, 0, pathCapacity*3)
 		wayCount := 0
 		var amount int64
-		for _, row0 := range matches[0] {
-			for _, row1 := range matches[1] {
-				for _, row2 := range matches[2] {
+		for _, row0 := range matches[0][:matchCounts[0]] {
+			for _, row1 := range matches[1][:matchCounts[1]] {
+				for _, row2 := range matches[2][:matchCounts[2]] {
 					rows := [3]int{row0, row1, row2}
 					pathMultiplier := int64(1)
 					for reel, row := range rows {
@@ -83,7 +89,7 @@ func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win,
 								return nil, 0, fmt.Errorf("ways: %s path multiplier: %w", target, err)
 							}
 						}
-						cellSet[Position{Reel: reel, Row: row}] = struct{}{}
+						usedCells[reel][row] = true
 					}
 					pathAmount, mulErr := safeMul(base, pathMultiplier)
 					if mulErr != nil {
@@ -93,12 +99,14 @@ func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win,
 					if err != nil {
 						return nil, 0, fmt.Errorf("ways: %s aggregate award: %w", target, err)
 					}
+					cellStart := len(pathCells)
+					pathCells = append(pathCells,
+						Position{Reel: 0, Row: row0},
+						Position{Reel: 1, Row: row1},
+						Position{Reel: 2, Row: row2},
+					)
 					pathAwards = append(pathAwards, PathAward{
-						Cells: []Position{
-							{Reel: 0, Row: row0},
-							{Reel: 1, Row: row1},
-							{Reel: 2, Row: row2},
-						},
+						Cells:           pathCells[cellStart:len(pathCells):len(pathCells)],
 						Multiplier:      pathMultiplier,
 						BaseAmountMinor: base,
 						AmountMinor:     pathAmount,
@@ -108,16 +116,14 @@ func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win,
 			}
 		}
 
-		cells := make([]Position, 0, len(cellSet))
-		for position := range cellSet {
-			cells = append(cells, position)
-		}
-		sort.Slice(cells, func(i, j int) bool {
-			if cells[i].Reel != cells[j].Reel {
-				return cells[i].Reel < cells[j].Reel
+		cells := make([]Position, 0, rows*3)
+		for reel := range 3 {
+			for row := range rows {
+				if usedCells[reel][row] {
+					cells = append(cells, Position{Reel: reel, Row: row})
+				}
 			}
-			return cells[i].Row < cells[j].Row
-		})
+		}
 		win := Win{
 			ID:          strings.ToLower(string(target)) + "-3",
 			Symbol:      target,

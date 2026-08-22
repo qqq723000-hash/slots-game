@@ -51,6 +51,7 @@ type LoadedWallet struct {
 type operatorLoadOptions struct {
 	allowInsecureWalletHTTP bool
 	requireIsolatedAccess   bool
+	walletMaterialOnly      bool
 }
 
 type OperatorLoadOption func(*operatorLoadOptions) error
@@ -69,6 +70,16 @@ func AllowInsecureWalletHTTPForDevelopment() OperatorLoadOption {
 func RequirePerOperatorAccessTokenKeys() OperatorLoadOption {
 	return func(options *operatorLoadOptions) error {
 		options.requireIsolatedAccess = true
+		return nil
+	}
+}
+
+// LoadWalletMaterialOnlyForWorker 仅供不暴露公网 API 的后台 Worker 使用。它仍会
+// 严格解析租户文档和钱包密钥，但不会读取访问令牌、运营请求或运营响应私钥，避免
+// Worker 因复用 API 引导路径而获得不需要的签发能力。
+func LoadWalletMaterialOnlyForWorker() OperatorLoadOption {
+	return func(options *operatorLoadOptions) error {
+		options.walletMaterialOnly = true
 		return nil
 	}
 }
@@ -148,7 +159,7 @@ func LoadOperatorDocument(
 
 	var legacyAccessPrivate ed25519.PrivateKey
 	var legacyAccessPublic ed25519.PublicKey
-	if document.Schema == LegacyOperatorDocumentSchema {
+	if document.Schema == LegacyOperatorDocumentSchema && !options.walletMaterialOnly {
 		var err error
 		legacyAccessPrivate, legacyAccessPublic, err = loadMatchingEd25519KeyPair(accessPrivateKeyPath, accessPublicKeyPath)
 		if err != nil {
@@ -175,35 +186,42 @@ func LoadOperatorDocument(
 			return LoadedOperators{}, fmt.Errorf("duplicate operatorId %q", operatorID)
 		}
 
-		accessSigning, accessVerificationKeys, err := loadAccessTokenKeys(
-			document.Schema, baseDirectory, operatorID, configured,
-			legacyAccessPrivate, legacyAccessPublic, keyIDs, accessPublicOwners,
-		)
-		if err != nil {
-			return LoadedOperators{}, fmt.Errorf("%s access token keys: %w", contextName, err)
-		}
-		// 此构造函数同时验证签名材料、签发方及受众语义，且不会让引导层依赖未导出的验证器。
-		if _, err := operator.NewAccessTokenIssuer(accessSigning, operator.AccessTokenIssuerOptions{
-			Issuer: document.TokenIssuer, Audience: document.TokenAudience,
-		}); err != nil {
-			return LoadedOperators{}, fmt.Errorf("%s access token material: %w", contextName, err)
-		}
+		var accessSigning operator.SigningKey
+		var accessVerificationKeys []operator.VerificationKey
+		var requestKeys []operator.VerificationKey
+		var responseSigning operator.SigningKey
+		var err error
+		if !options.walletMaterialOnly {
+			accessSigning, accessVerificationKeys, err = loadAccessTokenKeys(
+				document.Schema, baseDirectory, operatorID, configured,
+				legacyAccessPrivate, legacyAccessPublic, keyIDs, accessPublicOwners,
+			)
+			if err != nil {
+				return LoadedOperators{}, fmt.Errorf("%s access token keys: %w", contextName, err)
+			}
+			// 此构造函数同时验证签名材料、签发方及受众语义，且不会让引导层依赖未导出的验证器。
+			if _, err := operator.NewAccessTokenIssuer(accessSigning, operator.AccessTokenIssuerOptions{
+				Issuer: document.TokenIssuer, Audience: document.TokenAudience,
+			}); err != nil {
+				return LoadedOperators{}, fmt.Errorf("%s access token material: %w", contextName, err)
+			}
 
-		requestKeys, err := loadVerificationKeys(
-			baseDirectory, operatorID, operator.KeyPurposeHTTPRequest,
-			configured.OperatorRequestVerificationKeys, keyIDs,
-			operatorID+" operator request",
-		)
-		if err != nil {
-			return LoadedOperators{}, fmt.Errorf("%s: %w", contextName, err)
-		}
-		responseSigning, err := loadSigningKey(
-			baseDirectory, operatorID, operator.KeyPurposeHTTPResponse,
-			configured.OperatorResponseSigningKey, keyIDs,
-			operatorID+" operator response",
-		)
-		if err != nil {
-			return LoadedOperators{}, fmt.Errorf("%s: %w", contextName, err)
+			requestKeys, err = loadVerificationKeys(
+				baseDirectory, operatorID, operator.KeyPurposeHTTPRequest,
+				configured.OperatorRequestVerificationKeys, keyIDs,
+				operatorID+" operator request",
+			)
+			if err != nil {
+				return LoadedOperators{}, fmt.Errorf("%s: %w", contextName, err)
+			}
+			responseSigning, err = loadSigningKey(
+				baseDirectory, operatorID, operator.KeyPurposeHTTPResponse,
+				configured.OperatorResponseSigningKey, keyIDs,
+				operatorID+" operator response",
+			)
+			if err != nil {
+				return LoadedOperators{}, fmt.Errorf("%s: %w", contextName, err)
+			}
 		}
 		walletURL, err := validateWalletURL(configured.Wallet.BaseURL, options.allowInsecureWalletHTTP)
 		if err != nil {

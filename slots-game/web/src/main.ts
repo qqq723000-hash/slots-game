@@ -17,6 +17,7 @@ import {
   optionalWindowSessionStorage,
 } from "./protocol/configuredGateway";
 import { configurePixiTextMetricsReadbackCanvas } from "./renderer/configurePixiTextMetricsReadbackCanvas";
+import { configurePixiContentSecurityPolicy } from "./startup/configurePixiContentSecurityPolicy";
 import { waitForPaintedFrame } from "./startup/frameSlicedInitialization";
 import {
   finishStartupPerformanceMonitor,
@@ -54,6 +55,8 @@ export function startApplication(launchPageUrl: string): void {
     const launchGateway = configuredGateway;
     try {
       startStartupPerformanceMonitor(root);
+      configurePixiContentSecurityPolicy();
+      applicationRoot.dataset.pixiCspMode = "static-uniform-sync";
       configurePixiTextMetricsReadbackCanvas();
       // 首个加载画面由 HTML 外壳负责。先跨过两个绘制帧，确保蓝色加载页真实上屏，
       // 再开始 WebGL 和场景构造，避免首帧被同步初始化吞掉而出现白屏或明显卡顿。
@@ -84,7 +87,7 @@ export function startApplication(launchPageUrl: string): void {
     launchGateway.close();
     presentStartupFailure(
       error,
-      launchGateway.initialSessionRecoveryMode === "operator-session",
+      false,
       launchGateway.operatorHostOrigin,
     );
   }

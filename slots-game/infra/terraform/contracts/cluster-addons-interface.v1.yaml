@@ -1,0 +1,173 @@
+apiVersion: slots.example.com/v1
+kind: AwsClusterAddonsInterface
+metadata:
+  name: slots-application-platform-addons
+spec:
+  contractVersion: 1.0.0
+  foundation:
+    applyMeansApplicationReady: false
+    requiresPrivateVpcRunner: true
+    reason: EKS API 只开放私网端点，集群内发布条件必须由 VPC 内受保护执行器验证
+  requiredAddons:
+    - id: aws-load-balancer-controller
+      versionOutput: application_handoff.addon_versions.aws-load-balancer-controller
+      namespace: kube-system
+      deployment: aws-load-balancer-controller
+      serviceAccount: aws-load-balancer-controller
+      ingressClass: alb
+      requiredCrds:
+        - ingressclassparams.elbv2.k8s.aws
+        - targetgroupbindings.elbv2.k8s.aws
+      identityBoundary: add-on 层必须提供专用 Pod Identity 或 IRSA，禁止复用业务 ServiceAccount
+    - id: cluster-autoscaler
+      versionOutput: application_handoff.addon_versions.cluster-autoscaler
+      imageTagOutput: application_handoff.cluster_autoscaler_image_tag
+      namespace: kube-system
+      deployment: cluster-autoscaler
+      serviceAccount: cluster-autoscaler
+      podIdentityRoleOutput: cluster_autoscaler_role_arn
+      inlinePolicyNameOutput: cluster_autoscaler_inline_policy_name
+      cloudProvider: aws
+      autoDiscoveryTags:
+        - k8s.io/cluster-autoscaler/enabled
+        - k8s.io/cluster-autoscaler/${cluster_name}
+      imageMinorMustMatchKubernetes: true
+      mutableActionsRestrictedByResourceTags: true
+      requiredReadOnlyActions:
+        - autoscaling:DescribeTags
+    - id: external-secrets
+      versionOutput: application_handoff.addon_versions.external-secrets
+      namespace: external-secrets
+      deployment: external-secrets
+      serviceAccount: external-secrets
+      podIdentityRoleOutput: secret_sync_role_arn
+      requiredCrds:
+        - externalsecrets.external-secrets.io
+    - id: kube-prometheus-stack
+      versionOutput: application_handoff.addon_versions.kube-prometheus-stack
+      namespace: monitoring
+      deployment: kube-prometheus-stack-operator
+      serviceAccount: kube-prometheus-stack-operator
+      requiredCrds:
+        - servicemonitors.monitoring.coreos.com
+        - prometheusrules.monitoring.coreos.com
+        - prometheusagents.monitoring.coreos.com
+      ownedDeployments:
+        kubeStateMetrics:
+          namespace: monitoring
+          deployment: kube-prometheus-stack-kube-state-metrics
+          serviceAccount: kube-prometheus-stack-kube-state-metrics
+          helmReleaseName: kube-prometheus-stack
+          requiredForHpaConditionAlerts: true
+    - id: metrics-server
+      versionOutput: application_handoff.metrics_server_addon_version
+      source: eks-managed-addon
+      namespace: kube-system
+      deployment: metrics-server
+      serviceAccount: metrics-server
+      requiredApiService: v1beta1.metrics.k8s.io
+      requiredApiServiceCondition: Available=True
+    - id: prometheus-agent
+      versionOutput: application_handoff.addon_versions.prometheus-agent
+      namespace: monitoring
+      customResource: prometheusagent/prometheus-agent
+      serviceAccount: prometheus-agent
+      podIdentityRoleOutput: amp_writer_role_arn
+      remoteWriteEndpointOutput: amp_remote_write_endpoint
+      requiredStatusConditions:
+        - Reconciled
+        - Available
+  workloadNetwork:
+    clientSecurityGroupOutput: workload_client_security_group_id
+    bindingMode: eks-managed-node-cluster-security-group
+    guarantee: RDS 与 Valkey ingress 引用实际由托管节点持有的安全组，不引用未绑定的占位安全组
+    leastPrivilegeCompensatingControl: Chart 的默认拒绝 NetworkPolicy 必须只允许 RGS API 访问 Valkey
+  workloadSecrets:
+    immutableVersionedNames: true
+    apiRuntimeAssetsBoundary: api-runtime-assets
+    workerRuntimeAssetsBoundary: worker-runtime-assets
+    workerForbiddenKeys:
+      - launch-hmac.key
+      - operator-access-private.pem
+      - operator-response-private.pem
+    guarantee: API 与 Worker 使用独立 Secrets Manager 及 ExternalSecret 对象，禁止合并运行秘密
+  sharedAdmission:
+    authority: PostgreSQL-Outbox-Worker
+    cacheRole: 跨副本身份限流和可丢弃重复抑制
+    financialIdempotencyAuthority: false
+    authenticationMode: acl-ab-username-password-files
+    iamAuthenticationAllowed: false
+    workloadAwsIdentityAllowed: false
+    endpointScheme: rediss
+    activeSlotOutput: valkey_active_slot
+    rotationModeOutput: valkey_rotation_mode
+    aclUsernameOutput: valkey_user_name
+    aclUserNamesOutput: valkey_user_names
+    passwordVersionsOutput: valkey_password_versions
+    rotationContractOutput: valkey_rotation_contract
+    endpointUrlOutput: valkey_endpoint_url
+    endpointHostOutput: valkey_primary_endpoint
+    portOutput: valkey_port
+    secretArnOutput: valkey_secret_arn
+    secretNameOutput: valkey_secret_name
+    remoteSecretKeys:
+      - username
+      - password
+      - hmacKey
+      - rootCA
+    kubernetesSecretKeys:
+      - username
+      - password
+      - hmac.key
+      - root-ca.pem
+    rotation:
+      slots:
+        - a
+        - b
+      bothUsersAlwaysInUserGroup: true
+      publishedSecretParity: odd-a-even-b
+      switchDoesNotResetOldSlot: true
+      oldSlotResetRequiresLiveEvidence: true
+      passwordValuesStatePersistenceAllowed: false
+      hmacBucketContinuityRequiredDuringPasswordRotation: true
+      hmacResetRequiresSeparateApprovedMaintenance: true
+      modes:
+        - steady
+        - password-rotation
+        - hmac-maintenance
+      hmacMaintenanceEntryAndKeyChangeInSingleAttestedPlan: true
+      hmacMaintenanceEvidenceSchema: slots-game/hmac-quiesce-attestation/v1
+      hmacMaintenanceEvidenceMaximumTtlSeconds: 3600
+      hmacMaintenancePersistentLockName: slots-hmac-maintenance-lock
+      hmacMaintenanceExitRequiresSeparatePlan: true
+      hmacMaintenanceRequiresApplicationReplicasZero: true
+      hmacMaintenanceParallelRolloutAllowed: false
+      applicationReadyClaimAllowedDuringHmacMaintenance: false
+      maintenanceDeliveryMustStillBePublished: true
+      applicationReleaseAllowedOutput: application_release_allowed
+      maintenanceInProgressOutput: maintenance_in_progress
+      terraformPlanGate: infra/terraform/scripts/verify-valkey-rotation-plan.rb
+      planGateUsesBeforeAndAfterState: true
+      hmacMaintenanceNonNoopResourceAllowlist:
+        entry:
+          - addressSuffix: module.cache.terraform_data.rotation_guard
+            actions: [update]
+          - addressSuffix: module.cache.aws_secretsmanager_secret.shared_admission
+            actions: [create, delete]
+          - addressSuffix: module.cache.aws_secretsmanager_secret_version.shared_admission
+            actions: [delete, create]
+        exit:
+          - addressSuffix: module.cache.terraform_data.rotation_guard
+            actions: [update]
+      sharedAdmissionSecretSyncArnPattern: "arn:<partition>:secretsmanager:<region>:<account>:secret:<name-prefix>-rgs-shared-admission-v*"
+      hmacMaintenanceAllowsIamPolicyChanges: false
+      directApplyAllowed: false
+    externalSecretResourceNamesOutput: application_handoff.external_secret_resource_names
+    secretStoreScope: application-namespace
+  releaseGate:
+    script: deploy/aws-production/verify-live-platform-prerequisites.sh
+    requiredBeforeHelmUpgrade: true
+    requiredBeforeApplicationReadyClaim: true
+    remainingExternalEvidence:
+      - Chart PrometheusRule 已同步到 AMP rule group namespace
+      - AMP 告警已到达受控最终值班路由

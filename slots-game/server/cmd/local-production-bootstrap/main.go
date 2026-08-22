@@ -1,4 +1,4 @@
-// local-production-bootstrap 命令为单机生产部署生成一次性初始化材料。
+// local-production-bootstrap 命令为本机集成验收生成一次性初始化材料。
 //
 // 该命令只接受一个空目录，绝不覆盖既有文件。生成结果属于
 // LOCAL_TECHNICAL_PRODUCTION：它满足运行时生产配置校验，但审批引用仅表示

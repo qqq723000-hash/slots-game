@@ -1,0 +1,98 @@
+configuration = {
+  contract_version    = "1.0.0"
+  project_name        = "slots"
+  expected_account_id = "REPLACE_WITH_DR_ACCOUNT_ID"
+  aws_region          = "ap-northeast-1"
+  application_namespace = "slots-production-dr"
+  helm_release_name     = "slots"
+  availability_zones  = ["ap-northeast-1a", "ap-northeast-1c", "ap-northeast-1d"]
+
+  vpc_cidr             = "10.40.0.0/16"
+  public_subnet_cidrs  = ["10.40.0.0/24", "10.40.1.0/24", "10.40.2.0/24"]
+  private_subnet_cidrs = ["10.40.10.0/24", "10.40.11.0/24", "10.40.12.0/24"]
+  data_subnet_cidrs    = ["10.40.20.0/24", "10.40.21.0/24", "10.40.22.0/24"]
+  edge_ingress_cidrs   = ["0.0.0.0/0"]
+  enable_nat_gateway_per_az = true
+
+  cluster_admin_principal_arns  = ["REPLACE_WITH_DR_EKS_ADMIN_ROLE_ARN"]
+  alert_delivery_principal_arns = ["REPLACE_WITH_DR_ONCALL_ROLE_ARN"]
+
+  kubernetes_version = "REPLACE_WITH_SUPPORTED_EKS_MINOR"
+  eks_addon_versions = {
+    amazon-cloudwatch-observability = "REPLACE_WITH_EXACT_ADDON_VERSION"
+    coredns                = "REPLACE_WITH_EXACT_ADDON_VERSION"
+    eks-pod-identity-agent = "REPLACE_WITH_EXACT_ADDON_VERSION"
+    kube-proxy             = "REPLACE_WITH_EXACT_ADDON_VERSION"
+    metrics-server         = "REPLACE_WITH_EXACT_ADDON_VERSION"
+    vpc-cni                = "REPLACE_WITH_EXACT_ADDON_VERSION"
+  }
+  platform_addon_versions = {
+    aws-load-balancer-controller = "REPLACE_APPROVED_EXACT_SEMVER"
+    cluster-autoscaler            = "REPLACE_APPROVED_EXACT_SEMVER"
+    external-secrets             = "REPLACE_APPROVED_EXACT_SEMVER"
+    kube-prometheus-stack        = "REPLACE_APPROVED_EXACT_SEMVER"
+    prometheus-agent             = "REPLACE_APPROVED_EXACT_SEMVER"
+  }
+  cluster_autoscaler_image_tag = "REPLACE_WITH_EXACT_V1_XX_PATCH"
+  node_instance_types  = ["m7i.xlarge"]
+  node_min_size        = 3
+  node_desired_size    = 3
+  node_max_size        = 12
+  node_volume_size_gib = 150
+
+  rds_engine_version            = "REPLACE_WITH_APPROVED_POSTGRES_VERSION"
+  rds_parameter_group_family    = "REPLACE_WITH_MATCHING_PARAMETER_FAMILY"
+  rds_instance_class            = "db.r7g.xlarge"
+  rds_allocated_storage_gib     = 500
+  rds_max_allocated_storage_gib = 2000
+  rds_multi_az                  = true
+  rds_deletion_protection       = true
+  rds_backup_retention_days     = 35
+
+  valkey_engine_version = "7.2"
+  valkey_node_type      = "cache.r7g.large"
+  valkey_active_slot    = "a"
+  valkey_rotation_mode  = "steady"
+  valkey_password_fingerprint_a = "REPLACE_WITH_SHA256_OF_VALKEY_PASSWORD_A"
+  valkey_password_fingerprint_b = "REPLACE_WITH_SHA256_OF_VALKEY_PASSWORD_B"
+  valkey_password_version_a = 1
+  valkey_password_version_b = 1
+  valkey_password_reset_approvals = {}
+  valkey_hmac_maintenance_approval = null
+  shared_admission_hmac_key_fingerprint = "REPLACE_WITH_SHA256_OF_CANONICAL_BASE64_HMAC_KEY"
+  valkey_secret_version = 1
+  application_secret_versions = {
+    api-runtime-assets    = 1
+    migrator-database     = 1
+    operations-bearer     = 1
+    runtime-database      = 1
+    worker-runtime-assets = 1
+  }
+
+  web_bucket_name                    = "replace-with-unique-dr-web-bucket"
+  cloudfront_log_bucket_name         = "replace-with-unique-dr-cloudfront-log-bucket"
+  web_domain_name                    = "slots.dr.example.com"
+  cloudfront_acm_certificate_arn     = "REPLACE_WITH_US_EAST_1_ACM_CERTIFICATE_ARN"
+  cloudfront_waf_web_acl_arn         = "REPLACE_WITH_GLOBAL_WAF_WEB_ACL_ARN"
+  web_content_security_policy        = "REPLACE_WITH_CSP_FROM_VERIFIED_WEB_DIGEST"
+  cloudfront_price_class             = "PriceClass_All"
+
+  archive_bucket_name     = "replace-with-unique-dr-archive-bucket"
+  archive_retention_days  = 2555
+  archive_deep_after_days = 180
+
+  backup_retention_days                 = 365
+  backup_enable_vault_lock              = true
+  backup_vault_lock_changeable_for_days = 7
+  backup_copy_destination_vault_arn     = ""
+  backup_copy_source_account_ids        = ["REPLACE_WITH_PRIMARY_ACCOUNT_ID"]
+
+  ecr_untagged_retention_days   = 365
+  log_retention_days            = 365
+  cloudfront_log_retention_days = 365
+
+  additional_tags = {
+    CostCenter = "REPLACE_WITH_COST_CENTER"
+    Owner      = "REPLACE_WITH_TEAM"
+  }
+}

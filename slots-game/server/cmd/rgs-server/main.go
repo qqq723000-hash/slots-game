@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ import (
 	"slots-game/server/internal/rgs"
 	"slots-game/server/internal/rgsapi"
 	"slots-game/server/internal/rng"
+	"slots-game/server/internal/sharedadmission"
 	"slots-game/server/internal/wallet"
 )
 
@@ -52,9 +54,11 @@ func run(logger *slog.Logger) error {
 	}
 	if config.DatabaseURL == "" || config.OperatorConfigFile == "" ||
 		config.DefinitionFile == "" || config.DefinitionApprovalFile == "" ||
-		config.DefinitionApprovalPublicKeyFile == "" ||
-		config.LaunchHMACKeyFile == "" {
-		return errors.New("rgs-server requires database, definition, trust, operator, and launch-key configuration in every environment")
+		config.DefinitionApprovalPublicKeyFile == "" {
+		return errors.New("rgs-server requires database, definition, trust, and operator configuration in every environment")
+	}
+	if config.RuntimeRole.ServesPublicAPI() && config.LaunchHMACKeyFile == "" {
+		return errors.New("rgs-server API role requires launch-key configuration")
 	}
 	database, err := openRuntimeDatabase(
 		config.DatabaseURL,
@@ -93,12 +97,18 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	if err := validateLoadedDefinitionIdentity(config, definition, definitionHash); err != nil {
+		return err
+	}
 	operatorOptions := make([]bootstrap.OperatorLoadOption, 0, 1)
 	if config.Environment == platform.Development {
 		operatorOptions = append(operatorOptions, bootstrap.AllowInsecureWalletHTTPForDevelopment())
 	}
 	if config.Environment == platform.Production {
 		operatorOptions = append(operatorOptions, bootstrap.RequirePerOperatorAccessTokenKeys())
+	}
+	if config.RuntimeRole == platform.RuntimeRoleWorker {
+		operatorOptions = append(operatorOptions, bootstrap.LoadWalletMaterialOnlyForWorker())
 	}
 	operators, err := bootstrap.LoadOperatorDocument(
 		config.OperatorConfigFile,
@@ -109,14 +119,17 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := validateKeyReadiness(operators, time.Now().UTC(), config.AccessTokenTTL); err != nil {
+	if err := validateKeyReadinessForRole(operators, time.Now().UTC(), config.AccessTokenTTL, config.RuntimeRole); err != nil {
 		return err
 	}
-	launchHMACKey, err := bootstrap.LoadLaunchHMACKey(config.LaunchHMACKeyFile)
-	if err != nil {
-		return err
+	var launchHMACKey []byte
+	if config.RuntimeRole.ServesPublicAPI() {
+		launchHMACKey, err = bootstrap.LoadLaunchHMACKey(config.LaunchHMACKeyFile)
+		if err != nil {
+			return err
+		}
+		defer clear(launchHMACKey)
 	}
-	defer clear(launchHMACKey)
 
 	random := rng.NewCryptoSource()
 	if _, err := random.Intn(2); err != nil {
@@ -136,6 +149,26 @@ func run(logger *slog.Logger) error {
 
 	metrics := &platform.Metrics{}
 	metrics.SetDatabasePool(database)
+	var sharedLimiter *sharedadmission.Limiter
+	if config.SharedAdmissionURL != "" {
+		sharedLimiter, err = sharedadmission.New(sharedadmission.Config{
+			URL:          config.SharedAdmissionURL,
+			Username:     config.SharedAdmissionUsername,
+			PasswordFile: config.SharedAdmissionPasswordFile,
+			HMACKeyFile:  config.SharedAdmissionHMACKeyFile,
+			RootCAFile:   config.SharedAdmissionRootCAFile,
+			Timeout:      config.SharedAdmissionTimeout,
+			Rate:         config.SharedAdmissionRatePerSecond,
+			Burst:        config.SharedAdmissionRateBurst,
+		}, metrics)
+		if err != nil {
+			return fmt.Errorf("configure shared admission: %w", err)
+		}
+		defer sharedLimiter.Close()
+		if err := sharedLimiter.Check(startupContext); err != nil {
+			return fmt.Errorf("shared admission startup readiness: %w", err)
+		}
+	}
 	repository, err := postgres.NewRepository(database, metrics)
 	if err != nil {
 		return err
@@ -148,34 +181,8 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	launchService, err := launch.NewService(launchStore, launch.Options{TTL: config.LaunchTTL})
-	if err != nil {
-		return err
-	}
 
 	keyRing, err := operator.NewMemoryKeyRing(operators.VerificationKeys...)
-	if err != nil {
-		return err
-	}
-	requestVerifier, err := operator.NewRequestVerifier(
-		keyRing,
-		nonceStore,
-		operator.RequestVerifierOptions{
-			ClockSkew:   operator.DefaultSignatureClockSkew,
-			MaxLifetime: operator.DefaultSignatureLifetime,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	accessVerifier, err := operator.NewAccessTokenVerifier(
-		keyRing,
-		operator.AccessTokenVerifierOptions{
-			ExpectedIssuer: operators.TokenIssuer, ExpectedAudience: operators.TokenAudience,
-			ClockSkew:   operator.DefaultSignatureClockSkew,
-			MaxLifetime: config.AccessTokenTTL,
-		},
-	)
 	if err != nil {
 		return err
 	}
@@ -190,21 +197,12 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	accessIssuers := make(map[string]*operator.AccessTokenIssuer, len(operators.Operators))
 	walletPorts := make(map[string]rgs.WalletPort, len(operators.Operators))
-	baseWalletClient := wallet.SecureHTTPClient(config.WalletTimeout)
+	baseWalletClient, err := wallet.SecureHTTPClient(config.WalletTimeout, config.WalletRootCAFile)
+	if err != nil {
+		return fmt.Errorf("construct wallet HTTP client: %w", err)
+	}
 	for operatorID, loaded := range operators.Operators {
-		issuer, err := operator.NewAccessTokenIssuer(
-			loaded.AccessTokenSigningKey,
-			operator.AccessTokenIssuerOptions{
-				Issuer: operators.TokenIssuer, Audience: operators.TokenAudience,
-				MaxLifetime: config.AccessTokenTTL,
-			},
-		)
-		if err != nil {
-			return fmt.Errorf("construct access issuer for %s: %w", operatorID, err)
-		}
-		accessIssuers[operatorID] = issuer
 		port, err := wallet.NewHTTPWallet(wallet.HTTPConfig{
 			BaseURL: loaded.Wallet.BaseURL, OperatorID: operatorID,
 			RequestSigningKey: loaded.Wallet.RequestSigningKey,
@@ -232,48 +230,32 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	launchManager, err := application.NewLaunchManager(application.LaunchManagerConfig{
-		PublicBaseURL: config.PublicBaseURL, LaunchHMACKey: launchHMACKey,
-		AccessTokenTTL: config.AccessTokenTTL, GameID: definition.GameID,
-		DefinitionVersion: definition.DefinitionVersion, DefinitionHash: definitionHash,
-	}, repository, launchService, accessIssuers)
-	if err != nil {
-		return err
-	}
 	auditRuntime, err := configureOutboxRuntime(config, database, logger, metrics)
 	if err != nil {
 		return fmt.Errorf("configure outbox delivery: %w", err)
 	}
 	defer auditRuntime.Close()
 
-	operatorLimiter := newKnownOperatorAdmission(
-		operators, platform.NewLimiter(config.RatePerSecond, config.RateBurst, 100_000, 10*time.Minute),
-	)
-	clientLimiter := platform.NewLimiter(
-		config.RatePerSecond,
-		config.RateBurst,
-		100_000,
-		10*time.Minute,
-	)
-	responseKeys := rgsapi.ResponseSigningKeyResolverFunc(func(ctx context.Context, operatorID string) (operator.SigningKey, error) {
-		if err := ctx.Err(); err != nil {
-			return operator.SigningKey{}, err
+	apiHandler := http.NotFoundHandler()
+	if config.RuntimeRole.ServesPublicAPI() {
+		apiHandler, err = newRGSAPIHandler(
+			config,
+			logger,
+			metrics,
+			operators,
+			nonceStore,
+			launchStore,
+			launchHMACKey,
+			definition.GameID,
+			definition.DefinitionVersion,
+			definitionHash,
+			repository,
+			coordinator,
+			sharedLimiter,
+		)
+		if err != nil {
+			return err
 		}
-		loaded, exists := operators.Operators[operatorID]
-		if !exists {
-			return operator.SigningKey{}, errors.New("operator response key not found")
-		}
-		return loaded.OperatorResponseSigningKey, nil
-	})
-	apiHandler, err := rgsapi.NewHandler(rgsapi.Config{
-		OperatorRequests: requestVerifier, AccessTokens: accessVerifier,
-		ResponseSigningKeys: responseKeys, Launches: launchManager,
-		Spins: coordinator, Rounds: coordinator, Admission: operatorLimiter,
-		ClientAdmission: clientLimiter,
-		MaxRequestBytes: config.MaxRequestBytes, ResponseSignatureTTL: time.Minute,
-	})
-	if err != nil {
-		return err
 	}
 
 	allowedOrigins := make(map[string]struct{}, len(config.AllowedOrigins))
@@ -291,9 +273,13 @@ func run(logger *slog.Logger) error {
 	readinessChecks = append(readinessChecks, databaseReadiness...)
 	readinessChecks = append(
 		readinessChecks,
-		keyReadinessCheck{operators: operators, accessTTL: config.AccessTokenTTL},
+		keyReadinessCheck{
+			operators: operators,
+			accessTTL: config.AccessTokenTTL,
+			role:      config.RuntimeRole,
+		},
 	)
-	if auditRuntime.Enabled() {
+	if config.RuntimeRole.RunsBackgroundWorkloads() && auditRuntime.Enabled() {
 		readinessChecks = append(readinessChecks, auditRuntime)
 	}
 	operationsBearerToken, err := loadOperationsBearerToken(config.OperationsBearerTokenFile)
@@ -313,28 +299,33 @@ func run(logger *slog.Logger) error {
 	shutdownSignals := make(chan os.Signal, 1)
 	signal.Notify(shutdownSignals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(shutdownSignals)
-	recoveryWorker, err := recovery.New(recovery.Config{
-		Interval: 2 * time.Second, StaleAfter: time.Second,
-		AttemptTimeout: config.WalletTimeout + 2*time.Second,
-		BatchSize:      100, MaxParallel: 8,
-	}, repository, coordinator, logger, metrics)
-	if err != nil {
-		return err
-	}
-	if err := auditRuntime.Start(ctx); err != nil {
-		return fmt.Errorf("start outbox delivery: %w", err)
+	var recoveryWorker *recovery.Worker
+	if config.RuntimeRole.RunsBackgroundWorkloads() {
+		recoveryWorker, err = recovery.New(recovery.Config{
+			Interval: 2 * time.Second, StaleAfter: time.Second,
+			AttemptTimeout: config.WalletTimeout + 2*time.Second,
+			BatchSize:      100, MaxParallel: 8,
+		}, repository, coordinator, logger, metrics)
+		if err != nil {
+			return err
+		}
+		if err := auditRuntime.Start(ctx); err != nil {
+			return fmt.Errorf("start outbox delivery: %w", err)
+		}
 	}
 	backgroundDone := make(chan struct{})
 	var background sync.WaitGroup
-	background.Add(2)
-	go func() {
-		defer background.Done()
-		recoveryWorker.Run(ctx)
-	}()
-	go func() {
-		defer background.Done()
-		runSecurityMaintenance(ctx, logger, nonceStore, launchStore)
-	}()
+	if config.RuntimeRole.RunsBackgroundWorkloads() {
+		background.Add(2)
+		go func() {
+			defer background.Done()
+			recoveryWorker.Run(ctx)
+		}()
+		go func() {
+			defer background.Done()
+			runSecurityMaintenance(ctx, logger, nonceStore, launchStore)
+		}()
+	}
 	go func() {
 		background.Wait()
 		close(backgroundDone)
@@ -342,52 +333,71 @@ func run(logger *slog.Logger) error {
 
 	publicServer := newHTTPServer(
 		config.HTTPAddress,
-		observeRequests(logger, metrics, withRequestTimeout(config.RequestTimeout, publicHandler)),
+		observeRequests(
+			logger,
+			metrics,
+			config.SuccessAccessLogSamplePerMillion,
+			withRequestTimeout(config.RequestTimeout, publicHandler),
+		),
 		config,
 	)
-	metrics.HTTPConnectionLimit.Store(int64(config.MaxConnectionsPerListener))
-	publicServer.ConnState = func(_ net.Conn, state http.ConnState) {
-		observePublicConnectionState(metrics, state)
+	if config.RuntimeRole.ServesPublicAPI() {
+		metrics.HTTPConnectionLimit.Store(int64(config.MaxConnectionsPerListener))
+		publicServer.ConnState = func(_ net.Conn, state http.ConnState) {
+			observePublicConnectionState(metrics, state)
+		}
 	}
 	operationsServer := newHTTPServer(config.OperationsHTTPAddress, operationsHandler, config)
-	publicListener, err := openBoundedListener(config.HTTPAddress, config.MaxConnectionsPerListener)
-	if err != nil {
-		return fmt.Errorf("listen on public RGS address: %w", err)
+	var publicListener net.Listener
+	if config.RuntimeRole.ServesPublicAPI() {
+		publicListener, err = openBoundedListener(config.HTTPAddress, config.MaxConnectionsPerListener)
+		if err != nil {
+			return fmt.Errorf("listen on public RGS address: %w", err)
+		}
+		defer publicListener.Close()
 	}
-	defer publicListener.Close()
 	operationsListener, err := openBoundedListener(config.OperationsHTTPAddress, config.MaxConnectionsPerListener)
 	if err != nil {
 		return fmt.Errorf("listen on operations RGS address: %w", err)
 	}
 	defer operationsListener.Close()
-	serverErrors := make(chan error, 2)
+	serverCount := 1
+	if config.RuntimeRole.ServesPublicAPI() {
+		serverCount++
+	}
+	serverErrors := make(chan error, serverCount)
 	serversDone := make(chan struct{})
 	var servers sync.WaitGroup
-	servers.Add(2)
-	go func() {
-		defer servers.Done()
-		logger.Info(
-			"public RGS listener started",
-			"address", config.HTTPAddress,
-			"environment", config.Environment,
-			"game_id", definition.GameID,
-			"definition_version", definition.DefinitionVersion,
-			"definition_hash", definitionHash,
-			"operators", len(operators.Operators),
-			"outbox_delivery_enabled", auditRuntime.Enabled(),
-			"connection_limit", config.MaxConnectionsPerListener,
-		)
-		if config.TLSCertFile != "" {
-			serverErrors <- publicServer.ServeTLS(publicListener, config.TLSCertFile, config.TLSKeyFile)
-			return
-		}
-		serverErrors <- publicServer.Serve(publicListener)
-	}()
+	servers.Add(serverCount)
+	if config.RuntimeRole.ServesPublicAPI() {
+		go func() {
+			defer servers.Done()
+			logger.Info(
+				"public RGS listener started",
+				"address", config.HTTPAddress,
+				"environment", config.Environment,
+				"runtime_role", config.RuntimeRole,
+				"game_id", definition.GameID,
+				"definition_version", definition.DefinitionVersion,
+				"definition_hash", definitionHash,
+				"operators", len(operators.Operators),
+				"outbox_delivery_enabled", auditRuntime.Enabled(),
+				"connection_limit", config.MaxConnectionsPerListener,
+			)
+			if config.TLSCertFile != "" {
+				serverErrors <- publicServer.ServeTLS(publicListener, config.TLSCertFile, config.TLSKeyFile)
+				return
+			}
+			serverErrors <- publicServer.Serve(publicListener)
+		}()
+	}
 	go func() {
 		defer servers.Done()
 		logger.Info(
 			"operations RGS listener started",
 			"address", config.OperationsHTTPAddress,
+			"runtime_role", config.RuntimeRole,
+			"outbox_delivery_enabled", auditRuntime.Enabled(),
 			"connection_limit", config.MaxConnectionsPerListener,
 		)
 		serverErrors <- operationsServer.Serve(operationsListener)
@@ -402,19 +412,24 @@ func run(logger *slog.Logger) error {
 		shutdownContext, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
 		defer cancel()
 		shutdownErr := drainAndShutdownHTTPServers(
-			shutdownContext, lifecycleReadiness, stop, publicServer, operationsServer,
+			shutdownContext, lifecycleReadiness, stop,
+			roleHTTPServers(config.RuntimeRole, publicServer, operationsServer)...,
 		)
 		workerErr := errors.Join(
 			auditRuntime.Wait(shutdownContext),
 			waitForBackground(shutdownContext, backgroundDone),
 		)
-		serveErrors := append([]error{err}, waitForServers(shutdownContext, serversDone, serverErrors, 1)...)
+		serveErrors := append(
+			[]error{err},
+			waitForServers(shutdownContext, serversDone, serverErrors, serverCount-1)...,
+		)
 		return errors.Join(normalizeServerErrors(serveErrors...), shutdownErr, workerErr)
 	case <-shutdownSignals:
 		shutdownContext, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
 		defer cancel()
 		shutdownErr := drainAndShutdownHTTPServers(
-			shutdownContext, lifecycleReadiness, stop, publicServer, operationsServer,
+			shutdownContext, lifecycleReadiness, stop,
+			roleHTTPServers(config.RuntimeRole, publicServer, operationsServer)...,
 		)
 		workerErr := errors.Join(
 			auditRuntime.Wait(shutdownContext),
@@ -423,9 +438,132 @@ func run(logger *slog.Logger) error {
 		return errors.Join(
 			shutdownErr,
 			workerErr,
-			normalizeServerErrors(waitForServers(shutdownContext, serversDone, serverErrors, 2)...),
+			normalizeServerErrors(waitForServers(shutdownContext, serversDone, serverErrors, serverCount)...),
 		)
 	}
+}
+
+func newRGSAPIHandler(
+	config platform.Config,
+	logger *slog.Logger,
+	metrics *platform.Metrics,
+	operators bootstrap.LoadedOperators,
+	nonceStore *postgres.NonceStore,
+	launchStore *postgres.LaunchStore,
+	launchHMACKey []byte,
+	gameID string,
+	definitionVersion string,
+	definitionHash string,
+	repository *postgres.Repository,
+	coordinator *rgs.Coordinator,
+	sharedLimiter *sharedadmission.Limiter,
+) (http.Handler, error) {
+	launchService, err := launch.NewService(launchStore, launch.Options{TTL: config.LaunchTTL})
+	if err != nil {
+		return nil, err
+	}
+	keyRing, err := operator.NewMemoryKeyRing(operators.VerificationKeys...)
+	if err != nil {
+		return nil, err
+	}
+	requestVerifier, err := operator.NewRequestVerifier(
+		keyRing,
+		nonceStore,
+		operator.RequestVerifierOptions{
+			ClockSkew:   operator.DefaultSignatureClockSkew,
+			MaxLifetime: operator.DefaultSignatureLifetime,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	accessVerifier, err := operator.NewAccessTokenVerifier(
+		keyRing,
+		operator.AccessTokenVerifierOptions{
+			ExpectedIssuer:   operators.TokenIssuer,
+			ExpectedAudience: operators.TokenAudience,
+			ClockSkew:        operator.DefaultSignatureClockSkew,
+			MaxLifetime:      config.AccessTokenTTL,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	accessIssuers := make(map[string]*operator.AccessTokenIssuer, len(operators.Operators))
+	for operatorID, loaded := range operators.Operators {
+		issuer, issuerErr := operator.NewAccessTokenIssuer(
+			loaded.AccessTokenSigningKey,
+			operator.AccessTokenIssuerOptions{
+				Issuer: operators.TokenIssuer, Audience: operators.TokenAudience,
+				MaxLifetime: config.AccessTokenTTL,
+			},
+		)
+		if issuerErr != nil {
+			return nil, fmt.Errorf("construct access issuer for %s: %w", operatorID, issuerErr)
+		}
+		accessIssuers[operatorID] = issuer
+	}
+	launchManager, err := application.NewLaunchManager(application.LaunchManagerConfig{
+		PublicBaseURL: config.PublicBaseURL, LaunchHMACKey: launchHMACKey,
+		AccessTokenTTL: config.AccessTokenTTL, GameID: gameID,
+		DefinitionVersion: definitionVersion, DefinitionHash: definitionHash,
+	}, repository, launchService, accessIssuers)
+	if err != nil {
+		return nil, err
+	}
+	responseKeys := rgsapi.ResponseSigningKeyResolverFunc(func(ctx context.Context, operatorID string) (operator.SigningKey, error) {
+		if err := ctx.Err(); err != nil {
+			return operator.SigningKey{}, err
+		}
+		loaded, exists := operators.Operators[operatorID]
+		if !exists {
+			return operator.SigningKey{}, errors.New("operator response key not found")
+		}
+		return loaded.OperatorResponseSigningKey, nil
+	})
+	localOperatorLimiter := newKnownOperatorAdmission(
+		operators,
+		platform.NewLimiter(config.RatePerSecond, config.RateBurst, 100_000, 10*time.Minute),
+	)
+	localClientLimiter := localLimiterAdmission{limiter: platform.NewLimiter(
+		config.RatePerSecond,
+		config.RateBurst,
+		100_000,
+		10*time.Minute,
+	)}
+	return rgsapi.NewHandler(rgsapi.Config{
+		OperatorRequests: requestVerifier, AccessTokens: accessVerifier,
+		ResponseSigningKeys: responseKeys, Launches: launchManager,
+		Spins: coordinator, Rounds: coordinator, Admission: localOperatorLimiter,
+		ClientAdmission: localClientLimiter,
+		LaunchAdmission: sharedLimiter, SpinAdmission: sharedLimiter,
+		SecurityEvents:  newSecurityEventObserver(logger, metrics),
+		MaxRequestBytes: config.MaxRequestBytes, ResponseSignatureTTL: time.Minute,
+	})
+}
+
+func validateLoadedDefinitionIdentity(config platform.Config, definition game.Config, definitionHash string) error {
+	if config.ExpectedDefinitionGameID == "" && config.ExpectedDefinitionVersion == "" &&
+		config.ExpectedDefinitionSHA256 == "" {
+		return nil
+	}
+	if definition.GameID != config.ExpectedDefinitionGameID ||
+		definition.DefinitionVersion != config.ExpectedDefinitionVersion ||
+		definitionHash != config.ExpectedDefinitionSHA256 {
+		return errors.New("loaded definition identity does not match the release contract")
+	}
+	return nil
+}
+
+func roleHTTPServers(
+	role platform.RuntimeRole,
+	publicServer httpServerShutdowner,
+	operationsServer httpServerShutdowner,
+) []httpServerShutdowner {
+	if role.ServesPublicAPI() {
+		return []httpServerShutdowner{publicServer, operationsServer}
+	}
+	return []httpServerShutdowner{operationsServer}
 }
 
 func newPublicHandler(apiHandler, clientHandler http.Handler) http.Handler {
@@ -751,25 +889,74 @@ func newKnownOperatorAdmission(
 	return &knownOperatorAdmission{known: known, limiter: limiter}
 }
 
-func (a *knownOperatorAdmission) Allow(key string, now time.Time) bool {
+func (a *knownOperatorAdmission) Admit(_ context.Context, key string, now time.Time) rgsapi.AdmissionResult {
 	const prefix = "operator:"
 	if strings.HasPrefix(key, prefix) {
 		if _, exists := a.known[strings.TrimPrefix(key, prefix)]; !exists {
 			key = "operator:unknown"
 		}
 	}
-	return a.limiter.Allow(key, now)
+	return localAdmissionResult(a.limiter.Allow(key, now))
+}
+
+type localLimiterAdmission struct {
+	limiter *platform.Limiter
+}
+
+func (admission localLimiterAdmission) Admit(_ context.Context, key string, now time.Time) rgsapi.AdmissionResult {
+	return localAdmissionResult(admission.limiter.Allow(key, now))
+}
+
+func localAdmissionResult(allowed bool) rgsapi.AdmissionResult {
+	if allowed {
+		return rgsapi.AdmissionResult{Decision: rgsapi.AdmissionAllowed}
+	}
+	return rgsapi.AdmissionResult{Decision: rgsapi.AdmissionRateLimited, RetryAfter: time.Second}
 }
 
 type keyReadinessCheck struct {
 	operators bootstrap.LoadedOperators
 	accessTTL time.Duration
+	role      platform.RuntimeRole
 }
 
 func (keyReadinessCheck) Name() string { return "operator_keys" }
 
 func (check keyReadinessCheck) Check(context.Context) error {
-	return validateKeyReadiness(check.operators, time.Now().UTC(), check.accessTTL)
+	return validateKeyReadinessForRole(check.operators, time.Now().UTC(), check.accessTTL, check.role)
+}
+
+func validateKeyReadinessForRole(
+	operators bootstrap.LoadedOperators,
+	now time.Time,
+	accessTTL time.Duration,
+	role platform.RuntimeRole,
+) error {
+	if role == platform.RuntimeRoleWorker {
+		return validateWalletKeyReadiness(operators, now)
+	}
+	return validateKeyReadiness(operators, now, accessTTL)
+}
+
+func validateWalletKeyReadiness(operators bootstrap.LoadedOperators, now time.Time) error {
+	for operatorID, loaded := range operators.Operators {
+		requestKey := loaded.Wallet.RequestSigningKey
+		if now.Before(requestKey.NotBefore) || requestKey.NotAfter.Before(now.Add(time.Minute)) {
+			return fmt.Errorf("%s wallet request signing key is not ready", operatorID)
+		}
+		hasWalletResponseKey := false
+		for _, key := range operators.VerificationKeys {
+			if key.OperatorID == operatorID && key.Purpose == operator.KeyPurposeHTTPResponse &&
+				!now.Before(key.NotBefore) && key.NotAfter.After(now) {
+				hasWalletResponseKey = true
+				break
+			}
+		}
+		if !hasWalletResponseKey {
+			return fmt.Errorf("%s does not have an active wallet response verification key", operatorID)
+		}
+	}
+	return nil
 }
 
 func validateKeyReadiness(
@@ -884,6 +1071,7 @@ func (writer *responseStatusRecorder) Write(body []byte) (int, error) {
 func observeRequests(
 	logger *slog.Logger,
 	metrics *platform.Metrics,
+	successSamplePerMillion int,
 	next http.Handler,
 ) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -919,21 +1107,48 @@ func observeRequests(
 				}
 			}
 			if logger != nil {
+				requestID := loggedRequestID(request, recorder.Header())
 				// 访问日志会长期保留：只记录固定路由枚举和语法受限的 request_id 字段。
 				// 绝不写入原始 URL、未知路径、查询参数、RemoteAddr 或经济/玩家标识，
 				// 以免不可信输入扩大隐私暴露面或污染日志检索索引。
-				logger.Info(
-					"http request",
+				arguments := []any{
 					"route", route,
-					"request_id", loggedRequestID(request, recorder.Header()),
+					"request_id", requestID,
 					"status", status,
 					"status_class", httpStatusClass(status),
 					"duration_ms", duration.Milliseconds(),
-				)
+				}
+				switch {
+				case status >= http.StatusInternalServerError:
+					logger.Error("http request", arguments...)
+					metrics.AccessLogEmitted()
+				case status >= http.StatusBadRequest:
+					logger.Warn("http request", arguments...)
+					metrics.AccessLogEmitted()
+				case shouldEmitSuccessfulAccessLog(successSamplePerMillion, route, requestID):
+					logger.Info("http request", arguments...)
+					metrics.AccessLogEmitted()
+				default:
+					metrics.AccessLogDropped()
+				}
 			}
 		}()
 		next.ServeHTTP(recorder, request)
 	})
+}
+
+func shouldEmitSuccessfulAccessLog(samplePerMillion int, route, requestID string) bool {
+	if samplePerMillion <= 0 {
+		return false
+	}
+	if samplePerMillion >= 1_000_000 {
+		return true
+	}
+	// 固定路由和安全请求标识经过 SHA-256 分桶；同一输入始终得到相同决定，
+	// 副本扩缩容或进程重启不会改变采样结果，也不会引入高基数监控标签。
+	digest := sha256.Sum256([]byte(route + "\x00" + requestID))
+	bucket := binary.BigEndian.Uint64(digest[:8]) % 1_000_000
+	return bucket < uint64(samplePerMillion)
 }
 
 func normalizedPublicRoute(request *http.Request) string {

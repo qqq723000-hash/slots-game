@@ -11,10 +11,12 @@ import {
   type GameGateway,
   type GatewayCallbacks,
 } from "../protocol/GameGateway";
-import { createRequestId } from "../protocol/messages";
+import { ENGINE_RULES_VERSION, createRequestId } from "../protocol/messages";
+import { PRIMAL_PRESENTATION_DEFINITION_BINDINGS } from "../ui/presentationRules";
 
 const FIXTURE_BET_MINOR = "100" as const;
 const FIXTURE_BALANCE_MINOR = "100000" as const;
+const FIXTURE_PRESENTATION_DEFINITION_BINDING = PRIMAL_PRESENTATION_DEFINITION_BINDINGS[0];
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
 interface FixtureRound {
@@ -1354,8 +1356,13 @@ export class VisualFixtureGateway implements GameGateway {
       const session: SessionOpened = immutableClone({
         type: "session.opened",
         protocolVersion: 1,
+        // 视觉夹具只模拟已经批准的表现契约，避免测试页因缺少真实 RGS 投影而永远关闭帮助内容。
+        engineRulesVersion: ENGINE_RULES_VERSION,
+        definitionBinding: FIXTURE_PRESENTATION_DEFINITION_BINDING,
         requestId: createRequestId("fixture-open"),
         sessionId: this.sessionId,
+        currency: "EUR",
+        currencyExponent: 2,
         balanceMinor: this.balanceMinor.toString(),
         betOptionsMinor: [FIXTURE_BET_MINOR],
         defaultBetMinor: FIXTURE_BET_MINOR,

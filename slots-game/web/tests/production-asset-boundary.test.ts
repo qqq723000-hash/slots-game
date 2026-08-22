@@ -19,4 +19,12 @@ describe("生产资产边界", () => {
     expect(source).toContain("assets/primal-runtime/");
     expect(source).toContain('"assets/primal-reference"');
   });
+
+  it("第三方许可声明必须保留在发布白名单并进入可复算发布清单", () => {
+    const source = readFileSync(
+      new URL("../scripts/finalize-production-assets.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain('new Set(["index.html", "favicon.ico", "THIRD_PARTY_NOTICES.txt"])');
+  });
 });

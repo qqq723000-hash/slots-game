@@ -1,0 +1,64 @@
+output "delivery" {
+  description = "发布、Helm values 和后续平台集成需要的非秘密输出"
+  value = {
+    alb_security_group_id                    = module.platform.alb_security_group_id
+    alert_topic_arn                          = module.platform.alert_topic_arn
+    amp_remote_write_endpoint                = module.platform.amp_remote_write_endpoint
+    amp_writer_role_arn                      = module.platform.amp_writer_role_arn
+    amp_workspace_id                         = module.platform.amp_workspace_id
+    application_secret_arns                  = module.platform.application_secret_arns
+    application_secret_names                 = module.platform.application_secret_names
+    application_handoff                      = module.platform.application_handoff
+    application_namespace                    = module.platform.application_handoff.application_namespace
+    application_release_allowed              = module.platform.application_handoff.application_release_allowed
+    maintenance_in_progress                  = module.platform.application_handoff.maintenance_in_progress
+    aws_account_id                           = module.platform.aws_account_id
+    aws_region                               = module.platform.aws_region
+    archive_bucket_name                      = module.platform.archive_bucket_name
+    archive_kms_key_arn                      = module.platform.archive_kms_key_arn
+    archive_rds_export_role_arn              = module.platform.archive_rds_export_role_arn
+    backup_vault_arn                         = module.platform.backup_vault_arn
+    cloudfront_distribution_domain_name      = module.platform.cloudfront_distribution_domain_name
+    cloudfront_distribution_id               = module.platform.cloudfront_distribution_id
+    cloudfront_response_headers_policy_id    = module.platform.cloudfront_response_headers_policy_id
+    cloudfront_release_key_value_store_arn   = module.platform.cloudfront_release_key_value_store_arn
+    cloudfront_release_request_function_arn  = module.platform.cloudfront_release_request_function_arn
+    cloudfront_release_request_function_name = module.platform.cloudfront_release_request_function_name
+    cluster_arn                              = module.platform.cluster_arn
+    cluster_autoscaler_inline_policy_name    = module.platform.cluster_autoscaler_inline_policy_name
+    cluster_autoscaler_role_arn              = module.platform.cluster_autoscaler_role_arn
+    cluster_endpoint                         = module.platform.cluster_endpoint
+    cluster_name                             = module.platform.cluster_name
+    data_subnet_ids                          = module.platform.data_subnet_ids
+    ecr_repository_urls                      = module.platform.ecr_repository_urls
+    environment                              = module.platform.environment
+    helm_release_name                        = module.platform.application_handoff.helm_release_name
+    private_subnet_ids                       = module.platform.private_subnet_ids
+    public_subnet_ids                        = module.platform.public_subnet_ids
+    rds_endpoint                             = module.platform.rds_endpoint
+    rds_port                                 = module.platform.rds_port
+    rds_security_group_id                    = module.platform.rds_security_group_id
+    secret_sync_role_arn                     = module.platform.secret_sync_role_arn
+    valkey_secret_arn                        = module.platform.valkey_secret_arn
+    valkey_secret_name                       = module.platform.valkey_secret_name
+    valkey_active_slot                       = module.platform.valkey_active_slot
+    valkey_rotation_mode                     = module.platform.valkey_rotation_mode
+    valkey_password_versions                 = module.platform.valkey_password_versions
+    valkey_rotation_contract                 = module.platform.valkey_rotation_contract
+    valkey_user_name                         = module.platform.valkey_user_name
+    valkey_user_names                        = module.platform.valkey_user_names
+    valkey_endpoint_url                      = module.platform.valkey_endpoint_url
+    valkey_port                              = module.platform.valkey_port
+    valkey_primary_endpoint                  = module.platform.valkey_primary_endpoint
+    vpc_id                                   = module.platform.vpc_id
+    web_bucket_name                          = module.platform.web_bucket_name
+    web_kms_key_arn                          = module.platform.web_kms_key_arn
+    workload_client_security_group_id        = module.platform.workload_client_security_group_id
+  }
+}
+
+output "rds_master_user_secret_arn" {
+  description = "只供受控 DBA 初始化流程使用的 RDS 管理员 Secret ARN"
+  value       = module.platform.rds_master_user_secret_arn
+  sensitive   = true
+}

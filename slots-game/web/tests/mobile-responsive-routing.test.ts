@@ -1,17 +1,52 @@
+// @ts-nocheck -- 读取官方 JSON 资源并校验运行时投影，Node 内置类型不进入生产 tsconfig。
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   mobileReelProjection,
   reelLayoutGeometry,
 } from "../src/reels/ReelSetView";
 import {
+  JACKPOT_COMPACT_LANDSCAPE_SCALE_X,
   jackpotTierMobileLayout,
+  jackpotTierMobileDisplayLayout,
   type JackpotTier,
 } from "../src/renderer/JackpotTowerView";
 import { logoGameMobileLayout } from "../src/renderer/LogoGameView";
 import {
   computeResponsiveLayoutSnapshot,
+  resolveResponsiveMinBound,
   responsiveChannelFromEnvironment,
+  responsiveLayoutChannel,
 } from "../src/renderer/ResponsiveLayout";
+
+interface OfficialMobileNode {
+  readonly minBound: string;
+  readonly halign: string;
+  readonly valign: string;
+}
+
+const officialMobileConfig = JSON.parse(readFileSync(
+  new URL("../public/assets/primal-runtime/mobile/config/config_mobile.json", import.meta.url),
+  "utf8",
+)) as {
+  bundle: Array<{
+    name: string;
+    data?: { layouts?: Record<string, { content: Record<string, OfficialMobileNode> }> };
+  }>;
+};
+const officialHandLayouts = officialMobileConfig.bundle.find(({ name }) => (
+  name === "layout_handmode"
+))?.data?.layouts;
+
+function officialJackpotNode(
+  profile: "pt" | "iPad_pt" | "ls",
+  handMode: "left" | "right",
+  tier: JackpotTier,
+): OfficialMobileNode {
+  const node = officialHandLayouts?.[`${profile}_${handMode}`]?.content[`${tier}Panel0`];
+  if (!node) throw new Error(`Missing official ${profile}_${handMode}/${tier} layout`);
+  return node;
+}
 
 describe("mobile channel routing", () => {
   it("lets an explicit launcher query override pointer capability", () => {
@@ -32,6 +67,28 @@ describe("mobile channel routing", () => {
       coarsePointer: false,
     })).toBe("desktop");
     expect(responsiveChannelFromEnvironment()).toBe("desktop");
+  });
+
+  it("keeps asset channel routing separate from the live viewport layout channel", () => {
+    expect(responsiveLayoutChannel(1_024, 768, {
+      search: "?channel=mobile",
+      coarsePointer: false,
+    })).toBe("desktop");
+    expect(responsiveLayoutChannel(1_024, 768, { coarsePointer: true })).toBe("mobile");
+    expect(responsiveLayoutChannel(1_024, 768, { touchPoints: 5 })).toBe("mobile");
+    expect(responsiveLayoutChannel(1_920, 1_080, {
+      finePointer: true,
+      touchPoints: 10,
+    })).toBe("desktop");
+    expect(responsiveLayoutChannel(1_366, 768, {
+      finePointer: true,
+      touchPoints: 10,
+    })).toBe("desktop");
+    expect(responsiveLayoutChannel(390, 844)).toBe("mobile");
+    expect(responsiveLayoutChannel(844, 390)).toBe("mobile");
+    expect(responsiveLayoutChannel(1_024, 768)).toBe("desktop");
+    expect(responsiveLayoutChannel(1_024, 768, { search: "?layout=mobile" })).toBe("mobile");
+    expect(responsiveLayoutChannel(390, 844, { search: "?layout=desktop" })).toBe("desktop");
   });
 });
 
@@ -64,11 +121,6 @@ describe("mobile renderer projection contracts", () => {
       viewport: [844, 390] as const,
       expected: { x: 285.4390625, y: 117.12065625, scale: 0.641447368421 },
     },
-    {
-      name: "1024x768 landscape tablet",
-      viewport: [1_024, 768] as const,
-      expected: { x: 288, y: 288.326425702811, scale: 1.05216186383 },
-    },
   ])("projects the cabinet at $name", ({ viewport: [width, height], expected }) => {
     const snapshot = computeResponsiveLayoutSnapshot(width, height, { channel: "mobile" });
     const profile = snapshot.mobileProfile;
@@ -80,6 +132,19 @@ describe("mobile renderer projection contracts", () => {
     expect(projection.y).toBeCloseTo(expected.y, 10);
     expect(projection.scale).toBeCloseTo(expected.scale, 10);
     expect(geometry.areaWidth * projection.scale).toBeGreaterThan(0);
+  });
+
+  it("continuously reflows an arbitrary tablet viewport instead of freezing 844x633", () => {
+    const resized = computeResponsiveLayoutSnapshot(1_180, 820, { channel: "mobile" });
+    const canonical = computeResponsiveLayoutSnapshot(844, 633, { channel: "mobile" });
+    expect(resized.surfaceProfile).toBe("tablet-ls");
+    expect(resized.viewportRegion).not.toEqual(canonical.viewportRegion);
+    expect(resized.viewportRegion.width).toBe(844);
+    expect(resized.viewportRegion.height).toBeCloseTo(844 * 820 / 1_180, 12);
+    expect(resized.viewportRegion.width / resized.viewportRegion.height).toBeCloseTo(1_180 / 820, 12);
+    expect(mobileReelProjection(resized.viewportRegion, resized.mobileProfile!)).not.toEqual(
+      mobileReelProjection(canonical.viewportRegion, canonical.mobileProfile!),
+    );
   });
 
   it("applies the captured portrait logo correction and tablet landscape shift", () => {
@@ -104,56 +169,64 @@ describe("mobile renderer projection contracts", () => {
       tablet.mobileTransforms!.logo,
       tablet.mobileProfile!,
     );
-    expect(tabletLogo.x).toBeCloseTo(-238.628571428571, 10);
-    expect(tabletLogo.y).toBeCloseTo(103.057142857143, 10);
-    expect(tabletLogo.scale).toBeCloseTo(0.731428571429, 10);
+    const canonicalTablet = computeResponsiveLayoutSnapshot(844, 633, { channel: "mobile" });
+    expect(tabletLogo).toEqual(logoGameMobileLayout(
+      canonicalTablet.mobileTransforms!.logo,
+      canonicalTablet.mobileProfile!,
+    ));
   });
 
-  it("keeps the five portrait jackpot tiers in their captured two-row arrangement", () => {
-    const snapshot = computeResponsiveLayoutSnapshot(390, 844, { channel: "mobile" });
-    const expected: Readonly<Record<JackpotTier, readonly [number, number, number]>> = {
-      grand: [195, 39, 0.557142857143],
-      mega: [56.0625, 39, 0.4875],
-      major: [331.5, 39, 0.4875],
-      minor: [49.4, 95.333333333333, 0.433333333333],
-      mini: [337.566666666667, 95.333333333333, 0.433333333333],
-    };
+  it.each([
+    { name: "phone", viewport: [390, 844] as const, profile: "pt" as const, stretchX: false },
+    { name: "tablet", viewport: [633, 844] as const, profile: "iPad_pt" as const, stretchX: false },
+    { name: "rotated phone", viewport: [844, 390] as const, profile: "ls" as const, stretchX: true },
+    { name: "rotated tablet", viewport: [844, 633] as const, profile: "ls" as const, stretchX: false },
+  ])("derives every $name jackpot transform from config_mobile.json", ({
+    viewport,
+    profile,
+    stretchX,
+  }) => {
+    const [width, height] = viewport;
+    const snapshot = computeResponsiveLayoutSnapshot(width, height, { channel: "mobile" });
+    expect(snapshot.mobileProfile).toBe(profile);
 
-    for (const tier of Object.keys(expected) as JackpotTier[]) {
-      const right = jackpotTierMobileLayout(tier, "pt", "right", snapshot.gameplayRegion);
-      const left = jackpotTierMobileLayout(tier, "pt", "left", snapshot.gameplayRegion);
-      const [x, y, scale] = expected[tier];
-      expect(right.x).toBeCloseTo(x, 10);
-      expect(right.y).toBeCloseTo(y, 10);
-      expect(right.scale).toBeCloseTo(scale, 10);
-      expect(left).toEqual(right);
-    }
-  });
+    for (const handMode of ["left", "right"] as const) {
+      for (const tier of ["grand", "mega", "major", "minor", "mini"] as const) {
+        const official = officialJackpotNode(profile, handMode, tier);
+        const [left, top, boundWidth, boundHeight] = official.minBound
+          .split(",")
+          .map(Number) as [number, number, number, number];
+        const expected = resolveResponsiveMinBound(
+          snapshot.gameplayRegion,
+          { left, top, width: boundWidth, height: boundHeight },
+          Number(official.halign),
+          Number(official.valign),
+        );
+        const actual = jackpotTierMobileLayout(
+          tier,
+          profile,
+          handMode,
+          snapshot.gameplayRegion,
+        );
 
-  it("routes the landscape jackpot stack to the side selected by hand mode", () => {
-    const snapshot = computeResponsiveLayoutSnapshot(844, 390, { channel: "mobile" });
-    const expected = {
-      grand: { rightX: 97.133333333333, leftX: 745.626666666667, y: 132.28, scale: 0.462933333333 },
-      mega: { rightX: 96.72, leftX: 745.792, y: 178.56, scale: 0.41664 },
-      major: { rightX: 96.381818181818, leftX: 745.250909090909, y: 219.818181818182, scale: 0.378763636364 },
-      minor: { rightX: 96.1, leftX: 746.35, y: 257.3, scale: 0.3472 },
-      mini: { rightX: 95.861538461538, leftX: 746.707692307692, y: 291.876923076923, scale: 0.320492307692 },
-    } satisfies Readonly<Record<JackpotTier, {
-      readonly rightX: number;
-      readonly leftX: number;
-      readonly y: number;
-      readonly scale: number;
-    }>>;
+        expect(actual.x).toBeCloseTo(expected.x, 10);
+        expect(actual.y).toBeCloseTo(expected.y, 10);
+        expect(actual.scale).toBeCloseTo(expected.scale, 10);
 
-    for (const tier of Object.keys(expected) as JackpotTier[]) {
-      const right = jackpotTierMobileLayout(tier, "ls", "right", snapshot.gameplayRegion);
-      const left = jackpotTierMobileLayout(tier, "ls", "left", snapshot.gameplayRegion);
-      expect(right.x).toBeCloseTo(expected[tier].rightX, 10);
-      expect(left.x).toBeCloseTo(expected[tier].leftX, 10);
-      expect(right.y).toBeCloseTo(expected[tier].y, 10);
-      expect(left.y).toBeCloseTo(expected[tier].y, 10);
-      expect(right.scale).toBeCloseTo(expected[tier].scale, 10);
-      expect(left.scale).toBeCloseTo(expected[tier].scale, 10);
+        const display = jackpotTierMobileDisplayLayout(
+          tier,
+          profile,
+          handMode,
+          snapshot.gameplayRegion,
+        );
+        expect(display.x).toBeCloseTo(expected.x, 10);
+        expect(display.y).toBeCloseTo(expected.y, 10);
+        expect(display.scaleY).toBeCloseTo(expected.scale, 10);
+        expect(display.scaleX).toBeCloseTo(
+          expected.scale * (stretchX ? JACKPOT_COMPACT_LANDSCAPE_SCALE_X : 1),
+          10,
+        );
+      }
     }
   });
 });

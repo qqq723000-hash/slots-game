@@ -204,6 +204,43 @@ func TestLoadOperatorDocumentBuildsTenantBoundRuntimeMaterial(t *testing.T) {
 	}
 }
 
+func TestLoadOperatorDocumentWorkerProfileDoesNotReadAPIKeyMaterial(t *testing.T) {
+	fixture := newOperatorFixture(t)
+	configured := fixture.config.Operators[0]
+	for _, relative := range []string{
+		configured.AccessTokenSigningKey.PrivateKeyFile,
+		configured.AccessTokenSigningKey.PublicKeyFile,
+		configured.OperatorRequestVerificationKeys[0].PublicKeyFile,
+		configured.OperatorResponseSigningKey.PrivateKeyFile,
+		configured.OperatorResponseSigningKey.PublicKeyFile,
+	} {
+		if err := os.Remove(filepath.Join(fixture.directory, relative)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	loaded, err := LoadOperatorDocument(
+		fixture.document,
+		"",
+		"",
+		RequirePerOperatorAccessTokenKeys(),
+		LoadWalletMaterialOnlyForWorker(),
+	)
+	if err != nil {
+		t.Fatalf("load worker wallet material: %v", err)
+	}
+	operatorConfig := loaded.Operators["operator-a"]
+	if operatorConfig.AccessTokenSigningKey.PrivateKey != nil ||
+		operatorConfig.OperatorResponseSigningKey.PrivateKey != nil {
+		t.Fatal("worker profile retained API signing material")
+	}
+	if operatorConfig.Wallet.RequestSigningKey.PrivateKey == nil ||
+		len(operatorConfig.Wallet.ResponseVerificationKeys) != 1 ||
+		len(loaded.VerificationKeys) != 1 {
+		t.Fatal("worker profile did not retain the exact wallet material")
+	}
+}
+
 func TestLoadOperatorDocumentV2IsolatesAccessTokenKeysAcrossOperators(t *testing.T) {
 	fixture := newOperatorFixture(t)
 	secondPrivate, secondPublic := writeEd25519KeyPair(t, fixture.directory, "access-b")

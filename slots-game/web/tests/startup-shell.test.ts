@@ -25,6 +25,22 @@ describe("startup shell contract", () => {
       .toBeLessThan(mainSource.indexOf("await ApplicationController.create"));
   });
 
+  it("不会把渲染装配故障误报为运营方会话失效", () => {
+    expect(mainSource).toContain(
+      "presentStartupFailure(\n      error,\n      false,\n      launchGateway.operatorHostOrigin,",
+    );
+    expect(mainSource).not.toContain(
+      'launchGateway.initialSessionRecoveryMode === "operator-session"',
+    );
+  });
+
+  it("在创建渲染器前启用严格 CSP 兼容的 Pixi 同步器", () => {
+    const configure = mainSource.indexOf("configurePixiContentSecurityPolicy()");
+    const create = mainSource.indexOf("await ApplicationController.create");
+    expect(configure).toBeGreaterThanOrEqual(0);
+    expect(configure).toBeLessThan(create);
+  });
+
   it("mounts shell and overlay before constructing final renderer owners across frames", () => {
     const shell = controllerSource.indexOf('"shell-mounted",\n        () => mountApplicationShell');
     const overlay = controllerSource.indexOf('"overlay-mounted",\n        () =>');
@@ -48,6 +64,24 @@ describe("startup shell contract", () => {
     expect(controllerSource).toContain("shell.launchHost.appendChild(serverLoader)");
     expect(controllerSource).toContain("overlay.mountLaunchLoading(shell.launchHost)");
     expect(controllerSource).not.toContain("shell.overlayHost.appendChild(serverLoader)");
+  });
+
+  it("measures a safe-area outer shell and keeps the authored frame as its only scaled child", () => {
+    expect(controllerSource).toContain('class="game-safe-area" data-role="safe-area"');
+    expect(controllerSource).toContain('safeArea: requireRole("safe-area")');
+    expect(controllerSource).toContain("new ResponsiveLayout(shell.safeArea ?? shell.viewport");
+    expect(controllerSource).not.toContain("|| window.innerWidth");
+    expect(controllerSource).not.toContain("|| window.innerHeight");
+  });
+
+  it("freezes asset selection without freezing the live responsive layout channel", () => {
+    expect(controllerSource).toContain("setPrimalRuntimeAssetChannel(assetChannel)");
+    expect(controllerSource).toContain("channel: responsiveLayoutChannel(viewportWidth, viewportHeight");
+    expect(controllerSource).toContain(
+      "this.layout = new ResponsiveLayout(shell.safeArea ?? shell.viewport, frame",
+    );
+    expect(controllerSource).toContain("this.ui.setResponsiveLayout(snapshot)");
+    expect(controllerSource).not.toContain("}, { channel: assetChannel });");
   });
 
   it("keeps true 100% visible through a painted frame before launch", () => {

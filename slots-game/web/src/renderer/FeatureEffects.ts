@@ -17,6 +17,10 @@ import type {
   WheelAwardedEvent,
 } from "../app/state/types";
 import {
+  DEFAULT_MINOR_UNIT_FORMATTER,
+  type MinorUnitFormatter,
+} from "../protocol/moneyFormatter";
+import {
   PRIMAL_CHARACTER_ANIMATION_MS,
   PRIMAL_EXPANSION_TIMING_MS,
   PRIMAL_FEATURE_ANIMATION_MS,
@@ -385,11 +389,12 @@ export function shouldPresentFreeSpinSummary(
 /** 将文本注入到预设的 fs_summary 插槽中，无需重新计算资金。 */
 export function freeSpinSummaryTextBindings(
   event: FreeSpinsCompletedEvent,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): readonly PrimalPanelTextField[] {
   if (!CANONICAL_MONEY_MINOR.test(event.cumulativeWinMinor)) {
     throw new Error("Authoritative Free Spins summary must use canonical minor units");
   }
-  const fields = freeSpinSummaryTextFields(event);
+  const fields = freeSpinSummaryTextFields(event, formatter);
   if (event.cumulativeWinMinor !== "0") return fields;
   return Object.freeze(fields.map((field) => Object.freeze({
     ...field,
@@ -727,6 +732,8 @@ export function wheelResponsiveLayoutTrack(
   return viewportWidth > viewportHeight ? "layout/horizontal" : "layout/vertical";
 }
 
+export type ResponsiveSpineLayoutTrack = ReturnType<typeof wheelResponsiveLayoutTrack>;
+
 /** 物理视口内 1280x720 Wheel 场景的根投影。 */
 export function wheelStageOverlayTransform(region: ResponsiveRendererRegion) {
   // 预设的场景是720px高。在纵向中，仅宽度就足够了，但会在较短的手机横向区域中裁剪滚轮和超旋转控件（例如 844x372）。
@@ -742,13 +749,10 @@ export function wheelStageOverlayTransform(region: ResponsiveRendererRegion) {
   });
 }
 
-function currentWheelResponsiveLayoutTrack(): "layout/horizontal" | "layout/vertical" {
-  if (typeof window === "undefined") return "layout/horizontal";
-  return wheelResponsiveLayoutTrack(window.innerWidth, window.innerHeight);
-}
-
-function responsiveSpineLayoutAnimation(spine: Spine): string | null {
-  const desired = currentWheelResponsiveLayoutTrack();
+function responsiveSpineLayoutAnimation(
+  spine: Spine,
+  desired: ResponsiveSpineLayoutTrack,
+): string | null {
   const short = desired.endsWith("horizontal") ? "horizontal" : "vertical";
   for (const candidate of [desired, short]) {
     if (spine.state.hasAnimation(candidate)) return candidate;
@@ -848,7 +852,10 @@ export function createFeaturePresentationPlan(
   };
 }
 
-export function featureEffectLabel(event: FeatureEvent): string {
+export function featureEffectLabel(
+  event: FeatureEvent,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
+): string {
   switch (event.type) {
     case "grid.expanded":
       return `${event.rows} ROWS // ${event.ways} WAYS`;
@@ -886,7 +893,7 @@ export function featureEffectLabel(event: FeatureEvent): string {
     case "free_spin.cap_reached":
       return "FREE SPIN LIMIT REACHED";
     case "free_spins.completed":
-      return `FREE SPINS COMPLETE // ${event.cumulativeWinMinor}`;
+      return `FREE SPINS COMPLETE // ${formatter.format(event.cumulativeWinMinor, false)}`;
   }
 }
 
@@ -956,8 +963,10 @@ interface AuthoredWheelPlayback {
   layoutTrack: "layout/horizontal" | "layout/vertical";
 }
 
-function syncAuthoredWheelLayout(playback: AuthoredWheelPlayback): void {
-  const next = currentWheelResponsiveLayoutTrack();
+function syncAuthoredWheelLayout(
+  playback: AuthoredWheelPlayback,
+  next: ResponsiveSpineLayoutTrack,
+): void {
   if (next === playback.layoutTrack) return;
   if (!playback.view.state.hasAnimation(next)) {
     throw new Error(`Authored Primal Wheel is missing ${next}`);
@@ -972,6 +981,7 @@ function createAuthoredWheelPlayback(
   data: SpineData,
   plan: WheelSpineAnimationPlan,
   reducedMotion: boolean,
+  layoutTrack: ResponsiveSpineLayoutTrack,
 ): AuthoredWheelPlayback | null {
   let view: Spine | null = null;
   try {
@@ -1010,7 +1020,6 @@ function createAuthoredWheelPlayback(
     view.state.clearTrack(0);
     // `hidden` 钥匙槽颜色/附件 `show` 不完全拥有。在开始演出之前恢复设置，以便物理轮子在 PRIMAL WHEEL 标题后面展开，而不是仅在“就绪”重置时才弹出。
     view.skeleton.setToSetupPose();
-    const layoutTrack = currentWheelResponsiveLayoutTrack();
     view.state.setAnimation(2, layoutTrack, true);
     const show = view.state.setAnimation(0, plan.show, false);
     show.timeScale = reducedMotion ? 100 : 1;
@@ -1039,9 +1048,10 @@ function advanceAuthoredWheel(
   frame: PrimalWheelSpinFrame,
   spinElapsedMs: number,
   timeline: PrimalWheelRuntimeTimeline,
+  layoutTrack: ResponsiveSpineLayoutTrack,
 ): void {
   const { view, plan, reducedMotion } = playback;
-  syncAuthoredWheelLayout(playback);
+  syncAuthoredWheelLayout(playback, layoutTrack);
   if (!playback.spinStarted) {
     view.state.clearTrack(0);
     view.state.clearTrack(1);
@@ -1095,9 +1105,10 @@ function advanceAuthoredWheel(
 function applyAuthoredWheelIdleFrame(
   playback: AuthoredWheelPlayback | null,
   idleState: PrimalWheelIdleState,
+  layoutTrack: ResponsiveSpineLayoutTrack,
 ): void {
   if (!playback) return;
-  syncAuthoredWheelLayout(playback);
+  syncAuthoredWheelLayout(playback, layoutTrack);
   playback.rotationBone.rotation = idleState.rotationDegrees;
   playback.view.skeleton.updateWorldTransform();
 }
@@ -1133,6 +1144,7 @@ class AuthoredPanel extends Container {
     readonly spine: Spine,
     layout: Pick<AuthoredPanelLayout, "x" | "y" | "scale">,
     textFields: readonly PrimalPanelTextField[],
+    private readonly layoutTrackSource: () => ResponsiveSpineLayoutTrack,
   ) {
     super();
     this.position.set(layout.x, layout.y);
@@ -1151,7 +1163,7 @@ class AuthoredPanel extends Container {
   }
 
   private syncResponsiveLayout(): void {
-    const next = responsiveSpineLayoutAnimation(this.spine);
+    const next = responsiveSpineLayoutAnimation(this.spine, this.layoutTrackSource());
     if (!next || next === this.layoutTrack) return;
     this.spine.state.clearTrack(2);
     this.spine.state.setAnimation(2, next, true);
@@ -1164,6 +1176,7 @@ function createAuthoredPanel(
   data: SpineData | undefined,
   layout: Pick<AuthoredPanelLayout, "x" | "y" | "scale">,
   textFields: readonly PrimalPanelTextField[] = [],
+  layoutTrackSource: () => ResponsiveSpineLayoutTrack = () => "layout/horizontal",
 ): AuthoredPanel | null {
   if (!data) return null;
   let spine: Spine | null = null;
@@ -1174,7 +1187,7 @@ function createAuthoredPanel(
       spine.destroy({ children: true });
       return null;
     }
-    panel = new AuthoredPanel(spine, layout, textFields);
+    panel = new AuthoredPanel(spine, layout, textFields, layoutTrackSource);
     panel.alpha = 0;
     spine.skeleton.setToSetupPose();
     if (spine.state.hasAnimation("hidden")) {
@@ -1687,6 +1700,10 @@ export class FeatureEffects {
   private activeVaultTease: ActiveVaultTease | null = null;
   private pendingVaultUpgradeMembers = 0;
   private wheelSpeed: PrimalWheelSpeed = "normal";
+  private responsiveLayoutTrack: ResponsiveSpineLayoutTrack = "layout/horizontal";
+  private readonly responsiveLayoutTrackSource = (): ResponsiveSpineLayoutTrack => (
+    this.responsiveLayoutTrack
+  );
   private wheelOverlayRegion: ResponsiveRendererRegion = Object.freeze({
     left: 0,
     top: 0,
@@ -1706,6 +1723,7 @@ export class FeatureEffects {
   private presentationGeneration = 0;
   private presentationAbortController = new AbortController();
   private destroyed = false;
+  private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
 
   constructor(
     private readonly hostLayer: Container,
@@ -1719,6 +1737,16 @@ export class FeatureEffects {
   ) {
     this.reelAlphaLayers = new ReelAlphaLayers(this.reels);
     this.hostLayer.addChild(this.view);
+  }
+
+  /** 会话金额格式器只改变文字投影，不参与任何奖励或余额计算。 */
+  setMoneyFormatter(formatter: MinorUnitFormatter): void {
+    this.moneyFormatter = formatter;
+  }
+
+  /** 只消费 ResponsiveLayout 已提交的设计方向，禁止在表现帧中直接采样物理 window。 */
+  setResponsiveLayoutTrack(track: ResponsiveSpineLayoutTrack): void {
+    this.responsiveLayoutTrack = track;
   }
 
   /** 可选捕捉观察者；在正常的制作播放中不存在。 */
@@ -2729,7 +2757,11 @@ export class FeatureEffects {
     shockwave.position.copyFrom(source);
     shockwave.alpha = 0;
 
-    const banner = createBanner(featureEffectLabel(event), event.triggered ? 0xff6230 : 0xb66c38, 610);
+    const banner = createBanner(
+      featureEffectLabel(event, this.moneyFormatter),
+      event.triggered ? 0xff6230 : 0xb66c38,
+      610,
+    );
     banner.position.set(LOGICAL_WIDTH / 2, 178);
     banner.alpha = 0;
     scene.addChild(dim, beams, energy, core, count, shockwave, banner);
@@ -3246,6 +3278,7 @@ export class FeatureEffects {
       introData,
       PRIMAL_PANEL_LAYOUT.freeSpinIntro,
       freeSpinIntroTextFields(event),
+      this.responsiveLayoutTrackSource,
     );
     if (authoredIntro) {
       const scene = new Container();
@@ -3445,11 +3478,12 @@ export class FeatureEffects {
     const dim = new Graphics();
     dim.beginFill(0x020303, 1).drawRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT).endFill();
     dim.alpha = 0;
-    const summaryTextFields = freeSpinSummaryTextBindings(event);
+    const summaryTextFields = freeSpinSummaryTextBindings(event, this.moneyFormatter);
     const authoredSummary = createAuthoredPanel(
       authoredFeatureData.freeSpinSummary,
       PRIMAL_PANEL_LAYOUT.freeSpinSummary,
       summaryTextFields,
+      this.responsiveLayoutTrackSource,
     );
     if (!authoredSummary) {
       this.visualTelemetry?.failedToStart(descriptor, {
@@ -3632,11 +3666,14 @@ export class FeatureEffects {
         authoredWheelData,
         wheelPlan,
         reducedMotion,
+        this.responsiveLayoutTrack,
       )
       : null;
     const popup = createAuthoredPanel(
       authoredFeatureData.wheelPopupStart,
       PRIMAL_WHEEL_POPUP_LAYOUT,
+      [],
+      this.responsiveLayoutTrackSource,
     );
     if (popup) {
       popup.alpha = 1;
@@ -3656,7 +3693,8 @@ export class FeatureEffects {
     const summary = createAuthoredPanel(
       summaryData,
       PRIMAL_PANEL_LAYOUT.wheelSummary,
-      wheelSummaryTextFields(event, freeSpinSummary),
+      wheelSummaryTextFields(event, freeSpinSummary, this.moneyFormatter),
+      this.responsiveLayoutTrackSource,
     );
     if (!authoredPlayback || !popup || !summary) {
       authoredPlayback?.view.destroy({ children: true });
@@ -3719,7 +3757,7 @@ export class FeatureEffects {
     resultReadout.addChild(resultPlate, resultText);
     resultReadout.alpha = 0;
 
-    const banner = createBanner(featureEffectLabel(event), 0xff8b34, 600);
+    const banner = createBanner(featureEffectLabel(event, this.moneyFormatter), 0xff8b34, 600);
     banner.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 + 220);
 
     // 源按钮是制作成近似正圆的 600x600 多边形。视觉按钮继续与普通 Spin 控件共用，
@@ -3886,6 +3924,7 @@ export class FeatureEffects {
             spinFrame,
             spinElapsedMs,
             spinTimeline,
+            this.responsiveLayoutTrack,
           );
         } catch {
           const failedPlayback = authoredPlayback;
@@ -3897,7 +3936,11 @@ export class FeatureEffects {
           throw new Error("Authored Primal Wheel playback failed");
         }
       } else if (channels.wheel && idleFrame) {
-        applyAuthoredWheelIdleFrame(authoredPlayback, idleFrame);
+        applyAuthoredWheelIdleFrame(
+          authoredPlayback,
+          idleFrame,
+          this.responsiveLayoutTrack,
+        );
       }
       if (channels.wheel) {
         wheel.rotation = rotationDegrees * Math.PI / 180;
@@ -4406,7 +4449,7 @@ export class FeatureEffects {
     pulse.lineStyle(7, color, 0.86).drawCircle(0, 0, 86);
     pulse.lineStyle(2, 0xffe6ad, 0.62).drawCircle(0, 0, 121);
     pulse.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 - 8);
-    const banner = createBanner(featureEffectLabel(event), color);
+    const banner = createBanner(featureEffectLabel(event, this.moneyFormatter), color);
     banner.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 - 8);
     const extraSpin = event.type === "free_spin.awarded"
       ? new Sprite(authoredTexture(PRIMAL_ASSETS.features.vaultExtraSpin))

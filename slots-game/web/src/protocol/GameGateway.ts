@@ -5,8 +5,21 @@ import type {
   SessionOpened,
   SpinResult,
 } from "../app/state/types";
+import type { RgsSpinDecodeStage } from "./rgsDecoder";
 
 export type GatewayStatus = "idle" | "connecting" | "online" | "recovering" | "offline";
+
+/** 只描述结果交付经过的固定边界，绝不携带响应、标识或异常内容。 */
+export type ResultDeliveryStage =
+  | RgsSpinDecodeStage
+  | "post-response-before-decode"
+  | "decoded"
+  | "economic-identity"
+  | "sequence-guard"
+  | "origin-reconstructed"
+  | "origin-validated"
+  | "controller-dispatch"
+  | "delivered";
 
 /**
  * 首次会话只能由运营商重新签发；浏览器不得重放已经消费的一次性启动凭据。
@@ -18,6 +31,8 @@ export interface GatewayCallbacks {
   onSession(message: SessionOpened): void;
   /** 持久恢复返回结果时携带原始特性状态，继续由控制器完成语义校验。 */
   onSpinResult(message: SpinResult, originFeatureState?: Readonly<FeatureState>): void;
+  /** 固定阶段码仅供本地生产诊断；观察者异常不得影响权威轮次。 */
+  onResultDeliveryStage?(stage: ResultDeliveryStage): void;
   /** 服务端已经持久接受展示消费回执。 */
   onSpinResultAcknowledged?(roundId: string, sequence: number): void;
   /** 当前页无法安全恢复时，只请求运营商签发新会话，不暴露底层异常内容。 */

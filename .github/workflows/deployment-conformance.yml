@@ -2,6 +2,8 @@ name: Deployment conformance
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -24,6 +26,7 @@ jobs:
       HELM_ARCHIVE_SHA256: 3f43c0aa57243852dd542493a0f54f1396c0bc8ec7296bbb2c01e802010819ce
       KUBECONFORM_VERSION: 0.7.0
       KUBECONFORM_ARCHIVE_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3
+      TERRAFORM_VERSION: 1.15.9
 
     steps:
       - name: Check out repository
@@ -36,6 +39,12 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.22.0
+
+      - name: Set up fixed Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
 
       - name: Install checksum-pinned Helm and kubeconform
         shell: bash
@@ -71,7 +80,7 @@ jobs:
             printf 'TMPDIR=%s\n' "$RUNNER_TEMP"
           } >> "$GITHUB_ENV"
 
-      - name: Verify local and cluster production deployment contracts
+      - name: Verify local, cluster and AWS production deployment contracts
         run: make verify-deployment-contracts
 
       - name: Parse rendered cluster alert rules with fixed promtool

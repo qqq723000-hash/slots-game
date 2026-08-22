@@ -2,6 +2,7 @@ import type { SymbolId } from "../app/state/types";
 import { publicAssetUrl } from "./publicAssetUrl";
 
 const ROOT = publicAssetUrl("assets/primal-reference");
+const RUNTIME_ROOT = publicAssetUrl("assets/primal-runtime");
 
 export const PRIMAL_ASSETS = Object.freeze({
   controls: {
@@ -48,13 +49,10 @@ export const PRIMAL_ASSETS = Object.freeze({
     smokeBurst: `${ROOT}/10018.png`,
   },
   atlases: {
-    promotional: `${ROOT}/10044.avif`,
-    environment: `${ROOT}/10055.avif`,
-    environmentPieces: `${ROOT}/10049.avif`,
-    characterAndSymbols: `${ROOT}/10052.avif`,
-    interface: `${ROOT}/10057.avif`,
-    electric: `${ROOT}/10051.avif`,
-    motion: `${ROOT}/10058.avif`,
+    promotional: `${RUNTIME_ROOT}/interface/feature_preview_texture0_level1.avif`,
+    environment: `${RUNTIME_ROOT}/spine/spine_background/spine_background_level1.avif`,
+    environmentPieces: `${RUNTIME_ROOT}/spine/spine_background/spine_background_level1_2.avif`,
+    characterAndSymbols: `${RUNTIME_ROOT}/spine/spine_symbols/spine_symbols_level1_3.avif`,
     particles: `${ROOT}/10059.avif`,
   },
 });
@@ -108,14 +106,14 @@ export const CRITICAL_PRIMAL_ASSETS = Object.freeze([
   ...Object.values(SYMBOL_ASSET_BY_ID),
 ]);
 
-/** 10055.avif 的源空间区域；两张背景板共同组成垂直相机轨道。 */
+/** 背景图集的源空间区域；两张背景板共同组成垂直相机轨道。 */
 export const ENVIRONMENT_REGIONS = Object.freeze({
   // 两张相机背景板之间保留了 2 像素的图集隔离带。
   daylight: Object.freeze({ x: 2, y: 0, width: 1_434, height: 2_676 }),
   destroyed: Object.freeze({ x: 1_438, y: 0, width: 1_434, height: 2_676 }),
 });
 
-/** 在 10052.avif 源空间中实测得到的角色裁剪区域。 */
+/** 在角色与符号图集源空间中实测得到的角色裁剪区域。 */
 export const CHARACTER_REGIONS = Object.freeze({
   torso: Object.freeze({ x: 0, y: 2_200, width: 420, height: 490 }),
   head: Object.freeze({ x: 2_525, y: 1_788, width: 180, height: 165 }),

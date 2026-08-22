@@ -1,13 +1,18 @@
+import type {
+  FeatureState,
+  MoneyMinor,
+  SessionOpened,
+  SpinResult,
+} from "../app/state/types";
+import {
+  decodeServerMessage,
+  type SpinResultProjectionDecodeStage,
+} from "./decoder";
+import { ENGINE_RULES_VERSION } from "./messages";
 import {
   LOCKED_VAULT_FACES,
-  type FeatureState,
   type LockedVaultFace,
-  type MoneyMinor,
-  type SessionOpened,
-  type SpinResult,
-} from "../app/state/types";
-import { decodeServerMessage } from "./decoder";
-import { ENGINE_RULES_VERSION } from "./messages";
+} from "./protocolConstants";
 
 export class RgsProtocolError extends Error {
   constructor(message: string) {
@@ -65,6 +70,28 @@ export interface DecodedRgsSpin {
   readonly endRevision: string;
   readonly resultHash: string;
 }
+
+/** 仅用于定位旋转响应解码边界，不得携带响应值、标识或异常内容。 */
+export type RgsSpinDecodeStage =
+  | SpinResultProjectionDecodeStage
+  | "decode-envelope"
+  | "decode-request-id"
+  | "decode-data-shape"
+  | "decode-binding"
+  | "decode-metadata"
+  | "decode-grid"
+  | "decode-wins"
+  | "decode-events"
+  | "decode-feature"
+  | "decode-projection"
+  | "projection-round-id"
+  | "projection-sequence"
+  | "projection-money-fields"
+  | "projection-message-input"
+  | "decode-commit-metadata"
+  | "decode-complete";
+
+type RgsSpinDecodeStageObserver = (stage: RgsSpinDecodeStage) => void;
 
 export interface DecodedRgsRoundStatus {
   readonly requestId: string;
@@ -365,13 +392,23 @@ export function rgsSessionOpened(
     engineRulesVersion: ENGINE_RULES_VERSION,
     requestId: exchange.requestId,
     sessionId: exchange.session.binding.sessionId,
+    currency: exchange.session.binding.currency,
+    currencyExponent: exchange.session.binding.currencyExponent,
     balanceMinor: exchange.session.balanceMinor,
     betOptionsMinor: [...betOptionsMinor],
     defaultBetMinor,
     featureState: exchange.session.featureState,
   });
   if (decoded.type !== "session.opened") throw new RgsProtocolError("invalid session projection");
-  return decoded;
+  // 通用消息解码器只负责共享玩法协议；RGS 在其已验证的完整绑定上追加表现规则身份。
+  return {
+    ...decoded,
+    definitionBinding: Object.freeze({
+      gameId: exchange.session.binding.gameId,
+      definitionVersion: exchange.session.binding.definitionVersion,
+      definitionHash: exchange.session.binding.definitionHash,
+    }),
+  };
 }
 
 function position(value: unknown, path: string): { reel: number; row: number } {
@@ -603,7 +640,12 @@ function translatedEvents(value: unknown): unknown[] {
   });
 }
 
-function decodedSpinData(value: unknown, requestId: string): DecodedRgsSpin {
+function decodedSpinData(
+  value: unknown,
+  requestId: string,
+  onStage?: RgsSpinDecodeStageObserver,
+): DecodedRgsSpin {
+  onStage?.("decode-data-shape");
   const decoded = record(value, "response.data");
   const keys = [
     "operatorId",
@@ -632,9 +674,12 @@ function decodedSpinData(value: unknown, requestId: string): DecodedRgsSpin {
   exactKeys(decoded, keys, keys, "response.data");
   // 旋转响应省略会话交换绑定中保持不可变的 exponent/jurisdiction；这里只解码返回的
   // 经济身份，再由网关与完整会话交换绑定合并并逐项比较。
+  onStage?.("decode-binding");
   const operatorId = identifier(decoded.operatorId, "response.data.operatorId");
   const sessionId = identifier(decoded.sessionId, "response.data.sessionId");
   const gameId = identifier(decoded.gameId, "response.data.gameId");
+
+  onStage?.("decode-metadata");
   const definitionVersion = identifier(decoded.definitionVersion, "response.data.definitionVersion");
   const definitionHash = text(decoded.definitionHash, "response.data.definitionHash", 64, 64);
   if (!DIGEST_PATTERN.test(definitionHash)) throw new RgsProtocolError("response.data.definitionHash is invalid");
@@ -644,24 +689,68 @@ function decodedSpinData(value: unknown, requestId: string): DecodedRgsSpin {
   if (!(["BASE", "FREE_SPIN", "BONUS"] as const).includes(roundKind)) {
     throw new RgsProtocolError("response.data.roundKind is unsupported");
   }
+
+  onStage?.("decode-grid");
+  const grid = translatedGrid(decoded.grid);
+
+  onStage?.("decode-wins");
+  const wins = translatedWins(decoded.wins);
+
+  onStage?.("decode-events");
+  const events = translatedEvents(decoded.events);
+
+  onStage?.("decode-feature");
+  const decodedFeatureState = featureState(decoded.feature, "response.data.feature");
+
+  onStage?.("decode-projection");
+  onStage?.("projection-round-id");
+  const roundId = identifier(decoded.roundId, "response.data.roundId");
+
+  onStage?.("projection-sequence");
+  const decodedSequence = sequence(decoded.sequence, "response.data.sequence");
+
+  onStage?.("projection-money-fields");
+  const betMinor = decimal(decoded.betMinor, "response.data.betMinor", true);
+  const chargedBetMinor = decimal(decoded.chargedBetMinor, "response.data.chargedBetMinor");
+  const balanceMinor = decimal(decoded.balanceMinor, "response.data.balanceMinor");
+  const totalWinMinor = decimal(decoded.totalWinMinor, "response.data.totalWinMinor");
+
+  onStage?.("projection-message-input");
   const translated = decodeServerMessage({
     type: "spin.result",
     protocolVersion: 1,
     requestId,
     sessionId,
-    roundId: identifier(decoded.roundId, "response.data.roundId"),
-    sequence: sequence(decoded.sequence, "response.data.sequence"),
-    betMinor: decimal(decoded.betMinor, "response.data.betMinor", true),
-    chargedBetMinor: decimal(decoded.chargedBetMinor, "response.data.chargedBetMinor"),
-    balanceMinor: decimal(decoded.balanceMinor, "response.data.balanceMinor"),
-    totalWinMinor: decimal(decoded.totalWinMinor, "response.data.totalWinMinor"),
-    grid: translatedGrid(decoded.grid),
-    wins: translatedWins(decoded.wins),
-    events: translatedEvents(decoded.events),
-    featureState: featureState(decoded.feature, "response.data.feature"),
-  });
+    roundId,
+    sequence: decodedSequence,
+    betMinor,
+    chargedBetMinor,
+    balanceMinor,
+    totalWinMinor,
+    grid,
+    wins,
+    events,
+    featureState: decodedFeatureState,
+  }, onStage);
   if (translated.type !== "spin.result") throw new RgsProtocolError("invalid spin projection");
-  return Object.freeze({
+
+  onStage?.("decode-commit-metadata");
+  const serverTransactionId = identifier(
+    decoded.serverTransactionId,
+    "response.data.serverTransactionId",
+  );
+  const walletTransactionId = identifier(
+    decoded.walletTransactionId,
+    "response.data.walletTransactionId",
+  );
+  const startRevision = revision(decoded.startRevision, "response.data.startRevision");
+  const endRevision = revision(decoded.endRevision, "response.data.endRevision");
+  const resultHash = text(decoded.resultHash, "response.data.resultHash", 64, 64);
+  if (!DIGEST_PATTERN.test(resultHash)) {
+    throw new RgsProtocolError("response.data.resultHash is invalid");
+  }
+
+  const result = Object.freeze({
     result: translated,
     binding: Object.freeze({
       operatorId,
@@ -672,24 +761,26 @@ function decodedSpinData(value: unknown, requestId: string): DecodedRgsSpin {
       currency,
     }),
     roundKind,
-    serverTransactionId: identifier(decoded.serverTransactionId, "response.data.serverTransactionId"),
-    walletTransactionId: identifier(decoded.walletTransactionId, "response.data.walletTransactionId"),
-    startRevision: revision(decoded.startRevision, "response.data.startRevision"),
-    endRevision: revision(decoded.endRevision, "response.data.endRevision"),
-    resultHash: (() => {
-      const value = text(decoded.resultHash, "response.data.resultHash", 64, 64);
-      if (!DIGEST_PATTERN.test(value)) {
-        throw new RgsProtocolError("response.data.resultHash is invalid");
-      }
-      return value;
-    })(),
+    serverTransactionId,
+    walletTransactionId,
+    startRevision,
+    endRevision,
+    resultHash,
   });
+  onStage?.("decode-complete");
+  return result;
 }
 
-export function decodeRgsSpin(value: unknown, expectedRequestId: string): DecodedRgsSpin {
+export function decodeRgsSpin(
+  value: unknown,
+  expectedRequestId: string,
+  onStage?: RgsSpinDecodeStageObserver,
+): DecodedRgsSpin {
+  onStage?.("decode-envelope");
   const decodedEnvelope = envelope(value, "response");
+  onStage?.("decode-request-id");
   requireMatchingRequestId(decodedEnvelope.requestId, expectedRequestId);
-  return decodedSpinData(decodedEnvelope.data, decodedEnvelope.requestId);
+  return decodedSpinData(decodedEnvelope.data, decodedEnvelope.requestId, onStage);
 }
 
 export function decodeRgsRoundStatus(

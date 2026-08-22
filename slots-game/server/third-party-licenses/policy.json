@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "modules": [
+    {
+      "path": "github.com/jackc/pgpassfile",
+      "version": "v1.0.0",
+      "moduleSum": "h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=",
+      "licenseExpression": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "adb1663fda031df8f4344aa68f299fd87d80353e31339406742ded21dae65702"
+        }
+      ]
+    },
+    {
+      "path": "github.com/jackc/pgservicefile",
+      "version": "v0.0.0-20240606120523-5a60cdf6a761",
+      "moduleSum": "h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=",
+      "licenseExpression": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "fc505773403fe869ed64cc2235cdd13988a427bb7e3a7e7004a3f4b27420f8fc"
+        }
+      ]
+    },
+    {
+      "path": "github.com/jackc/pgx/v5",
+      "version": "v5.10.0",
+      "moduleSum": "h1:VhSvgU2jSli8o3AqIEOTJr7rZwAEUVo4E4XhR94Zfr0=",
+      "licenseExpression": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "467f95e074fe23079a5623ed652619682692041b8551da27e3c2ddb9659a1507"
+        }
+      ]
+    },
+    {
+      "path": "github.com/jackc/puddle/v2",
+      "version": "v2.2.2",
+      "moduleSum": "h1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo=",
+      "licenseExpression": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "2d50e98a4900b4d6457a38d39c1432fdc156fc2f7b365f2e33ec9344acbb0057"
+        }
+      ]
+    },
+    {
+      "path": "github.com/valkey-io/valkey-go",
+      "version": "v1.0.67",
+      "moduleSum": "h1:QPaRcuBmazhyoWTxk7I2XcSALhoL7UhAReR5o/rh1Po=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "283ea6cc2997a1a70da0049e09adf9317bb60ca1b51279b65196b83a69e1996b"
+        },
+        {
+          "name": "NOTICE",
+          "sha256": "41824cdce292fe84e7130615e322aae144fdb9e1d147c00ce901b92694fae02c"
+        }
+      ]
+    },
+    {
+      "path": "golang.org/x/sync",
+      "version": "v0.22.0",
+      "moduleSum": "h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=",
+      "licenseExpression": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ]
+    },
+    {
+      "path": "golang.org/x/sys",
+      "version": "v0.44.0",
+      "moduleSum": "h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=",
+      "licenseExpression": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ]
+    },
+    {
+      "path": "golang.org/x/text",
+      "version": "v0.41.0",
+      "moduleSum": "h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=",
+      "licenseExpression": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ]
+    }
+  ]
+}

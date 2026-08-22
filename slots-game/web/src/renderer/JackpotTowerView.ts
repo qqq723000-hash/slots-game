@@ -7,6 +7,10 @@ import {
 } from "pixi.js";
 import type { MoneyMinor } from "../app/state/types";
 import {
+  DEFAULT_MINOR_UNIT_FORMATTER,
+  type MinorUnitFormatter,
+} from "../protocol/moneyFormatter";
+import {
   resolveResponsiveMinBound,
   responsiveRendererRegion,
   type MobileHandMode,
@@ -122,13 +126,35 @@ export function jackpotTierMobileLayout(
     layout.horizontalAlign,
     layout.verticalAlign,
   );
-  if (profile !== "ls") return transform;
-  const runtimeScale = Math.max(1, Math.min(1.12, 1.244 - transform.scale * 0.3));
-  return {
-    x: transform.x,
-    y: transform.y + Math.max(0, Math.min(16, (transform.scale - 0.413) * 40)),
-    scale: transform.scale * runtimeScale,
-  };
+  return transform;
+}
+
+export interface JackpotTierMobileDisplayLayout extends ResponsiveNodeTransform {
+  readonly scaleX: number;
+  readonly scaleY: number;
+}
+
+/** 844x390 实机证据显示官方横屏父级只把大奖面板沿 X 轴扩展 12%，Y 轴仍保持 canonical minBound 投影。 */
+export const JACKPOT_COMPACT_LANDSCAPE_SCALE_X = 1.12;
+
+export function jackpotTierMobileDisplayLayout(
+  tier: JackpotTier,
+  profile: MobileLayoutProfile,
+  handMode: MobileHandMode,
+  region: ResponsiveRendererRegion,
+): JackpotTierMobileDisplayLayout {
+  const canonical = jackpotTierMobileLayout(tier, profile, handMode, region);
+  const compactLandscape = profile === "ls"
+    && region.height > 0
+    && region.width / region.height >= 2;
+  const scaleX = canonical.scale * (compactLandscape
+    ? JACKPOT_COMPACT_LANDSCAPE_SCALE_X
+    : 1);
+  return Object.freeze({
+    ...canonical,
+    scaleX,
+    scaleY: canonical.scale,
+  });
 }
 
 export function jackpotTierResponsiveLayout(
@@ -209,7 +235,12 @@ export const JACKPOT_AUTHORED_TIME_SCALE = 1;
 async function waitForJackpotFont(signal?: AbortSignal): Promise<void> {
   if (typeof document === "undefined" || !document.fonts?.load) return;
   if (signal?.aborted) return;
-  await document.fonts.load(JACKPOT_FONT_DESCRIPTOR, "GRAND 1000.00");
+  const loaded = await document.fonts.load(JACKPOT_FONT_DESCRIPTOR, "GRAND 1000.00");
+  if (signal?.aborted) return;
+  if (loaded.length === 0
+    || (document.fonts.check?.(JACKPOT_FONT_DESCRIPTOR, "GRAND 1000.00") === false)) {
+    throw new Error(`Required jackpot font failed to become ready: ${JACKPOT_FONT_FAMILY}`);
+  }
 }
 
 function jackpotTextStyle(fontSize: number): TextStyle {
@@ -228,7 +259,9 @@ function jackpotTextStyle(fontSize: number): TextStyle {
     // 在重命名的系列下请求 700 可以在错过匹配面孔的浏览器上合成第二个权重。
     fontFamily: `'${JACKPOT_FONT_FAMILY}', 'Primal Kanit', Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif`,
     fontSize,
+    fontStyle: "normal",
     fontWeight: "normal",
+    letterSpacing: 0,
     lineJoin: "miter",
     stroke: "#22140e",
     strokeThickness: 6,
@@ -236,10 +269,13 @@ function jackpotTextStyle(fontSize: number): TextStyle {
 }
 
 /** 格式化服务器投注预测，而不通过浮点数转换整数货币。 */
-export function jackpotDisplayValue(betMinor: MoneyMinor, multiplier: bigint): string {
-  if (!/^(0|[1-9]\d*)$/.test(betMinor)) return "0.00";
-  const projected = (BigInt(betMinor) * multiplier).toString().padStart(3, "0");
-  return `${projected.slice(0, -2)}.${projected.slice(-2)}`;
+export function jackpotDisplayValue(
+  betMinor: MoneyMinor,
+  multiplier: bigint,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
+): string {
+  if (!/^(0|[1-9]\d*)$/.test(betMinor)) return formatter.format("0", false);
+  return formatter.format((BigInt(betMinor) * multiplier).toString(), false);
 }
 
 /**
@@ -248,6 +284,7 @@ export function jackpotDisplayValue(betMinor: MoneyMinor, multiplier: bigint): s
 export class JackpotTowerView extends Container {
   private readonly panels: JackpotPanel[] = [];
   private betMinor: MoneyMinor = "0";
+  private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
   private loadPromise: Promise<void> | null = null;
   private reactionElapsedMs = 0;
   private reactionCursor = 0;
@@ -279,9 +316,9 @@ export class JackpotTowerView extends Container {
       if (this.disposed || signal?.aborted) return;
       for (const layout of JACKPOT_TIER_LAYOUTS) {
         const panel = new Container();
-        const responsiveLayout = this.panelResponsiveLayout(layout);
+        const responsiveLayout = this.panelResponsiveDisplayLayout(layout);
         panel.position.set(responsiveLayout.x, responsiveLayout.y);
-        panel.scale.set(responsiveLayout.scale);
+        panel.scale.set(responsiveLayout.scaleX, responsiveLayout.scaleY);
 
         const view = createSpineView(data[layout.key], {
           animation: "idle",
@@ -292,7 +329,10 @@ export class JackpotTowerView extends Container {
         view.update(0);
 
         const title = new Text(layout.label, jackpotTextStyle(45));
-        const value = new Text(jackpotDisplayValue(this.betMinor, layout.multiplier), jackpotTextStyle(48));
+        const value = new Text(
+          jackpotDisplayValue(this.betMinor, layout.multiplier, this.moneyFormatter),
+          jackpotTextStyle(48),
+        );
         title.anchor.set(0.5);
         value.anchor.set(0.5);
         const titleHost = this.attachTextAtSlot(
@@ -339,13 +379,18 @@ export class JackpotTowerView extends Container {
     this.syncValues();
   }
 
+  setMoneyFormatter(formatter: MinorUnitFormatter): void {
+    this.moneyFormatter = formatter;
+    this.syncValues();
+  }
+
   setResponsiveLayout(visibleInsetX: number): void {
     this.mobileLayoutContext = null;
     this.visibleInsetX = Number.isFinite(visibleInsetX) ? Math.max(0, visibleInsetX) : 0;
     for (const panel of this.panels) {
-      const layout = this.panelResponsiveLayout(panel.layout);
+      const layout = this.panelResponsiveDisplayLayout(panel.layout);
       panel.root.position.set(layout.x, layout.y);
-      panel.root.scale.set(layout.scale);
+      panel.root.scale.set(layout.scaleX, layout.scaleY);
     }
     this.syncTextAnchors();
   }
@@ -357,9 +402,9 @@ export class JackpotTowerView extends Container {
   ): void {
     this.mobileLayoutContext = { profile, handMode, region: { ...region } };
     for (const panel of this.panels) {
-      const layout = this.panelResponsiveLayout(panel.layout);
+      const layout = this.panelResponsiveDisplayLayout(panel.layout);
       panel.root.position.set(layout.x, layout.y);
-      panel.root.scale.set(layout.scale);
+      panel.root.scale.set(layout.scaleX, layout.scaleY);
     }
     this.syncTextAnchors();
   }
@@ -372,10 +417,12 @@ export class JackpotTowerView extends Container {
 
   update(deltaMs: number): void {
     if (!this.visible || this.panels.length === 0) return;
-    const safeDeltaMs = Math.min(64, Math.max(0, deltaMs));
-    const deltaSeconds = safeDeltaMs / 1_000;
+    const wallClockDeltaMs = Number.isFinite(deltaMs) ? Math.max(0, deltaMs) : 0;
+    const poseDeltaMs = Math.min(64, wallClockDeltaMs);
+    const deltaSeconds = poseDeltaMs / 1_000;
     for (const panel of this.panels) this.updatePanelView(panel, deltaSeconds);
-    this.advanceCollectionReaction(safeDeltaMs);
+    // Spine 姿势可限幅以避免恢复后台标签页时发生大步跳帧；五档收集顺序属于墙钟语义，不能被同一限幅拖慢。
+    this.advanceCollectionReaction(wallClockDeltaMs);
     this.syncTextAnchors();
   }
 
@@ -476,7 +523,11 @@ export class JackpotTowerView extends Container {
 
   private syncValues(): void {
     for (const panel of this.panels) {
-      panel.value.text = jackpotDisplayValue(this.betMinor, panel.layout.multiplier);
+      panel.value.text = jackpotDisplayValue(
+        this.betMinor,
+        panel.layout.multiplier,
+        this.moneyFormatter,
+      );
     }
     this.syncTextAnchors();
   }
@@ -485,6 +536,26 @@ export class JackpotTowerView extends Container {
     const mobile = this.mobileLayoutContext;
     if (!mobile) return jackpotTierResponsiveLayout(layout, this.visibleInsetX);
     return jackpotTierMobileLayout(layout.tier, mobile.profile, mobile.handMode, mobile.region);
+  }
+
+  private panelResponsiveDisplayLayout(
+    layout: JackpotTierLayout,
+  ): JackpotTierMobileDisplayLayout {
+    const mobile = this.mobileLayoutContext;
+    if (mobile) {
+      return jackpotTierMobileDisplayLayout(
+        layout.tier,
+        mobile.profile,
+        mobile.handMode,
+        mobile.region,
+      );
+    }
+    const canonical = this.panelResponsiveLayout(layout);
+    return Object.freeze({
+      ...canonical,
+      scaleX: canonical.scale,
+      scaleY: canonical.scale,
+    });
   }
 
   private syncTextAnchors(): void {

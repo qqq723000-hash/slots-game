@@ -491,6 +491,19 @@ export class CityBackdrop extends Container {
     }
   }
 
+  /**
+   * 仅供 Free Spins 最终退出屏障调用。常规调色板切换继续保留预设的混合窗口；这里必须在
+   * PRESENTATION_COMPLETE 前一次性提交 Base 镜头、设置姿势和空粒子池，避免下一帧再看到火/雪残影。
+   */
+  settleFeatureExit(): void {
+    this.rows = 3;
+    this.targetTrackY = this.trackYForRows(3);
+    this.currentTrackY = this.targetTrackY;
+    this.applyTrackPosition();
+    this.restoreAuthoredPalette("main");
+    this.authoredParticles.killAll();
+  }
+
   update(deltaMs: number): void {
     const safeDelta = Number.isFinite(deltaMs) ? Math.max(0, Math.min(64, deltaMs)) : 0;
     if (!this.authoredIntroTimelineControlled) {

@@ -14,6 +14,7 @@ spec:
     - Ingress
     - Egress
 ---
+{{- if .Values.web.enabled }}
 # Web 只接受入口控制器访问，静态运行时没有任何主动出口。
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -30,14 +31,22 @@ spec:
     - Ingress
   ingress:
     - from:
+        {{- if eq .Values.networkPolicy.ingressController.mode "selectors" }}
         - namespaceSelector:
             {{- toYaml .Values.networkPolicy.ingressController.namespaceSelector | nindent 12 }}
           podSelector:
             {{- toYaml .Values.networkPolicy.ingressController.podSelector | nindent 12 }}
+        {{- else }}
+        {{- range .Values.networkPolicy.ingressController.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+        {{- end }}
       ports:
         - port: 8080
           protocol: TCP
 ---
+{{- end }}
 # RGS 公网面仅允许入口控制器，运维面仅允许受标记的 Prometheus。
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -54,10 +63,17 @@ spec:
     - Ingress
   ingress:
     - from:
+        {{- if eq .Values.networkPolicy.ingressController.mode "selectors" }}
         - namespaceSelector:
             {{- toYaml .Values.networkPolicy.ingressController.namespaceSelector | nindent 12 }}
           podSelector:
             {{- toYaml .Values.networkPolicy.ingressController.podSelector | nindent 12 }}
+        {{- else }}
+        {{- range .Values.networkPolicy.ingressController.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+        {{- end }}
       ports:
         - port: 8080
           protocol: TCP
@@ -70,18 +86,49 @@ spec:
         - port: 8081
           protocol: TCP
 ---
-# RGS 只可解析 DNS，并访问外部 PostgreSQL、钱包和审计接收端的明确网段与端口。
+# Worker 不提供公网端口，只允许受标记的 Prometheus 访问运维端口。
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-egress") }}
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-worker-ingress") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "slots.selectorLabels" (dict "root" . "component" "rgs-worker") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.monitoring.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.monitoring.podSelector | nindent 12 }}
+      ports:
+        - port: 8081
+          protocol: TCP
+---
+# API 与 Worker 只可解析 DNS，并访问外部 PostgreSQL 和钱包的明确网段与端口。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-runtime-egress") }}
   labels:
     {{- include "slots.commonLabels" . | nindent 4 }}
     app.kubernetes.io/component: rgs
 spec:
   podSelector:
     matchLabels:
-      {{- include "slots.selectorLabels" (dict "root" . "component" "rgs") | nindent 6 }}
+      app.kubernetes.io/name: {{ include "slots.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - rgs
+          - rgs-worker
   policyTypes:
     - Egress
   egress:
@@ -111,6 +158,46 @@ spec:
       ports:
         - port: {{ .Values.networkPolicy.egress.wallet.port }}
           protocol: TCP
+---
+# 共享准入出口只属于 API Pod；Worker 不挂载凭据，也不能建立 Valkey 连接。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-shared-admission-egress") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "slots.selectorLabels" (dict "root" . "component" "rgs") | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{- range .Values.networkPolicy.egress.sharedAdmission.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicy.egress.sharedAdmission.port }}
+          protocol: TCP
+---
+# 审计出口只属于 Worker，API Pod 不持有或使用审计投递能力。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-worker-audit-egress") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "slots.selectorLabels" (dict "root" . "component" "rgs-worker") | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
     - to:
         {{- range .Values.networkPolicy.egress.audit.cidrs }}
         - ipBlock:

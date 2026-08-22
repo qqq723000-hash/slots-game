@@ -24,11 +24,59 @@ func TestDevelopmentConfigHasSafeBoundedDefaults(t *testing.T) {
 		config.DatabaseMaxOpenConns != 40 || config.DatabaseMaxIdleConns != 10 ||
 		config.MaxInFlightRequests != 256 ||
 		config.MaxConnectionsPerListener != 1_024 ||
-		config.OperationsHTTPAddress != "127.0.0.1:8081" {
+		config.SuccessAccessLogSamplePerMillion != 1_000_000 ||
+		config.OperationsHTTPAddress != "127.0.0.1:8081" ||
+		config.RuntimeRole != RuntimeRoleCombined {
 		t.Fatalf("unexpected defaults: %+v", config)
 	}
 	if config.OutboxEndpointURL != "" {
 		t.Fatalf("development default unexpectedly enables external delivery: %q", config.OutboxEndpointURL)
+	}
+}
+
+func TestSuccessAccessLogSamplingConfigurationBounds(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		want int
+	}{
+		{raw: "0", want: 0},
+		{raw: "10000", want: 10_000},
+		{raw: "1000000", want: 1_000_000},
+	} {
+		config, err := LoadConfigFrom(lookup(map[string]string{
+			"RGS_SUCCESS_ACCESS_LOG_SAMPLE_PER_MILLION": test.raw,
+		}))
+		if err != nil {
+			t.Fatalf("sample %s was rejected: %v", test.raw, err)
+		}
+		if config.SuccessAccessLogSamplePerMillion != test.want {
+			t.Fatalf("sample %s parsed as %d, want %d", test.raw, config.SuccessAccessLogSamplePerMillion, test.want)
+		}
+	}
+	for _, value := range []string{"-1", "1000001", "not-a-number"} {
+		if _, err := LoadConfigFrom(lookup(map[string]string{
+			"RGS_SUCCESS_ACCESS_LOG_SAMPLE_PER_MILLION": value,
+		})); err == nil {
+			t.Fatalf("unsafe sample %s was accepted", value)
+		}
+	}
+}
+
+func TestRuntimeRolesExposeOnlyTheirIntendedWorkloads(t *testing.T) {
+	for _, test := range []struct {
+		role        RuntimeRole
+		servesAPI   bool
+		runsWorkers bool
+	}{
+		{role: RuntimeRoleCombined, servesAPI: true, runsWorkers: true},
+		{role: RuntimeRoleAPI, servesAPI: true, runsWorkers: false},
+		{role: RuntimeRoleWorker, servesAPI: false, runsWorkers: true},
+	} {
+		if test.role.ServesPublicAPI() != test.servesAPI ||
+			test.role.RunsBackgroundWorkloads() != test.runsWorkers {
+			t.Fatalf("role %q exposure = api:%v workers:%v", test.role,
+				test.role.ServesPublicAPI(), test.role.RunsBackgroundWorkloads())
+		}
 	}
 }
 
@@ -41,6 +89,18 @@ func TestRuntimeConfigNeverFallsBackToMigratorCredential(t *testing.T) {
 	}
 	if config.DatabaseURL != "" {
 		t.Fatalf("runtime database URL unexpectedly read migrator credential: %q", config.DatabaseURL)
+	}
+}
+
+func TestRuntimeConfigLoadsWalletRootCAFile(t *testing.T) {
+	config, err := LoadConfigFrom(lookup(map[string]string{
+		"RGS_WALLET_ROOT_CA_FILE": " /run/secrets/wallet-root.pem ",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.WalletRootCAFile != "/run/secrets/wallet-root.pem" {
+		t.Fatalf("WalletRootCAFile = %q", config.WalletRootCAFile)
 	}
 }
 
@@ -60,6 +120,9 @@ func TestProductionConfigFailsClosed(t *testing.T) {
 		"RGS_DEFINITION_FILE":                     "/run/config/game-definition.json",
 		"RGS_DEFINITION_APPROVAL_FILE":            "/run/config/definition.json",
 		"RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE": "/run/secrets/definition-approval-public.pem",
+		"RGS_EXPECTED_DEFINITION_GAME_ID":         "iron-colossus",
+		"RGS_EXPECTED_DEFINITION_VERSION":         "definition-v1",
+		"RGS_EXPECTED_DEFINITION_SHA256":          strings.Repeat("a", 64),
 		"RGS_LAUNCH_HMAC_KEY_FILE":                "/run/secrets/launch-hmac.key",
 		"RGS_OPERATIONS_BEARER_TOKEN_FILE":        "/run/secrets/operations-bearer.token",
 		"RGS_OUTBOX_ENDPOINT_URL":                 "https://audit.example/rgs/v1/events",
@@ -82,6 +145,129 @@ func TestProductionConfigFailsClosed(t *testing.T) {
 	if _, err := LoadConfigFrom(lookup(missingOperationsBearer)); err == nil ||
 		!strings.Contains(err.Error(), "RGS_OPERATIONS_BEARER_TOKEN_FILE") {
 		t.Fatalf("missing operations bearer token error = %v", err)
+	}
+
+	apiValues := make(map[string]string, len(values))
+	for key, value := range values {
+		if strings.HasPrefix(key, "RGS_OUTBOX_") {
+			continue
+		}
+		apiValues[key] = value
+	}
+	apiValues["RGS_RUNTIME_ROLE"] = "api"
+	apiValues["RGS_SHARED_ADMISSION_URL"] = "rediss://valkey.example:6379"
+	apiValues["RGS_SHARED_ADMISSION_USERNAME"] = "rgs-api"
+	apiValues["RGS_SHARED_ADMISSION_PASSWORD_FILE"] = "/run/secrets/valkey-password"
+	apiValues["RGS_SHARED_ADMISSION_HMAC_KEY_FILE"] = "/run/secrets/admission-hmac.key"
+	apiValues["RGS_SHARED_ADMISSION_ROOT_CA_FILE"] = "/run/config/valkey-root.pem"
+	apiConfig, err := LoadConfigFrom(lookup(apiValues))
+	if err != nil {
+		t.Fatalf("valid production api config rejected: %v", err)
+	}
+	if apiConfig.RuntimeRole != RuntimeRoleAPI || apiConfig.RuntimeRole.RunsBackgroundWorkloads() {
+		t.Fatalf("unexpected api role config: %+v", apiConfig)
+	}
+	apiValues["RGS_OUTBOX_ENDPOINT_URL"] = values["RGS_OUTBOX_ENDPOINT_URL"]
+	if _, err := LoadConfigFrom(lookup(apiValues)); err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("api outbox configuration error = %v", err)
+	}
+
+	workerValues := make(map[string]string, len(values)+1)
+	for key, value := range values {
+		workerValues[key] = value
+	}
+	workerValues["RGS_RUNTIME_ROLE"] = "worker"
+	delete(workerValues, "RGS_LAUNCH_HMAC_KEY_FILE")
+	workerConfig, err := LoadConfigFrom(lookup(workerValues))
+	if err != nil {
+		t.Fatalf("valid production worker config rejected: %v", err)
+	}
+	if workerConfig.RuntimeRole != RuntimeRoleWorker || workerConfig.RuntimeRole.ServesPublicAPI() {
+		t.Fatalf("unexpected worker role config: %+v", workerConfig)
+	}
+	if workerConfig.LaunchHMACKeyFile != "" {
+		t.Fatalf("worker retained launch HMAC configuration: %q", workerConfig.LaunchHMACKeyFile)
+	}
+	missingDefinitionIdentity := make(map[string]string, len(workerValues)-1)
+	for key, value := range workerValues {
+		if key != "RGS_EXPECTED_DEFINITION_SHA256" {
+			missingDefinitionIdentity[key] = value
+		}
+	}
+	if _, err := LoadConfigFrom(lookup(missingDefinitionIdentity)); err == nil ||
+		!strings.Contains(err.Error(), "RGS_EXPECTED_DEFINITION_SHA256") {
+		t.Fatalf("worker without expected definition digest error = %v", err)
+	}
+	delete(workerValues, "RGS_OUTBOX_ENDPOINT_URL")
+	if _, err := LoadConfigFrom(lookup(workerValues)); err == nil ||
+		!strings.Contains(err.Error(), "RGS_OUTBOX_ENDPOINT_URL") {
+		t.Fatalf("worker without outbox endpoint error = %v", err)
+	}
+
+	if _, err := LoadConfigFrom(lookup(map[string]string{"RGS_RUNTIME_ROLE": "unexpected"})); err == nil ||
+		!strings.Contains(err.Error(), "RGS_RUNTIME_ROLE") {
+		t.Fatalf("invalid runtime role error = %v", err)
+	}
+	if _, err := LoadConfigFrom(lookup(map[string]string{"RGS_RUNTIME_ROLE": "worker"})); err == nil ||
+		!strings.Contains(err.Error(), "RGS_OUTBOX_ENDPOINT_URL") {
+		t.Fatalf("worker without outbox error = %v", err)
+	}
+}
+
+func TestSharedAdmissionConfigFailsClosed(t *testing.T) {
+	valid := map[string]string{
+		"RGS_SHARED_ADMISSION_URL":             "rediss://valkey.example:6379",
+		"RGS_SHARED_ADMISSION_USERNAME":        "rgs-api",
+		"RGS_SHARED_ADMISSION_PASSWORD_FILE":   "/run/secrets/valkey-password",
+		"RGS_SHARED_ADMISSION_HMAC_KEY_FILE":   "/run/secrets/admission-hmac.key",
+		"RGS_SHARED_ADMISSION_ROOT_CA_FILE":    "/run/config/valkey-root.pem",
+		"RGS_SHARED_ADMISSION_TIMEOUT":         "75ms",
+		"RGS_SHARED_ADMISSION_RATE_PER_SECOND": "125.5",
+		"RGS_SHARED_ADMISSION_RATE_BURST":      "300",
+		"RGS_RATE_PER_SECOND":                  "50",
+		"RGS_RATE_BURST":                       "100",
+	}
+	config, err := LoadConfigFrom(lookup(valid))
+	if err != nil {
+		t.Fatalf("valid shared admission config rejected: %v", err)
+	}
+	if config.SharedAdmissionTimeout.String() != "75ms" || config.SharedAdmissionRatePerSecond != 125.5 ||
+		config.SharedAdmissionRateBurst != 300 || config.RatePerSecond != 50 || config.RateBurst != 100 {
+		t.Fatalf("shared admission timeout = %s", config.SharedAdmissionTimeout)
+	}
+
+	for name, mutate := range map[string]func(map[string]string){
+		"plain scheme": func(values map[string]string) { values["RGS_SHARED_ADMISSION_URL"] = "redis://valkey.example:6379" },
+		"embedded credential": func(values map[string]string) {
+			values["RGS_SHARED_ADMISSION_URL"] = "rediss://user:secret@valkey.example:6379"
+		},
+		"relative password": func(values map[string]string) { values["RGS_SHARED_ADMISSION_PASSWORD_FILE"] = "password" },
+		"missing root CA":   func(values map[string]string) { delete(values, "RGS_SHARED_ADMISSION_ROOT_CA_FILE") },
+		"excess timeout":    func(values map[string]string) { values["RGS_SHARED_ADMISSION_TIMEOUT"] = "501ms" },
+		"zero rate":         func(values map[string]string) { values["RGS_SHARED_ADMISSION_RATE_PER_SECOND"] = "0" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			values := make(map[string]string, len(valid))
+			for key, value := range valid {
+				values[key] = value
+			}
+			mutate(values)
+			if _, err := LoadConfigFrom(lookup(values)); err == nil {
+				t.Fatal("unsafe shared admission config unexpectedly accepted")
+			}
+		})
+	}
+
+	worker := make(map[string]string, len(valid)+2)
+	for key, value := range valid {
+		worker[key] = value
+	}
+	worker["RGS_RUNTIME_ROLE"] = "worker"
+	worker["RGS_OUTBOX_ENDPOINT_URL"] = "https://audit.example/events"
+	worker["RGS_OUTBOX_HMAC_KEY_ID"] = "key-1"
+	worker["RGS_OUTBOX_HMAC_KEY_FILE"] = "/run/secrets/outbox.key"
+	if _, err := LoadConfigFrom(lookup(worker)); err == nil || !strings.Contains(err.Error(), "worker runtime role") {
+		t.Fatalf("worker shared admission error = %v", err)
 	}
 }
 

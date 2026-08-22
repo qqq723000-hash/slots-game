@@ -11,6 +11,10 @@ import type {
   MoneyMinor,
   WheelAwardedEvent,
 } from "../app/state/types";
+import {
+  DEFAULT_MINOR_UNIT_FORMATTER,
+  type MinorUnitFormatter,
+} from "../protocol/moneyFormatter";
 import type { Spine } from "./spine/SpineAdapter";
 
 export type SpineTextBounds = readonly [x: number, y: number, width: number, height: number];
@@ -274,10 +278,11 @@ export function freeSpinIntroTextFields(
 
 export function freeSpinSummaryTextFields(
   event: FreeSpinsCompletedEvent,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): readonly PrimalPanelTextField[] {
   return materializeFields(PRIMAL_PANEL_TEXT_SLOTS.freeSpinSummary, [
     "CONGRATULATIONS!",
-    formatPrimalPanelAmount(event.cumulativeWinMinor),
+    formatPrimalPanelAmount(event.cumulativeWinMinor, formatter),
     "Total Win",
   ]);
 }
@@ -285,6 +290,7 @@ export function freeSpinSummaryTextFields(
 export function wheelSummaryTextFields(
   event: WheelAwardedEvent,
   freeSpins: boolean,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): readonly PrimalPanelTextField[] {
   const prize = wheelPrizeLabel(event);
   if (freeSpins) {
@@ -296,7 +302,7 @@ export function wheelSummaryTextFields(
   }
   // GamePrimalWheelBonusFeature 在此绑定 `_totalCoins`。乘数是一个不同的服务器事实，当权威金额不存在时，决不能将乘数提升到钱槽中。
   const value = event.amountMinor !== undefined
-    ? formatPrimalPanelAmount(event.amountMinor)
+    ? formatPrimalPanelAmount(event.amountMinor, formatter)
     : "";
   return materializeFields(PRIMAL_PANEL_TEXT_SLOTS.wheelSummaryJackpot, [
     "CONGRATULATIONS!",
@@ -306,10 +312,12 @@ export function wheelSummaryTextFields(
   ]);
 }
 
-export function formatPrimalPanelAmount(value: MoneyMinor): string {
-  if (!/^(0|[1-9]\d*)$/.test(value)) return "0.00";
-  const digits = value.padStart(3, "0");
-  return `${digits.slice(0, -2)}.${digits.slice(-2)}`;
+export function formatPrimalPanelAmount(
+  value: MoneyMinor,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
+): string {
+  if (!/^(0|[1-9]\d*)$/.test(value)) return formatter.format("0", false);
+  return formatter.format(value, false);
 }
 
 export function fitSpineTextToBounds(

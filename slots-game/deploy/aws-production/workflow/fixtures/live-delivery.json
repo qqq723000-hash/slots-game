@@ -1,0 +1,114 @@
+{
+  "amp_remote_write_endpoint": "https://aps-workspaces.ap-southeast-1.amazonaws.com/workspaces/ws-1234567890abcdef",
+  "amp_writer_role_arn": "arn:aws:iam::123456789012:role/slots-prometheus-agent",
+  "application_namespace": "slots-production",
+  "application_release_allowed": true,
+  "aws_account_id": "123456789012",
+  "aws_region": "ap-southeast-1",
+  "cluster_autoscaler_inline_policy_name": "scale-managed-node-groups",
+  "cluster_autoscaler_role_arn": "arn:aws:iam::123456789012:role/slots-cluster-autoscaler",
+  "cluster_name": "slots-prod-primary",
+  "environment": "prod-primary",
+  "helm_release_name": "slots",
+  "maintenance_in_progress": false,
+  "application_secret_names": {
+    "api-runtime-assets": "slots-rgs-api-runtime-assets-v2",
+    "migrator-database": "slots-rgs-migrator-database-v1",
+    "operations-bearer": "slots-rgs-operations-bearer-v1",
+    "runtime-database": "slots-rgs-runtime-database-v1",
+    "worker-runtime-assets": "slots-rgs-worker-runtime-assets-v3"
+  },
+  "application_handoff": {
+    "addon_versions": {
+      "aws-load-balancer-controller": "1.2.3",
+      "cluster-autoscaler": "1.2.3",
+      "external-secrets": "1.2.3",
+      "kube-prometheus-stack": "1.2.3",
+      "prometheus-agent": "1.2.3"
+    },
+    "cluster_autoscaler_image_tag": "v1.30.2",
+    "cluster_autoscaler_inline_policy_name": "scale-managed-node-groups",
+    "contract_version": "1.0.0",
+    "application_namespace": "slots-production",
+    "application_release_allowed": true,
+    "external_secret_resource_names": {
+      "api-runtime-assets": "slots-rgs-api-runtime-assets-v2",
+      "migrator-database": "slots-rgs-migrator-database-v1",
+      "operations-bearer": "slots-rgs-operations-bearer-v1",
+      "runtime-database": "slots-rgs-runtime-database-v1",
+      "shared-admission": "slots-rgs-shared-admission-v1",
+      "worker-runtime-assets": "slots-rgs-worker-runtime-assets-v3"
+    },
+    "foundation_apply_is_application_ready": false,
+    "helm_release_name": "slots",
+    "kube_state_metrics_release_name": "kube-prometheus-stack",
+    "kubernetes_version": "1.30",
+    "metrics_server_addon_version": "v0.7.2-eksbuild.1",
+    "maintenance_in_progress": false,
+    "required_api_services": {
+      "resource_metrics": "v1beta1.metrics.k8s.io"
+    },
+    "required_deployments": {
+      "aws_load_balancer_controller": "kube-system/aws-load-balancer-controller",
+      "cluster_autoscaler": "kube-system/cluster-autoscaler",
+      "external_secrets": "external-secrets/external-secrets",
+      "kube_state_metrics": "monitoring/kube-prometheus-stack-kube-state-metrics",
+      "metrics_server": "kube-system/metrics-server",
+      "prometheus_operator": "monitoring/kube-prometheus-stack-operator"
+    },
+    "private_vpc_runner_required": true
+  },
+  "secret_sync_role_arn": "arn:aws:iam::123456789012:role/slots-external-secrets",
+  "valkey_active_slot": "a",
+  "valkey_endpoint_url": "rediss://slots-valkey.example.cache.amazonaws.com:6379",
+  "valkey_password_versions": {
+    "a": 1,
+    "b": 1
+  },
+  "valkey_primary_endpoint": "slots-valkey.example.cache.amazonaws.com",
+  "valkey_rotation_contract": {
+    "active_slot": "a",
+    "active_user_name": "slotsprodprimary-rgs-a",
+    "both_users_remain_in_user_group": true,
+    "contract_version": "1.0.0",
+    "hmac_bucket_reset_requires_separate_change": true,
+    "hmac_maintenance_forbids_parallel_rollout": true,
+    "hmac_maintenance_attestation_schema": "slots-game/hmac-quiesce-attestation/v1",
+    "hmac_maintenance_evidence_maximum_ttl_seconds": 3600,
+    "hmac_maintenance_exit_requires_separate_plan": true,
+    "hmac_maintenance_persistent_lock_name": "slots-hmac-maintenance-lock",
+    "hmac_maintenance_requires_zero_replicas": true,
+    "hmac_maintenance_single_attested_plan": true,
+    "hmac_maintenance_target_identity": {
+      "environment": "prod-primary",
+      "aws_account_id": "123456789012",
+      "aws_region": "ap-southeast-1",
+      "eks_cluster_name": "slots-prod-primary",
+      "kubernetes_namespace": "slots-production",
+      "helm_release_name": "slots"
+    },
+    "application_release_allowed": true,
+    "maintenance_in_progress": false,
+    "hmac_key_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "old_slot_reset_requires_live_evidence": true,
+    "password_fingerprints": {
+      "a": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "b": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "password_versions": {
+      "a": 1,
+      "b": 1
+    },
+    "published_secret_version": 1,
+    "rotation_mode": "steady"
+  },
+  "valkey_rotation_mode": "steady",
+  "valkey_secret_arn": "arn:aws:secretsmanager:ap-southeast-1:123456789012:secret:slots-shared-v1-AbCdEf",
+  "valkey_secret_name": "slots-rgs-shared-admission-v1",
+  "valkey_user_name": "slotsprodprimary-rgs-a",
+  "valkey_user_names": {
+    "a": "slotsprodprimary-rgs-a",
+    "b": "slotsprodprimary-rgs-b"
+  },
+  "workload_client_security_group_id": "sg-0123456789abcdef0"
+}

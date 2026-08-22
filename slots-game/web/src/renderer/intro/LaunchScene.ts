@@ -19,9 +19,11 @@ import { loadPrimalSpineSet } from "../spine/PrimalSpineAssets";
 import { LOGICAL_HEIGHT, LOGICAL_WIDTH } from "../theme";
 import type {
   MobileLayoutProfile,
+  ResponsiveMinBound,
   ResponsiveNodeTransform,
   ResponsiveRendererRegion,
 } from "../ResponsiveLayout";
+import { resolveResponsiveMinBound } from "../ResponsiveLayout";
 
 export const CHARACTER_IDLE_LOOP_MS = PRIMAL_CHARACTER_ANIMATION_MS.idleStateLoop;
 /**
@@ -33,6 +35,25 @@ export const PRIMAL_DESKTOP_CHARACTER_SKELETON_TRANSFORM = Object.freeze({
   y: 360,
   scale: 0.72,
 });
+/** 从 mobile/config/config_mobile.json 恢复的 `transition` 节点边界。 */
+export const PRIMAL_MOBILE_TRANSITION_MIN_BOUNDS: Readonly<
+  Record<MobileLayoutProfile, ResponsiveMinBound>
+> = Object.freeze({
+  ls: Object.freeze({ left: -600, top: -450, width: 1_200, height: 900 }),
+  pt: Object.freeze({ left: -600, top: -250, width: 1_200, height: 900 }),
+  iPad_pt: Object.freeze({ left: -600, top: -250, width: 1_200, height: 900 }),
+});
+
+/** 将官方 transition 根节点等比 contain 到完整移动视口。 */
+export function resolveLaunchTransitionLayout(
+  viewportRegion: ResponsiveRendererRegion,
+  profile: MobileLayoutProfile,
+): ResponsiveNodeTransform {
+  return resolveResponsiveMinBound(
+    viewportRegion,
+    PRIMAL_MOBILE_TRANSITION_MIN_BOUNDS[profile],
+  );
+}
 /** 从桌面/移动捆绑包中恢复了官方 Character 调度程序节奏。 */
 export const WHEEL_CHEST_POUND_SCHEDULER_FPS = 30;
 /** Float32 从权威 character.skel 解码的持续时间。 */
@@ -259,6 +280,7 @@ class PrimalGorilla extends Container {
 
 export class LaunchScene {
   readonly overlay = new Container();
+  private readonly transitionHost = new Container();
   private readonly foreground = new Container();
   private readonly leftTank = new Sprite(Texture.EMPTY);
   private readonly rightTank = new Sprite(Texture.EMPTY);
@@ -330,7 +352,11 @@ export class LaunchScene {
     this.camera.actorLayer.addChild(this.monsterHost, this.monsterMist);
     this.camera.foregroundLayer.addChild(this.foreground);
     this.camera.fxLayer.addChild(this.shockwave);
-    this.overlay.addChild(this.blackout, this.logo);
+    // 桌面时间线继续以 1280×720 坐标写 logo；移动端只变换这个独立根节点。
+    this.transitionHost.pivot.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2);
+    this.transitionHost.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2);
+    this.transitionHost.addChild(this.logo);
+    this.overlay.addChild(this.blackout, this.transitionHost);
     this.applyFrame({
       worldAlpha: 0,
       cameraZoom: 1.09,
@@ -481,6 +507,35 @@ export class LaunchScene {
     // 与机柜不同的是，原来的桌面ppsApe是一个独立的根节点。在这里缩放它复合了预设的 Spine 比例，并将其脚趾推过 1280×720 的状态栏边界。
     this.monsterHost.scale.set(PRIMAL_DESKTOP_CHARACTER_HOST_SCALE);
     this.reels.setResponsiveComposition(this.responsiveCompositionScale);
+  }
+
+  /**
+   * 重投影启动转场，不触碰 IntroDirector/Spine 时间、轨道、可见性或透明度。
+   * blackout 独立覆盖整个渲染器，因此状态栏区域也不会在淡入期间露底。
+   */
+  setResponsiveTransitionLayout(
+    viewportRegion: ResponsiveRendererRegion,
+    profile: MobileLayoutProfile | null,
+  ): void {
+    this.blackout.clear()
+      .beginFill(0x1b242a)
+      .drawRect(
+        viewportRegion.left,
+        viewportRegion.top,
+        viewportRegion.width,
+        viewportRegion.height,
+      )
+      .endFill();
+
+    this.transitionHost.pivot.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2);
+    if (profile) {
+      const transform = resolveLaunchTransitionLayout(viewportRegion, profile);
+      this.transitionHost.position.set(transform.x, transform.y);
+      this.transitionHost.scale.set(transform.scale);
+      return;
+    }
+    this.transitionHost.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2);
+    this.transitionHost.scale.set(1);
   }
 
   /** 使用角色节点和 Base Reel 的独立画布锚点。 */
@@ -738,7 +793,7 @@ export class LaunchScene {
       this.idleResumeToBase = false;
       this.idleResumeToFeature = false;
       this.monsterHost.addChild(monster);
-      this.overlay.addChild(logo);
+      this.transitionHost.addChild(logo);
       this.monsterFallback.visible = false;
       this.logo.visible = false;
       this.applyPersistentPresentation();
@@ -853,6 +908,37 @@ export class LaunchScene {
       palette: presentation.palette,
     };
     this.applyPersistentPresentation();
+  }
+
+  /**
+   * 仅供最终特性退出屏障调用。正常状态变化仍走 150 毫秒混合；这里先撤销全部旧特性
+   * TrackEntry，再从设置姿势无混合地重放已提交的 Base 持久表现，保证退出 Promise 的首帧干净。
+   */
+  settleFeatureExit(): void {
+    const monster = this.authoredMonster;
+    if (!monster) return;
+    this.cancelWheelChestPoundReentry();
+    for (const track of [
+      PRIMAL_CHARACTER_TRACK.overlay,
+      PRIMAL_CHARACTER_TRACK.body,
+      PRIMAL_CHARACTER_TRACK.aura,
+      PRIMAL_CHARACTER_TRACK.particles,
+      PRIMAL_CHARACTER_TRACK.palette,
+    ]) {
+      monster.state.clearTrack(track);
+    }
+    monster.skeleton.setToSetupPose();
+    this.applyPersistentPresentation();
+    for (const track of [
+      PRIMAL_CHARACTER_TRACK.body,
+      PRIMAL_CHARACTER_TRACK.aura,
+      PRIMAL_CHARACTER_TRACK.particles,
+      PRIMAL_CHARACTER_TRACK.palette,
+    ]) {
+      const entry = monster.state.getCurrent(track);
+      if (entry) entry.mixDuration = 0;
+    }
+    monster.update(0);
   }
 
   setCharacterBodyContinuation(body: CharacterBodyContinuation, restart = true): void {

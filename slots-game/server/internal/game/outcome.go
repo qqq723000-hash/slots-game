@@ -87,6 +87,12 @@ func ValidateOutcomeAgainstConfig(config Config, input SpinInput, outcome SpinOu
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("outcome: invalid game definition: %w", err)
 	}
+	return validateOutcomeAgainstValidatedConfig(config, input, outcome)
+}
+
+// validateOutcomeAgainstValidatedConfig 只供持有不可变、已验证定义的 Engine 热路径使用。
+// 外部调用仍必须经过 ValidateOutcomeAgainstConfig，不能用本函数绕过定义信任边界。
+func validateOutcomeAgainstValidatedConfig(config Config, input SpinInput, outcome SpinOutcome) error {
 	if err := config.ValidateBet(input.BetMinor); err != nil {
 		return fmt.Errorf("outcome: invalid bet: %w", err)
 	}

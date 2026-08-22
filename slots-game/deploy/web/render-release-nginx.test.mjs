@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test, { after } from "node:test";
 
+import { createReleaseContentSecurityPolicy } from "./content-security-policy.mjs";
 import { renderReleaseNginxConfig } from "./render-release-nginx.mjs";
 
 const baseConfig = await readFile(new URL("./nginx.conf", import.meta.url), "utf8");
@@ -18,7 +19,9 @@ test("renders exact operator frame and RGS connect origins without X-Frame-Optio
   });
   assert.match(rendered, /connect-src 'self' https:\/\/rgs\.example;/);
   assert.match(rendered, /frame-ancestors https:\/\/operator\.example/);
-  assert.doesNotMatch(rendered, /X-Frame-Options|frame-ancestors \*|connect-src \*/);
+  assert.match(rendered, /script-src 'self';/);
+  assert.match(rendered, /form-action 'none';/);
+  assert.doesNotMatch(rendered, /X-Frame-Options|frame-ancestors \*|connect-src \*|'unsafe-eval'/);
   assert.equal((rendered.match(/add_header Content-Security-Policy/g) ?? []).length, 1);
   assert.equal((rendered.match(/connect-src/g) ?? []).length, 1);
   assert.equal((rendered.match(/frame-ancestors/g) ?? []).length, 1);
@@ -72,7 +75,47 @@ test("fails closed when the reviewed base policy drifts", () => {
   assert.throws(() => renderReleaseNginxConfig(
     baseConfig.replace("frame-ancestors 'self'", "frame-ancestors https://drift.invalid"),
     { rgsBaseUrl: "https://rgs.example", hostOrigin: "https://operator.example" },
-  ), /exact frame-ancestors 'self'/);
+  ), /frame-ancestors/u);
+});
+
+for (const unsafeScriptSource of [
+  "'self' 'unsafe-eval'",
+  "'self' 'unsafe-inline'",
+  "'self' *",
+  "'self' data:",
+  "'self' blob:",
+]) {
+  test(`rejects unsafe script source ${unsafeScriptSource}`, () => {
+    assert.throws(() => renderReleaseNginxConfig(
+      baseConfig.replace("script-src 'self'", `script-src ${unsafeScriptSource}`),
+      { rgsBaseUrl: "https://rgs.example", hostOrigin: "https://operator.example" },
+    ), /script-src/u);
+  });
+}
+
+for (const drift of [
+  baseConfig.replace("default-src 'self'", "default-src https:"),
+  baseConfig.replace("object-src 'none'", "object-src 'self'"),
+  baseConfig.replace("base-uri 'self'", "base-uri *"),
+  baseConfig.replace("form-action 'none'; ", ""),
+  baseConfig.replace("font-src 'self'", "font-src 'self' https://fonts.invalid"),
+]) {
+  test("拒绝任一审核指令缺失或放宽", () => {
+    assert.throws(() => renderReleaseNginxConfig(drift, {
+      rgsBaseUrl: "https://rgs.example",
+      hostOrigin: "https://operator.example",
+    }), /base Content-Security-Policy/u);
+  });
+}
+
+test("渲染结果与共用 CSP 规范文本完全一致", () => {
+  const options = {
+    rgsBaseUrl: "https://rgs.example/client/v1",
+    hostOrigin: "https://operator.example",
+  };
+  const rendered = renderReleaseNginxConfig(baseConfig, options);
+  const expected = createReleaseContentSecurityPolicy(options);
+  assert.match(rendered, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"));
 });
 
 for (const drift of [

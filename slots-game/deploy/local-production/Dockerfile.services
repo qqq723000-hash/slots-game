@@ -8,8 +8,8 @@ WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY server/ ./
-COPY deploy/local-production/secret-env.go /src/tools/secret-env.go
-COPY deploy/local-production/service-probe.go /src/tools/service-probe.go
+COPY tools/container-helpers/secret-env/main.go /src/tools/secret-env.go
+COPY tools/container-helpers/service-probe/main.go /src/tools/service-probe.go
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     --network=none \
@@ -35,7 +35,7 @@ USER nonroot:nonroot
 
 FROM runtime-base AS rgs-runtime
 LABEL org.opencontainers.image.title="slots-rgs-runtime" \
-      org.opencontainers.image.description="RGS 本机生产运行服务"
+      org.opencontainers.image.description="RGS 本机集成验收运行服务"
 COPY --from=build --chown=nonroot:nonroot /out/rgs-server /rgs-server
 COPY --from=build --chown=nonroot:nonroot /out/secret-env /secret-env
 COPY --from=build --chown=nonroot:nonroot /out/service-probe /service-probe
@@ -44,14 +44,14 @@ ENTRYPOINT ["/secret-env", "RGS_DATABASE_URL", "/rgs-server"]
 
 FROM runtime-base AS rgs-migrator
 LABEL org.opencontainers.image.title="slots-rgs-migrator" \
-      org.opencontainers.image.description="RGS 本机生产数据库迁移器"
+      org.opencontainers.image.description="RGS 本机集成验收数据库迁移器"
 COPY --from=build --chown=nonroot:nonroot /out/rgs-migrator /rgs-migrator
 COPY --from=build --chown=nonroot:nonroot /out/secret-env /secret-env
 ENTRYPOINT ["/secret-env", "RGS_MIGRATOR_DATABASE_URL", "/rgs-migrator"]
 
 FROM runtime-base AS local-operator
 LABEL org.opencontainers.image.title="slots-local-operator" \
-      org.opencontainers.image.description="本机生产运营、钱包与审计配套服务"
+      org.opencontainers.image.description="本机集成验收运营、钱包与审计配套服务"
 COPY --from=build --chown=nonroot:nonroot /out/local-operator /local-operator
 COPY --from=build --chown=nonroot:nonroot /out/service-probe /service-probe
 EXPOSE 8443

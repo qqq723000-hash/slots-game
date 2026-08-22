@@ -1,28 +1,101 @@
-# Iron Colossus 商用交付项目
+# Iron Colossus 商用交付源码
 
-本仓库包含完整的 Go RGS 后端、PostgreSQL 迁移器、运营商/钱包适配服务、TypeScript/PixiJS
-前端、生产容器、监控告警、日志采集、备份恢复和供应链门禁。浏览器只展示服务端已验证结果；
-RNG、余额、派彩、特性状态和幂等轮次均由服务端负责。
+本仓库交付 Go RGS 后端、PostgreSQL 迁移器、TypeScript/PixiJS Web、生产容器、Helm Chart、
+可观测性规则与供应链门禁。浏览器只是表现层；会话、余额、RNG、轮次、派彩、特性状态、幂等与
+恢复均由服务端负责。
 
-生产入口只接受完整的 HTTPS RGS 配置及一次性运营商交接值；任何缺失或畸形配置都会在下注前
-失败关闭。
+## 正式生产主线
 
-## 目录
+AWS 是本仓库唯一正式生产目标。macOS Docker Compose 只保留为开发、集成和端到端验收环境，
+不得写入生产变更单，也不得作为多可用区、高可用、备份恢复或安全控制已经落地的证据。
 
-- `server/`：`rgs-server`、`rgs-migrator`、本机运营/钱包服务和生产配置引导器；
+```text
+玩家浏览器
+├── Web：Route 53 → CloudFront + AWS WAF → 私有 S3（OAC、按 release ID 隔离）
+└── API：Route 53 → AWS WAF → ALB → Amazon EKS
+    ├── rgs-server API（至少 3 个暖副本，跨 3 个可用区）
+    ├── rgs-server Worker（至少 2 个暖副本，独立扩容）
+    ├── Amazon RDS for PostgreSQL Multi-AZ 实例
+    ├── ElastiCache Valkey（仅已验证身份的新意图共享准入）
+    ├── 正式运营商钱包与幂等审计接收端
+    ├── AWS Secrets Manager + 同步控制器 Pod Identity
+    └── Prometheus Agent/ADOT → AMP；CloudWatch Logs；AMG
+```
+
+正式设计、实施顺序和运行责任分别见：
+
+- [AWS 正式生产架构](docs/aws-production-architecture.md)
+- [AWS 正式生产部署](docs/aws-production-deployment.md)
+- [AWS 正式生产运维](docs/aws-production-operations.md)
+- [通用 Kubernetes 多副本契约](docs/cluster-runtime-contract.md)
+- [高并发性能与数据生命周期契约](docs/performance-optimization-contract.md)
+- [通用 Helm 应用交付](deploy/cluster-production/README.md)
+
+## 交付边界
+
+| 能力 | 仓库状态 | 正式上线责任 |
+| --- | --- | --- |
+| RGS、迁移器、Web 源码与测试 | 已实现 | 应用团队维护并通过受保护门禁 |
+| OCI 构建、摘要部署、SBOM、来源证明、签名契约 | 已实现 | 发布平台绑定 ECR 与 AWS/GitHub OIDC |
+| RGS/Web 通用 Kubernetes Chart、HPA、PDB、NetworkPolicy、监控规则 | 已实现 | 平台团队提供目标集群并验证渲染结果 |
+| 应用专属 AWS VPC、EKS、RDS、Valkey、ECR、S3/CloudFront、IAM/KMS、监控与备份 IaC | 已实现 | 受保护 AWS 工作流评审并应用保存的 plan；目标账号仍需实时验收 |
+| AWS Organizations/账号工厂、state/部署身份、DNS/证书/WAF、组织级审计与安全账号 | 不在应用仓库的创建边界 | 企业落地区先提供并验收 |
+| 正式钱包、运营商入口、审计接收端 | 仅定义协议契约 | 运营商集成团队提供并完成一致性验收 |
+| 正式 Secret 值、私钥与告警接收凭据 | Git 中禁止保存 | 安全与平台团队在目标账号受控注入并轮换 |
+| `local-operator` | 仅本机验收工具 | 正式环境禁止部署或依赖 |
+
+“仓库检查通过”只证明源码和交付契约成立，不等于某个 AWS 账号已经完成部署。正式上线必须同时
+保存基础设施变更、Helm 渲染、镜像摘要、Secret 版本、告警演练和恢复演练证据。
+
+## 源码目录
+
+- `server/`：`rgs-server`、`rgs-migrator` 以及仅供本机验收的运营商/钱包工具；
 - `web/`：只消费权威 RGS 结果的浏览器表现层；
-- `deploy/local-production/`：macOS 本机完整生产模式编排；
-- `deploy/cluster-production/`：公司 Kubernetes 集群的 RGS、Web 与一次性 migrator Helm 交付；
-- `deploy/observability/`：Prometheus、Grafana、Alertmanager 与 Vector 契约；
-- `deploy/supply-chain/`：漏洞/密钥扫描、SBOM、来源证明与镜像签名门禁；
-- `docs/`：架构、运营商集成、迁移、恢复、密钥轮换与安全运行手册。
+- `infra/terraform/`：应用专属 AWS 基础设施、环境栈、落地区接口与失败闭合门禁；
+- `deploy/cluster-production/`：可移植的 Kubernetes/Helm RGS、Web 与一次性 migrator 交付；
+- `deploy/local-production/`：macOS 本地集成验收编排，不是正式生产环境；
+- `deploy/observability/`：Prometheus 规则、Grafana 与日志采集契约；
+- `deploy/supply-chain/`：秘密/漏洞扫描、SBOM、来源证明与镜像签名门禁；
+- `../.github/workflows/`：源码一致性、供应链、AWS 基础设施与应用发布工作流；
+- `docs/`：AWS 架构、部署、运维和应用级安全运行手册。
 
 当前正式版本及兼容边界见 [变更记录](CHANGELOG.md)。
 
-## 本机正式部署
+## AWS 发布流程摘要
 
-前置环境为 Docker Desktop、Go 1.26.6、Node.js 22.22.0 和 Git LFS 3.7.1。克隆后先执行
-`git lfs install --local && git lfs pull`，再进行首次部署：
+正式发布必须由受保护流水线和独立审批驱动，不得从开发者电脑直接上传生产制品或长期凭据。
+
+1. 企业落地区先提供账号、state/部署身份、DNS/证书/WAF 和组织级安全能力。
+2. 受保护基础设施工作流评审并应用 `infra/terraform` 的保存 plan，生成不含秘密的应用交接对象；实时 add-on 和外部系统验收不得省略。
+3. 受保护供应链流水线构建、扫描、签名并推送不可变镜像；AWS 应用流水线使用 GitHub Actions
+   OIDC 换取短期角色，重新验证获批 digest 后部署，不在部署阶段按 tag 重建制品。
+4. Web 以 `release ID` 为不可变前缀同步到私有 S3；release router 只把新会话切到新前缀，并保持
+   已有会话的版本固定。
+5. 先以独立迁移角色执行数据库迁移或验证，再按镜像 digest 执行 Helm 发布。
+6. 通过真实启动、旋转、钱包未知结果恢复、共享准入故障、审计、跨可用区驱逐、告警和恢复验收后才放量。
+
+通用 Chart 的最小命令如下；AWS 环境必须使用安全变更目录中的正式 values，而不是仓库示例：
+
+```sh
+make verify-deployment-contracts
+
+helm lint --strict deploy/cluster-production/chart \
+  -f /secure/change/slots-production-values.yaml
+
+helm upgrade --install slots deploy/cluster-production/chart \
+  --namespace slots-production --create-namespace \
+  -f /secure/change/slots-production-values.yaml \
+  --atomic --wait --timeout 15m
+```
+
+当前受保护 OCI 制品只交付 `linux/amd64`。数据库模式或数学定义变化不能走普通无停机滚动；Web
+稳定路径必须由 S3/CloudFront 的发布前缀完成版本隔离。完整边界见
+[多副本集群运行契约](docs/cluster-runtime-contract.md)。
+
+## 本地集成验收
+
+本机前置环境为 Docker Desktop、Go 1.26.6、Node.js 22.22.0 和 Git LFS 3.7.1。克隆后先执行
+`git lfs install --local && git lfs pull`：
 
 ```sh
 ./deploy/local-production/bootstrap.sh
@@ -30,39 +103,20 @@ RNG、余额、派彩、特性状态和幂等轮次均由服务端负责。
 ./deploy/local-production/verify.sh
 ```
 
-默认入口：
+本机入口：
 
 - 运营入口与游戏：`https://slots.localhost:8443/operator/`
 - RGS：`https://rgs.localhost:8443`
 - Grafana：`http://127.0.0.1:3000`
 - Prometheus：`http://127.0.0.1:9090`
-- Alertmanager：`https://localhost:9093`（需要仓库外状态目录中的 Bearer token）
+- Alertmanager：`https://localhost:9093`，需要仓库外状态目录中的 Bearer token
 
-运行状态和真实凭据位于仓库外的
-`${XDG_DATA_HOME:-$HOME/.local/share}/slots-game-production/`，不得复制回 Git。停止服务使用 `down.sh`；
-只有明确需要销毁本部署持久卷时才执行 `destroy.sh`。
+本机运行状态和凭据位于仓库外的
+`${XDG_DATA_HOME:-$HOME/.local/share}/slots-game-production/`，不得复制回 Git。停止服务使用
+`down.sh`；只有明确需要销毁该本地实例持久卷时才执行 `destroy.sh`。完整说明见
+[本地集成验收手册](deploy/local-production/README.md)。
 
-完整说明见 [本机生产部署手册](deploy/local-production/README.md)。
-
-## 公司集群生产部署
-
-集群交付不复用本机 `local-operator` 或本机 PostgreSQL，只引用公司提供的入口网关、全局限流、
-高可用 PostgreSQL、钱包、审计、密钥同步与 Prometheus Operator。先按
-[公司集群生产部署手册](deploy/cluster-production/README.md) 准备外部 Secret/CIDR/selector 和镜像摘要，再执行：
-
-```sh
-make verify-deployment-contracts
-helm upgrade --install slots deploy/cluster-production/chart \
-  --namespace slots-production --create-namespace \
-  -f /secure/change/slots-production-values.yaml \
-  --atomic --wait --timeout 15m
-```
-
-当前受保护发布制品只交付 `linux/amd64`。数据库模式、数学定义变更不能走普通无停机滚动；Web
-稳定路径素材也要求公司蓝绿发布或版本化 CDN 隔离。详细的本机与公司集群双树见
-[生产架构](docs/architecture.md)。
-
-## 交付验证
+## 源码与交付验证
 
 ```sh
 make bootstrap
@@ -72,25 +126,28 @@ make verify-deployment-contracts
 ./deploy/local-production/verify.sh
 ```
 
-前端发布镜像还要求仓库外的精确资源审批文件，并通过 BuildKit secret mount 注入：
+前端发布制品还要求仓库外的精确资源审批文件，并通过 BuildKit secret mount 注入：
 
 ```sh
 RELEASE_ASSET_APPROVAL_FILE=/secure/release/asset-approval.json \
-VITE_RGS_BASE_URL=https://rgs.example \
+VITE_RGS_BASE_URL=https://rgs.example.com \
 VITE_RGS_BET_OPTIONS_MINOR=10,20,50,100,200 \
 VITE_RGS_DEFAULT_BET_MINOR=100 \
-VITE_RGS_HOST_ORIGIN=https://operator.example \
+VITE_RGS_HOST_ORIGIN=https://slots.example.com \
+WEB_RELEASE_VERSION=1.1.0 \
+WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
   make build-web-release-image
 ```
 
-## 生产不变量
+## 不可破坏的生产约束
 
-- 金额始终使用最小货币单位的规范十进制字符串，禁止浮点结算；
-- 同一轮次使用稳定 `operationId` 执行一条原子钱包命令，未知结果只查询、不重复扣款；
-- PostgreSQL、钱包、审计出口或生产审批不可用时，就绪探针失败；
+- RGS 是强一致交易边界，金额始终使用最小货币单位的规范十进制字符串，禁止浮点结算；
+- 同一轮次使用稳定 `operationId` 执行一条原子钱包命令，未知结果只查询，不重复 RNG 或扣款；
+- PostgreSQL、钱包、审计出口、定义审批或生产密钥不可用时，RGS 失败关闭并退出流量；
 - 一次性启动码、Bearer token、私钥和 DSN 不进入浏览器存储、日志、Git 或镜像层；
-- 迁移器与运行时使用独立角色，运行时不能取得 DDL 权限；
-- 生产资源由字节长度、SHA-256、发布清单和外部审批逐项绑定。
+- 迁移器与运行时使用独立数据库角色，运行时不能取得 DDL 权限；
+- 正式镜像使用 digest，Web 资源由字节长度、SHA-256、发布清单和审批逐项绑定；
+- `local-operator`、本机 PostgreSQL、Compose Prometheus/Grafana/Vector 均不得进入 AWS 生产环境。
 
-详细生产架构树见 [docs/architecture.md](docs/architecture.md)，贡献和注释规范见
+完整系统说明见 [生产架构总览](docs/architecture.md)，贡献和中文注释规范见
 [CONTRIBUTING.md](CONTRIBUTING.md)。

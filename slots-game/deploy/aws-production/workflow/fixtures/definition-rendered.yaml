@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slots-slots-cluster-production-rgs
+  namespace: slots-production
+  labels:
+    app.kubernetes.io/instance: slots
+    app.kubernetes.io/component: rgs
+spec:
+  template:
+    metadata:
+      annotations:
+        slots-game.io/definition-game-id: iron-colossus
+        slots-game.io/definition-version: definition-v1
+        slots-game.io/definition-sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slots-slots-cluster-production-rgs-worker
+  namespace: slots-production
+  labels:
+    app.kubernetes.io/instance: slots
+    app.kubernetes.io/component: rgs-worker
+spec:
+  template:
+    metadata:
+      annotations:
+        slots-game.io/definition-game-id: iron-colossus
+        slots-game.io/definition-version: definition-v1
+        slots-game.io/definition-sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

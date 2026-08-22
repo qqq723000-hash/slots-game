@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SpinResult } from "../src/app/state/types";
 import {
   authoritativeReelRoundFromV1,
@@ -52,6 +52,25 @@ describe("authoritative reel round contract", () => {
     expect(round.grid).not.toBe(result.grid);
     expect(Object.isFrozen(round)).toBe(true);
     expect(Object.isFrozen(round.grid[0]?.[0])).toBe(true);
+  });
+
+  it("adapts and freezes protocol v1 when the browser has no structuredClone", () => {
+    const result = spinResult(baseGrid);
+    const originalGrid = result.grid;
+    vi.stubGlobal("structuredClone", undefined);
+    try {
+      const round = authoritativeReelRoundFromV1(result);
+
+      expect(round.grid).toEqual(originalGrid);
+      expect(round.grid).not.toBe(originalGrid);
+      expect(round.grid[0]).not.toBe(originalGrid[0]);
+      expect(round.grid[0]?.[0]).not.toBe(originalGrid[0]?.[0]);
+      expect(Object.isFrozen(round.grid)).toBe(true);
+      expect(Object.isFrozen(round.grid[0])).toBe(true);
+      expect(Object.isFrozen(round.grid[0]?.[0])).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("rejects malformed grids at the presentation boundary", () => {

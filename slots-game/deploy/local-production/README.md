@@ -1,6 +1,7 @@
-# 本机生产部署
+# 本机集成验收
 
-此目录把项目以 `RGS_ENVIRONMENT=production` 运行在一台 macOS 主机上。部署使用
+此目录在一台 macOS 主机上以 `RGS_ENVIRONMENT=production` 配置分支运行完整集成验收，
+不属于 AWS 正式生产拓扑，也不能证明多可用区、托管服务或云端安全控制已经落地。环境使用
 TLS PostgreSQL、一次性迁移器、独立公网/运维监听器、HTTPS 入口、持久化钱包与审计
 接收端、Prometheus、Grafana、Alertmanager 和 Vector。所有宿主机端口仅绑定回环地址。
 
@@ -18,11 +19,14 @@ TLS PostgreSQL、一次性迁移器、独立公网/运维监听器、HTTPS 入�
 ```
 
 `bootstrap.sh` 仅使用已审核的 Node.js `v22.22.0`，安装 lockfile 依赖、重新生成
-生产 Web 产物，然后构建最小运行镜像。`up.sh` 会在启动后自动执行端到端验收。
+生产 Web 产物，然后构建最小运行镜像。源码、依赖锁、构建配置或 Web 资源有任何变化时，
+必须重新执行 `bootstrap.sh`；`up.sh` 只重启最后一次通过 bootstrap 审计的镜像，禁止隐式
+重建。`up.sh` 会在启动后自动执行端到端验收；
+宿主机必须安装 Google Chrome 或 Chromium，以执行真实 WebGL 会话门禁。
 CA 信任命令只修改当前用户的 macOS 登录钥匙串；系统可能要求一次用户确认。
 
-本地镜像构建会注入 OCI `created/revision/source/version` 标签，并由 `bootstrap.sh` 与
-`up.sh` 通过 BuildKit 命令行参数显式生成 `mode=max` SLSA provenance；Compose 文件本身
+本地镜像构建会注入 OCI `created/revision/source/version` 标签，并由 `bootstrap.sh`
+通过 BuildKit 命令行参数显式生成 `mode=max` SLSA provenance；Compose 文件本身
 保持兼容稳定版 schema。默认 revision 来自当前 Git commit；工作区未提交时追加
 `-dirty`，避免把脏源码误标为已提交版本。自动化构建可显式设置
 `LOCAL_PRODUCTION_IMAGE_CREATED`、`LOCAL_PRODUCTION_IMAGE_REVISION`、
@@ -45,6 +49,29 @@ Compose 环境前校验。静态约束可单独执行：
 镜像和随部署生成的 provisioning bundle；版本检查、使用统计、插件目录写入与插件
 自动安装均已关闭。如需新增插件，应更新固定镜像并重新完成供应链审核，不能在运行
 容器内临时安装。
+
+RGS 到本机钱包的 HTTPS 调用通过 `RGS_WALLET_ROOT_CA_FILE` 在钱包专用客户端中加载
+`local-production-root-ca.pem`，并继续执行证书链与 `wallet` 主机名校验。根证书文件缺失、
+超限或不含有效证书时，RGS 会拒绝启动，不会降级为明文或跳过 TLS 验证。
+
+### 本机运营入口凭据
+
+管理员访问令牌由首次部署生成，只保存在仓库外的受限状态目录。使用以下命令把令牌
+直接复制到 macOS 剪贴板，终端不会显示令牌内容：
+
+```sh
+slots_state_root="${XDG_DATA_HOME:-$HOME/.local/share}/slots-game-production"
+pbcopy < "$slots_state_root/secrets/local-operator-admin.token"
+```
+
+打开 `https://slots.localhost:8443/operator/` 后粘贴该值。玩家 ID 与钱包账户 ID 可留空；
+本机运营服务会使用部署时固定的默认测试身份。入口返回 `401` 时，应重新从上述文件
+复制当前令牌，不要把令牌写入 URL、截图、聊天记录或仓库。
+
+`verify.sh` 不仅检查 HTTP 探针，还会在临时 Chrome 配置中创建并消费一次性会话，确认
+精确 RGS origin 的 POST 交换成功、会话已应用到玩家余额、地址栏片段已清除、严格 CSP
+生效且游戏画布完成就绪；进程退出时会删除
+临时浏览器目录和启动响应。
 
 ## 运维与恢复
 

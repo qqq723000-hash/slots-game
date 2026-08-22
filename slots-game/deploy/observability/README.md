@@ -1,9 +1,10 @@
-# RGS 可观测性发布基线
+# RGS 可观测性本机与 CI 契约
 
-本目录提供一个供应商中立、低资源、可部署的单节点基线：Prometheus 抓取与告警规则、
-Grafana 声明式数据源/仪表盘、Vector 容器 stdout 收集与 HTTPS 出口，以及一个明确未获
-批准的保留策略模板。它用于关闭“完全没有监控平面”的发布缺口，但不声称替代托管高可用
-监控、SOC/SIEM、审计 outbox 或监管证据系统。
+本目录只用于本机集成验收和 CI 契约验证，提供 Prometheus 抓取与告警规则、Grafana 声明式
+数据源/仪表盘、Vector 容器 stdout 收集与 HTTPS 出口，以及一个明确未获批准的保留策略模板。
+AWS 正式环境不得部署本目录的 Compose 单节点栈；正式链路必须按 AWS 架构接入
+Prometheus Agent 或 ADOT、AMP、CloudWatch Logs、AMG、公司告警路由及审计证据系统。本目录
+保留供应商中立的规则和脱敏约束，供正式平台实现与验收时复用，但不构成云端能力已落地的证明。
 
 ## 安全不变量
 

@@ -2,6 +2,8 @@ name: Frontend conformance
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -50,12 +52,27 @@ jobs:
         run: npm test -- --run --fileParallelism=false
 
       - name: Build production frontend
+        env:
+          VITE_RGS_BASE_URL: https://rgs.ci.invalid
+          VITE_RGS_BET_OPTIONS_MINOR: 100,200,500
+          VITE_RGS_DEFAULT_BET_MINOR: "200"
+          VITE_RGS_HOST_ORIGIN: https://operator.ci.invalid
         run: npm run build
 
-      - name: Smoke production modules in a real browser
+      - name: Verify production transaction in real Chrome
+        env:
+          VITE_RGS_BASE_URL: https://rgs.ci.invalid
+          VITE_RGS_BET_OPTIONS_MINOR: 100,200,500
+          VITE_RGS_DEFAULT_BET_MINOR: "200"
+          VITE_RGS_HOST_ORIGIN: https://operator.ci.invalid
         run: npm run build:browser-smoke
 
       - name: Rebuild and verify deterministic release bytes
+        env:
+          VITE_RGS_BASE_URL: https://rgs.ci.invalid
+          VITE_RGS_BET_OPTIONS_MINOR: 100,200,500
+          VITE_RGS_DEFAULT_BET_MINOR: "200"
+          VITE_RGS_HOST_ORIGIN: https://operator.ci.invalid
         run: npm run build:determinism-check
 
   verify-web-static-image:
@@ -88,7 +105,7 @@ jobs:
           DOCKER_BUILDKIT=1 docker build \
             --file deploy/web/Dockerfile \
             --target config-conformance \
-            --build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid/client/v1 \
+            --build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid \
             --build-arg VITE_RGS_BET_OPTIONS_MINOR=100,200,500 \
             --build-arg VITE_RGS_DEFAULT_BET_MINOR=200 \
             --build-arg VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid \
@@ -132,7 +149,7 @@ jobs:
           if DOCKER_BUILDKIT=1 docker build \
             --file deploy/web/Dockerfile \
             --target runtime \
-            --build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid/client/v1 \
+            --build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid \
             --build-arg VITE_RGS_BET_OPTIONS_MINOR=100,200,500 \
             --build-arg VITE_RGS_DEFAULT_BET_MINOR=200 \
             --build-arg VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid \

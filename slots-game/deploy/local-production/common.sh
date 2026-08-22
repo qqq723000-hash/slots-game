@@ -1,5 +1,5 @@
 #!/bin/sh
-# 本机生产运维脚本的共用路径、版本与 Compose 入口。
+# 本机集成验收脚本的共用路径、版本与 Compose 入口。
 # shellcheck disable=SC2034
 set -eu
 

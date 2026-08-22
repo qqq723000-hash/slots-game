@@ -439,6 +439,8 @@ describe("RgsGateway", () => {
     expect(observed.log.sessions[0]).toMatchObject({
       sessionId: "session-a",
       engineRulesVersion: "slots-game-ways3-features-v4",
+      currency: "EUR",
+      currencyExponent: 2,
       balanceMinor: "1000",
       betOptionsMinor: ["50", "100", "200"],
       defaultBetMinor: "100",
@@ -500,6 +502,267 @@ describe("RgsGateway", () => {
     expect(gateway.acknowledgeSpinResult("round-a", 2)).toBe(false);
     expect(gateway.acknowledgeSpinResult("round-a", 1)).toBe(true);
     await vi.waitFor(() => expect(gateway.hasPendingSpin).toBe(false));
+  });
+
+  it("accepts the exact no-win BASE response shape emitted by local production", async () => {
+    const operatorId = "local-production-operator";
+    const sessionId = "session_local_contract";
+    const roundId = "round-local-contract";
+    const definitionHash = "96caac1ea4f82292ba96e0e0397459687638d6ff904471a8363e69f6e824d35d";
+    const localFeature = feature("NONE", 0, 0, "0", "0", 1, 0);
+    const localResult: Record<string, unknown> = {
+      operatorId,
+      sessionId,
+      roundId,
+      gameId: "iron-colossus",
+      definitionVersion: "local-production-2026-08-16.1",
+      definitionHash,
+      currency: "CNY",
+      roundKind: "BASE",
+      serverTransactionId: "rgs-op-v1:local-contract",
+      walletTransactionId: "wtx_local_contract",
+      startRevision: "0",
+      endRevision: "1",
+      sequence: "1",
+      resultHash: "a".repeat(64),
+      betMinor: "100",
+      chargedBetMinor: "100",
+      balanceMinor: "99610",
+      totalWinMinor: "0",
+      grid: [
+        [{ symbol: "PRISM" }, { symbol: "PRISM" }, { symbol: "PRISM" }],
+        [{ symbol: "CIRCUIT" }, { symbol: "ORBIT" }, { symbol: "PRISM" }],
+        [{ symbol: "CIRCUIT" }, { symbol: "PULSE" }, { symbol: "ORBIT" }],
+      ],
+      wins: [],
+      events: [],
+      feature: localFeature,
+    };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init), {
+            operatorId,
+            sessionId,
+            gameId: "iron-colossus",
+            definitionVersion: "local-production-2026-08-16.1",
+            definitionHash,
+            currency: "CNY",
+            currencyExponent: 2,
+            jurisdiction: "CN-LOCAL",
+            balanceMinor: "99710",
+            feature: localFeature,
+          }))
+        : response(successEnvelope(requestId(init), localResult))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      operatorId,
+      sessionId,
+      betOptionsMinor: ["10", "20", "50", "100", "200", "300", "400", "600", "1000", "2000", "5000", "10000"],
+    }));
+    const observed = callbacks();
+    const deliveryStages: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: (stage) => deliveryStages.push(stage),
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin(roundId, "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(observed.log.errors).toEqual([]);
+    expect(observed.log.results[0]).toMatchObject({
+      result: { roundId, sequence: 1, balanceMinor: "99610" },
+      origin: { mode: "BASE", rageLevel: 1, rageCollected: 0 },
+    });
+    expect(deliveryStages).toEqual([
+      "post-response-before-decode",
+      "decode-envelope",
+      "decode-request-id",
+      "decode-data-shape",
+      "decode-binding",
+      "decode-metadata",
+      "decode-grid",
+      "decode-wins",
+      "decode-events",
+      "decode-feature",
+      "decode-projection",
+      "projection-round-id",
+      "projection-sequence",
+      "projection-money-fields",
+      "projection-message-input",
+      "projection-message-shape",
+      "projection-message-grid",
+      "projection-message-wins",
+      "projection-message-events",
+      "projection-message-feature",
+      "projection-invariant-win-identities",
+      "projection-invariant-award-total",
+      "projection-invariant-wheel",
+      "projection-invariant-vault",
+      "projection-invariant-reels",
+      "projection-message-output",
+      "decode-commit-metadata",
+      "decode-complete",
+      "decoded",
+      "economic-identity",
+      "sequence-guard",
+      "origin-reconstructed",
+      "origin-validated",
+      "controller-dispatch",
+      "delivered",
+    ]);
+  });
+
+  it("marks the response boundary before a committed spin decoder failure", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), {
+            ...committedResult(),
+            wins: null,
+          }))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    const deliveryStages: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: (stage) => deliveryStages.push(stage),
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.results).toEqual([]);
+    expect(deliveryStages).toEqual([
+      "post-response-before-decode",
+      "decode-envelope",
+      "decode-request-id",
+      "decode-data-shape",
+      "decode-binding",
+      "decode-metadata",
+      "decode-grid",
+      "decode-wins",
+    ]);
+  });
+
+  it("stops the fixed projection stages at the visible-award invariant", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), {
+            ...committedResult(),
+            totalWinMinor: "1",
+          }))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    const deliveryStages: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: (stage) => deliveryStages.push(stage),
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.results).toEqual([]);
+    expect(deliveryStages.at(-1)).toBe("projection-invariant-award-total");
+  });
+
+  it("stops the fixed decoder stages at a mismatched response request id", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope("foreign-request", committedResult()))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    const deliveryStages: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: (stage) => deliveryStages.push(stage),
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.results).toEqual([]);
+    expect(deliveryStages).toEqual([
+      "post-response-before-decode",
+      "decode-envelope",
+      "decode-request-id",
+    ]);
+  });
+
+  it("keeps delivery authoritative when the fixed-stage observer throws", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), committedResult()))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onResultDeliveryStage: () => {
+        throw new Error("诊断观察者故障");
+      },
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(observed.log.errors).toEqual([]);
+  });
+
+  it("accepts the local-production two-Rage response with mixed WILD cells", async () => {
+    const result = committedResult({
+      grid: [
+        [{ symbol: "PULSE" }, { symbol: "CIRCUIT" }, { symbol: "SURGE" }],
+        [{ symbol: "WILD", multiplier: 5 }, { symbol: "WILD" }, { symbol: "NOVA" }],
+        [{ symbol: "TANK" }, { symbol: "ORBIT" }, { symbol: "SURGE" }],
+      ],
+      events: [fullEvent("surge.collected", {
+        count: 2,
+        cells: [{ reel: 0, row: 2 }, { reel: 2, row: 2 }],
+        triggered: false,
+        guaranteed: false,
+        level: 1,
+        total: 2,
+      })],
+      nextFeature: feature("NONE", 0, 0, "0", "0", 1, 2),
+    });
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), result))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(observed.log.errors).toEqual([]);
+    expect(observed.log.results[0]?.result.featureState).toMatchObject({
+      mode: "BASE",
+      rageLevel: 1,
+      rageCollected: 2,
+    });
   });
 
   it("binds one in-flight server acknowledgement to the delivered result before clearing locally", async () => {
@@ -1122,28 +1385,239 @@ describe("RgsGateway", () => {
     expect(spins[1]?.headers.get("Authorization")).toBe(`Bearer ${TOKEN_TWO}`);
   });
 
-  it("blocks wagering and preserves the pending round when the one 401 refresh fails", async () => {
+  it.each([
+    {
+      name: "currencyExponent",
+      refreshOverrides: { currencyExponent: 3 },
+    },
+    {
+      name: "session status",
+      refreshOverrides: { status: "BLOCKED" },
+    },
+  ])("terminates the browser transport and requests an operator relaunch when refresh drifts $name", async ({
+    refreshOverrides,
+  }) => {
     const requests: SeenRequest[] = [];
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
     const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
       const request = seenRequest(url, init);
       requests.push(request);
       if (request.url.endsWith("/sessions/exchange")) {
         return response(exchangeEnvelope(requestId(init)));
       }
+      if (request.url.endsWith("/sessions/refresh")) {
+        return response(exchangeEnvelope(
+          requestId(init),
+          refreshOverrides,
+          TOKEN_TWO,
+        ));
+      }
       return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
     });
-    const gateway = new RgsGateway(config(fetchImplementation));
+    const gateway = new RgsGateway(config(fetchImplementation, { ledgerStorage: storage }));
     const observed = callbacks();
-    gateway.setCallbacks(observed.callbacks);
+    const operatorRecovery = vi.fn();
+    const callbackOrder: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onStatus: (status) => {
+        observed.callbacks.onStatus(status);
+        callbackOrder.push(`status:${status}`);
+      },
+      onError: (error) => {
+        observed.callbacks.onError(error);
+        callbackOrder.push("error");
+      },
+      onOperatorSessionRequired: (error) => {
+        operatorRecovery(error);
+        callbackOrder.push("operator");
+      },
+    });
     gateway.connect();
     await waitForSession(observed.log);
+
     expect(gateway.requestSpin("round-a", "100")).toBe(true);
     await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
 
+    expect(observed.log.sessions).toHaveLength(1);
+    expect(observed.log.results).toEqual([]);
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.errors[0]).toMatchObject({
+      name: "RgsProtocolError",
+      message: "RGS refresh changed the immutable session binding or status",
+    });
+    expect(requests.filter(({ url }) => url.endsWith("/spins"))).toHaveLength(1);
+    expect(gateway.hasPendingSpin).toBe(true);
+    expect(storage.clear).not.toHaveBeenCalled();
+    expect(gateway.requestSpin("round-b", "100")).toBe(false);
+    expect(operatorRecovery).toHaveBeenCalledOnce();
+    expect(operatorRecovery).toHaveBeenCalledWith(observed.log.errors[0]);
+    expect(callbackOrder.slice(-3)).toEqual(["status:offline", "error", "operator"]);
+
+    // 一次性 launch code 已消费；terminal refresh failure 必须使旧网关不可再次 connect。
+    gateway.connect();
+    await Promise.resolve();
+    expect(observed.log.errors).toHaveLength(1);
+    expect(requests.filter(({ url }) => url.endsWith("/sessions/exchange"))).toHaveLength(1);
+  });
+
+  it("isolates terminal status/error observers so operator recovery always runs", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (String(url).endsWith("/sessions/refresh")) {
+        return response(exchangeEnvelope(
+          requestId(init),
+          { currencyExponent: 3 },
+          TOKEN_TWO,
+        ));
+      }
+      return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const statuses: GatewayStatus[] = [];
+    const diagnosticObserver = vi.fn(() => {
+      throw new Error("diagnostic observer failed");
+    });
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      onStatus: (status) => {
+        statuses.push(status);
+        if (status === "offline") throw new Error("status observer failed");
+      },
+      onSession: vi.fn(),
+      onSpinResult: vi.fn(),
+      onError: diagnosticObserver,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await vi.waitFor(() => expect(statuses).toContain("online"));
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
+    expect(statuses.at(-1)).toBe("offline");
+    expect(diagnosticObserver).toHaveBeenCalledOnce();
+    expect(gateway.hasPendingSpin).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "revision",
+      refreshOverrides: { revision: "2", sequence: "2" },
+    },
+    {
+      name: "sequence",
+      // revision 只允许与对应的一次 sequence 递增同步前进。
+      refreshOverrides: { revision: "1", sequence: "9" },
+    },
+  ])("terminates and retains the pending ledger when refresh advances outside its $name window", async ({
+    refreshOverrides,
+  }) => {
+    const requests: SeenRequest[] = [];
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      requests.push(request);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/sessions/refresh")) {
+        return response(exchangeEnvelope(
+          requestId(init),
+          refreshOverrides,
+          TOKEN_TWO,
+        ));
+      }
+      return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { ledgerStorage: storage }));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.errors[0]).toMatchObject({
+      name: "RgsProtocolError",
+      message: "refreshed RGS session is outside the pending round revision/sequence window",
+    });
+    expect(operatorRecovery).toHaveBeenCalledOnce();
+    expect(operatorRecovery).toHaveBeenCalledWith(observed.log.errors[0]);
+    expect(requests.filter(({ url }) => url.endsWith("/spins"))).toHaveLength(1);
+    expect(gateway.hasPendingSpin).toBe(true);
+    expect(storage.clear).not.toHaveBeenCalled();
+    expect(gateway.requestSpin("round-b", "100")).toBe(false);
+
+    gateway.connect();
+    await Promise.resolve();
+    expect(observed.log.errors).toHaveLength(1);
+  });
+
+  it.each([401, 403, 410, 423])(
+    "terminates for operator relaunch and preserves pending recovery when refresh returns %i",
+    async (refreshStatus) => {
+    const requests: SeenRequest[] = [];
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      requests.push(request);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/sessions/refresh")) {
+        return response(errorEnvelope(requestId(init), "SESSION_AUTHORIZATION_LOST"), refreshStatus);
+      }
+      return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { ledgerStorage: storage }));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    const callbackOrder: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onStatus: (status) => {
+        observed.callbacks.onStatus(status);
+        callbackOrder.push(`status:${status}`);
+      },
+      onError: (error) => {
+        observed.callbacks.onError(error);
+        callbackOrder.push("error");
+      },
+      onOperatorSessionRequired: (error) => {
+        operatorRecovery(error);
+        callbackOrder.push("operator");
+      },
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
     expect(requests.filter(({ url }) => url.endsWith("/sessions/refresh"))).toHaveLength(1);
     expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.errors).toHaveLength(1);
+    expect(observed.log.errors[0]).toMatchObject({
+      type: "error",
+      code: "SESSION_AUTHORIZATION_LOST",
+      retryable: false,
+    });
+    expect(operatorRecovery).toHaveBeenCalledWith(observed.log.errors[0]);
+    expect(callbackOrder.slice(-3)).toEqual(["status:offline", "error", "operator"]);
     expect(gateway.hasPendingSpin).toBe(true);
+    expect(storage.clear).not.toHaveBeenCalled();
     expect(gateway.requestSpin("round-b", "100")).toBe(false);
+    gateway.connect();
+    await Promise.resolve();
+    expect(requests.filter(({ url }) => url.endsWith("/sessions/exchange"))).toHaveLength(1);
   });
 
   it("uses compact-token expiry only as a proactive refresh scheduling hint", async () => {
@@ -1210,7 +1684,7 @@ describe("RgsGateway", () => {
     gateway.close();
   });
 
-  it("fails closed when a proactive refresh returns a non-retryable response", async () => {
+  it("hands a non-retryable proactive refresh failure to the operator", async () => {
     vi.useFakeTimers();
     const hintedToken = schedulingToken(100, 200);
     const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
@@ -1220,17 +1694,65 @@ describe("RgsGateway", () => {
     ));
     const gateway = new RgsGateway(config(fetchImplementation, { now: () => 100_000 }));
     const observed = callbacks();
-    gateway.setCallbacks(observed.callbacks);
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({ ...observed.callbacks, onOperatorSessionRequired: operatorRecovery });
     gateway.connect();
     await vi.runAllTicks();
     await waitForSession(observed.log);
 
     await vi.advanceTimersByTimeAsync(70_000);
-    await vi.waitFor(() => expect(observed.log.statuses.at(-1)).toBe("offline"));
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
 
     expect(gateway.requestSpin("round-a", "100")).toBe(false);
     expect(observed.log.errors).toHaveLength(1);
+    expect(operatorRecovery).toHaveBeenCalledWith(observed.log.errors[0]);
     gateway.close();
+  });
+
+  it("retries 5xx while the token is valid, then requests an operator relaunch at hard expiry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const hintedToken = schedulingToken(100, 140);
+    let refreshCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init), {}, hintedToken));
+      }
+      refreshCalls += 1;
+      return response(errorEnvelope(requestId(init), "TEMPORARY_UNAVAILABLE"), 503);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { now: () => Date.now() }));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({ ...observed.callbacks, onOperatorSessionRequired: operatorRecovery });
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(refreshCalls).toBe(1);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(refreshCalls).toBe(2);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(refreshCalls).toBe(3);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(refreshCalls).toBe(4);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(8_000);
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
+    expect(refreshCalls).toBe(5);
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.errors.at(-1)).toMatchObject({
+      name: "RgsProtocolError",
+      message: "RGS access token could not be refreshed before expiry; operator relaunch is required",
+    });
+    expect(gateway.requestSpin("round-a", "100")).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(refreshCalls).toBe(5);
   });
 
   it("fails closed on malformed or foreign exchange envelopes", async () => {

@@ -19,6 +19,31 @@
 禁止把令牌、审批编号、内部目录、人员信息或 Secret 填入版本参数。素材审批文件只作为
 BuildKit Secret 参与门禁，不会进入镜像、标签或 HTTP 响应。
 
+## 第三方许可交付
+
+`web/public/THIRD_PARTY_NOTICES.txt` 由锁文件中的非 `dev` 生产依赖和已安装 npm 包内许可原文
+确定性生成。只有确实向生产分块写入运行代码的构建器可以进入显式允许清单；当前 Vite 会写入
+`modulepreload` 与动态加载辅助代码，因此同时交付其随包许可原文。纯 `@types` 声明包和
+TypeScript、Vitest、Ajv 等未写入浏览器制品的依赖不会进入声明或运行镜像。更新依赖后必须执行：
+
+```sh
+cd web
+npm ci
+npm run licenses:generate
+npm run licenses:test
+npm run licenses:check
+```
+
+普通依赖直接采用由 `package-lock.json` 完整性摘要固定的包内许可文件。上游发布包缺失许可原文
+时，只允许在 `web/third-party-licenses/overrides.json` 中记录绑定完整提交摘要的 HTTPS 来源、
+原文文件和 SHA-256。构建器运行码贡献者也必须在该文件中逐个锁定版本并写明中文原因；未声明、
+摘要漂移、无效来源、过期或未使用覆盖项都会失败关闭。
+
+构建会把声明保留在发布白名单并纳入 `release-manifest.json` 的文件摘要。正式镜像同时在
+文件系统根路径 `/THIRD_PARTY_NOTICES.txt` 与站点 HTTP 路径 `/THIRD_PARTY_NOTICES.txt` 交付
+完全相同、只读的字节；
+镜像不得复制 `node_modules` 或仅用于构建、测试的依赖。
+
 ## 探针
 
 | 路径 | 用途 | 成功条件 | 是否检查外部依赖 |
@@ -67,13 +92,15 @@ BuildKit Secret 参与门禁，不会进入镜像、标签或 HTTP 响应。
 node deploy/web/verify-replica-consistency.mjs \
   --timeout-ms 3000 \
   --max-bytes 1048576 \
+  --rgs-base-url https://rgs.example/client/v1 \
+  --host-origin https://operator.example \
   --replica http://10.0.1.11:8080/release-manifest.json \
   --replica http://10.0.1.12:8080/release-manifest.json
 ```
 
 该命令拒绝重定向、可缓存清单、超时、超限响应、未知清单字段、无法复算的 `releaseId`、
-副本内容差异和 CSP 差异。地址必须直达各 Pod；经过 Service、Ingress 或 CDN 会隐藏单副本
-漂移，不能作为放量证据。
+副本内容差异、CSP 差异，以及即使各副本一致但偏离本次发布精确 RGS/运营方 origin 的策略。
+地址必须直达各 Pod；经过 Service、Ingress 或 CDN 会隐藏单副本漂移，不能作为放量证据。
 
 ## 集群外仍需配置
 

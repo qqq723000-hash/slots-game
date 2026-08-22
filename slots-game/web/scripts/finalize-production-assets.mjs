@@ -40,7 +40,7 @@ async function referencedPrimalFiles() {
 }
 
 async function expectedPaths() {
-  const keep = new Set(["index.html", "favicon.ico"]);
+  const keep = new Set(["index.html", "favicon.ico", "THIRD_PARTY_NOTICES.txt"]);
   for (const path of await filesUnder(distRoot)) {
     const name = slash(relative(distRoot, path));
     if (/^assets\/[^/]+\.(?:js|css)$/.test(name)) keep.add(name);

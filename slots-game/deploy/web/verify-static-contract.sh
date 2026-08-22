@@ -8,10 +8,17 @@ repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 dockerfile="$script_dir/Dockerfile"
 dockerignore="$script_dir/Dockerfile.dockerignore"
 nginx_conf="$script_dir/nginx.conf"
+policy_verifier="$script_dir/content-security-policy.mjs"
+policy_verifier_test="$script_dir/content-security-policy.test.mjs"
 release_renderer="$script_dir/render-release-nginx.mjs"
 release_renderer_test="$script_dir/render-release-nginx.test.mjs"
 release_manifest="$repo_root/web/scripts/release-manifest.mjs"
 deterministic_build_verifier="$repo_root/web/scripts/verify-deterministic-release-build.mjs"
+third_party_notice_generator="$repo_root/web/scripts/generate-third-party-notices.mjs"
+third_party_notice_test="$repo_root/web/scripts/test-third-party-notices.mjs"
+third_party_notice="$repo_root/web/public/THIRD_PARTY_NOTICES.txt"
+third_party_override_manifest="$repo_root/web/third-party-licenses/overrides.json"
+spine_license="$repo_root/web/third-party-licenses/SPINE-LICENSE"
 replica_verifier="$script_dir/verify-replica-consistency.mjs"
 replica_verifier_test="$script_dir/verify-replica-consistency.test.mjs"
 operations_readme="$script_dir/README.md"
@@ -44,10 +51,17 @@ for required_file in \
   "$dockerfile" \
   "$dockerignore" \
   "$nginx_conf" \
+  "$policy_verifier" \
+  "$policy_verifier_test" \
   "$release_renderer" \
   "$release_renderer_test" \
   "$release_manifest" \
   "$deterministic_build_verifier" \
+  "$third_party_notice_generator" \
+  "$third_party_notice_test" \
+  "$third_party_notice" \
+  "$third_party_override_manifest" \
+  "$spine_license" \
   "$replica_verifier" \
   "$replica_verifier_test" \
   "$operations_readme" \
@@ -59,7 +73,45 @@ done
 require_regex '^ARG NODE_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$dockerfile"
 require_regex '^ARG NGINX_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$dockerfile"
 require_fixed '"build:determinism-check": "node scripts/verify-deterministic-release-build.mjs"' "$repo_root/web/package.json"
+require_fixed '"licenses:generate": "node scripts/generate-third-party-notices.mjs --write"' "$repo_root/web/package.json"
+require_fixed '"licenses:check": "node scripts/generate-third-party-notices.mjs --check"' "$repo_root/web/package.json"
+require_fixed '"licenses:check-artifacts": "node scripts/generate-third-party-notices.mjs --check-artifacts"' "$repo_root/web/package.json"
+require_fixed '"licenses:test": "node scripts/test-third-party-notices.mjs"' "$repo_root/web/package.json"
+require_fixed 'vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs' "$repo_root/web/package.json"
+require_fixed '"prebuild": "npm run licenses:check"' "$repo_root/web/package.json"
+require_fixed '"pretest": "npm run licenses:test && npm run licenses:check"' "$repo_root/web/package.json"
 require_fixed 'run: npm run build:determinism-check' "$frontend_workflow"
+require_fixed 'new Set(["index.html", "favicon.ico", "THIRD_PARTY_NOTICES.txt"])' "$repo_root/web/scripts/finalize-production-assets.mjs"
+require_fixed 'npm run licenses:generate' "$operations_readme"
+require_fixed '/THIRD_PARTY_NOTICES.txt' "$operations_readme"
+
+# 生产声明必须覆盖新增的 CSP 兼容运行库与 Spine 特殊许可，且不得混入开发工具。
+require_fixed '@pixi/unsafe-eval@6.5.2 | 声明：MIT' "$third_party_notice"
+require_fixed '@pixi-spine/base@3.1.0 | 声明：SEE SPINE-LICENSE' "$third_party_notice"
+require_fixed '@pixi-spine/runtime-4.1@3.1.0 | 声明：SEE SPINE-LICENSE' "$third_party_notice"
+require_fixed 'vite@8.1.5 [构建器运行码贡献者：Vite 将 modulepreload 与动态加载辅助代码写入生产浏览器分块。] | 声明：MIT' "$third_party_notice"
+require_fixed 'rolldown@1.1.5 [构建器运行码贡献者：Rolldown 将 CommonJS 包装、属性复制和 ESM 互操作辅助代码写入生产浏览器分块。] | 声明：MIT' "$third_party_notice"
+require_fixed 'Copyright (c) 2013-2020, Esoteric Software LLC' "$third_party_notice"
+require_fixed 'Copyright (c) 2013-2019 Mathew Groves, Chad Engler' "$third_party_notice"
+require_fixed 'Copyright (c) 2024-present VoidZero Inc. & Contributors' "$third_party_notice"
+require_fixed 'Copyright (c) 2017 [these people](https://github.com/rollup/rollup/graphs/contributors)' "$third_party_notice"
+require_fixed 'Copyright (c) 2020 Evan Wallace' "$third_party_notice"
+require_fixed 'Vite 将 modulepreload 与动态加载辅助代码写入生产浏览器分块。' "$third_party_override_manifest"
+require_fixed 'Rolldown 将 CommonJS 包装、属性复制和 ESM 互操作辅助代码写入生产浏览器分块。' "$third_party_override_manifest"
+require_fixed '"integrity": "sha512-t9z29cJjXf/vxQ8dyhCSpt6H6aSwHTk8cT5I3iy6SMXuFpk5mB6PL6XfC8PCwrPTx93udwKUm9HRteAlTGBLiA=="' "$third_party_override_manifest"
+require_fixed '"licenseSha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734"' "$third_party_override_manifest"
+require_fixed '"licenseSha256": "743d64c1f8a673ddcfd1740aa81672eac950ad7e63f6ba2d7c39f91dd57c5b99"' "$third_party_override_manifest"
+require_fixed '"sourceRevision": "f09947ab017d6df74299f691853dcfc4f4f0f86e"' "$third_party_override_manifest"
+require_fixed '"rolldown-commonjs-interop"' "$third_party_override_manifest"
+for development_package in vitest typescript ajv; do
+  if grep -E "^- ${development_package}@" "$third_party_notice" >/dev/null; then
+    fail "development-only package leaked into THIRD_PARTY_NOTICES.txt: $development_package"
+  fi
+done
+require_fixed '"licenseSha256": "ae6ec834a618890360d86e5f576b0c69eec21309478ddc2dcc2689043d061ee4"' "$third_party_override_manifest"
+require_fixed '"sourceRevision": "d625529c0edbbeaec7a9209ce299eff284f015d7"' "$third_party_override_manifest"
+test "$(grep -F -c '"licenseSha256": "ae6ec834a618890360d86e5f576b0c69eec21309478ddc2dcc2689043d061ee4"' "$third_party_override_manifest")" -eq 2 \
+  || fail 'both pixi-spine packages must bind the reviewed Spine license digest'
 
 # Dockerfile 专用 ignore 优先于仓库 ignore。允许列表刻意收窄，避免 `COPY web/` 把抓包、
 # 开发者 node_modules 或旧 dist 发送给 BuildKit。
@@ -73,21 +125,27 @@ for allow in \
   '!web/vite.config.ts' \
   '!web/scripts/' \
   '!web/scripts/finalize-production-assets.mjs' \
+  '!web/scripts/generate-third-party-notices.mjs' \
   '!web/scripts/release-manifest.mjs' \
+  '!web/scripts/test-third-party-notices.mjs' \
   '!web/scripts/verify-production-javascript-bundles.mjs' \
   '!web/scripts/verify-release-asset-approval.mjs' \
   '!web/src/' \
   '!web/src/**' \
   '!web/public/' \
   '!web/public/**' \
+  '!web/third-party-licenses/' \
+  '!web/third-party-licenses/SPINE-LICENSE' \
+  '!web/third-party-licenses/overrides.json' \
   '!deploy/' \
   '!deploy/web/' \
   '!deploy/web/nginx.conf' \
+  '!deploy/web/content-security-policy.mjs' \
   '!deploy/web/render-release-nginx.mjs'
 do
   require_line "$allow" "$dockerignore"
 done
-test "$(grep -c '^!' "$dockerignore")" -eq 19 || fail "Dockerfile.dockerignore has an unreviewed re-include rule"
+test "$(grep -c '^!' "$dockerignore")" -eq 25 || fail "Dockerfile.dockerignore has an unreviewed re-include rule"
 
 if grep -E '^!(captures|web/(node_modules|dist)|server|docs)(/|$)' "$dockerignore" >/dev/null; then
   fail "forbidden build-context tree is re-included"
@@ -104,6 +162,8 @@ fi
 require_line 'FROM ${NODE_IMAGE} AS dependencies' "$dockerfile"
 require_line 'FROM dependencies AS static-conformance-build' "$dockerfile"
 require_line 'RUN --network=none npm run build' "$dockerfile"
+require_fixed 'test -s /src/web/dist/THIRD_PARTY_NOTICES.txt && \' "$dockerfile"
+require_fixed 'cmp /src/web/public/THIRD_PARTY_NOTICES.txt /src/web/dist/THIRD_PARTY_NOTICES.txt' "$dockerfile"
 require_line 'FROM dependencies AS release-config-build' "$dockerfile"
 require_line 'FROM release-config-build AS release-build' "$dockerfile"
 for build_arg in \
@@ -125,7 +185,7 @@ release_config_network_none_line=$(printf '%s\134' 'RUN --network=none ')
 require_line "$release_config_network_none_line" "$dockerfile"
 require_fixed '--mount=type=secret,id=release_asset_approval,required=true,target=/run/secrets/release_asset_approval' "$dockerfile"
 require_fixed 'node ./src/validateReleaseRgsBuildConfig.mjs &&' "$dockerfile"
-require_line 'COPY deploy/web/nginx.conf deploy/web/render-release-nginx.mjs /src/release-web/' "$dockerfile"
+require_line 'COPY deploy/web/nginx.conf deploy/web/content-security-policy.mjs deploy/web/render-release-nginx.mjs /src/release-web/' "$dockerfile"
 require_fixed 'node /src/release-web/render-release-nginx.mjs \' "$dockerfile"
 require_fixed '--input /src/release-web/nginx.conf \' "$dockerfile"
 require_fixed '--output /src/web/release-nginx.conf \' "$dockerfile"
@@ -224,6 +284,8 @@ test "$last_stage" = runtime || fail "runtime must remain the default final Dock
 printf '%s\n' "$static_stage" | grep -F 'COPY --from=static-conformance-build --chown=0:0 /src/web/dist/ /usr/share/nginx/html/' >/dev/null || fail "static conformance must copy only its own root-owned dist into the web root"
 printf '%s\n' "$static_stage" | grep -F 'COPY --chown=0:0 deploy/web/nginx.conf /etc/nginx/conf.d/default.conf' >/dev/null || fail "static conformance must retain the root-owned fail-closed nginx policy"
 printf '%s\n' "$runtime_stage" | grep -F 'COPY --from=release-build --chown=0:0 /src/web/dist/ /usr/share/nginx/html/' >/dev/null || fail "runtime must copy only approval-gated root-owned dist into the web root"
+printf '%s\n' "$runtime_stage" | grep -F 'COPY --from=release-build --chown=0:0 /src/web/dist/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt' >/dev/null || fail "runtime must expose the approved third-party notice at the image root"
+printf '%s\n' "$runtime_stage" | grep -F 'cmp /THIRD_PARTY_NOTICES.txt /usr/share/nginx/html/THIRD_PARTY_NOTICES.txt' >/dev/null || fail "runtime must prove the image-root and served third-party notices are identical"
 printf '%s\n' "$runtime_stage" | grep -F 'COPY --from=release-build --chown=0:0 /src/web/release-nginx.conf /etc/nginx/conf.d/default.conf' >/dev/null || fail "runtime must copy only the root-owned release-generated nginx policy"
 printf '%s\n' "$runtime_stage" | grep -F 'RUN --network=none nginx -t' >/dev/null || fail "runtime must parse-check the generated nginx policy without network access"
 printf '%s\n' "$runtime_stage" | grep -F 'org.opencontainers.image.version="${WEB_RELEASE_VERSION}"' >/dev/null || fail "runtime must expose the validated public release version label"
@@ -254,7 +316,7 @@ done
 # 被上传为素材/发布证据。
 require_fixed '--target config-conformance' "$frontend_workflow"
 require_fixed 'slots-web-config-conformance:ci-only-not-release-evidence' "$frontend_workflow"
-require_fixed '--build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid/client/v1' "$frontend_workflow"
+require_fixed '--build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid' "$frontend_workflow"
 require_fixed '--build-arg VITE_RGS_BET_OPTIONS_MINOR=100,200,500' "$frontend_workflow"
 require_fixed '--build-arg VITE_RGS_DEFAULT_BET_MINOR=200' "$frontend_workflow"
 require_fixed '--build-arg VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid' "$frontend_workflow"
@@ -273,7 +335,7 @@ require_fixed 'docker run --detach --read-only \' "$frontend_workflow"
 require_fixed '--tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m' "$frontend_workflow"
 require_fixed '--tmpfs /var/cache/nginx:rw,noexec,nosuid,nodev,size=16m' "$frontend_workflow"
 for fixed_argument in \
-  '--build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid/client/v1' \
+  '--build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid' \
   '--build-arg VITE_RGS_BET_OPTIONS_MINOR=100,200,500' \
   '--build-arg VITE_RGS_DEFAULT_BET_MINOR=200' \
   '--build-arg VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid'
@@ -319,7 +381,9 @@ require_fixed 'add_header Referrer-Policy "strict-origin-when-cross-origin" alwa
 require_fixed 'add_header X-Frame-Options "SAMEORIGIN" always;' "$nginx_conf"
 require_fixed 'add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;' "$nginx_conf"
 require_fixed 'add_header Content-Security-Policy ' "$nginx_conf"
+require_fixed "script-src 'self';" "$nginx_conf"
 require_fixed "connect-src 'self';" "$nginx_conf"
+require_fixed "form-action 'none';" "$nginx_conf"
 require_fixed 'server_tokens off;' "$nginx_conf"
 
 if grep -F 'location ^~ /assets/' "$nginx_conf" >/dev/null; then
@@ -327,6 +391,9 @@ if grep -F 'location ^~ /assets/' "$nginx_conf" >/dev/null; then
 fi
 if grep -E "connect-src[^;]*(ws:|wss:|\*)" "$nginx_conf" >/dev/null; then
   fail "CSP connect-src must not permit wildcard WebSocket origins"
+fi
+if grep -E "script-src[^;]*('unsafe-eval'|'unsafe-inline'|\*|data:|blob:)" "$nginx_conf" >/dev/null; then
+  fail "CSP script-src must allow only self"
 fi
 
 # Nginx 的 location 级 add_header 会取消继承的 server header，因此 Cache-Control
@@ -356,6 +423,7 @@ set -- \
   "$release_manifest" \
   "$repo_root/web/scripts/verify-production-javascript-bundles.mjs" \
   "$repo_root/web/scripts/verify-release-asset-approval.mjs" \
+  "$policy_verifier" \
   "$release_renderer" \
   "$replica_verifier"
 find "$@" -type l -print | grep . >/dev/null && fail "web build input contains a symbolic link"
@@ -373,6 +441,7 @@ fi
 # renderer 单测覆盖 CSP/XFO 语义重复、注释诱饵、URL 注入和 CLI 原子输出；这些检查
 # 在 Docker daemon 不可用时仍必须执行，镜像内 nginx -t 则负责最终语法解析。
 command -v node >/dev/null 2>&1 || fail "node is required to verify the release nginx renderer"
+node --test "$policy_verifier_test" >/dev/null || fail "Content-Security-Policy semantic tests failed"
 node --test "$release_renderer_test" >/dev/null || fail "release nginx renderer tests failed"
 node --test "$replica_verifier_test" >/dev/null || fail "web replica consistency tests failed"
 

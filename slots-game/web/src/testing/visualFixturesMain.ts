@@ -1406,6 +1406,22 @@ if (!isVisualFixtureScenario(scenario)) {
       const publishPerspectiveDiagnostics = (): void => {
         if (!app || destroyed) return;
         const diagnostics = app.getReelPerspectiveDiagnostics();
+        const responsiveFrame = root.querySelector<HTMLElement>('[data-role="frame"]');
+        if (responsiveFrame) {
+          const rectangle = responsiveFrame.getBoundingClientRect();
+          body.dataset.fixtureSurfaceProfile = responsiveFrame.dataset.surfaceProfile ?? "";
+          body.dataset.fixtureDesignSurface = [
+            responsiveFrame.dataset.designWidth ?? "",
+            responsiveFrame.dataset.designHeight ?? "",
+          ].join(",");
+          body.dataset.fixtureLetterboxFrame = [
+            rectangle.left,
+            rectangle.top,
+            rectangle.width,
+            rectangle.height,
+            responsiveFrame.dataset.frameScale ?? "",
+          ].join(",");
+        }
         body.dataset.fixtureReelFilterAppliedFrames = String(diagnostics.appliedFrames);
         body.dataset.fixtureReelFilterAttached = String(diagnostics.attached);
         body.dataset.fixtureReelFilterEnabled = String(diagnostics.enabled);

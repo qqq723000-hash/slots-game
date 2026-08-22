@@ -85,6 +85,11 @@ RGS 还要求一个 32 字节 launch HMAC 密钥，通过 `RGS_LAUNCH_HMAC_KEY_F
 最大五分钟 launch TTL 加 25 小时保留期，再在所有副本上替换它。紧急泄露轮换有意使未完成
 launch 与保留重放失效，因此需要事件 runbook。
 
+钱包使用私有 CA 时，以 `RGS_WALLET_ROOT_CA_FILE` 给每个 RGS 副本只读挂载 PEM 信任根。
+该信任根只进入钱包专用 HTTP 客户端，不替代系统全局信任配置；配置后的文件若缺失、不是普通
+文件、超过 1 MiB 或不含有效证书，RGS 必须失败闭合并拒绝启动。钱包 URL 仍必须使用 HTTPS，
+证书主机名必须与运营商文档中的钱包 base URL 一致，不能用该选项关闭链或主机名验证。
+
 ## 4. 固定请求签名 profile
 
 运营商到 RGS 与 RGS 到钱包的调用使用一个刻意狭窄的 Ed25519 HTTP 消息签名 profile。线上实现不

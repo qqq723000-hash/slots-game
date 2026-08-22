@@ -12,6 +12,26 @@ import { publicAssetUrl } from "../assets/publicAssetUrl";
 import type { GatewayStatus } from "../protocol/GameGateway";
 import type { LaunchPhase } from "../startup/LaunchStateMachine";
 import type { PreloadProgress } from "../startup/PreloadGate";
+import type { ResponsiveLayoutSnapshot } from "../renderer/ResponsiveLayout";
+import {
+  DEFAULT_MINOR_UNIT_FORMATTER,
+  MoneyDisplayBindingError,
+  createMinorUnitFormatter,
+  sameMoneyDisplayBinding,
+  type MinorUnitFormatter,
+} from "../protocol/moneyFormatter";
+import {
+  PRIMAL_HELP_AUTHORING,
+  PRIMAL_HELP_LOCALE_BUNDLES,
+  PRIMAL_HELP_SECTIONS,
+  PRIMAL_PRESENTATION_RULES,
+  PRIMAL_WAY_WINS_COPY,
+  applyPrimalHelpLocaleBundle,
+  bindPrimalPresentationRules,
+  requestedPrimalHelpLocale,
+  resolvePrimalHelpLocale,
+  type PresentationRulesBindingResult,
+} from "./presentationRules";
 
 type SpinHandler = () => void;
 type FastStopHandler = () => void;
@@ -654,6 +674,321 @@ const PRIMAL_REFERENCE_ROOT = publicAssetUrl("assets/primal-reference");
 const POWERED_BY_GM_GO = publicAssetUrl("assets/brand/powered-by-gm-go.png");
 const STATUSBAR_GM_GO = publicAssetUrl("assets/brand/statusbar-gm-go.png");
 
+function officialHelpArtworkMarkup(
+  artwork: readonly {
+    readonly asset: string;
+    readonly alt: string;
+    readonly authoredWidthPx: number;
+    readonly authoredHeightPx: number;
+  }[],
+): string {
+  if (artwork.length === 0) return "";
+  return `
+    <div class="official-help__artwork" aria-label="Feature artwork">
+      ${artwork.map(({ asset, alt, authoredWidthPx, authoredHeightPx }) => `
+        <img
+          src="${PRIMAL_REFERENCE_ROOT}/${asset}"
+          alt="${alt}"
+          style="--official-help-art-width: ${authoredWidthPx}px; --official-help-art-height: ${authoredHeightPx}px"
+        />
+      `).join("")}
+    </div>
+  `;
+}
+
+function officialHelpCopyMarkup(
+  section: typeof PRIMAL_HELP_SECTIONS[number],
+  paragraphIndexes: readonly number[],
+): string {
+  return `
+    <div class="official-help__copy">
+      ${paragraphIndexes.map((index) => `
+        <p
+          data-locale-key="${section.paragraphKeys[index]}"
+          style="--official-help-line-box-height: ${section.paragraphBoxHeightsPx[index]}px"
+        >${section.paragraphs[index]}</p>
+      `).join("")}
+    </div>
+  `;
+}
+
+function officialHelpSectionContentMarkup(
+  section: typeof PRIMAL_HELP_SECTIONS[number],
+): string {
+  const allParagraphs = section.paragraphs.map((_, index) => index);
+  if (section.id === "wild") {
+    return `
+      <div class="wild-paytable" aria-label="Wild multiplier artwork">
+        ${PAYTABLE_WILD_ENTRIES.map(({ label, asset }) => `
+          <figure class="wild-paytable__item">
+            <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} wild symbol" />
+            <figcaption>${label}</figcaption>
+          </figure>
+        `).join("")}
+      </div>
+      ${officialHelpCopyMarkup(section, allParagraphs)}
+    `;
+  }
+  if (section.id === "vault") {
+    return [
+      officialHelpArtworkMarkup(section.artwork.slice(0, 1)),
+      officialHelpCopyMarkup(section, [0, 1]),
+      officialHelpArtworkMarkup(section.artwork.slice(1)),
+      officialHelpCopyMarkup(section, [2]),
+    ].join("");
+  }
+  if (section.id === "kong-quest") {
+    return [
+      officialHelpArtworkMarkup(section.artwork.slice(0, 1)),
+      officialHelpCopyMarkup(section, [0, 1, 2, 3]),
+      officialHelpArtworkMarkup(section.artwork.slice(1, 2)),
+      officialHelpCopyMarkup(section, [4, 5]),
+      officialHelpArtworkMarkup(section.artwork.slice(2)),
+    ].join("");
+  }
+  if (section.id === "king-spin") {
+    return [
+      officialHelpArtworkMarkup(section.artwork.slice(0, 1)),
+      officialHelpCopyMarkup(section, [0, 1, 2]),
+      officialHelpArtworkMarkup(section.artwork.slice(1, 2)),
+      officialHelpCopyMarkup(section, [3, 4]),
+      officialHelpArtworkMarkup(section.artwork.slice(2)),
+    ].join("");
+  }
+  return `${officialHelpArtworkMarkup(section.artwork)}${officialHelpCopyMarkup(
+    section,
+    allParagraphs,
+  )}`;
+}
+
+function officialHelpSectionsMarkup(): string {
+  const features = PRIMAL_HELP_SECTIONS.map((section) => `
+    <article
+      class="official-help__section official-help__section--${section.id}"
+      data-help-section="${section.id}"
+      aria-labelledby="official-help-${section.id}"
+    >
+      <h4 id="official-help-${section.id}" data-locale-key="${section.titleKey}">${section.title}</h4>
+      ${officialHelpSectionContentMarkup(section)}
+    </article>
+  `).join("");
+
+  return `
+    ${features}
+    <section
+      class="base-paytable official-help__section official-help__section--paying-symbols"
+      data-help-section="paying-symbols"
+      aria-labelledby="base-paytable-title"
+    >
+      <h4 id="base-paytable-title" data-locale-key="IDS_PAYINGSYMBOLS_UC">${PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PAYINGSYMBOLS_UC}</h4>
+      <div class="base-paytable__grid">
+        ${BASE_PAYTABLE_ENTRIES.map(({ label, multiplier, asset }) => `
+          <figure class="base-paytable__item">
+            <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} symbol" />
+            <figcaption><strong>${label}</strong><span>${multiplier}× total bet</span></figcaption>
+          </figure>
+        `).join("")}
+      </div>
+    </section>
+    <article
+      class="official-help__section official-help__section--way-wins"
+      data-help-section="way-wins"
+      aria-labelledby="official-help-way-wins"
+    >
+      <h4 id="official-help-way-wins" data-locale-key="IDS_PR_PAYWAYS">${PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PR_PAYWAYS}</h4>
+      <div class="official-help__copy"><p data-locale-key="IDS_PR_WW_LR" style="--official-help-line-box-height: 120px">${PRIMAL_WAY_WINS_COPY}</p></div>
+    </article>
+  `;
+}
+
+export interface OfficialHelpProjectionGeometry {
+  readonly authoredWidthPx: number;
+  readonly authoredHeightPx: number;
+  readonly availableWidthPx: number;
+  readonly scaleX: number;
+  readonly scaleY: number;
+  readonly projectedWidthPx: number;
+  readonly projectedHeightPx: number;
+  /** 投影槽只占缩放后的宽度，因此不会制造水平滚动范围。 */
+  readonly scrollWidthPx: number;
+}
+
+export interface MobileDomLayoutGeometry {
+  readonly orientation: "portrait" | "landscape";
+  readonly edge: number;
+  readonly gap: number;
+  readonly utilityControlSize: number;
+  readonly utilityWidth: number;
+  readonly utilityHeight: number;
+  readonly spinSize: number;
+  readonly roundHeight: number;
+  readonly utilityBottom: number;
+  readonly spinBottom: number;
+  readonly roundBottom: number;
+  readonly roundInlineStart: number;
+  readonly roundInlineEnd: number;
+}
+
+function clampedDomLayoutValue(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+export type MobileStatusMoneyDensity = "normal" | "extreme";
+
+/**
+ * 长金额必须切换为无省略布局；阈值按值本身计算，标签由 CSS 槽位另外预留。
+ */
+export function mobileStatusMoneyDensity(
+  formattedValues: readonly string[],
+): MobileStatusMoneyDensity {
+  return formattedValues.some((value) => value.trim().length > 10) ? "extreme" : "normal";
+}
+
+/**
+ * 移动 DOM HUD 只根据当前连续设计域求解，绝不识别 390/633/844 等设备预设。
+ * Pixi 仍拥有玩法区域；这里仅保证菜单、状态信息和输入控件留在其安全边界内。
+ */
+export function mobileDomLayoutGeometry(
+  designWidth: number,
+  designHeight: number,
+  gameplayHeight: number,
+  statusHeight: number,
+  frameScale = 1,
+): MobileDomLayoutGeometry {
+  const width = Number.isFinite(designWidth) ? Math.max(0, designWidth) : 0;
+  const height = Number.isFinite(designHeight) ? Math.max(0, designHeight) : 0;
+  const gameplay = Number.isFinite(gameplayHeight)
+    ? clampedDomLayoutValue(gameplayHeight, 0, height)
+    : 0;
+  const status = Number.isFinite(statusHeight)
+    ? clampedDomLayoutValue(statusHeight, 0, height - gameplay)
+    : Math.max(0, height - gameplay);
+  const shortEdge = Math.min(width, height);
+  const safeFrameScale = Number.isFinite(frameScale) && frameScale > 0 ? frameScale : 1;
+  const minimumTouchLogicalSize = 44 / safeFrameScale;
+  const orientation = width > height ? "landscape" : "portrait";
+  const edge = clampedDomLayoutValue(shortEdge * 0.024, 8, 18);
+  const gap = clampedDomLayoutValue(shortEdge * 0.018, 5, 10);
+
+  if (orientation === "portrait") {
+    const padding = clampedDomLayoutValue(shortEdge * 0.018, 6, 10);
+    const usableWidth = Math.max(0, width - edge * 2);
+    const desiredControl = Math.max(
+      minimumTouchLogicalSize,
+      clampedDomLayoutValue(Math.min(width * 0.095, height * 0.055), 35, 44),
+    );
+    const controlCapacity = Math.max(0, (usableWidth - gap * 4 - padding * 2) / 5);
+    const utilityControlSize = Math.min(desiredControl, controlCapacity);
+    const contentWidth = utilityControlSize * 5 + gap * 4 + padding * 2;
+    const desiredWidth = Math.min(width * 0.68, 330);
+    const utilityWidth = Math.min(usableWidth, Math.max(contentWidth, desiredWidth));
+    const utilityHeight = Math.min(gameplay, utilityControlSize + padding * 2);
+    const desiredSpin = clampedDomLayoutValue(
+      Math.min(width * 0.23, height * 0.12),
+      86,
+      104,
+    );
+    const spinSize = Math.min(desiredSpin, usableWidth, gameplay);
+    const roundHeight = Math.min(
+      clampedDomLayoutValue(width * 0.075, 28, 34),
+      gameplay,
+    );
+    const utilityBottom = status + edge;
+    const spinBottom = utilityBottom + utilityHeight + gap;
+    const roundBottom = spinBottom + spinSize + gap;
+
+    return Object.freeze({
+      orientation,
+      edge,
+      gap,
+      utilityControlSize,
+      utilityWidth,
+      utilityHeight,
+      spinSize,
+      roundHeight,
+      utilityBottom,
+      spinBottom,
+      roundBottom,
+      roundInlineStart: edge,
+      roundInlineEnd: edge,
+    });
+  }
+
+  const usableGameplayHeight = Math.max(0, gameplay - edge * 2);
+  const padding = clampedDomLayoutValue(shortEdge * 0.02, 6, 10);
+  const desiredControl = Math.max(
+    minimumTouchLogicalSize,
+    clampedDomLayoutValue(Math.min(width * 0.055, height * 0.1), 36, 48),
+  );
+  const controlCapacity = Math.max(
+    0,
+    (usableGameplayHeight - gap * 4 - padding * 2) / 5,
+  );
+  const utilityControlSize = Math.min(desiredControl, controlCapacity);
+  const utilityWidth = Math.min(
+    Math.max(0, width - edge * 2),
+    utilityControlSize + padding * 2,
+  );
+  const utilityHeight = Math.min(
+    usableGameplayHeight,
+    utilityControlSize * 5 + gap * 4 + padding * 2,
+  );
+  const desiredSpin = clampedDomLayoutValue(
+    Math.min(width * 0.128, height * 0.24),
+    78,
+    108,
+  );
+  const spinSize = Math.min(desiredSpin, usableGameplayHeight, Math.max(0, width - edge * 2));
+  const roundHeight = Math.min(
+    clampedDomLayoutValue(height * 0.055, 22, 34),
+    gameplay,
+  );
+
+  return Object.freeze({
+    orientation,
+    edge,
+    gap,
+    utilityControlSize,
+    utilityWidth,
+    utilityHeight,
+    spinSize,
+    roundHeight,
+    utilityBottom: 0,
+    spinBottom: 0,
+    roundBottom: status + edge,
+    roundInlineStart: edge + utilityWidth + gap,
+    roundInlineEnd: edge + spinSize + gap,
+  });
+}
+
+/**
+ * 750px 作者坐标只在这一层做一次各向同性投影。字体、换行盒和网格始终保留作者尺寸。
+ */
+export function officialHelpProjectionGeometry(
+  availableWidthPx: number,
+  authoredHeightPx: number,
+): OfficialHelpProjectionGeometry {
+  const available = Number.isFinite(availableWidthPx) ? Math.max(0, availableWidthPx) : 0;
+  const authoredHeight = Number.isFinite(authoredHeightPx) ? Math.max(0, authoredHeightPx) : 0;
+  const scale = Math.min(1, available / PRIMAL_HELP_AUTHORING.logicalWidthPx);
+  // IEEE-754 可能把 `750 * (available / 750)` 舍入到 available 右侧几个 ulp；
+  // 物理滚动边界必须严格封闭，不能把这个误差发布成水平滚动范围。
+  const projectedWidth = Math.min(
+    available,
+    PRIMAL_HELP_AUTHORING.logicalWidthPx * scale,
+  );
+  return Object.freeze({
+    authoredWidthPx: PRIMAL_HELP_AUTHORING.logicalWidthPx,
+    authoredHeightPx: authoredHeight,
+    availableWidthPx: available,
+    scaleX: scale,
+    scaleY: scale,
+    projectedWidthPx: projectedWidth,
+    projectedHeightPx: authoredHeight * scale,
+    scrollWidthPx: projectedWidth,
+  });
+}
+
 /**
  * 将抓取到的原版 1600×900 闪光灯坐标按 0.8 比例投影到本项目 1280×720 舞台。
  */
@@ -661,9 +996,9 @@ export const PRIMAL_DESKTOP_UI_GEOMETRY = Object.freeze({
   stageScale: 0.8,
   statusbar: Object.freeze({
     sourceHeight: 30,
-    height: 16,
+    height: 24,
     sourceFontSize: 18,
-    fontSize: 12.8,
+    fontSize: 14.4,
     gameNameSourceFontSize: 16,
     gameNameFontSize: 8,
     atlasWidth: 1_865,
@@ -794,11 +1129,12 @@ export function ordinaryWinInformationPresentation(
   state: OrdinaryWinInformationState,
   currentMinor: MoneyMinor,
   totalMinor: MoneyMinor,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): RoundStatePresentation | null {
   if (!/^(0|[1-9]\d*)$/.test(currentMinor) || !/^[1-9]\d*$/.test(totalMinor)) return null;
   if (BigInt(currentMinor) > BigInt(totalMinor)) return null;
   const visibleMinor = state === "settled" ? totalMinor : currentMinor;
-  const amount = formatMinor(visibleMinor);
+  const amount = formatter.format(visibleMinor);
   if (state === "counting") {
     return {
       visualText: `WIN: ${amount}`,
@@ -827,8 +1163,9 @@ export function bigWinCongratulationsPresentation(): RoundStatePresentation {
  */
 export function wheelBonusRoundSummaryPresentation(
   totalWinMinor: MoneyMinor,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): RoundStatePresentation {
-  const total = formatMinor(totalWinMinor);
+  const total = formatter.format(totalWinMinor);
   return {
     visualText: `WIN: ${total}`,
     visualSecondaryText: "Congratulations!",
@@ -840,6 +1177,7 @@ export function wheelBonusRoundSummaryPresentation(
 /** 主信息行显示官方无摘要 Free Spins 结果副本。 */
 export function freeSpinConclusionPresentation(
   cumulativeWinMinor: MoneyMinor,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): RoundStatePresentation {
   const hasWin = /^(0|[1-9]\d*)$/.test(cumulativeWinMinor)
     && BigInt(cumulativeWinMinor) > 0n;
@@ -848,7 +1186,7 @@ export function freeSpinConclusionPresentation(
       ? "FREE SPINS CONCLUDED"
       : "NO WIN, FREE SPINS CONCLUDED",
     accessibleText: hasWin
-      ? `Free Spins concluded. ${formatMinor(cumulativeWinMinor)} won.`
+      ? `Free Spins concluded. ${formatter.format(cumulativeWinMinor)} won.`
       : "No win. Free Spins concluded.",
   };
 }
@@ -883,18 +1221,6 @@ export function roundStatePresentation(
   };
 }
 
-function formatMinor(value: MoneyMinor): string {
-  const normalized = value.padStart(3, "0");
-  const whole = normalized.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${whole}.${normalized.slice(-2)}`;
-}
-
-/** 捕获的 16px 状态条从不插入千位分隔符。 */
-function formatStatusMinor(value: MoneyMinor): string {
-  const normalized = value.padStart(3, "0");
-  return `${normalized.slice(0, -2)}.${normalized.slice(-2)}`;
-}
-
 /** 奖池金额是权威投注的显示预测。 */
 export function jackpotValuesForBet(betMinor: MoneyMinor): MoneyMinor[] {
   if (!/^(0|[1-9]\d*)$/.test(betMinor)) return JACKPOT_TIERS.map(() => "0");
@@ -912,7 +1238,10 @@ export function betTickerWindow(
   return options.slice(Math.max(0, selectedIndex - 1), selectedIndex + 2);
 }
 
-function eventTitle(event: FeatureEvent): string {
+function eventTitle(
+  event: FeatureEvent,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
+): string {
   switch (event.type) {
     case "surge.collected":
       if (event.guaranteed) return `Core lock · ${event.count}/3 · wheel guaranteed`;
@@ -950,7 +1279,7 @@ function eventTitle(event: FeatureEvent): string {
     case "free_spin.cap_reached":
       return "Free Spin limit reached";
     case "free_spins.completed":
-      return `${event.mode} complete · ${formatMinor(event.cumulativeWinMinor)} won`;
+      return `${event.mode} complete · ${formatter.format(event.cumulativeWinMinor)} won`;
   }
 }
 
@@ -991,6 +1320,9 @@ export class DomOverlay {
   private readonly paytableButton: HTMLButtonElement;
   private readonly sound: HTMLButtonElement;
   private readonly gameMenu: HTMLElement;
+  private readonly officialHelpViewport: HTMLElement;
+  private readonly officialHelpProjection: HTMLElement;
+  private readonly officialHelpAuthoredSurface: HTMLElement;
   private readonly gameMenuClose: HTMLButtonElement;
   private readonly gameMenuTabs: readonly HTMLButtonElement[];
   private readonly gameMenuPanels: readonly HTMLElement[];
@@ -1018,6 +1350,13 @@ export class DomOverlay {
   private readonly hudElements: readonly HTMLElement[];
   /** 交互式 HUD 区域在打开的对话框后面必须不可用。 */
   private readonly modalBackground: readonly HTMLElement[];
+  /** 与当前 sessionId 一起锁定；同一会话不得热切换金额解释。 */
+  private moneySessionId: string | null = null;
+  private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
+  /** 首次观察到的玩法表现绑定保持冻结；同会话任何字段漂移都会关闭固定文案。 */
+  private presentationRulesBinding: Readonly<PresentationRulesBindingResult> | null = null;
+  /** 页面启动时冻结的运营商语言请求；同一会话不得随 DOM 或 URL 漂移。 */
+  private readonly requestedHelpLocale: string;
   private betOptions: MoneyMinor[] = [];
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private winCounterAnimation: {
@@ -1070,9 +1409,48 @@ export class DomOverlay {
   private previewContinueHandler: PreviewContinueHandler = () => undefined;
   private soundToggleHandler: SoundToggleHandler = () => undefined;
   private fastPlayHandler: FastPlayHandler = () => undefined;
+  private officialHelpResizeObserver: ResizeObserver | null = null;
+  private officialHelpResizeFrameHandle: number | null = null;
+  private officialHelpResizeGeneration = 0;
+  private destroyed = false;
+  private readonly handleOfficialHelpResize = (): void => {
+    this.scheduleObservedLayoutSync();
+  };
+
+  /**
+   * ResizeObserver 回调内同步修改 host/帮助视口会重新触发布局观察。把 observer
+   * 和 window.resize 的兜底通知收敛到同一动画帧，显式 ResponsiveLayout 提交
+   * 则继续走同步的 setResponsiveLayout 路径。
+   */
+  private scheduleObservedLayoutSync(): void {
+    if (this.destroyed || this.officialHelpResizeFrameHandle !== null) return;
+    const generation = this.officialHelpResizeGeneration;
+    this.officialHelpResizeFrameHandle = requestAnimationFrame(() => {
+      if (this.destroyed || generation !== this.officialHelpResizeGeneration) return;
+      try {
+        this.syncMobileDomLayout();
+        this.syncOfficialHelpProjection();
+      } finally {
+        if (generation === this.officialHelpResizeGeneration) {
+          this.officialHelpResizeFrameHandle = null;
+        }
+      }
+    });
+  }
+
+  private cancelObservedLayoutSync(): void {
+    const handle = this.officialHelpResizeFrameHandle;
+    this.officialHelpResizeFrameHandle = null;
+    this.officialHelpResizeGeneration += 1;
+    if (handle !== null) cancelAnimationFrame(handle);
+  }
 
   constructor(host: HTMLElement) {
     this.host = host;
+    this.requestedHelpLocale = requestedPrimalHelpLocale({
+      search: window.location.search,
+      documentLanguage: document.documentElement.lang,
+    });
     host.innerHTML = `
       <div class="launch-loading" data-role="launch-loading" aria-live="polite">
         <div class="launch-loading__mark" aria-hidden="true">
@@ -1128,7 +1506,12 @@ export class DomOverlay {
             <span>Continue</span>
           </button>
           <label class="feature-preview__opt-out">
-            <input data-role="preview-opt-out" type="checkbox" />
+            <input
+              id="feature-preview-opt-out"
+              name="featurePreviewOptOut"
+              data-role="preview-opt-out"
+              type="checkbox"
+            />
             <i aria-hidden="true"></i>
             <span>Don't show again</span>
           </label>
@@ -1188,6 +1571,8 @@ export class DomOverlay {
         class="game-menu"
         data-role="game-menu"
         data-open="false"
+        data-presentation-rules-status="missing-binding"
+        data-presentation-rules-version="${PRIMAL_PRESENTATION_RULES.version}"
         role="dialog"
         aria-modal="true"
         aria-labelledby="game-menu-title"
@@ -1261,32 +1646,28 @@ export class DomOverlay {
             aria-label="Paytable"
             hidden
           >
-            <p class="game-menu__eyebrow">Multiplier wilds</p>
-            <h3>Win up to 2500x your bet!</h3>
-            <section class="base-paytable" aria-labelledby="base-paytable-title">
-              <h4 id="base-paytable-title">Base game · 27 ways</h4>
-              <p>Three matching symbols on adjacent reels from left to right pay the amount shown for every winning way.</p>
-              <div class="base-paytable__grid">
-                ${BASE_PAYTABLE_ENTRIES.map(({ label, multiplier, asset }) => `
-                  <figure class="base-paytable__item">
-                    <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} symbol" />
-                    <figcaption><strong>${label}</strong><span>${multiplier}× total bet</span></figcaption>
-                  </figure>
-                `).join("")}
+            <p class="game-menu__eyebrow">Official feature guide</p>
+            <h3>Primal Rampage</h3>
+            <div
+              class="official-help-viewport"
+              data-role="presentation-rules-content"
+              data-presentation-rules-version="${PRIMAL_PRESENTATION_RULES.version}"
+              data-help-locale="${PRIMAL_PRESENTATION_RULES.locale}"
+              data-advertised-locales="${PRIMAL_PRESENTATION_RULES.advertisedLocales.join(",")}"
+              hidden
+            >
+              <div class="official-help-projection" data-role="official-help-projection">
+                <div class="official-help" data-role="official-help-authored-surface">
+                  ${officialHelpSectionsMarkup()}
+                  <p class="presentation-rules-meta">
+                    ${PRIMAL_PRESENTATION_RULES.version} · exact session definition binding required
+                  </p>
+                </div>
               </div>
-            </section>
-            <h4 class="wild-paytable__title">Wild</h4>
-            <div class="wild-paytable" aria-label="Wild multiplier artwork">
-              ${PAYTABLE_WILD_ENTRIES.map(({ label, asset }) => `
-                <figure class="wild-paytable__item">
-                  <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} wild symbol" />
-                  <figcaption>${label}</figcaption>
-                </figure>
-              `).join("")}
             </div>
-            <div class="paytable-notes">
-              <article><strong>Primal Wheel</strong><p>The wheel presentation is shown only when the authoritative server result includes a wheel event.</p></article>
-              <article><strong>Expanding Reels</strong><p>Free-spin reel expansion follows the feature state supplied with the server result.</p></article>
+            <div class="presentation-rules-unavailable" data-role="presentation-rules-unavailable">
+              <strong>Feature guide unavailable</strong>
+              <p>This fixed guide is shown only for a session definition explicitly approved by this client build.</p>
             </div>
           </section>
           <section
@@ -1297,13 +1678,17 @@ export class DomOverlay {
             aria-label="Game rules"
             hidden
           >
-            <p class="game-menu__eyebrow">Authoritative server rules</p>
+            <p class="game-menu__eyebrow">Session-bound presentation</p>
             <h3>Game rules</h3>
-            <div class="rules-card">
+            <div class="rules-card" data-role="presentation-rules-summary" hidden>
               <p>Round outcomes, balances, available bets and feature events are supplied by the authoritative RGS and validated before presentation.</p>
-              <p>The 3×3 base grid evaluates all 27 left-to-right Ways. Three matching paying symbols on adjacent reels award the displayed per-way multiplier; there is no fixed single payline.</p>
-              <p>RTP, volatility, reel weights, limits and operator terms are bound to the approved server definition and operator session for this deployment.</p>
-              <p>Use Spin to request a round. Any displayed Wild multiplier or feature sequence reflects the result received from the server; this menu never creates outcomes.</p>
+              <p>This feature guide is fixed to ${PRIMAL_PRESENTATION_RULES.version} and is enabled only when the game, definition version and complete SHA-256 identity match its explicit allow-list.</p>
+              <p>A changed mathematical definition requires a reviewed presentationRules revision; this client never assumes that another definition is compatible.</p>
+              <p>Use Spin to request a round. The menu presents rules but never creates or changes an outcome.</p>
+            </div>
+            <div class="rules-card presentation-rules-unavailable" data-role="presentation-rules-unavailable-rules">
+              <strong>Game rules unavailable</strong>
+              <p>The current session has not matched this client build's fixed presentationRules identity.</p>
             </div>
           </section>
         </div>
@@ -1469,6 +1854,8 @@ export class DomOverlay {
               <label class="autoplay-stop-condition">
                 <span>${label}</span>
                 <input
+                  id="autoplay-stop-${boundary}"
+                  name="autoplayStopConditions"
                   type="checkbox"
                   data-autoplay-stop-boundary="${boundary}"
                   aria-label="${label}"
@@ -1547,7 +1934,15 @@ export class DomOverlay {
           <strong data-role="bet-trigger-value">—</strong>
           <i aria-hidden="true"></i>
         </button>
-        <select class="bet-control--native" data-role="bet" aria-hidden="true" tabindex="-1" disabled>
+        <select
+          id="bet-control-native"
+          name="betMinor"
+          class="bet-control--native"
+          data-role="bet"
+          aria-hidden="true"
+          tabindex="-1"
+          disabled
+        >
           <option value="">—</option>
         </select>
         <button
@@ -1590,15 +1985,15 @@ export class DomOverlay {
           draggable="false"
         />
         <div class="status-metric status-metric--balance">
-          <span>Balance:</span>
+          <span class="status-metric__label">Balance:&#32;</span>
           <strong data-role="balance">—</strong>
         </div>
         <div class="status-metric status-metric--bet">
-          <span>Bet:</span>
+          <span class="status-metric__label">Bet:&#32;</span>
           <strong data-role="bet-status">—</strong>
         </div>
         <div class="status-metric status-metric--win">
-          <span>Win:</span>
+          <span class="status-metric__label">Win:&#32;</span>
           <strong data-role="last-win" data-zero="true">0.00</strong>
         </div>
         <span class="status-panel__game">Primal Rampage</span>
@@ -1666,6 +2061,9 @@ export class DomOverlay {
     this.paytableButton = this.require(host, "paytable") as HTMLButtonElement;
     this.sound = this.require(host, "sound") as HTMLButtonElement;
     this.gameMenu = this.require(host, "game-menu");
+    this.officialHelpViewport = this.require(host, "presentation-rules-content");
+    this.officialHelpProjection = this.require(host, "official-help-projection");
+    this.officialHelpAuthoredSurface = this.require(host, "official-help-authored-surface");
     this.gameMenuClose = this.require(host, "game-menu-close") as HTMLButtonElement;
     this.gameMenuTabs = [...host.querySelectorAll<HTMLButtonElement>("[data-menu-tab]")];
     this.gameMenuPanels = [...host.querySelectorAll<HTMLElement>("[data-menu-panel]")];
@@ -1768,6 +2166,14 @@ export class DomOverlay {
       this.previewContinueHandler();
     });
     document.addEventListener("keydown", this.handleKeyDown);
+    if (typeof ResizeObserver === "function") {
+      this.officialHelpResizeObserver = new ResizeObserver(this.handleOfficialHelpResize);
+      this.officialHelpResizeObserver.observe(this.host);
+      this.officialHelpResizeObserver.observe(this.officialHelpViewport);
+      this.officialHelpResizeObserver.observe(this.officialHelpAuthoredSurface);
+    }
+    window.addEventListener("resize", this.handleOfficialHelpResize);
+    this.syncMobileDomLayout();
     this.setHudReveal(0);
   }
 
@@ -2077,15 +2483,181 @@ export class DomOverlay {
     this.roundState.style.setProperty("--launch-shift-y", `${(1 - soft) * 18}px`);
   }
 
+  private activeMoneyFormatter(): MinorUnitFormatter {
+    // 部分纯表现单元测试通过 Object.create 构造原型夹具；该回退只服务于尚未绑定会话的壳。
+    return this.moneyFormatter ?? DEFAULT_MINOR_UNIT_FORMATTER;
+  }
+
+  private publishMoneyBinding(formatter: MinorUnitFormatter): void {
+    if (!this.statusPanel?.dataset) return;
+    this.statusPanel.dataset.currency = formatter.currency;
+    this.statusPanel.dataset.currencyExponent = String(formatter.currencyExponent);
+  }
+
+  private syncOfficialHelpProjection(): void {
+    if (this.officialHelpViewport.hidden) return;
+    const availableWidth = this.officialHelpViewport.clientWidth;
+    const authoredHeight = this.officialHelpAuthoredSurface.scrollHeight;
+    if (availableWidth <= 0 || authoredHeight <= 0) return;
+    const geometry = officialHelpProjectionGeometry(availableWidth, authoredHeight);
+    const scale = geometry.scaleX.toFixed(8);
+    this.officialHelpProjection.style.width = `${geometry.projectedWidthPx}px`;
+    this.officialHelpProjection.style.height = `${geometry.projectedHeightPx}px`;
+    this.officialHelpProjection.style.setProperty("--official-help-scale", scale);
+    this.officialHelpProjection.dataset.scaleX = scale;
+    this.officialHelpProjection.dataset.scaleY = scale;
+    this.officialHelpProjection.dataset.authoredWidth = String(geometry.authoredWidthPx);
+    this.officialHelpViewport.dataset.horizontalOverflow = String(
+      geometry.scrollWidthPx > geometry.availableWidthPx,
+    );
+  }
+
+  /** ResponsiveLayout 的同一提交直接驱动 HUD；ResizeObserver 只保留为内容变化兜底。 */
+  setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
+    if (this.destroyed) return;
+    this.syncMobileDomLayout(snapshot);
+    this.syncOfficialHelpProjection();
+  }
+
+  private syncMobileDomLayout(snapshot?: ResponsiveLayoutSnapshot): void {
+    const properties = [
+      "--mobile-hud-edge",
+      "--mobile-control-gap",
+      "--mobile-utility-control-size",
+      "--mobile-utility-width",
+      "--mobile-utility-height",
+      "--mobile-spin-size",
+      "--mobile-round-height",
+      "--mobile-utility-bottom",
+      "--mobile-spin-bottom",
+      "--mobile-round-bottom",
+      "--mobile-round-inline-start",
+      "--mobile-round-inline-end",
+    ] as const;
+    const frame = this.host.closest<HTMLElement>(".game-frame");
+    const channel = snapshot?.channel ?? frame?.dataset.channel;
+    if (!frame || channel !== "mobile") {
+      for (const property of properties) this.host.style.removeProperty(property);
+      delete this.host.dataset.domOrientation;
+      return;
+    }
+
+    const width = snapshot?.viewportRegion.width ?? frame.clientWidth;
+    const height = snapshot?.viewportRegion.height ?? frame.clientHeight;
+    if (width <= 0 || height <= 0) return;
+    const frameStyle = snapshot ? null : getComputedStyle(frame);
+    const cssPixels = (property: string): number => {
+      const value = Number.parseFloat(frameStyle?.getPropertyValue(property) ?? "");
+      return Number.isFinite(value) ? Math.max(0, value) : 0;
+    };
+    const gameplayHeight = snapshot?.gameplayRegion.height ?? cssPixels("--gameplay-height");
+    const statusHeight = snapshot?.statusRegion.height ?? cssPixels("--status-height");
+    if (gameplayHeight <= 0 || gameplayHeight + statusHeight > height + 0.01) return;
+
+    const geometry = mobileDomLayoutGeometry(
+      width,
+      height,
+      gameplayHeight,
+      statusHeight,
+      snapshot?.frame.scale ?? Number.parseFloat(frame.dataset.frameScale ?? "1"),
+    );
+    const values = [
+      geometry.edge,
+      geometry.gap,
+      geometry.utilityControlSize,
+      geometry.utilityWidth,
+      geometry.utilityHeight,
+      geometry.spinSize,
+      geometry.roundHeight,
+      geometry.utilityBottom,
+      geometry.spinBottom,
+      geometry.roundBottom,
+      geometry.roundInlineStart,
+      geometry.roundInlineEnd,
+    ] as const;
+    properties.forEach((property, index) => {
+      this.host.style.setProperty(property, `${values[index]}px`);
+    });
+    this.host.dataset.domOrientation = geometry.orientation;
+  }
+
+  private bindSessionPresentationRules(session: SessionOpened): void {
+    this.presentationRulesBinding = bindPrimalPresentationRules(
+      this.presentationRulesBinding ?? null,
+      session,
+      this.requestedHelpLocale,
+    );
+    const menu = (this as unknown as { gameMenu?: HTMLElement }).gameMenu;
+    if (!menu || typeof menu.querySelector !== "function") return;
+
+    let localeDomReady = false;
+    if (this.presentationRulesBinding.status === "bound") {
+      try {
+        const resolution = resolvePrimalHelpLocale(this.requestedHelpLocale);
+        applyPrimalHelpLocaleBundle(this.officialHelpAuthoredSurface, resolution);
+        this.officialHelpViewport.dataset.helpLocale = resolution.locale;
+        localeDomReady = true;
+      } catch {
+        // 缺 bundle、字体或 DOM key 时保持帮助页关闭，绝不展示半更新文案。
+      }
+    }
+    const bound = this.presentationRulesBinding.status === "bound" && localeDomReady;
+    const setHidden = (role: string, hidden: boolean): void => {
+      const element = menu.querySelector<HTMLElement>(`[data-role="${role}"]`);
+      if (element) element.hidden = hidden;
+    };
+    setHidden("presentation-rules-content", !bound);
+    setHidden("presentation-rules-summary", !bound);
+    setHidden("presentation-rules-unavailable", bound);
+    setHidden("presentation-rules-unavailable-rules", bound);
+    menu.dataset.presentationRulesStatus = this.presentationRulesBinding.status === "bound"
+      && !localeDomReady
+      ? "locale-unavailable"
+      : this.presentationRulesBinding.status;
+    menu.dataset.presentationRulesVersion = PRIMAL_PRESENTATION_RULES.version;
+    menu.dataset.presentationRulesLocale = this.presentationRulesBinding.record.locale;
+    menu.dataset.presentationRulesRequestedLocale = this.presentationRulesBinding.record.requestedLocale;
+    if (bound) queueMicrotask(() => this.syncOfficialHelpProjection());
+  }
+
+  private bindSessionMoneyFormatter(session: SessionOpened): void {
+    const next = createMinorUnitFormatter(session);
+    const currentSessionId = this.moneySessionId;
+    if (typeof currentSessionId === "string"
+      && currentSessionId === session.sessionId
+      && !sameMoneyDisplayBinding(this.activeMoneyFormatter(), next)) {
+      // 先抛错、后写入：任何调用者即使捕获异常，也看不到半更新的 Balance/Bet/Win。
+      throw new MoneyDisplayBindingError("session money display binding changed");
+    }
+    this.moneySessionId = session.sessionId;
+    this.moneyFormatter = next;
+    this.publishMoneyBinding(next);
+  }
+
+  private assertSnapshotMoneyBinding(snapshot: GameSnapshot): void {
+    const next = createMinorUnitFormatter(snapshot);
+    if (typeof this.moneySessionId !== "string") {
+      this.moneyFormatter = next;
+      this.publishMoneyBinding(next);
+      return;
+    }
+    if (!sameMoneyDisplayBinding(this.activeMoneyFormatter(), next)) {
+      throw new MoneyDisplayBindingError("snapshot money display binding does not match its session");
+    }
+  }
+
   applySession(session: SessionOpened): void {
+    this.bindSessionMoneyFormatter(session);
+    this.bindSessionPresentationRules(session);
+    const formatter = this.activeMoneyFormatter();
     if (this.autoplayStopSessionId !== session.sessionId) {
       this.resetAutoplayStopSession(session.sessionId);
     }
-    this.balance.textContent = formatStatusMinor(session.balanceMinor);
+    this.balance.textContent = formatter.format(session.balanceMinor, false);
     this.bet.replaceChildren(...session.betOptionsMinor.map((value) => {
       const option = document.createElement("option");
       option.value = value;
-      option.textContent = formatMinor(value);
+      option.textContent = formatter.format(value);
       option.selected = value === session.defaultBetMinor;
       return option;
     }));
@@ -2095,7 +2667,8 @@ export class DomOverlay {
   }
 
   applySnapshot(snapshot: GameSnapshot): void {
-    this.balance.textContent = formatStatusMinor(snapshot.balanceMinor);
+    this.assertSnapshotMoneyBinding(snapshot);
+    this.balance.textContent = this.activeMoneyFormatter().format(snapshot.balanceMinor, false);
     this.setLastWin(snapshot.lastWinMinor);
     this.bet.value = snapshot.selectedBetMinor;
     this.syncBetChoices();
@@ -2105,7 +2678,7 @@ export class DomOverlay {
   applyResult(result: SpinResult): void {
     this.armAutoplayStopRound(result);
     this.cancelWinCounter();
-    this.balance.textContent = formatStatusMinor(result.balanceMinor);
+    this.balance.textContent = this.activeMoneyFormatter().format(result.balanceMinor, false);
     this.setLastWin(visibleWinMinorForResult(result));
     this.showFeatureState(result.featureState);
   }
@@ -2183,8 +2756,8 @@ export class DomOverlay {
   }
 
   private setLastWin(amountMinor: MoneyMinor): void {
-    const formatted = formatStatusMinor(amountMinor);
-    const zero = formatted === "0.00";
+    const formatted = this.activeMoneyFormatter().format(amountMinor, false);
+    const zero = amountMinor === "0";
     this.lastWin.textContent = formatted;
     if (this.lastWin.dataset) {
       this.lastWin.dataset.zero = String(zero);
@@ -2192,7 +2765,17 @@ export class DomOverlay {
     if (this.statusPanel?.dataset) {
       this.statusPanel.dataset.zeroWin = String(zero);
     }
+    this.syncStatusMoneyDensity();
     this.syncStatusGameNameProjection();
+  }
+
+  private syncStatusMoneyDensity(): void {
+    if (!this.statusPanel?.dataset) return;
+    this.statusPanel.dataset.moneyDensity = mobileStatusMoneyDensity([
+      this.balance?.textContent ?? "",
+      this.betStatus?.textContent ?? "",
+      this.lastWin?.textContent ?? "",
+    ]);
   }
 
   /**
@@ -2273,7 +2856,10 @@ export class DomOverlay {
   /** 通过以下就绪刷新保存返回的网格主赢副本。 */
   showWheelBonusRoundSummary(totalWinMinor: MoneyMinor): void {
     this.heldOrdinaryWinRoundState = null;
-    this.heldWheelBonusRoundState = wheelBonusRoundSummaryPresentation(totalWinMinor);
+    this.heldWheelBonusRoundState = wheelBonusRoundSummaryPresentation(
+      totalWinMinor,
+      this.activeMoneyFormatter(),
+    );
     this.applyRoundState(this.heldWheelBonusRoundState);
   }
 
@@ -2286,7 +2872,10 @@ export class DomOverlay {
   /** 替换就绪提示，直到下一轮状态转换。 */
   showFreeSpinConclusion(cumulativeWinMinor: MoneyMinor): void {
     this.heldOrdinaryWinRoundState = null;
-    this.applyRoundState(freeSpinConclusionPresentation(cumulativeWinMinor));
+    this.applyRoundState(freeSpinConclusionPresentation(
+      cumulativeWinMinor,
+      this.activeMoneyFormatter(),
+    ));
   }
 
   /** 在 Base 退出之前将活动区域与接受的终端事件对齐。 */
@@ -2296,7 +2885,7 @@ export class DomOverlay {
       event.mode,
       `${event.awarded}/${event.awarded} complete`,
       "0 remaining",
-      `${formatMinor(event.cumulativeWinMinor)} won`,
+      `${this.activeMoneyFormatter().format(event.cumulativeWinMinor)} won`,
     ].join(" · ");
     this.feature.dataset.visible = "true";
   }
@@ -2355,7 +2944,7 @@ export class DomOverlay {
   }
 
   async announceEvent(event: FeatureEvent, durationMs = 620): Promise<void> {
-    this.feature.textContent = eventTitle(event);
+    this.feature.textContent = eventTitle(event, this.activeMoneyFormatter());
     this.feature.dataset.visible = "true";
     await new Promise((resolve) => setTimeout(resolve, durationMs));
     this.feature.dataset.visible = "false";
@@ -2372,6 +2961,9 @@ export class DomOverlay {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.cancelObservedLayoutSync();
     this.cancelWinCounter();
     this.clearAutoplayTimer();
     this.wheelHyperspinEffect.destroy();
@@ -2383,6 +2975,9 @@ export class DomOverlay {
     this.autoplayOptions.removeEventListener("keydown", this.handleAutoplayOptionKeyDown);
     this.autoplayStopToggle.removeEventListener("click", this.handleAutoplayStopToggle);
     this.autoplayStopConditions.removeEventListener("change", this.handleAutoplayStopConditionChange);
+    this.officialHelpResizeObserver?.disconnect();
+    this.officialHelpResizeObserver = null;
+    window.removeEventListener("resize", this.handleOfficialHelpResize);
     if (this.toastTimer) clearTimeout(this.toastTimer);
   }
 
@@ -2417,7 +3012,12 @@ export class DomOverlay {
     currentMinor: MoneyMinor,
     totalMinor: MoneyMinor,
   ): void {
-    const presentation = ordinaryWinInformationPresentation(state, currentMinor, totalMinor);
+    const presentation = ordinaryWinInformationPresentation(
+      state,
+      currentMinor,
+      totalMinor,
+      this.activeMoneyFormatter(),
+    );
     if (!presentation) return;
     this.heldOrdinaryWinRoundState = presentation;
     this.resultPresentationSuppressesSpinCopy = true;
@@ -2662,6 +3262,9 @@ export class DomOverlay {
       this.panelLifecycle.setVisible(previousTab, false);
       this.panelLifecycle.setVisible(tab, true);
     }
+    // 菜单从 inert/隐藏切为可见后，纵向滚动条才拥有最终宽度；下一帧按最终
+    // clientWidth 重算作者面，避免沿用打开前的宽投影而裁掉右缘。
+    if (tab === "paytable") this.scheduleObservedLayoutSync();
   }
 
   private setGameMenuOpen(open: boolean, tab = this.activeMenuTab, restoreFocus = true): void {
@@ -2887,10 +3490,10 @@ export class DomOverlay {
       choice.className = "bet-choice";
       choice.classList.toggle("is-selected", selected);
       choice.dataset.value = value;
-      choice.textContent = formatMinor(value);
+      choice.textContent = this.activeMoneyFormatter().format(value);
       choice.disabled = !this.canChangeBet;
       choice.setAttribute("role", "radio");
-      choice.setAttribute("aria-label", `Bet ${formatMinor(value)}`);
+      choice.setAttribute("aria-label", `Bet ${this.activeMoneyFormatter().format(value)}`);
       choice.setAttribute("aria-checked", String(selected));
       choice.tabIndex = selected ? 0 : -1;
       return choice;
@@ -2913,10 +3516,15 @@ export class DomOverlay {
   }
 
   private syncBetChoices(): void {
-    const formatted = this.bet.value ? formatMinor(this.bet.value) : "—";
+    const formatted = this.bet.value
+      ? this.activeMoneyFormatter().format(this.bet.value)
+      : "—";
     this.betTriggerValue.textContent = formatted;
     this.betTrigger.setAttribute("aria-label", `Total bet ${formatted}`);
-    this.betStatus.textContent = this.bet.value ? formatStatusMinor(this.bet.value) : "—";
+    this.betStatus.textContent = this.bet.value
+      ? this.activeMoneyFormatter().format(this.bet.value, false)
+      : "—";
+    this.syncStatusMoneyDensity();
     this.renderBetTicker();
     const selectedIndex = this.betOptions.indexOf(this.bet.value);
     this.betDecrease.disabled = !this.canChangeBet || selectedIndex <= 0;
@@ -2924,7 +3532,9 @@ export class DomOverlay {
     const jackpotValues = jackpotValuesForBet(this.bet.value || "0");
     this.host.querySelectorAll<HTMLElement>('[data-role="jackpot-value"]').forEach((element, index) => {
       const value = jackpotValues[index];
-      element.textContent = value === undefined ? "—" : formatMinor(value);
+      element.textContent = value === undefined
+        ? "—"
+        : this.activeMoneyFormatter().format(value);
     });
   }
 
@@ -2993,7 +3603,9 @@ export class DomOverlay {
     const played = state.freeSpinsPlayed ?? 0;
     const total = played + state.freeSpinsRemaining;
     this.feature.dataset.mode = state.mode.toLowerCase();
-    const win = state.freeSpinsWinMinor === undefined ? "" : ` · ${formatMinor(state.freeSpinsWinMinor)} won`;
+    const win = state.freeSpinsWinMinor === undefined
+      ? ""
+      : ` · ${this.activeMoneyFormatter().format(state.freeSpinsWinMinor)} won`;
     this.feature.textContent = `${state.mode} · ${played}/${total} complete · ${state.freeSpinsRemaining} remaining${win}`;
     this.feature.dataset.visible = "true";
   }

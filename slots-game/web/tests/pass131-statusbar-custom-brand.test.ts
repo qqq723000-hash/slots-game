@@ -30,16 +30,16 @@ describe("Pass 131 cross-device status brand", () => {
       .toBeLessThan(panel.indexOf("status-metric--balance"));
   });
 
-  it("uses the same translucent plates on desktop, phone and tablet", () => {
+  it("keeps translucent metric plates mobile-only", () => {
     const css = readFileSync(cssUrl, "utf8");
-    const pass = css.slice(css.indexOf("/*\n * Pass 131："));
+    const pass = css.slice(css.indexOf("/* 三端状态栏最终合约："));
     expect(pass).toMatch(
-      /\.status-metric--balance,\s*\.status-metric--bet\s*\{[^}]*padding:\s*0 4px;[^}]*border-radius:\s*3px;[^}]*background:\s*rgba\(255, 255, 255, 0\.15\);/s,
+      /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-metric--balance,\s*\.game-frame:not\(\[data-channel="mobile"\]\) \.status-metric--bet\s*\{[^}]*padding:\s*0;[^}]*background:\s*transparent;/s,
     );
     expect(pass).toMatch(
-      /data-mobile-layout="ls"[\s\S]*?not\(\[data-mobile-layout="ls"\]\)[\s\S]*?background:\s*rgba\(255, 255, 255, 0\.15\);/s,
+      /\.game-frame\[data-channel="mobile"\] \.status-metric--balance,\s*\.game-frame\[data-channel="mobile"\] \.status-metric--bet\s*\{[^}]*background:\s*rgba\(255, 255, 255, 0\.15\);/s,
     );
     expect(pass).toMatch(/\.status-metric--win\s*\{[^}]*background:\s*transparent;/s);
-    expect(pass).toMatch(/\.status-panel__provider\s*\{[^}]*object-fit:\s*contain;[^}]*pointer-events:\s*none;/s);
+    expect(css).toMatch(/\.status-panel__provider\s*\{[^}]*object-fit:\s*contain;[^}]*pointer-events:\s*none;/s);
   });
 });

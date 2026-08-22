@@ -88,20 +88,17 @@ describe("native base-game logo", () => {
     view.destroy({ children: true });
   });
 
-  it("reprojects the official logo host at tablet and portrait widths", () => {
-    const cases = [
-      { viewport: [1_024, 768] as const, x: 113.778, y: 184.076, scale: 0.812698 },
-      { viewport: [390, 844] as const, x: 43.333, y: 345.857, scale: 0.309524 },
-    ];
+  it("keeps the official logo host canonical before root letterboxing", () => {
+    const cases = [[1_024, 768], [390, 844]] as const;
 
-    for (const { viewport: [width, height], x, y, scale } of cases) {
+    for (const [width, height] of cases) {
       const frame = computeResponsiveFrameGeometry(width, height);
       const layout = logoGameResponsiveLayout(frame.visibleInsetX);
       expect(frame.x + (layout.x + LOGO_GAME_SPINE_HOST.x * layout.scale) * frame.scale)
-        .toBeCloseTo(x, 3);
+        .toBeCloseTo(frame.x + 248 * frame.scale, 6);
       expect(frame.y + (layout.y + LOGO_GAME_SPINE_HOST.y * layout.scale) * frame.scale)
-        .toBeCloseTo(y, 3);
-      expect(layout.scale * frame.scale).toBeCloseTo(scale, 6);
+        .toBeCloseTo(frame.y + 163.2 * frame.scale, 6);
+      expect(layout.scale * frame.scale).toBeCloseTo(0.8 * frame.scale, 10);
     }
   });
 
@@ -174,6 +171,96 @@ interface LogoRoutingHarness {
   environmentState: SpinEnvironmentState;
 }
 
+interface FeatureExitBarrierHarness {
+  exitFeatureMode(state: FeatureState, reducedMotion?: boolean): Promise<void>;
+  beginFeatureExitAtSummaryHide: ReturnType<typeof vi.fn>;
+  pendingFeatureExit: Promise<void> | null;
+  featureMode: FeatureState["mode"];
+  backdrop: { settleFeatureExit: ReturnType<typeof vi.fn> };
+  launchScene: { settleFeatureExit: ReturnType<typeof vi.fn> };
+}
+
+const BASE_FEATURE_STATE: FeatureState = {
+  mode: "BASE",
+  freeSpinsRemaining: 0,
+  rageLevel: 1,
+  rageCollected: 0,
+};
+
+describe("PixiRenderer feature-exit final-frame barrier", () => {
+  it.each(["EXPANSION", "OVERDRIVE"] as const)(
+    "settles %s residue only after row reconciliation and before resolving",
+    async (featureMode) => {
+      let resolveRows: (() => void) | undefined;
+      const pendingRows = new Promise<void>((resolve) => {
+        resolveRows = resolve;
+      });
+      const order: string[] = [];
+      void pendingRows.then(() => order.push("rows"));
+      const renderer = Object.create(PixiRenderer.prototype) as FeatureExitBarrierHarness;
+      Object.assign(renderer, {
+        featureMode,
+        pendingFeatureExit: pendingRows,
+        beginFeatureExitAtSummaryHide: vi.fn(),
+        backdrop: {
+          settleFeatureExit: vi.fn(() => order.push("settle")),
+        },
+        launchScene: { settleFeatureExit: vi.fn(() => order.push("character")) },
+      });
+
+      const exit = renderer.exitFeatureMode(BASE_FEATURE_STATE);
+      await Promise.resolve();
+      expect(renderer.backdrop.settleFeatureExit).not.toHaveBeenCalled();
+
+      resolveRows?.();
+      await exit;
+
+      expect(order).toEqual(["rows", "settle", "character"]);
+      expect(renderer.pendingFeatureExit).toBeNull();
+    },
+  );
+
+  it("settles and releases the barrier even when row reconciliation rejects", async () => {
+    let rejectRows: ((reason?: unknown) => void) | undefined;
+    const pendingRows = new Promise<void>((_resolve, reject) => {
+      rejectRows = reject;
+    });
+    const fault = new Error("row reconciliation failed");
+    const renderer = Object.create(PixiRenderer.prototype) as FeatureExitBarrierHarness;
+    Object.assign(renderer, {
+      featureMode: "EXPANSION",
+      pendingFeatureExit: pendingRows,
+      beginFeatureExitAtSummaryHide: vi.fn(),
+      backdrop: { settleFeatureExit: vi.fn() },
+      launchScene: { settleFeatureExit: vi.fn() },
+    });
+
+    const exit = renderer.exitFeatureMode(BASE_FEATURE_STATE);
+    rejectRows?.(fault);
+
+    await expect(exit).rejects.toBe(fault);
+    expect(renderer.backdrop.settleFeatureExit).toHaveBeenCalledOnce();
+    expect(renderer.launchScene.settleFeatureExit).toHaveBeenCalledOnce();
+    expect(renderer.pendingFeatureExit).toBeNull();
+  });
+
+  it("still settles the character and releases the barrier when backdrop cleanup throws", async () => {
+    const cleanupFault = new Error("backdrop cleanup failed");
+    const renderer = Object.create(PixiRenderer.prototype) as FeatureExitBarrierHarness;
+    Object.assign(renderer, {
+      featureMode: "OVERDRIVE",
+      pendingFeatureExit: Promise.resolve(),
+      beginFeatureExitAtSummaryHide: vi.fn(),
+      backdrop: { settleFeatureExit: vi.fn(() => { throw cleanupFault; }) },
+      launchScene: { settleFeatureExit: vi.fn() },
+    });
+
+    await expect(renderer.exitFeatureMode(BASE_FEATURE_STATE)).rejects.toBe(cleanupFault);
+    expect(renderer.launchScene.settleFeatureExit).toHaveBeenCalledOnce();
+    expect(renderer.pendingFeatureExit).toBeNull();
+  });
+});
+
 describe("PixiRenderer base-logo lifecycle routing", () => {
   it("shows after intro, wins only in base, hides on Free Spins entry, then shows on exit", async () => {
     const renderer = Object.create(PixiRenderer.prototype) as LogoRoutingHarness;
@@ -183,12 +270,14 @@ describe("PixiRenderer base-logo lifecycle routing", () => {
       reactToWin: vi.fn(async () => undefined),
       transitionAuthoredPalette: vi.fn(),
       setExpansionRows: vi.fn(),
+      settleFeatureExit: vi.fn(),
     };
     const launchScene = {
       completeAuthoredIntro: vi.fn(),
       playCharacterAnimation: vi.fn(),
       setCharacterBodyContinuation: vi.fn(),
       setCharacterPersistentPresentation: vi.fn(),
+      settleFeatureExit: vi.fn(),
     };
     const reels = {
       activeRows: 3,

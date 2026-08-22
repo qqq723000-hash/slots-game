@@ -15,6 +15,21 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
+  name: {{ include "slots.resourceName" (dict "root" . "suffix" "rgs-worker") }}
+  labels:
+    {{- include "slots.commonLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rgs-worker
+spec:
+  minAvailable: {{ .Values.worker.pdb.minAvailable }}
+  unhealthyPodEvictionPolicy: IfHealthyBudget
+  selector:
+    matchLabels:
+      {{- include "slots.selectorLabels" (dict "root" . "component" "rgs-worker") | nindent 6 }}
+{{- if .Values.web.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
   name: {{ include "slots.resourceName" (dict "root" . "suffix" "web") }}
   labels:
     {{- include "slots.commonLabels" . | nindent 4 }}
@@ -25,3 +40,4 @@ spec:
   selector:
     matchLabels:
       {{- include "slots.selectorLabels" (dict "root" . "component" "web") | nindent 6 }}
+{{- end }}

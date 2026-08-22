@@ -42,6 +42,9 @@ type Handler struct {
 	deliveries           ResultDeliveryService
 	admission            Admission
 	clientAdmission      Admission
+	launchAdmission      Admission
+	spinAdmission        Admission
+	securityEvents       SecurityEventObserver
 	maxRequestBytes      int64
 	responseSignatureTTL time.Duration
 	now                  func() time.Time
@@ -88,6 +91,9 @@ func NewHandler(config Config) (*Handler, error) {
 		deliveries:           deliveries,
 		admission:            config.Admission,
 		clientAdmission:      config.ClientAdmission,
+		launchAdmission:      config.LaunchAdmission,
+		spinAdmission:        config.SpinAdmission,
+		securityEvents:       config.SecurityEvents,
 		maxRequestBytes:      config.MaxRequestBytes,
 		responseSignatureTTL: config.ResponseSignatureTTL,
 		now:                  config.Now,
@@ -189,11 +195,16 @@ func (h *Handler) handleOperatorLaunch(writer http.ResponseWriter, request *http
 		return
 	}
 	requestID = verified.RequestID
-	if !h.admitVerifiedOperator(writer, requestID, verified.OperatorID) {
+	if !h.admitVerifiedOperator(request.Context(), writer, requestID, verified.OperatorID) {
+		return
+	}
+	if h.launchAdmission != nil && !h.writeAdmissionResult(writer, requestID, h.launchAdmission.Admit(
+		request.Context(), "operator:"+verified.OperatorID, h.now(),
+	)) {
 		return
 	}
 	if err := h.operatorRequests.ConsumeNonce(request.Context(), verified); err != nil {
-		h.writeMappedError(writer, requestID, err)
+		h.writeOperatorNonceError(writer, requestID, err)
 		return
 	}
 
@@ -339,7 +350,13 @@ func (h *Handler) handleClientSpin(writer http.ResponseWriter, request *http.Req
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "request fields are invalid")
 		return
 	}
-	if _, ok := h.authenticateClient(writer, request, requestID, payload.sessionBindingRequest); !ok {
+	claims, ok := h.authenticateClient(writer, request, requestID, payload.sessionBindingRequest)
+	if !ok {
+		return
+	}
+	if h.spinAdmission != nil && !h.writeAdmissionResult(writer, requestID, h.spinAdmission.Admit(
+		request.Context(), clientAdmissionKey(claims.OperatorID, claims.SessionID), h.now(),
+	)) {
 		return
 	}
 	spinRequest := rgs.SpinRequest{
@@ -477,11 +494,11 @@ func (h *Handler) handleOperatorRoundStatus(writer http.ResponseWriter, request 
 		return
 	}
 	requestID = verified.RequestID
-	if !h.admitVerifiedOperator(writer, requestID, verified.OperatorID) {
+	if !h.admitVerifiedOperator(request.Context(), writer, requestID, verified.OperatorID) {
 		return
 	}
 	if err := h.operatorRequests.ConsumeNonce(request.Context(), verified); err != nil {
-		h.writeMappedError(writer, requestID, err)
+		h.writeOperatorNonceError(writer, requestID, err)
 		return
 	}
 	var payload roundStatusRequest
@@ -496,13 +513,13 @@ func (h *Handler) handleOperatorRoundStatus(writer http.ResponseWriter, request 
 	h.serveRoundStatus(writer, request.Context(), requestID, payload)
 }
 
-func (h *Handler) admitVerifiedOperator(writer http.ResponseWriter, requestID, operatorID string) bool {
-	if h.admission == nil || h.admission.Allow("operator:"+operatorID, h.now()) {
+func (h *Handler) admitVerifiedOperator(ctx context.Context, writer http.ResponseWriter, requestID, operatorID string) bool {
+	if h.admission == nil {
 		return true
 	}
-	writer.Header().Set("Retry-After", "1")
-	h.writeError(writer, requestID, http.StatusTooManyRequests, "RATE_LIMITED", "request rate limit exceeded")
-	return false
+	return h.writeAdmissionResult(writer, requestID, h.admission.Admit(
+		ctx, "operator:"+operatorID, h.now(),
+	))
 }
 
 func (h *Handler) serveRoundStatus(writer http.ResponseWriter, ctx context.Context, requestID string, payload roundStatusRequest) {
@@ -557,15 +574,30 @@ func (h *Handler) authenticateClientClaims(writer http.ResponseWriter, request *
 	}
 	// 客户端限流必须位于访问令牌验证之后，并绑定已验证的运营商与会话。
 	// 不能使用 RemoteAddr/X-Forwarded-For：反向代理会让无关玩家共享地址，后者又可被伪造。
-	if h.clientAdmission != nil && !h.clientAdmission.Allow(
-		clientAdmissionKey(claims.OperatorID, claims.SessionID),
-		h.now(),
-	) {
-		writer.Header().Set("Retry-After", "1")
-		h.writeError(writer, requestID, http.StatusTooManyRequests, "RATE_LIMITED", "request rate limit exceeded")
+	if h.clientAdmission != nil && !h.writeAdmissionResult(writer, requestID, h.clientAdmission.Admit(
+		request.Context(), clientAdmissionKey(claims.OperatorID, claims.SessionID), h.now(),
+	)) {
 		return operator.AccessTokenClaims{}, false
 	}
 	return claims, true
+}
+
+func (h *Handler) writeAdmissionResult(writer http.ResponseWriter, requestID string, result AdmissionResult) bool {
+	if result.Decision == AdmissionAllowed {
+		return true
+	}
+	retryAfter := result.RetryAfter
+	if retryAfter <= 0 {
+		retryAfter = time.Second
+	}
+	seconds := int64((retryAfter + time.Second - 1) / time.Second)
+	writer.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	if result.Decision != AdmissionRateLimited {
+		h.writeError(writer, requestID, http.StatusServiceUnavailable, "ADMISSION_UNAVAILABLE", "request admission service is unavailable")
+		return false
+	}
+	h.writeError(writer, requestID, http.StatusTooManyRequests, "RATE_LIMITED", "request rate limit exceeded")
+	return false
 }
 
 func clientAdmissionKey(operatorID, sessionID string) string {
@@ -640,6 +672,13 @@ func (h *Handler) writeError(writer http.ResponseWriter, requestID string, statu
 func (h *Handler) writeMappedError(writer http.ResponseWriter, requestID string, err error) {
 	status, code, message := mapError(err)
 	h.writeError(writer, requestID, status, code, message)
+}
+
+func (h *Handler) writeOperatorNonceError(writer http.ResponseWriter, requestID string, err error) {
+	if errors.Is(err, operator.ErrReplay) && h.securityEvents != nil {
+		h.securityEvents.NonceReplay()
+	}
+	h.writeMappedError(writer, requestID, err)
 }
 
 func (h *Handler) writeJSON(writer http.ResponseWriter, requestID string, status int, payload any) {

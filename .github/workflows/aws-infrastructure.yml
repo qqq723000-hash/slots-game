@@ -1,0 +1,648 @@
+name: AWS infrastructure delivery
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/aws-infrastructure.yml
+      - .github/workflows/aws-application-deploy.yml
+      - .github/workflows/aws-hmac-quiesce-evidence.yml
+      - slots-game/infra/terraform/**
+      - slots-game/deploy/aws-production/workflow/**
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: 受保护的 Terraform 目标环境
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod-primary
+          - prod-dr
+      operation:
+        description: 只生成计划，或在独立审批后应用同一计划
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+      hmac_quiesce_evidence_version_id:
+        description: 仅 HMAC maintenance 使用的固定证据 S3 VersionId
+        required: false
+        type: string
+      hmac_quiesce_evidence_sha256:
+        description: 仅 HMAC maintenance 使用的规范化证据 SHA-256
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}
+  cancel-in-progress: false
+
+jobs:
+  static-contract:
+    name: AWS infrastructure static contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: 检出无持久凭据的源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装固定 Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.15.9
+          terraform_wrapper: false
+
+      - name: 执行无云凭据静态和负向门禁
+        working-directory: slots-game
+        run: |
+          set -euo pipefail
+          test -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+          deploy/aws-production/workflow/verify-contract.sh
+          deploy/aws-production/workflow/test-negative-contract.sh
+          make -C infra/terraform verify
+
+      - name: 检查 AWS 交付脚本
+        run: >-
+          shellcheck
+          slots-game/deploy/aws-production/workflow/*.sh
+          slots-game/deploy/aws-production/workflow/fixtures/*.sh
+          slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh
+
+  terraform-plan:
+    if: github.event_name == 'workflow_dispatch'
+    needs: static-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: aws-${{ inputs.target_environment }}-terraform-plan
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_TERRAFORM_PLAN_ROLE_ARN: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
+      AWS_TF_STATE_BUCKET: ${{ vars.AWS_TF_STATE_BUCKET }}
+      AWS_TF_STATE_KEY: ${{ vars.AWS_TF_STATE_KEY }}
+      AWS_TF_STATE_KMS_KEY_ARN: ${{ vars.AWS_TF_STATE_KMS_KEY_ARN }}
+      AWS_TERRAFORM_DELIVERY_BUCKET: ${{ vars.AWS_TERRAFORM_DELIVERY_BUCKET }}
+      AWS_TERRAFORM_DELIVERY_KEY: ${{ vars.AWS_TERRAFORM_DELIVERY_KEY }}
+      AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN }}
+      AWS_HMAC_QUIESCE_EVIDENCE_BUCKET: ${{ vars.AWS_HMAC_QUIESCE_EVIDENCE_BUCKET }}
+      AWS_HMAC_QUIESCE_EVIDENCE_KEY: ${{ vars.AWS_HMAC_QUIESCE_EVIDENCE_KEY }}
+      AWS_HMAC_QUIESCE_EVIDENCE_KMS_KEY_ARN: ${{ vars.AWS_HMAC_QUIESCE_EVIDENCE_KMS_KEY_ARN }}
+      AWS_HMAC_QUIESCE_CANCELLATION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_CANCELLATION_PREFIX }}
+      AWS_HMAC_QUIESCE_COMPLETION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_COMPLETION_PREFIX }}
+      AWS_HMAC_QUIESCE_PRODUCER_ROLE_ARN: ${{ vars.AWS_HMAC_QUIESCE_PRODUCER_ROLE_ARN }}
+      AWS_HMAC_QUIESCE_PRODUCER_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/aws-hmac-quiesce-evidence.yml@refs/heads/main
+      AWS_EKS_CLUSTER_NAME: ${{ vars.AWS_EKS_CLUSTER_NAME }}
+      AWS_EKS_NAMESPACE: ${{ vars.AWS_EKS_NAMESPACE }}
+      AWS_HELM_RELEASE_NAME: ${{ vars.AWS_HELM_RELEASE_NAME }}
+      INPUT_HMAC_QUIESCE_EVIDENCE_VERSION_ID: ${{ inputs.hmac_quiesce_evidence_version_id }}
+      INPUT_HMAC_QUIESCE_EVIDENCE_SHA256: ${{ inputs.hmac_quiesce_evidence_sha256 }}
+      TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_BACKEND_FILE: /tmp/slots-${{ inputs.target_environment }}-${{ github.run_id }}-${{ github.run_attempt }}.backend.hcl
+      TFVARS_FILE: /tmp/slots-${{ inputs.target_environment }}-${{ github.run_id }}-${{ github.run_attempt }}.auto.tfvars.json
+      TF_PLAN_DIR: /tmp/slots-terraform-plan-${{ github.run_id }}-${{ github.run_attempt }}
+      HMAC_EVIDENCE_FILE: /tmp/slots-terraform-plan-${{ github.run_id }}-${{ github.run_attempt }}/hmac-quiesce-evidence.json
+    steps:
+      - name: 检出计划对应的精确源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装固定 Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.15.9
+          terraform_wrapper: false
+
+      - name: 在申请 OIDC 凭据前验证固定 Environment
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_PROTECTED" = true
+          slots-game/deploy/aws-production/workflow/validate-environment.sh terraform-plan
+
+      - name: 在申请 OIDC 凭据前验证非秘密配置与 ephemeral 输入
+        env:
+          TERRAFORM_TFVARS_JSON: ${{ secrets.TERRAFORM_TFVARS_JSON }}
+          TF_VAR_valkey_password_a: ${{ secrets.TERRAFORM_VALKEY_PASSWORD_A }}
+          TF_VAR_valkey_password_b: ${{ secrets.TERRAFORM_VALKEY_PASSWORD_B }}
+          TF_VAR_shared_admission_hmac_key: ${{ secrets.TERRAFORM_SHARED_ADMISSION_HMAC_KEY }}
+          TF_VAR_valkey_root_ca_pem: ${{ secrets.TERRAFORM_VALKEY_ROOT_CA_PEM }}
+        run: |
+          set -euo pipefail
+          preflight_tfvars=$(mktemp "$RUNNER_TEMP/slots-hmac-tfvars-preflight.XXXXXX")
+          trap 'rm -f "$preflight_tfvars"' EXIT HUP INT TERM
+          printf '%s' "$TERRAFORM_TFVARS_JSON" > "$preflight_tfvars"
+          chmod 0600 "$preflight_tfvars"
+          printf '%s' "$TERRAFORM_TFVARS_JSON" | jq -e '
+            type == "object" and keys == ["configuration"] and
+            (.configuration | type == "object") and
+            all(.. | objects | keys[];
+              . != "valkey_password_a" and
+              . != "valkey_password_b" and
+              . != "shared_admission_hmac_key" and
+              . != "valkey_root_ca_pem"
+            )
+          ' >/dev/null
+          slots-game/deploy/aws-production/workflow/validate-hmac-terraform-inputs.sh "$preflight_tfvars"
+          slots-game/deploy/aws-production/workflow/fingerprint-terraform-ephemeral-inputs.sh \
+            "$TARGET_ENVIRONMENT" >/dev/null
+
+      - name: 通过 GitHub OIDC 获取计划角色临时凭据
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: slots-tf-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: 生成后端文件并验证实际账号
+        env:
+          TERRAFORM_TFVARS_JSON: ${{ secrets.TERRAFORM_TFVARS_JSON }}
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$AWS_ACCOUNT_ID"
+          printf '%s' "$TERRAFORM_TFVARS_JSON" | jq -e '
+            type == "object" and keys == ["configuration"] and
+            (.configuration | type == "object") and
+            all(.. | objects | keys[];
+              . != "valkey_password_a" and
+              . != "valkey_password_b" and
+              . != "shared_admission_hmac_key" and
+              . != "valkey_root_ca_pem"
+            )
+          ' >/dev/null
+          mkdir -m 0700 "$TF_PLAN_DIR"
+          {
+            printf 'bucket = "%s"\n' "$AWS_TF_STATE_BUCKET"
+            printf 'key = "%s"\n' "$AWS_TF_STATE_KEY"
+            printf 'region = "%s"\n' "$AWS_REGION"
+            printf 'kms_key_id = "%s"\n' "$AWS_TF_STATE_KMS_KEY_ARN"
+            printf 'encrypt = true\n'
+            printf 'use_lockfile = true\n'
+          } > "$TF_BACKEND_FILE"
+          printf '%s' "$TERRAFORM_TFVARS_JSON" > "$TFVARS_FILE"
+          chmod 0600 "$TF_BACKEND_FILE" "$TFVARS_FILE"
+          slots-game/deploy/aws-production/workflow/validate-hmac-terraform-inputs.sh "$TFVARS_FILE"
+
+      - name: 按固定 VersionId 下载 HMAC 停机证据或写入空标记
+        run: |
+          set -euo pipefail
+          rotation_mode=$(jq -er '.configuration.valkey_rotation_mode' "$TFVARS_FILE")
+          if test "$rotation_mode" = hmac-maintenance; then
+            INPUT_EVIDENCE_VERSION_ID=$INPUT_HMAC_QUIESCE_EVIDENCE_VERSION_ID \
+              INPUT_EVIDENCE_SHA256=$INPUT_HMAC_QUIESCE_EVIDENCE_SHA256 \
+              slots-game/deploy/aws-production/workflow/download-hmac-quiesce-evidence.sh \
+                consume "$HMAC_EVIDENCE_FILE"
+            INPUT_EVIDENCE_VERSION_ID=$INPUT_HMAC_QUIESCE_EVIDENCE_VERSION_ID \
+              INPUT_EVIDENCE_SHA256=$INPUT_HMAC_QUIESCE_EVIDENCE_SHA256 \
+              slots-game/deploy/aws-production/workflow/hmac-evidence-marker.sh \
+                check all "$HMAC_EVIDENCE_FILE"
+          else
+            printf 'null\n' > "$HMAC_EVIDENCE_FILE"
+            chmod 0600 "$HMAC_EVIDENCE_FILE"
+          fi
+
+      - name: 初始化并生成不可变计划
+        working-directory: slots-game/infra/terraform/environments/${{ inputs.target_environment }}
+        env:
+          TF_VAR_valkey_password_a: ${{ secrets.TERRAFORM_VALKEY_PASSWORD_A }}
+          TF_VAR_valkey_password_b: ${{ secrets.TERRAFORM_VALKEY_PASSWORD_B }}
+          TF_VAR_shared_admission_hmac_key: ${{ secrets.TERRAFORM_SHARED_ADMISSION_HMAC_KEY }}
+          TF_VAR_valkey_root_ca_pem: ${{ secrets.TERRAFORM_VALKEY_ROOT_CA_PEM }}
+        run: |
+          set -euo pipefail
+          valkey_password_fingerprint_a=$(printf '%s' "$TF_VAR_valkey_password_a" | sha256sum | awk '{ print $1 }')
+          valkey_password_fingerprint_b=$(printf '%s' "$TF_VAR_valkey_password_b" | sha256sum | awk '{ print $1 }')
+          shared_admission_hmac_key_fingerprint=$(printf '%s' "$TF_VAR_shared_admission_hmac_key" | sha256sum | awk '{ print $1 }')
+          for fingerprint in "$valkey_password_fingerprint_a" "$valkey_password_fingerprint_b" \
+            "$shared_admission_hmac_key_fingerprint"
+          do
+            printf '%s\n' "$fingerprint" | grep -Eq '^[0-9a-f]{64}$'
+          done
+          fingerprinted_tfvars="${TFVARS_FILE}.fingerprinted"
+          jq \
+            --arg valkey_password_fingerprint_a "$valkey_password_fingerprint_a" \
+            --arg valkey_password_fingerprint_b "$valkey_password_fingerprint_b" \
+            --arg shared_admission_hmac_key_fingerprint "$shared_admission_hmac_key_fingerprint" \
+            '
+              .configuration.valkey_password_fingerprint_a = $valkey_password_fingerprint_a |
+              .configuration.valkey_password_fingerprint_b = $valkey_password_fingerprint_b |
+              .configuration.shared_admission_hmac_key_fingerprint = $shared_admission_hmac_key_fingerprint
+            ' "$TFVARS_FILE" > "$fingerprinted_tfvars"
+          chmod 0600 "$fingerprinted_tfvars"
+          mv "$fingerprinted_tfvars" "$TFVARS_FILE"
+          terraform init -input=false -lockfile=readonly -backend-config="$TF_BACKEND_FILE"
+          terraform validate
+          terraform plan -input=false -lock-timeout=10m -var-file="$TFVARS_FILE" \
+            -out="$TF_PLAN_DIR/terraform.tfplan"
+          rotation_mode=$(jq -er '.configuration.valkey_rotation_mode' "$TFVARS_FILE")
+          if test "$rotation_mode" = hmac-maintenance; then
+            terraform show -json "$TF_PLAN_DIR/terraform.tfplan" |
+              ruby "$GITHUB_WORKSPACE/slots-game/infra/terraform/scripts/verify-valkey-rotation-plan.rb" \
+                --evidence "$HMAC_EVIDENCE_FILE" -
+            evidence_mode=maintenance
+            evidence_version_id=$INPUT_HMAC_QUIESCE_EVIDENCE_VERSION_ID
+            evidence_sha256=$INPUT_HMAC_QUIESCE_EVIDENCE_SHA256
+          else
+            terraform show -json "$TF_PLAN_DIR/terraform.tfplan" |
+              ruby "$GITHUB_WORKSPACE/slots-game/infra/terraform/scripts/verify-valkey-rotation-plan.rb" -
+            evidence_mode=none
+            evidence_version_id=none
+            evidence_sha256=none
+          fi
+          terraform show -no-color "$TF_PLAN_DIR/terraform.tfplan" > "$TF_PLAN_DIR/terraform-plan.txt"
+          plan_sha256=$(sha256sum "$TF_PLAN_DIR/terraform.tfplan" | awk '{ print $1 }')
+          ephemeral_fingerprint=$("$GITHUB_WORKSPACE/slots-game/deploy/aws-production/workflow/fingerprint-terraform-ephemeral-inputs.sh" \
+            "$TARGET_ENVIRONMENT")
+          printf '%s\n' "$ephemeral_fingerprint" | grep -Eq '^[0-9a-f]{64}$'
+          {
+            printf 'SCHEMA_VERSION=1\n'
+            printf 'SOURCE_SHA=%s\n' "$GITHUB_SHA"
+            printf 'WORKFLOW_RUN_ID=%s\n' "$GITHUB_RUN_ID"
+            printf 'WORKFLOW_RUN_ATTEMPT=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'TARGET_ENVIRONMENT=%s\n' '${{ inputs.target_environment }}'
+            printf 'AWS_ACCOUNT_ID=%s\n' "$AWS_ACCOUNT_ID"
+            printf 'AWS_REGION=%s\n' "$AWS_REGION"
+            printf 'AWS_TF_STATE_BUCKET=%s\n' "$AWS_TF_STATE_BUCKET"
+            printf 'AWS_TF_STATE_KEY=%s\n' "$AWS_TF_STATE_KEY"
+            printf 'AWS_TF_STATE_KMS_KEY_ARN=%s\n' "$AWS_TF_STATE_KMS_KEY_ARN"
+            printf 'TERRAFORM_VERSION=1.15.9\n'
+            printf 'PLAN_SHA256=%s\n' "$plan_sha256"
+            printf 'EPHEMERAL_INPUTS_HMAC=%s\n' "$ephemeral_fingerprint"
+            printf 'HMAC_QUIESCE_EVIDENCE_MODE=%s\n' "$evidence_mode"
+            printf 'HMAC_QUIESCE_EVIDENCE_VERSION_ID=%s\n' "$evidence_version_id"
+            printf 'HMAC_QUIESCE_EVIDENCE_SHA256=%s\n' "$evidence_sha256"
+          } > "$TF_PLAN_DIR/plan-metadata.env"
+          chmod 0600 "$TF_PLAN_DIR/terraform.tfplan" "$TF_PLAN_DIR/plan-metadata.env" "$HMAC_EVIDENCE_FILE"
+
+      - name: 上传只供本次应用消费的精确计划
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: terraform-plan-${{ inputs.target_environment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.TF_PLAN_DIR }}
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
+
+      - name: 清除 runner 中的临时后端和变量文件
+        if: always()
+        run: rm -f "$TF_BACKEND_FILE" "$TFVARS_FILE" "${TFVARS_FILE}.fingerprinted"
+
+  terraform-apply:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'
+    needs:
+      - static-contract
+      - terraform-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment:
+      name: aws-${{ inputs.target_environment }}-terraform-apply
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_TERRAFORM_APPLY_ROLE_ARN: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
+      AWS_TF_STATE_BUCKET: ${{ vars.AWS_TF_STATE_BUCKET }}
+      AWS_TF_STATE_KEY: ${{ vars.AWS_TF_STATE_KEY }}
+      AWS_TF_STATE_KMS_KEY_ARN: ${{ vars.AWS_TF_STATE_KMS_KEY_ARN }}
+      AWS_TERRAFORM_DELIVERY_BUCKET: ${{ vars.AWS_TERRAFORM_DELIVERY_BUCKET }}
+      AWS_TERRAFORM_DELIVERY_KEY: ${{ vars.AWS_TERRAFORM_DELIVERY_KEY }}
+      AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN: ${{ vars.AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN }}
+      AWS_HMAC_QUIESCE_EVIDENCE_BUCKET: ${{ vars.AWS_HMAC_QUIESCE_EVIDENCE_BUCKET }}
+      AWS_HMAC_QUIESCE_EVIDENCE_KEY: ${{ vars.AWS_HMAC_QUIESCE_EVIDENCE_KEY }}
+      AWS_HMAC_QUIESCE_EVIDENCE_KMS_KEY_ARN: ${{ vars.AWS_HMAC_QUIESCE_EVIDENCE_KMS_KEY_ARN }}
+      AWS_HMAC_QUIESCE_CANCELLATION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_CANCELLATION_PREFIX }}
+      AWS_HMAC_QUIESCE_COMPLETION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_COMPLETION_PREFIX }}
+      AWS_HMAC_QUIESCE_PRODUCER_ROLE_ARN: ${{ vars.AWS_HMAC_QUIESCE_PRODUCER_ROLE_ARN }}
+      AWS_HMAC_QUIESCE_PRODUCER_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/aws-hmac-quiesce-evidence.yml@refs/heads/main
+      AWS_EKS_CLUSTER_NAME: ${{ vars.AWS_EKS_CLUSTER_NAME }}
+      AWS_EKS_NAMESPACE: ${{ vars.AWS_EKS_NAMESPACE }}
+      AWS_HELM_RELEASE_NAME: ${{ vars.AWS_HELM_RELEASE_NAME }}
+      INPUT_HMAC_QUIESCE_EVIDENCE_VERSION_ID: ${{ inputs.hmac_quiesce_evidence_version_id }}
+      INPUT_HMAC_QUIESCE_EVIDENCE_SHA256: ${{ inputs.hmac_quiesce_evidence_sha256 }}
+      TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_PLAN_DIR: /tmp/slots-terraform-apply-${{ github.run_id }}-${{ github.run_attempt }}
+      HMAC_EVIDENCE_FILE: /tmp/slots-terraform-apply-${{ github.run_id }}-${{ github.run_attempt }}/hmac-quiesce-evidence.json
+    steps:
+      - name: 检出与计划完全相同的源码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 安装与计划完全相同的 Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.15.9
+          terraform_wrapper: false
+
+      - name: 按计划 job 返回的不可变 ID 下载制品
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.terraform-plan.outputs.artifact_id }}
+          path: ${{ env.TF_PLAN_DIR }}
+
+      - name: 在申请应用角色前封闭验证计划身份
+        env:
+          TF_VAR_valkey_password_a: ${{ secrets.TERRAFORM_VALKEY_PASSWORD_A }}
+          TF_VAR_valkey_password_b: ${{ secrets.TERRAFORM_VALKEY_PASSWORD_B }}
+          TF_VAR_shared_admission_hmac_key: ${{ secrets.TERRAFORM_SHARED_ADMISSION_HMAC_KEY }}
+          TF_VAR_valkey_root_ca_pem: ${{ secrets.TERRAFORM_VALKEY_ROOT_CA_PEM }}
+        run: |
+          set -euo pipefail
+          slots-game/deploy/aws-production/workflow/validate-environment.sh terraform-apply
+          metadata="$TF_PLAN_DIR/plan-metadata.env"
+          plan="$TF_PLAN_DIR/terraform.tfplan"
+          test -f "$metadata" -a -f "$plan" -a -f "$HMAC_EVIDENCE_FILE"
+          test "$(find "$TF_PLAN_DIR" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 4
+          test -z "$(find "$TF_PLAN_DIR" -mindepth 1 ! -type f -print -quit)"
+          for expected in \
+            'SCHEMA_VERSION=1' \
+            "SOURCE_SHA=$GITHUB_SHA" \
+            "WORKFLOW_RUN_ID=$GITHUB_RUN_ID" \
+            "WORKFLOW_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT" \
+            'TARGET_ENVIRONMENT=${{ inputs.target_environment }}' \
+            "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID" \
+            "AWS_REGION=$AWS_REGION" \
+            "AWS_TF_STATE_BUCKET=$AWS_TF_STATE_BUCKET" \
+            "AWS_TF_STATE_KEY=$AWS_TF_STATE_KEY" \
+            "AWS_TF_STATE_KMS_KEY_ARN=$AWS_TF_STATE_KMS_KEY_ARN" \
+            'TERRAFORM_VERSION=1.15.9'
+          do
+            grep -F -x -- "$expected" "$metadata" >/dev/null
+          done
+          plan_sha256=$(sha256sum "$plan" | awk '{ print $1 }')
+          grep -F -x "PLAN_SHA256=$plan_sha256" "$metadata" >/dev/null
+          ephemeral_fingerprint=$(slots-game/deploy/aws-production/workflow/fingerprint-terraform-ephemeral-inputs.sh \
+            "$TARGET_ENVIRONMENT")
+          printf '%s\n' "$ephemeral_fingerprint" | grep -Eq '^[0-9a-f]{64}$'
+          grep -F -x "EPHEMERAL_INPUTS_HMAC=$ephemeral_fingerprint" "$metadata" >/dev/null
+          evidence_mode=$(sed -n 's/^HMAC_QUIESCE_EVIDENCE_MODE=//p' "$metadata")
+          case "$evidence_mode" in
+            maintenance)
+              grep -F -x "HMAC_QUIESCE_EVIDENCE_VERSION_ID=$INPUT_HMAC_QUIESCE_EVIDENCE_VERSION_ID" \
+                "$metadata" >/dev/null
+              grep -F -x "HMAC_QUIESCE_EVIDENCE_SHA256=$INPUT_HMAC_QUIESCE_EVIDENCE_SHA256" \
+                "$metadata" >/dev/null
+              test "$(sha256sum "$HMAC_EVIDENCE_FILE" | awk '{ print $1 }')" = \
+                "$INPUT_HMAC_QUIESCE_EVIDENCE_SHA256"
+              HMAC_EVIDENCE_EXPECTED_SHA256=$INPUT_HMAC_QUIESCE_EVIDENCE_SHA256 \
+                ruby slots-game/deploy/aws-production/workflow/verify-hmac-quiesce-evidence.rb \
+                  consume "$HMAC_EVIDENCE_FILE" >/dev/null
+              ;;
+            none)
+              test -z "$INPUT_HMAC_QUIESCE_EVIDENCE_VERSION_ID"
+              test -z "$INPUT_HMAC_QUIESCE_EVIDENCE_SHA256"
+              grep -F -x 'HMAC_QUIESCE_EVIDENCE_VERSION_ID=none' "$metadata" >/dev/null
+              grep -F -x 'HMAC_QUIESCE_EVIDENCE_SHA256=none' "$metadata" >/dev/null
+              test "$(cat "$HMAC_EVIDENCE_FILE")" = null
+              ;;
+            *) exit 1 ;;
+          esac
+          test "$(wc -l < "$metadata" | tr -d ' ')" = 16
+
+      - name: 通过 GitHub OIDC 获取独立应用角色临时凭据
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: slots-tf-apply-${{ github.run_id }}-${{ github.run_attempt }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: 初始化同一后端并只应用已审批计划
+        working-directory: slots-game/infra/terraform/environments/${{ inputs.target_environment }}
+        env:
+          TF_VAR_valkey_password_a: ${{ secrets.TERRAFORM_VALKEY_PASSWORD_A }}
+          TF_VAR_valkey_password_b: ${{ secrets.TERRAFORM_VALKEY_PASSWORD_B }}
+          TF_VAR_shared_admission_hmac_key: ${{ secrets.TERRAFORM_SHARED_ADMISSION_HMAC_KEY }}
+          TF_VAR_valkey_root_ca_pem: ${{ secrets.TERRAFORM_VALKEY_ROOT_CA_PEM }}
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "$AWS_ACCOUNT_ID"
+          backend_file="$RUNNER_TEMP/${{ inputs.target_environment }}.backend.hcl"
+          {
+            printf 'bucket = "%s"\n' "$AWS_TF_STATE_BUCKET"
+            printf 'key = "%s"\n' "$AWS_TF_STATE_KEY"
+            printf 'region = "%s"\n' "$AWS_REGION"
+            printf 'kms_key_id = "%s"\n' "$AWS_TF_STATE_KMS_KEY_ARN"
+            printf 'encrypt = true\n'
+            printf 'use_lockfile = true\n'
+          } > "$backend_file"
+          chmod 0600 "$backend_file"
+          terraform init -input=false -lockfile=readonly -backend-config="$backend_file"
+          evidence_mode=$(sed -n 's/^HMAC_QUIESCE_EVIDENCE_MODE=//p' "$TF_PLAN_DIR/plan-metadata.env")
+          if test "$evidence_mode" = maintenance; then
+            evidence_readback="$RUNNER_TEMP/hmac-quiesce-evidence-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+            INPUT_EVIDENCE_VERSION_ID=$INPUT_HMAC_QUIESCE_EVIDENCE_VERSION_ID \
+              INPUT_EVIDENCE_SHA256=$INPUT_HMAC_QUIESCE_EVIDENCE_SHA256 \
+              "$GITHUB_WORKSPACE/slots-game/deploy/aws-production/workflow/download-hmac-quiesce-evidence.sh" \
+                consume "$evidence_readback"
+            cmp -s "$HMAC_EVIDENCE_FILE" "$evidence_readback"
+            INPUT_EVIDENCE_VERSION_ID=$INPUT_HMAC_QUIESCE_EVIDENCE_VERSION_ID \
+              INPUT_EVIDENCE_SHA256=$INPUT_HMAC_QUIESCE_EVIDENCE_SHA256 \
+              "$GITHUB_WORKSPACE/slots-game/deploy/aws-production/workflow/hmac-evidence-marker.sh" \
+                check all "$evidence_readback"
+            rm -f "$evidence_readback"
+            terraform show -json "$TF_PLAN_DIR/terraform.tfplan" |
+              ruby "$GITHUB_WORKSPACE/slots-game/infra/terraform/scripts/verify-valkey-rotation-plan.rb" \
+                --evidence "$HMAC_EVIDENCE_FILE" -
+          else
+            test "$evidence_mode" = none
+            terraform show -json "$TF_PLAN_DIR/terraform.tfplan" |
+              ruby "$GITHUB_WORKSPACE/slots-game/infra/terraform/scripts/verify-valkey-rotation-plan.rb" -
+          fi
+          terraform apply -input=false -auto-approve -lock-timeout=10m "$TF_PLAN_DIR/terraform.tfplan"
+
+      - name: 发布精确版本的 Terraform 应用交接对象
+        working-directory: slots-game/infra/terraform/environments/${{ inputs.target_environment }}
+        run: |
+          set -euo pipefail
+          delivery_file="$TF_PLAN_DIR/terraform-delivery.json"
+          put_result="$TF_PLAN_DIR/terraform-delivery-put.json"
+          head_result="$TF_PLAN_DIR/terraform-delivery-head.json"
+          identity_file="$TF_PLAN_DIR/terraform-delivery-identity.env"
+          terraform output -json delivery > "$delivery_file"
+          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          # shellcheck disable=SC2016
+          jq -e --arg account "$AWS_ACCOUNT_ID" --arg region "$AWS_REGION" --arg registry "$registry" \
+            --arg target "$TARGET_ENVIRONMENT" --arg namespace "$AWS_EKS_NAMESPACE" \
+            --arg release "$AWS_HELM_RELEASE_NAME" '
+            .application_handoff as $handoff |
+            .valkey_active_slot as $active_slot |
+            .valkey_user_names as $user_names |
+            .valkey_password_versions as $password_versions |
+            .valkey_rotation_contract as $rotation |
+            .valkey_rotation_mode as $rotation_mode |
+            (.valkey_secret_name | capture("-v(?<version>[1-9][0-9]*)$").version | tonumber) as $secret_version |
+            .environment == $target and .aws_account_id == $account and .aws_region == $region and
+            .application_namespace == $namespace and .helm_release_name == $release and
+            (.cluster_arn | startswith("arn:aws:eks:\($region):\($account):cluster/")) and
+            (.cluster_name | type == "string" and length > 0) and
+            (.ecr_repository_urls | type == "object" and length == 3) and
+            all(.ecr_repository_urls[]; startswith("\($registry)/")) and
+            (.web_bucket_name | type == "string" and length > 0) and
+            (.web_kms_key_arn | startswith("arn:aws:kms:\($region):\($account):key/")) and
+            (.cluster_autoscaler_role_arn | startswith("arn:aws:iam::\($account):role/")) and
+            (.secret_sync_role_arn | startswith("arn:aws:iam::\($account):role/")) and
+            (.amp_writer_role_arn | startswith("arn:aws:iam::\($account):role/")) and
+            ($active_slot == "a" or $active_slot == "b") and
+            ($user_names | keys | sort) == ["a", "b"] and
+            ([$user_names[]] | unique | length) == 2 and
+            all($user_names[]; type == "string" and length > 0) and
+            .valkey_user_name == $user_names[$active_slot] and
+            ($password_versions | keys | sort) == ["a", "b"] and
+            all($password_versions[]; type == "number" and . >= 1 and floor == .) and
+            $rotation.contract_version == "1.0.0" and
+            $rotation.active_slot == $active_slot and
+            $rotation.active_user_name == .valkey_user_name and
+            $rotation.password_versions == $password_versions and
+            $rotation.rotation_mode == $rotation_mode and
+            ($rotation_mode == "steady" or $rotation_mode == "password-rotation" or
+              $rotation_mode == "hmac-maintenance") and
+            .application_release_allowed == ($rotation_mode != "hmac-maintenance") and
+            .maintenance_in_progress == ($rotation_mode == "hmac-maintenance") and
+            $rotation.application_release_allowed == .application_release_allowed and
+            $rotation.maintenance_in_progress == .maintenance_in_progress and
+            ($rotation.password_fingerprints | keys | sort) == ["a", "b"] and
+            all($rotation.password_fingerprints[]; type == "string" and test("^[0-9a-f]{64}$")) and
+            ($rotation.hmac_key_fingerprint | type == "string" and test("^[0-9a-f]{64}$")) and
+            $rotation.published_secret_version == $secret_version and
+            $rotation.both_users_remain_in_user_group == true and
+            $rotation.old_slot_reset_requires_live_evidence == true and
+            $rotation.hmac_bucket_reset_requires_separate_change == true and
+            $rotation.hmac_maintenance_requires_zero_replicas == true and
+            $rotation.hmac_maintenance_forbids_parallel_rollout == true and
+            $rotation.hmac_maintenance_single_attested_plan == true and
+            $rotation.hmac_maintenance_exit_requires_separate_plan == true and
+            $rotation.hmac_maintenance_attestation_schema == "slots-game/hmac-quiesce-attestation/v1" and
+            $rotation.hmac_maintenance_evidence_maximum_ttl_seconds == 3600 and
+            $rotation.hmac_maintenance_persistent_lock_name == "slots-hmac-maintenance-lock" and
+            $rotation.hmac_maintenance_target_identity == {
+              environment: $target, aws_account_id: $account, aws_region: $region,
+              eks_cluster_name: .cluster_name, kubernetes_namespace: $namespace,
+              helm_release_name: $release
+            } and
+            (($active_slot == "a" and ($secret_version % 2) == 1) or
+              ($active_slot == "b" and ($secret_version % 2) == 0)) and
+            $handoff.contract_version == "1.0.0" and
+            $handoff.foundation_apply_is_application_ready == false and
+            $handoff.application_namespace == $namespace and $handoff.helm_release_name == $release and
+            $handoff.application_release_allowed == .application_release_allowed and
+            $handoff.maintenance_in_progress == .maintenance_in_progress and
+            $handoff.cluster_autoscaler_inline_policy_name == .cluster_autoscaler_inline_policy_name and
+            (.cluster_autoscaler_inline_policy_name | type == "string" and length > 0) and
+            $handoff.private_vpc_runner_required == true and
+            ($handoff.addon_versions | keys | sort) == [
+              "aws-load-balancer-controller",
+              "cluster-autoscaler",
+              "external-secrets",
+              "kube-prometheus-stack",
+              "prometheus-agent"
+            ] and
+            all($handoff.addon_versions[];
+              type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
+            ) and
+            ($handoff.kubernetes_version | test("^[0-9]+\\.[0-9]+$")) and
+            ($handoff.cluster_autoscaler_image_tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$") and
+              startswith("v\($handoff.kubernetes_version).")) and
+            ($handoff.metrics_server_addon_version |
+              test("^v[0-9]+\\.[0-9]+\\.[0-9]+-eksbuild\\.[0-9]+$")) and
+            $handoff.required_deployments == {
+              "aws_load_balancer_controller": "kube-system/aws-load-balancer-controller",
+              "cluster_autoscaler": "kube-system/cluster-autoscaler",
+              "external_secrets": "external-secrets/external-secrets",
+              "kube_state_metrics": "monitoring/kube-prometheus-stack-kube-state-metrics",
+              "metrics_server": "kube-system/metrics-server",
+              "prometheus_operator": "monitoring/kube-prometheus-stack-operator"
+            } and
+            $handoff.required_api_services == {"resource_metrics": "v1beta1.metrics.k8s.io"} and
+            $handoff.kube_state_metrics_release_name == "kube-prometheus-stack"
+          ' "$delivery_file" >/dev/null
+          test "$(aws s3api get-bucket-versioning --bucket "$AWS_TERRAFORM_DELIVERY_BUCKET" \
+            --query Status --output text)" = Enabled
+          plan_sha256=$(sed -n 's/^PLAN_SHA256=//p' "$TF_PLAN_DIR/plan-metadata.env")
+          printf '%s\n' "$plan_sha256" | grep -Eq '^[0-9a-f]{64}$'
+          delivery_sha256=$(sha256sum "$delivery_file" | awk '{ print $1 }')
+          aws s3api put-object --bucket "$AWS_TERRAFORM_DELIVERY_BUCKET" \
+            --key "$AWS_TERRAFORM_DELIVERY_KEY" --body "$delivery_file" \
+            --content-type application/json --cache-control no-store \
+            --server-side-encryption aws:kms --ssekms-key-id "$AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN" \
+            --metadata "schema-version=1,content-sha256=${delivery_sha256},source-sha=${GITHUB_SHA},target-environment=${TARGET_ENVIRONMENT},aws-account-id=${AWS_ACCOUNT_ID},aws-region=${AWS_REGION},workflow-run-id=${GITHUB_RUN_ID},workflow-run-attempt=${GITHUB_RUN_ATTEMPT},plan-sha256=${plan_sha256}" \
+            --output json > "$put_result"
+          version_id=$(jq -er '.VersionId | select(test("^[A-Za-z0-9._~+/=-]{1,1024}$"))' "$put_result")
+          aws s3api head-object --bucket "$AWS_TERRAFORM_DELIVERY_BUCKET" \
+            --key "$AWS_TERRAFORM_DELIVERY_KEY" --version-id "$version_id" \
+            --output json > "$head_result"
+          # shellcheck disable=SC2016
+          jq -e --arg version "$version_id" --arg kms "$AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN" \
+            --arg source "$GITHUB_SHA" --arg target "$TARGET_ENVIRONMENT" \
+            --arg account "$AWS_ACCOUNT_ID" --arg region "$AWS_REGION" --arg plan "$plan_sha256" \
+            --arg content_sha "$delivery_sha256" '
+            .VersionId == $version and .ContentLength > 0 and
+            .ContentType == "application/json" and .CacheControl == "no-store" and
+            .ServerSideEncryption == "aws:kms" and .SSEKMSKeyId == $kms and
+            .Metadata["schema-version"] == "1" and
+            .Metadata["content-sha256"] == $content_sha and
+            .Metadata["source-sha"] == $source and
+            .Metadata["target-environment"] == $target and
+            .Metadata["aws-account-id"] == $account and
+            .Metadata["aws-region"] == $region and
+            .Metadata["plan-sha256"] == $plan
+          ' "$head_result" >/dev/null
+          {
+            printf 'AWS_TERRAFORM_DELIVERY_BUCKET=%s\n' "$AWS_TERRAFORM_DELIVERY_BUCKET"
+            printf 'AWS_TERRAFORM_DELIVERY_KEY=%s\n' "$AWS_TERRAFORM_DELIVERY_KEY"
+            printf 'AWS_TERRAFORM_DELIVERY_VERSION_ID=%s\n' "$version_id"
+            printf 'AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN=%s\n' "$AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN"
+          } > "$identity_file"
+          chmod 0600 "$delivery_file" "$put_result" "$head_result" "$identity_file"
+          {
+            printf '### Terraform 应用交接对象\n\n'
+            printf '将受保护应用部署 Environment 的 AWS_TERRAFORM_DELIVERY_VERSION_ID 设为 %s。\n' \
+              "$version_id"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传 Terraform 应用交接审计证据
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: terraform-application-handoff-${{ inputs.target_environment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.TF_PLAN_DIR }}/terraform-delivery.json
+            ${{ env.TF_PLAN_DIR }}/terraform-delivery-put.json
+            ${{ env.TF_PLAN_DIR }}/terraform-delivery-head.json
+            ${{ env.TF_PLAN_DIR }}/terraform-delivery-identity.env
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 90
+
+      - name: 清除 runner 中的临时计划和后端文件
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/${{ inputs.target_environment }}.backend.hcl"
+          rm -rf "$TF_PLAN_DIR"

@@ -8,15 +8,18 @@ WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY server/ ./
-COPY deploy/local-production/secret-env.go /src/tools/secret-env.go
-COPY deploy/local-production/service-probe.go /src/tools/service-probe.go
+COPY tools/container-helpers/secret-env/main.go /src/tools/secret-env.go
+COPY tools/container-helpers/service-probe/main.go /src/tools/service-probe.go
+COPY tools/container-helpers/secret-materializer/main.go /src/tools/secret-materializer.go
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     --network=none \
+    go run ./scripts/third-party-notices --check && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/rgs-server ./cmd/rgs-server && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/rgs-migrator ./cmd/rgs-migrator && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/secret-env /src/tools/secret-env.go && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/service-probe /src/tools/service-probe.go
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/service-probe /src/tools/service-probe.go && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags='-s -w' -o /out/secret-materializer /src/tools/secret-materializer.go
 
 FROM ${RUNTIME_IMAGE} AS runtime-base
 ARG OCI_IMAGE_CREATED
@@ -38,6 +41,8 @@ LABEL org.opencontainers.image.title="slots-rgs-runtime" \
 COPY --from=build --chown=nonroot:nonroot /out/rgs-server /rgs-server
 COPY --from=build --chown=nonroot:nonroot /out/secret-env /secret-env
 COPY --from=build --chown=nonroot:nonroot /out/service-probe /service-probe
+COPY --from=build --chown=nonroot:nonroot /out/secret-materializer /secret-materializer
+COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt
 EXPOSE 8080 8081
 ENTRYPOINT ["/secret-env", "RGS_DATABASE_URL", "/rgs-server"]
 
@@ -46,4 +51,5 @@ LABEL org.opencontainers.image.title="slots-rgs-migrator" \
       org.opencontainers.image.description="RGS 集群生产数据库迁移器"
 COPY --from=build --chown=nonroot:nonroot /out/rgs-migrator /rgs-migrator
 COPY --from=build --chown=nonroot:nonroot /out/secret-env /secret-env
+COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt
 ENTRYPOINT ["/secret-env", "RGS_MIGRATOR_DATABASE_URL", "/rgs-migrator"]

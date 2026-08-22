@@ -50,6 +50,26 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe("waitForCriticalDomReadiness", () => {
+  it("preloads the source-named mobile status face as a required font", () => {
+    expect(DEFAULT_CRITICAL_FONT_DESCRIPTORS).toEqual(expect.arrayContaining([
+      'normal 16px "ROBOTO_CONDENSED_BOLD"',
+      'normal 16px "ROBOTO_CONDENSED_REGULAR"',
+    ]));
+  });
+
+  it.each([
+    'normal 16px "ROBOTO_CONDENSED_BOLD"',
+    'normal 16px "ROBOTO_CONDENSED_REGULAR"',
+  ])("fails closed when source-named status face %s is unavailable", async (required) => {
+    const fontSet: CriticalFontFaceSet = {
+      load: async (descriptor) => descriptor === required ? [] : [{}],
+      ready: Promise.resolve({}),
+    };
+
+    await expect(waitForCriticalDomReadiness(rootWith([]), { fontSet }))
+      .rejects.toMatchObject({ kind: "font", resource: required });
+  });
+
   it("waits for every image decode, requested font and FontFaceSet.ready", async () => {
     const firstDecode = deferred<void>();
     const secondDecode = deferred<void>();

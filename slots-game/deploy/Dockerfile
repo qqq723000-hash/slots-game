@@ -16,6 +16,7 @@ COPY server/ ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     --network=none \
+    go run ./scripts/third-party-notices --check && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags='-s -w' \
       -o /out/rgs-server ./cmd/rgs-server && \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags='-s -w' \
@@ -24,6 +25,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM ${RUNTIME_IMAGE} AS migrator
 WORKDIR /
 COPY --from=build --chown=nonroot:nonroot /out/rgs-migrator /rgs-migrator
+COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt
 
 USER nonroot:nonroot
 ENTRYPOINT ["/rgs-migrator"]
@@ -31,6 +33,7 @@ ENTRYPOINT ["/rgs-migrator"]
 FROM ${RUNTIME_IMAGE} AS runtime
 WORKDIR /
 COPY --from=build --chown=nonroot:nonroot /out/rgs-server /rgs-server
+COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt
 
 # 此处仅声明 OCI 元数据：8081 是私有运维监听端口，严禁通过公网入口或服务负载均衡器发布。
 EXPOSE 8080 8081

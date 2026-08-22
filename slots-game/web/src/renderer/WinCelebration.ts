@@ -7,6 +7,10 @@ import {
   TextStyle,
 } from "pixi.js";
 import type { CellAddress, MoneyMinor, SymbolId, Win } from "../app/state/types";
+import {
+  DEFAULT_MINOR_UNIT_FORMATTER,
+  type MinorUnitFormatter,
+} from "../protocol/moneyFormatter";
 import type { ReelSetView } from "../reels/ReelSetView";
 import { readableSpineTextTransform } from "./PrimalPanelText";
 import { createSpineView, type Spine, type SpineData } from "./spine/SpineAdapter";
@@ -484,10 +488,12 @@ export function winCelebrationFrame(): WinCelebrationFrame {
 }
 
 /** 原始 WinLabel 信用格式：带有两位小数的整数小单位。 */
-export function winLabelValue(amountMinor: MoneyMinor): string {
-  if (!/^(0|[1-9]\d*)$/.test(amountMinor)) return "0.00";
-  const digits = amountMinor.padStart(3, "0");
-  return `${digits.slice(0, -2)}.${digits.slice(-2)}`;
+export function winLabelValue(
+  amountMinor: MoneyMinor,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
+): string {
+  if (!/^(0|[1-9]\d*)$/.test(amountMinor)) return formatter.format("0", false);
+  return formatter.format(amountMinor, false);
 }
 
 /**
@@ -497,6 +503,7 @@ export function authoritativeWinLabelText(
   amountMinor: MoneyMinor,
   ways?: number,
   multiplier?: number,
+  formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
 ): WinLabelTextFacts {
   const info = ways === -1
     ? "BONUS won!"
@@ -505,7 +512,7 @@ export function authoritativeWinLabelText(
       : null;
   const effectiveMultiplier = recordMultiplier(multiplier);
   return Object.freeze({
-    winLabelValue: winLabelValue(amountMinor),
+    winLabelValue: winLabelValue(amountMinor, formatter),
     winLabelInfo: info,
     winLabelMultiplier: effectiveMultiplier > 1 ? ` x${effectiveMultiplier}` : null,
   });
@@ -573,6 +580,7 @@ export class WinCelebration {
   private lastFinalizedGeneration = 0;
   private resident: ResidentWinScene | null = null;
   private residentHideTail: ResidentHideTail | null = null;
+  private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
 
   constructor(
     private readonly hostLayer: Container,
@@ -586,6 +594,10 @@ export class WinCelebration {
 
   get artworkLoaded(): boolean {
     return this.assets !== null;
+  }
+
+  setMoneyFormatter(formatter: MinorUnitFormatter): void {
+    this.moneyFormatter = formatter;
   }
 
   loadArtwork(signal?: AbortSignal): Promise<void> {
@@ -1382,7 +1394,12 @@ export class WinCelebration {
 
     const initial = winLabelMergeFrame(record, 0, reducedMotion);
     // 官方的SEPARATE_DELAYED模式创建基础标签，没有独立的乘数。它在 `show` 之后的合并开始时分配。
-    const facts = authoritativeWinLabelText(initial.amountMinor, record.ways);
+    const facts = authoritativeWinLabelText(
+      initial.amountMinor,
+      record.ways,
+      undefined,
+      this.moneyFormatter,
+    );
     const definitions: readonly Readonly<{
       name: WinLabelTextSlot;
       value: string | null;
@@ -1438,7 +1455,12 @@ export class WinCelebration {
     record: WinRecordPlan,
     amountMinor: MoneyMinor,
   ): void {
-    const facts = authoritativeWinLabelText(amountMinor, record.ways);
+    const facts = authoritativeWinLabelText(
+      amountMinor,
+      record.ways,
+      undefined,
+      this.moneyFormatter,
+    );
     for (const field of label.fields) {
       const value = facts[field.name];
       field.text.text = value ?? "";
@@ -1452,7 +1474,12 @@ export class WinCelebration {
     record: WinRecordPlan,
     amountMinor: MoneyMinor = record.amountMinor,
   ): void {
-    const facts = authoritativeWinLabelText(amountMinor, record.ways, record.multiplier);
+    const facts = authoritativeWinLabelText(
+      amountMinor,
+      record.ways,
+      record.multiplier,
+      this.moneyFormatter,
+    );
     for (const field of label.fields) {
       const value = facts[field.name];
       field.text.text = value ?? "";

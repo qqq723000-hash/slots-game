@@ -5,10 +5,13 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -33,7 +36,10 @@ func TestDecodeStrictObjectRejectsDuplicateAndUnknownWalletFields(t *testing.T) 
 }
 
 func TestSecureHTTPClientBoundsConnectionsPerWalletHost(t *testing.T) {
-	client := SecureHTTPClient(3 * time.Second)
+	client, err := SecureHTTPClient(3*time.Second, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("transport type = %T, want *http.Transport", client.Transport)
@@ -57,6 +63,49 @@ func TestSecureHTTPClientBoundsConnectionsPerWalletHost(t *testing.T) {
 			transport.MaxIdleConnsPerHost,
 			transport.MaxConnsPerHost,
 		)
+	}
+}
+
+func TestSecureHTTPClientUsesConfiguredWalletRootCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	rootPath := filepath.Join(t.TempDir(), "wallet-root.pem")
+	rootPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	if err := os.WriteFile(rootPath, rootPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client, err := SecureHTTPClient(time.Second, rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("configured wallet root CA was not trusted: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("wallet TLS response status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+}
+
+func TestSecureHTTPClientFailsClosedOnInvalidWalletRootCA(t *testing.T) {
+	directory := t.TempDir()
+	malformedPath := filepath.Join(directory, "malformed.pem")
+	if err := os.WriteFile(malformedPath, []byte("not a certificate"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, rootPath := range map[string]string{
+		"missing":   filepath.Join(directory, "missing.pem"),
+		"malformed": malformedPath,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := SecureHTTPClient(time.Second, rootPath); err == nil {
+				t.Fatal("invalid wallet root CA unexpectedly accepted")
+			}
+		})
 	}
 }
 

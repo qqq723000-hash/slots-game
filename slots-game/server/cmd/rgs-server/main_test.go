@@ -12,10 +12,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"slots-game/server/internal/game"
 	"slots-game/server/internal/platform"
 )
 
@@ -44,6 +46,31 @@ func TestProductionSelectsStrictDefinitionApprovalPolicy(t *testing.T) {
 	}
 	if options := definitionLoadOptions(platform.Production); len(options) != 1 {
 		t.Fatalf("production definition options = %d, want 1", len(options))
+	}
+}
+
+func TestLoadedDefinitionMustMatchReleaseIdentity(t *testing.T) {
+	definition := game.Config{GameID: "iron-colossus", DefinitionVersion: "definition-v1"}
+	config := platform.Config{
+		ExpectedDefinitionGameID:  definition.GameID,
+		ExpectedDefinitionVersion: definition.DefinitionVersion,
+		ExpectedDefinitionSHA256:  strings.Repeat("a", 64),
+	}
+	if err := validateLoadedDefinitionIdentity(config, definition, strings.Repeat("a", 64)); err != nil {
+		t.Fatalf("matching definition identity rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*platform.Config){
+		"game":    func(value *platform.Config) { value.ExpectedDefinitionGameID = "other" },
+		"version": func(value *platform.Config) { value.ExpectedDefinitionVersion = "other" },
+		"digest":  func(value *platform.Config) { value.ExpectedDefinitionSHA256 = strings.Repeat("b", 64) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			mismatched := config
+			mutate(&mismatched)
+			if err := validateLoadedDefinitionIdentity(mismatched, definition, strings.Repeat("a", 64)); err == nil {
+				t.Fatal("mismatched definition identity was accepted")
+			}
+		})
 	}
 }
 
@@ -79,6 +106,21 @@ func TestRuntimeDrainFailsReadinessBeforeStoppingBackgroundAndListeners(t *testi
 			"drain order = background_ready:%v shutdown_ready:%v shutdown_calls:%d close_calls:%d",
 			backgroundSawReady, server.shutdownSawReady, server.shutdownCalls, server.closeCalls,
 		)
+	}
+}
+
+func TestRuntimeRoleSelectsOnlyOwnedHTTPServers(t *testing.T) {
+	public := &shutdownOrderRecorder{}
+	operations := &shutdownOrderRecorder{}
+	for _, role := range []platform.RuntimeRole{platform.RuntimeRoleCombined, platform.RuntimeRoleAPI} {
+		servers := roleHTTPServers(role, public, operations)
+		if len(servers) != 2 || servers[0] != public || servers[1] != operations {
+			t.Fatalf("role %q servers = %#v", role, servers)
+		}
+	}
+	servers := roleHTTPServers(platform.RuntimeRoleWorker, public, operations)
+	if len(servers) != 1 || servers[0] != operations {
+		t.Fatalf("worker servers = %#v", servers)
 	}
 }
 
@@ -205,7 +247,7 @@ func TestObserveRequestsClassifiesAuthAndAdmissionFailuresOnce(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			metrics := &platform.Metrics{}
 			handler := observeRequests(
-				slog.New(slog.NewTextHandler(io.Discard, nil)), metrics,
+				slog.New(slog.NewTextHandler(io.Discard, nil)), metrics, 1_000_000,
 				http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 					writer.WriteHeader(test.status)
 				}),
@@ -348,6 +390,7 @@ func TestObserveRequestsLogsOnlyNormalizedSafeFields(t *testing.T) {
 	handler := observeRequests(
 		slog.New(slog.NewJSONHandler(&logs, nil)),
 		&platform.Metrics{},
+		1_000_000,
 		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("X-Request-Id", "req_safe-1")
 			writer.WriteHeader(http.StatusTeapot)
@@ -366,6 +409,9 @@ func TestObserveRequestsLogsOnlyNormalizedSafeFields(t *testing.T) {
 		entry["status"] != float64(http.StatusTeapot) || entry["status_class"] != "4xx" {
 		t.Fatalf("normalized log entry = %#v", entry)
 	}
+	if entry["level"] != "WARN" {
+		t.Fatalf("4xx log level = %#v, want WARN", entry["level"])
+	}
 	if _, exists := entry["duration_ms"]; !exists {
 		t.Fatalf("duration missing from log entry: %#v", entry)
 	}
@@ -375,11 +421,95 @@ func TestObserveRequestsLogsOnlyNormalizedSafeFields(t *testing.T) {
 	}
 }
 
+func TestObserveRequestsSamplesOnlySuccessfulAccessLogs(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		status      int
+		sample      int
+		wantLevel   string
+		wantEmitted uint64
+		wantDropped uint64
+	}{
+		{name: "successful request dropped", status: http.StatusNoContent, sample: 0, wantDropped: 1},
+		{name: "successful request emitted", status: http.StatusOK, sample: 1_000_000, wantLevel: "INFO", wantEmitted: 1},
+		{name: "client error is never sampled", status: http.StatusBadRequest, sample: 0, wantLevel: "WARN", wantEmitted: 1},
+		{name: "server error is never sampled", status: http.StatusServiceUnavailable, sample: 0, wantLevel: "ERROR", wantEmitted: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			metrics := &platform.Metrics{}
+			handler := observeRequests(
+				slog.New(slog.NewJSONHandler(&logs, nil)),
+				metrics,
+				test.sample,
+				http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+					writer.Header().Set("X-Request-Id", "req_sampling-1")
+					writer.WriteHeader(test.status)
+				}),
+			)
+			handler.ServeHTTP(
+				httptest.NewRecorder(),
+				httptest.NewRequest(http.MethodPost, "/client/v1/spins", nil),
+			)
+
+			if metrics.AccessLogsEmitted.Load() != test.wantEmitted ||
+				metrics.AccessLogsDropped.Load() != test.wantDropped {
+				t.Fatalf(
+					"access log metrics = emitted:%d dropped:%d, want emitted:%d dropped:%d",
+					metrics.AccessLogsEmitted.Load(), metrics.AccessLogsDropped.Load(),
+					test.wantEmitted, test.wantDropped,
+				)
+			}
+			if test.wantLevel == "" {
+				if logs.Len() != 0 {
+					t.Fatalf("sampled-out success unexpectedly logged: %s", logs.String())
+				}
+				return
+			}
+			var entry map[string]any
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+				t.Fatalf("decode access log: %v: %s", err, logs.String())
+			}
+			if entry["level"] != test.wantLevel || entry["status"] != float64(test.status) {
+				t.Fatalf("access log = %#v", entry)
+			}
+		})
+	}
+}
+
+func TestSuccessfulAccessLogSamplingIsDeterministic(t *testing.T) {
+	if shouldEmitSuccessfulAccessLog(0, "client.spin", "req-1") {
+		t.Fatal("zero sample unexpectedly emitted a success")
+	}
+	if !shouldEmitSuccessfulAccessLog(1_000_000, "client.spin", "req-1") {
+		t.Fatal("full sample unexpectedly dropped a success")
+	}
+
+	const sample = 500_000
+	first := shouldEmitSuccessfulAccessLog(sample, "client.spin", "req-stable")
+	for attempt := 0; attempt < 100; attempt++ {
+		if got := shouldEmitSuccessfulAccessLog(sample, "client.spin", "req-stable"); got != first {
+			t.Fatalf("same access log key changed decision on attempt %d", attempt)
+		}
+	}
+
+	var emitted, dropped bool
+	for index := 0; index < 10_000 && !(emitted && dropped); index++ {
+		decision := shouldEmitSuccessfulAccessLog(sample, "client.spin", "req-"+strconv.Itoa(index))
+		emitted = emitted || decision
+		dropped = dropped || !decision
+	}
+	if !emitted || !dropped {
+		t.Fatalf("partial deterministic sample did not produce both decisions: emitted=%v dropped=%v", emitted, dropped)
+	}
+}
+
 func TestObserveRequestsExcludesPublicHealthFromBusinessMetrics(t *testing.T) {
 	metrics := &platform.Metrics{}
 	handler := observeRequests(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		metrics,
+		1_000_000,
 		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 			writer.WriteHeader(http.StatusOK)
 		}),
@@ -413,6 +543,7 @@ func TestPublicInFlightGateRejectsWithoutBlockingAndBypassesHealth(t *testing.T)
 	handler := observeRequests(
 		nil,
 		metrics,
+		1_000_000,
 		newPublicInFlightGate(1, metrics, newPublicHandler(api, api)),
 	)
 

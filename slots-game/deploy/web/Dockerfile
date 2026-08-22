@@ -13,6 +13,9 @@ RUN --mount=type=cache,target=/root/.npm \
 FROM dependencies AS static-conformance-build
 COPY web/ ./
 RUN --network=none npm run build
+RUN --network=none \
+    test -s /src/web/dist/THIRD_PARTY_NOTICES.txt && \
+    cmp /src/web/public/THIRD_PARTY_NOTICES.txt /src/web/dist/THIRD_PARTY_NOTICES.txt
 
 FROM dependencies AS release-config-build
 ARG VITE_RGS_BASE_URL
@@ -23,7 +26,7 @@ ARG WEB_RELEASE_VERSION
 ARG WEB_RELEASE_REVISION
 COPY web/ ./
 # 生产响应头与 Vite 必须消费同一组公开 origin；不得另设默认值或把 launch code 传入 ARG。
-COPY deploy/web/nginx.conf deploy/web/render-release-nginx.mjs /src/release-web/
+COPY deploy/web/nginx.conf deploy/web/content-security-policy.mjs deploy/web/render-release-nginx.mjs /src/release-web/
 RUN --network=none \
     node ./src/validateReleaseRgsBuildConfig.mjs && \
     node /src/release-web/render-release-nginx.mjs \
@@ -36,7 +39,9 @@ RUN --network=none \
     WEB_RELEASE_REVISION="$WEB_RELEASE_REVISION" \
       npm run build && \
     test -s /src/web/dist/index.html && \
-    test -s /src/web/dist/release-manifest.json
+    test -s /src/web/dist/release-manifest.json && \
+    test -s /src/web/dist/THIRD_PARTY_NOTICES.txt && \
+    cmp /src/web/public/THIRD_PARTY_NOTICES.txt /src/web/dist/THIRD_PARTY_NOTICES.txt
 
 FROM release-config-build AS release-build
 # 真实 runtime 只能在同一构建产物通过外部精确素材授权后继续；CI 配置门禁不得进入本层。
@@ -82,11 +87,16 @@ ARG WEB_RELEASE_REVISION
 # 生产目标只复制 release-build 生成的精确策略；CI 静态镜像不得作为发布替代品。
 COPY --from=release-build --chown=0:0 /src/web/release-nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=release-build --chown=0:0 /src/web/dist/ /usr/share/nginx/html/
+COPY --from=release-build --chown=0:0 /src/web/dist/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt
 
 USER 0:0
 RUN --network=none \
     chown 0:0 /etc/nginx/conf.d /usr/share/nginx/html && \
-    chmod -R a-w /etc/nginx/conf.d /usr/share/nginx/html
+    chmod -R a-w /etc/nginx/conf.d /usr/share/nginx/html && \
+    chmod a-w /THIRD_PARTY_NOTICES.txt
+RUN --network=none \
+    test -s /THIRD_PARTY_NOTICES.txt && \
+    cmp /THIRD_PARTY_NOTICES.txt /usr/share/nginx/html/THIRD_PARTY_NOTICES.txt
 USER 101:101
 RUN --network=none nginx -t
 

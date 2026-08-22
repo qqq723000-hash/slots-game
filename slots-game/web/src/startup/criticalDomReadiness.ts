@@ -2,6 +2,8 @@ export const DEFAULT_CRITICAL_FONT_DESCRIPTORS = Object.freeze([
   '700 16px "Primal Kanit"',
   '700 16px "Primal Roboto Condensed"',
   '400 16px "Primal Roboto Condensed Regular"',
+  'normal 16px "ROBOTO_CONDENSED_BOLD"',
+  'normal 16px "ROBOTO_CONDENSED_REGULAR"',
 ] as const);
 
 export const CRITICAL_DOM_PROGRESS_WEIGHTS = Object.freeze({

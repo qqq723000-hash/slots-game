@@ -38,6 +38,32 @@ func TestEvaluateWaysTwoByOneByThree(t *testing.T) {
 	}
 }
 
+func TestEvaluateWaysPathCellsCannotOverwriteAdjacentPath(t *testing.T) {
+	grid := Grid{
+		{{Symbol: SymbolOrbit}, {Symbol: SymbolOrbit}, {Symbol: SymbolOrbit}},
+		{{Symbol: SymbolOrbit}, {Symbol: SymbolOrbit}, {Symbol: SymbolOrbit}},
+		{{Symbol: SymbolOrbit}, {Symbol: SymbolOrbit}, {Symbol: SymbolOrbit}},
+	}
+	wins, _, err := EvaluateWays(grid, DemoConfig().Paytable, 1)
+	if err != nil {
+		t.Fatalf("EvaluateWays returned error: %v", err)
+	}
+	if len(wins) != 1 || len(wins[0].PathAwards) < 2 {
+		t.Fatalf("wins = %+v, want at least two ORBIT paths", wins)
+	}
+	secondBefore := append([]Position(nil), wins[0].PathAwards[1].Cells...)
+	first := wins[0].PathAwards[0].Cells
+	first = append(first, Position{Reel: 2, Row: 7})
+	if len(first) != 4 || len(wins[0].PathAwards[0].Cells) != 3 {
+		t.Fatalf("appending to one path changed its published length")
+	}
+	for index := range secondBefore {
+		if wins[0].PathAwards[1].Cells[index] != secondBefore[index] {
+			t.Fatalf("appending to one path overwrote adjacent path cells")
+		}
+	}
+}
+
 func TestEvaluateWaysAppliesEachWildMultiplierToItsOwnPath(t *testing.T) {
 	grid := Grid{
 		{{Symbol: SymbolOrbit}, {Symbol: SymbolNova}, {Symbol: SymbolCircuit}},

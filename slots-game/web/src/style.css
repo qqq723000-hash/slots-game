@@ -26,6 +26,15 @@
   font-display: swap;
 }
 
+/* 官方移动端配置直接请求该资源内建的粗体家族名；不要再叠加合成 700。 */
+@font-face {
+  font-family: "ROBOTO_CONDENSED_BOLD";
+  src: url("/assets/primal-runtime/fonts/ROBOTO_CONDENSED_BOLD.woff") format("woff");
+  font-style: normal;
+  font-weight: normal;
+  font-display: swap;
+}
+
 @font-face {
   font-family: "Primal Roboto Condensed Regular";
   src: url("/assets/primal-runtime/fonts/ROBOTO_CONDENSED_REGULAR.woff") format("woff");
@@ -44,7 +53,7 @@
 
 :root {
   color: #f5f2e9;
-  background: #000e20;
+  background: #000;
   font-family: "Montserrat", "Rajdhani", "DIN Alternate", "Arial Narrow", ui-sans-serif, system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: geometricPrecision;
@@ -69,11 +78,11 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: #000e20;
+  background: #000;
 }
 
 body {
-  background: #000e20;
+  background: #000;
   overscroll-behavior: none;
   user-select: none;
 }
@@ -88,31 +97,43 @@ select {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #000e20;
+  background: #000;
+}
+
+/* 浏览器安全区只缩小可用外框；设计坐标内绝不再次消费物理 safe-area。 */
+.game-safe-area {
+  position: absolute;
+  inset:
+    env(safe-area-inset-top, 0px)
+    env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px)
+    env(safe-area-inset-left, 0px);
+  overflow: hidden;
+  background: #000;
 }
 
 .game-frame {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  left: 0;
+  top: 0;
   width: 1280px;
   height: 720px;
   overflow: hidden;
-  transform-origin: center;
+  container-name: game-surface;
+  container-type: size;
+  transform-origin: top left;
   background: #15100c;
-  box-shadow: 0 0 0 1px #3b332a, 0 0 110px rgba(0, 0, 0, 0.9);
 }
 
 .canvas-host,
-.canvas-host canvas,
 .dom-overlay {
   position: absolute;
   inset: 0;
-  width: 1280px;
-  height: 720px;
 }
 
 .canvas-host canvas {
+  position: absolute;
+  inset: 0;
   display: block;
   touch-action: none;
 }
@@ -131,6 +152,7 @@ select {
   align-items: center;
   justify-content: center;
   flex-direction: column;
+  pointer-events: none;
   color: #fff0ce;
   background:
     linear-gradient(115deg, transparent 0 47%, rgba(255, 112, 18, 0.035) 47% 53%, transparent 53%),
@@ -155,6 +177,7 @@ select {
 .launch-loading::after { top: calc(50% + 115px); }
 
 .launch-loading[data-visible="true"] {
+  pointer-events: auto;
   opacity: 1;
 }
 
@@ -1203,7 +1226,7 @@ select {
   color: #fff0d1;
   background:
     linear-gradient(rgba(8, 7, 6, 0.74), rgba(8, 7, 6, 0.94)),
-    url("/assets/primal-reference/10055.avif") 50% 38% / cover no-repeat;
+    url("/assets/primal-runtime/spine/spine_background/spine_background_level1.avif") 50% 38% / cover no-repeat;
   text-align: center;
   pointer-events: auto;
 }
@@ -2060,7 +2083,7 @@ select {
 /*
  * 在手机景观中，控件在逻辑空间中被放大，因此它们的后缩放触摸目标仍然可用。
  */
-@media (max-height: 600px) and (min-aspect-ratio: 4 / 5) {
+@container game-surface (max-height: 600px) and (min-aspect-ratio: 4 / 5) {
   .utility-dock {
     bottom: 35px;
     height: 88px;
@@ -2668,7 +2691,7 @@ select {
   }
 }
 
-@media (max-height: 600px) and (min-aspect-ratio: 4 / 5) {
+@container game-surface (max-height: 600px) and (min-aspect-ratio: 4 / 5) {
   .brand {
     left: 18px;
     top: 15px;
@@ -3816,7 +3839,13 @@ select {
   * 移动端复刻的点击直径大于原生 44px 控件间距。在相邻图标的中点裁剪重叠圆形，
   * 避免后面的 DOM 同级节点抢占相邻按钮中心的点击。两侧外部控件仍保留完整的向外触达范围。
    */
-  --utility-hit-trim: max(0px, calc((var(--utility-hit-size, 35px) - 44px) / 2));
+  --utility-hit-step: calc(
+    var(--mobile-utility-control-size, 44px) + var(--mobile-control-gap, 0px)
+  );
+  --utility-hit-trim: max(
+    0px,
+    calc((var(--utility-hit-size, 35px) - var(--utility-hit-step)) / 2)
+  );
   clip-path: inset(0 var(--utility-hit-trim) 0 var(--utility-hit-trim));
 }
 
@@ -3927,11 +3956,7 @@ select {
 #game-menu-paytable .game-menu__eyebrow { display: none; }
 
 #game-menu-paytable > h3 {
-  margin: 0 0 28px;
-  color: #f04a2e;
-  font-size: 40px;
-  text-shadow: 0 2px 0 #68170d, 0 0 8px rgba(244, 64, 31, 0.35);
-  text-transform: none;
+  display: none;
 }
 
 .wild-paytable {
@@ -4221,20 +4246,12 @@ select {
  * 官方移动频道组成。 Pixi 渲染器拥有游戏区域；该 DOM 层仅拥有控件和服务器值状态栏。
  */
 .game-frame[data-channel="mobile"] {
-  container-type: size;
   /*
    * `hidden` 创建一个滚动容器：Continue 失去焦点后，Chrome 可以保留分数 scrollTop 并将整个移动场景向上移动。
    */
   overflow: clip;
   background: #000;
   box-shadow: none;
-}
-
-.game-frame[data-channel="mobile"] .canvas-host,
-.game-frame[data-channel="mobile"] .canvas-host canvas,
-.game-frame[data-channel="mobile"] .dom-overlay {
-  width: 100%;
-  height: 100%;
 }
 
 .game-frame[data-channel="mobile"] .status-panel {
@@ -4244,7 +4261,7 @@ select {
   width: 100%;
   height: var(--status-height);
   min-height: 0;
-  padding: env(safe-area-inset-bottom, 0) env(safe-area-inset-right, 0) 0 env(safe-area-inset-left, 0);
+  padding: 0;
   transform: translateY(var(--launch-shift-y, 0));
   background: rgba(0, 0, 0, 0.96);
   color: var(--primal-status-text-color);
@@ -4278,12 +4295,12 @@ select {
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-dock {
-  left: max(env(safe-area-inset-left, 0px), 14px);
+  left: 14px;
   top: calc(var(--gameplay-height) / 2);
   bottom: auto;
-  width: clamp(58px, 7vw, 74px);
-  height: min(74vh, 350px);
-  min-height: 250px;
+  width: clamp(58px, 7cqw, 74px);
+  height: min(74cqh, calc(var(--gameplay-height) - 4.8cqh));
+  min-height: 0;
   flex-direction: column;
   justify-content: space-evenly;
   gap: 0;
@@ -4296,23 +4313,23 @@ select {
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-button,
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .bet-trigger {
-  width: clamp(36px, 5.5vw, 48px);
-  height: clamp(36px, 5.5vw, 48px);
-  flex-basis: clamp(36px, 5.5vw, 48px);
+  width: clamp(36px, 5.5cqw, 48px);
+  height: clamp(36px, 5.5cqw, 48px);
+  flex-basis: clamp(36px, 5.5cqw, 48px);
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-button__asset,
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .bet-trigger__icon {
-  width: clamp(25px, 3.6vw, 34px);
-  height: clamp(25px, 3.6vw, 34px);
+  width: clamp(25px, 3.6cqw, 34px);
+  height: clamp(25px, 3.6cqw, 34px);
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .spin-dock {
-  right: max(env(safe-area-inset-right, 0px), 1.2vw);
+  right: 1.2cqw;
   top: calc(var(--gameplay-height) / 2);
   bottom: auto;
-  width: clamp(78px, 10.8vw, 108px);
-  height: clamp(78px, 10.8vw, 108px);
+  width: clamp(78px, 10.8cqw, 108px);
+  height: clamp(78px, 10.8cqw, 108px);
   transform: translateY(-50%);
 }
 
@@ -4325,8 +4342,8 @@ select {
   left: 50%;
   top: auto;
   bottom: calc(var(--status-height) + 12px);
-  width: min(54vw, 520px);
-  height: clamp(22px, 4.4vh, 34px);
+  width: min(54cqw, 520px);
+  height: clamp(22px, 4.4cqh, 34px);
   transform: translateX(-50%) translateY(var(--launch-shift-y, 0));
 }
 
@@ -4335,9 +4352,9 @@ select {
   /*
   * 原生横屏提示采用紧凑标题。此前从桌面版推导出的缩放比 844x390 参考画面宽约 1.57 倍。
    */
-  font-size: clamp(11px, 1.5vw, 14px);
+  font-size: clamp(11px, 1.5cqw, 14px);
   line-height: 1.65;
-  -webkit-text-stroke-width: clamp(1.5px, 0.2vw, 2px);
+  -webkit-text-stroke-width: clamp(1.5px, 0.2cqw, 2px);
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-panel {
@@ -4392,8 +4409,8 @@ select {
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-dock {
   left: 50%;
   top: auto;
-  bottom: calc(var(--status-height) + max(env(safe-area-inset-bottom, 0px), 15px));
-  width: clamp(244px, 68vw, 302px);
+  bottom: calc(var(--status-height) + 15px);
+  width: min(calc(100cqw - 4.8cqw), 68cqw, 302px);
   height: 46px;
   justify-content: space-evenly;
   gap: 0;
@@ -4403,24 +4420,24 @@ select {
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-button,
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .bet-trigger {
-  width: clamp(35px, 10vw, 42px);
-  height: clamp(35px, 10vw, 42px);
-  flex-basis: clamp(35px, 10vw, 42px);
+  width: clamp(35px, 10cqw, 42px);
+  height: clamp(35px, 10cqw, 42px);
+  flex-basis: clamp(35px, 10cqw, 42px);
 }
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-button__asset,
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .bet-trigger__icon {
-  width: clamp(24px, 6.8vw, 29px);
-  height: clamp(24px, 6.8vw, 29px);
+  width: clamp(24px, 6.8cqw, 29px);
+  height: clamp(24px, 6.8cqw, 29px);
 }
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .spin-dock {
   right: auto;
   left: 50%;
   top: auto;
-  bottom: calc(var(--status-height) + clamp(70px, 9.6vh, 90px));
-  width: clamp(86px, 23vw, 98px);
-  height: clamp(86px, 23vw, 98px);
+  bottom: calc(var(--status-height) + clamp(70px, 9.6cqh, 90px));
+  width: clamp(86px, 23cqw, 98px);
+  height: clamp(86px, 23cqw, 98px);
   transform: translateX(-50%);
 }
 
@@ -4432,7 +4449,7 @@ select {
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .round-state {
   left: 50%;
   top: auto;
-  bottom: calc(var(--status-height) + clamp(149px, 18.4vh, 176px));
+  bottom: calc(var(--status-height) + clamp(149px, 18.4cqh, 176px));
   width: 96%;
   height: 32px;
   transform: translateX(-50%) translateY(var(--launch-shift-y, 0));
@@ -4440,19 +4457,19 @@ select {
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .round-state__title {
   height: 32px;
-  font-size: clamp(17px, 5.2vw, 23px);
+  font-size: clamp(17px, 5.2cqw, 23px);
   line-height: 32px;
   -webkit-text-stroke-width: 3px;
 }
 
 /* 手机竖屏的信息标题小于 iPad 竖屏。 */
 .game-frame[data-channel="mobile"][data-mobile-layout="pt"] .round-state__title {
-  font-size: clamp(13px, 3.9vw, 16px);
+  font-size: clamp(13px, 3.9cqw, 16px);
   -webkit-text-stroke-width: 2px;
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="pt"] .round-state {
-  bottom: calc(var(--status-height) + clamp(149px, 18.4vh, 176px) + 3px);
+  bottom: calc(var(--status-height) + clamp(149px, 18.4cqh, 176px) + 3px);
 }
 
 /*
@@ -4462,7 +4479,7 @@ select {
 .game-frame[data-channel="mobile"][data-mobile-layout="pt"] .round-state[data-variant="win-counting"],
 .game-frame[data-channel="mobile"][data-mobile-layout="pt"] .round-state[data-variant="win-settled"],
 .game-frame[data-channel="mobile"][data-mobile-layout="pt"] .round-state[data-variant="wheel-bonus"] {
-  bottom: calc(var(--status-height) + clamp(149px, 18.4vh, 176px) + 35px);
+  bottom: calc(var(--status-height) + clamp(149px, 18.4cqh, 176px) + 35px);
 }
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel {
@@ -4477,17 +4494,17 @@ select {
 }
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--balance {
-  left: max(env(safe-area-inset-left, 0px), 12px);
+  left: 12px;
   top: 10px;
 }
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--bet {
-  left: max(env(safe-area-inset-left, 0px), 12px);
+  left: 12px;
   top: 38px;
 }
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--win {
-  right: max(env(safe-area-inset-right, 0px), 12px);
+  right: 12px;
   top: 11px;
   width: auto;
   padding-right: 0;
@@ -4495,9 +4512,9 @@ select {
 }
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel__provider {
-  left: max(env(safe-area-inset-left, 0px), 7px);
+  left: 7px;
   top: auto;
-  bottom: max(env(safe-area-inset-bottom, 0px), 5px);
+  bottom: 5px;
   width: 56px;
   height: 18px;
   transform: none;
@@ -4508,7 +4525,7 @@ select {
   right: auto;
   left: 58px;
   top: auto;
-  bottom: max(env(safe-area-inset-bottom, 0px), 6px);
+  bottom: 6px;
   display: block;
   width: auto;
   height: 16px;
@@ -4532,7 +4549,7 @@ select {
 .game-frame[data-channel="mobile"][data-fps-layout="pt"] .feature-preview[data-authored="true"] .feature-preview__logo,
 .game-frame[data-channel="mobile"][data-fps-layout="iPad_pt"] .feature-preview[data-authored="true"] .feature-preview__logo {
   top: 20.7%;
-  width: min(39vw, 154px);
+  width: min(39cqw, 154px);
   height: auto;
 }
 
@@ -4547,7 +4564,7 @@ select {
   top: 34.5%;
   width: 48%;
   height: 26px;
-  font-size: clamp(15px, 4.4vw, 19px);
+  font-size: clamp(15px, 4.4cqw, 19px);
   line-height: 26px;
 }
 
@@ -4576,7 +4593,7 @@ select {
 
 .game-frame[data-channel="mobile"][data-fps-layout="pt"] .feature-preview[data-authored="true"] .feature-card__copy span,
 .game-frame[data-channel="mobile"][data-fps-layout="iPad_pt"] .feature-preview[data-authored="true"] .feature-card__copy span {
-  font-size: clamp(14px, 4.1vw, 18px);
+  font-size: clamp(14px, 4.1cqw, 18px);
   -webkit-text-stroke-width: 3px;
 }
 
@@ -4647,7 +4664,7 @@ select {
 
 .game-frame[data-channel="mobile"][data-fps-layout="ls"] .feature-preview[data-authored="true"] .feature-preview__logo {
   top: 2%;
-  width: clamp(100px, 12.5vw, 132px);
+  width: clamp(100px, 12.5cqw, 132px);
   height: auto;
 }
 
@@ -4659,7 +4676,7 @@ select {
 .game-frame[data-channel="mobile"][data-fps-layout="ls"] .feature-preview[data-authored="true"] .feature-card__title {
   top: 17.7%;
   width: 40%;
-  font-size: clamp(13px, 1.65vw, 18px);
+  font-size: clamp(13px, 1.65cqw, 18px);
   line-height: 22px;
   -webkit-text-stroke-width: 2.5px;
 }
@@ -4673,7 +4690,7 @@ select {
 }
 
 .game-frame[data-channel="mobile"][data-fps-layout="ls"] .feature-preview[data-authored="true"] .feature-card__copy span {
-  font-size: clamp(12px, 1.55vw, 16px);
+  font-size: clamp(12px, 1.55cqw, 16px);
   -webkit-text-stroke-width: 3px;
 }
 
@@ -4947,10 +4964,818 @@ select {
   background: transparent;
 }
 
+/* 任意移动视口 DOM 合约 */
+/*
+ * 移动设计域由当前视口纵横比连续求解；这里仅消费连续 cqw/cqh 与现有 gameplay/status 变量。
+ * 这些回退值也覆盖 DOM ResizeObserver 发布首个精确几何值之前的一帧，绝不识别设备型号或预设尺寸。
+ */
+.game-frame[data-channel="mobile"] .dom-overlay {
+  --mobile-hud-edge: clamp(8px, min(2.4cqw, 2.4cqh), 18px);
+  --mobile-control-gap: clamp(5px, min(1.8cqw, 1.8cqh), 10px);
+}
+
+.game-frame[data-channel="mobile"] .game-menu__content {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.game-frame[data-channel="mobile"] .game-menu__panel,
+.game-frame[data-channel="mobile"] #game-menu-paytable,
+.game-frame[data-channel="mobile"] .official-help-viewport {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.game-frame[data-channel="mobile"] .official-help-viewport {
+  overflow-x: clip;
+  contain: inline-size;
+}
+
+.game-frame[data-channel="mobile"] .official-help-projection {
+  max-width: 100%;
+  overflow: clip;
+}
+
+.game-frame[data-channel="mobile"] .compact-modal,
+.game-frame[data-channel="mobile"] .bet-popover {
+  width: 341px;
+  max-width: calc(100cqw - var(--mobile-hud-edge) - var(--mobile-hud-edge));
+  max-height: calc(var(--gameplay-height) - var(--mobile-hud-edge) - var(--mobile-hud-edge));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.game-frame[data-channel="mobile"] .bet-stepper {
+  grid-template-columns:
+    clamp(30px, 8cqw, 34px)
+    minmax(0, 1fr)
+    clamp(30px, 8cqw, 34px);
+  gap: clamp(4px, 1.6cqw, 7px);
+  padding-right: clamp(0px, 3cqw, 17px);
+  padding-left: clamp(0px, 3cqw, 17px);
+}
+
+.game-frame[data-channel="mobile"] .bet-choices {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.game-frame[data-channel="mobile"] .status-metric {
+  min-width: 0;
+  max-width: 48%;
+}
+
+.game-frame[data-channel="mobile"] .status-metric__label {
+  flex: 0 0 auto;
+}
+
+.game-frame[data-channel="mobile"] .status-metric strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 纵向手机与平板共享同一套比例式堆栈；iPad_pt 只影响 Pixi 作者节点，不改变 DOM 流。 */
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .dom-overlay {
+  --mobile-utility-control-size: clamp(35px, min(9.5cqw, 5.5cqh), 44px);
+  --mobile-utility-width: min(
+    calc(100cqw - var(--mobile-hud-edge) - var(--mobile-hud-edge)),
+    68cqw,
+    330px
+  );
+  --mobile-utility-height: calc(
+    var(--mobile-utility-control-size) + clamp(12px, 3.6cqw, 20px)
+  );
+  --mobile-spin-size: clamp(86px, min(23cqw, 12cqh), 104px);
+  --mobile-round-height: clamp(28px, 7.5cqw, 34px);
+  --mobile-utility-bottom: calc(var(--status-height) + var(--mobile-hud-edge));
+  --mobile-spin-bottom: calc(
+    var(--mobile-utility-bottom) + var(--mobile-utility-height) + var(--mobile-control-gap)
+  );
+  --mobile-round-bottom: calc(
+    var(--mobile-spin-bottom) + var(--mobile-spin-size) + var(--mobile-control-gap)
+  );
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-dock {
+  left: 50%;
+  top: auto;
+  right: auto;
+  bottom: var(--mobile-utility-bottom);
+  width: var(--mobile-utility-width);
+  max-width: calc(100cqw - var(--mobile-hud-edge) - var(--mobile-hud-edge));
+  height: var(--mobile-utility-height);
+  min-height: 0;
+  gap: var(--mobile-control-gap);
+  padding: clamp(6px, 1.8cqw, 10px);
+  transform: translateX(-50%) translateY(var(--launch-shift-y, 0));
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-button,
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .bet-trigger {
+  width: var(--mobile-utility-control-size);
+  height: var(--mobile-utility-control-size);
+  flex-basis: var(--mobile-utility-control-size);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-button__asset,
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .bet-trigger__icon {
+  width: min(70%, 29px);
+  height: min(70%, 29px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .spin-dock {
+  right: auto;
+  left: 50%;
+  top: auto;
+  bottom: var(--mobile-spin-bottom);
+  width: var(--mobile-spin-size);
+  height: var(--mobile-spin-size);
+  transform: translateX(-50%);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .round-state {
+  right: var(--mobile-hud-edge);
+  left: var(--mobile-hud-edge);
+  top: auto;
+  bottom: var(--mobile-round-bottom);
+  width: auto;
+  max-width: none;
+  height: var(--mobile-round-height);
+  transform: translateY(var(--launch-shift-y, 0));
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .round-state__title {
+  height: 100%;
+  overflow: hidden;
+  font-size: clamp(13px, 4.2cqw, 22px);
+  line-height: var(--mobile-round-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-text-stroke-width: clamp(2px, 0.55cqw, 3px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .round-state[data-variant="win-counting"] {
+  /* 覆盖旧 pt 变体的固定偏移；所有纵向比例都服从同一无重叠几何。 */
+  bottom: var(--mobile-round-bottom);
+  height: clamp(44px, 7cqh, 58px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .round-state[data-variant="win-counting"] .round-state__title {
+  height: 100%;
+  font-size: clamp(30px, 8cqw, 44px);
+  line-height: 1.2;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .round-state[data-variant="win-settled"],
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .round-state[data-variant="wheel-bonus"] {
+  bottom: var(--mobile-round-bottom);
+  height: clamp(36px, 5cqh, 42px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel {
+  overflow: hidden;
+  font-size: clamp(12px, min(3.6cqw, 2.2cqh), 16px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--balance,
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--bet {
+  left: var(--mobile-hud-edge);
+  max-width: calc(58% - var(--mobile-hud-edge));
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--balance {
+  top: 12%;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--bet {
+  top: 44%;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-metric--win {
+  right: var(--mobile-hud-edge);
+  top: 12%;
+  max-width: calc(42% - var(--mobile-hud-edge));
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel__provider {
+  left: var(--mobile-hud-edge);
+  bottom: 5%;
+  width: clamp(42px, 13cqw, 62px);
+  max-width: 24%;
+  height: auto;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-game-name-visible="true"] .status-panel__game {
+  right: var(--mobile-hud-edge);
+  left: auto;
+  bottom: 5%;
+  max-width: 55%;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 横向手机与平板根据连续高度收缩；去掉旧的 250px 最小栏高，避免矮视口把两端控件顶出玩法区。 */
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .dom-overlay {
+  --mobile-utility-control-size: clamp(36px, min(5.5cqw, 10cqh), 48px);
+  --mobile-utility-width: calc(
+    var(--mobile-utility-control-size) + clamp(12px, 4cqh, 20px)
+  );
+  --mobile-utility-height: min(
+    calc(var(--gameplay-height) - var(--mobile-hud-edge) - var(--mobile-hud-edge)),
+    calc(
+      var(--mobile-utility-control-size) +
+      var(--mobile-utility-control-size) +
+      var(--mobile-utility-control-size) +
+      var(--mobile-utility-control-size) +
+      var(--mobile-utility-control-size) +
+      var(--mobile-control-gap) +
+      var(--mobile-control-gap) +
+      var(--mobile-control-gap) +
+      var(--mobile-control-gap) +
+      clamp(12px, 4cqh, 20px)
+    )
+  );
+  --mobile-spin-size: clamp(78px, min(12.8cqw, 24cqh), 108px);
+  --mobile-round-height: clamp(22px, 5.5cqh, 34px);
+  --mobile-round-bottom: calc(var(--status-height) + var(--mobile-hud-edge));
+  --mobile-round-inline-start: calc(
+    var(--mobile-hud-edge) + var(--mobile-utility-width) + var(--mobile-control-gap)
+  );
+  --mobile-round-inline-end: calc(
+    var(--mobile-hud-edge) + var(--mobile-spin-size) + var(--mobile-control-gap)
+  );
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-dock {
+  left: var(--mobile-hud-edge);
+  top: calc(var(--gameplay-height) / 2);
+  right: auto;
+  bottom: auto;
+  width: var(--mobile-utility-width);
+  height: var(--mobile-utility-height);
+  min-height: 0;
+  gap: var(--mobile-control-gap);
+  padding: clamp(6px, 2cqh, 10px);
+  transform: translateY(calc(-50% + var(--launch-shift-y, 0px)));
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-button,
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .bet-trigger {
+  width: var(--mobile-utility-control-size);
+  height: var(--mobile-utility-control-size);
+  flex-basis: var(--mobile-utility-control-size);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-button__asset,
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .bet-trigger__icon {
+  width: min(70%, 34px);
+  height: min(70%, 34px);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .spin-dock {
+  right: var(--mobile-hud-edge);
+  left: auto;
+  top: calc(var(--gameplay-height) / 2);
+  bottom: auto;
+  width: var(--mobile-spin-size);
+  height: var(--mobile-spin-size);
+  transform: translateY(-50%);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .round-state {
+  right: var(--mobile-round-inline-end);
+  left: var(--mobile-round-inline-start);
+  top: auto;
+  bottom: var(--mobile-round-bottom);
+  width: auto;
+  max-width: none;
+  height: var(--mobile-round-height);
+  transform: translateY(var(--launch-shift-y, 0));
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .round-state__title {
+  height: 100%;
+  overflow: hidden;
+  font-size: clamp(11px, min(1.7cqw, 3.2cqh), 16px);
+  line-height: var(--mobile-round-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-text-stroke-width: clamp(1.5px, min(0.22cqw, 0.45cqh), 2px);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-panel {
+  font-size: clamp(
+    11px,
+    min(var(--mobile-status-font-size, 12px), 3.2cqh),
+    20px
+  );
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric {
+  max-height: calc(var(--status-height) - 2px);
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1.15;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric strong {
+  line-height: inherit;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric--balance {
+  max-width: calc(
+    var(--mobile-status-bet-left) - var(--mobile-status-balance-left) - var(--mobile-control-gap)
+  );
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric--bet {
+  max-width: 30%;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-metric--win {
+  max-width: 31%;
+}
+
+/* int64 极值金额不得通过 ellipsis 隐藏：仅在长值出现时让三项接管整个状态栏。 */
+.game-frame[data-channel="mobile"]
+  .status-panel[data-money-density="extreme"] .status-metric strong {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.game-frame[data-channel="mobile"]
+  .status-panel[data-money-density="extreme"] .status-panel__provider,
+.game-frame[data-channel="mobile"]
+  .status-panel[data-money-density="extreme"] .status-panel__game {
+  display: none;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] {
+  font-size: clamp(10px, 3.6cqw, 14px);
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] .status-metric {
+  right: var(--mobile-hud-edge);
+  left: var(--mobile-hud-edge);
+  width: auto;
+  max-width: none;
+  height: 28%;
+  min-height: 0;
+  padding: 0 clamp(3px, 1cqw, 6px);
+  justify-content: flex-start;
+  line-height: 1.2;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] .status-metric--balance {
+  top: 2%;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] .status-metric--bet {
+  top: 35%;
+}
+
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
+  .status-panel[data-money-density="extreme"] .status-metric--win {
+  top: 68%;
+  background: transparent;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"]
+  .status-panel[data-money-density="extreme"] {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  column-gap: var(--mobile-control-gap);
+  padding: 0 var(--mobile-hud-edge);
+  font-size: clamp(
+    9px,
+    min(var(--mobile-status-font-size, 12px), 1.45cqw),
+    12px
+  );
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"]
+  .status-panel[data-money-density="extreme"] .status-metric {
+  position: static;
+  inset: auto;
+  width: 100%;
+  max-width: none;
+  height: calc(var(--status-height) - 2px);
+  max-height: calc(var(--status-height) - 2px);
+  min-height: 0;
+  padding: 0;
+  justify-content: center;
+  overflow: visible;
+  transform: none;
+  line-height: 1.15;
+}
+
 /*
  * Pass 142：移动状态条已经拥有`--gameplay-height`以下的最终物理区域。 HUD 显示可能会淡化它，
  * 但桌面 24px 入口翻译会将整个条带（及其提供者）推过手机和平板电脑上的视口边缘。
  */
 .game-frame[data-channel="mobile"] .status-panel {
   transform: none;
+}
+
+/*
+ * 固定玩法说明：桌面保留侧栏；手机与平板改为顶部标签，避免把 128px 桌面导航挤进窄视口。
+ * 文案区域只在精确 session definition 绑定成功后显示。
+ */
+.official-help,
+.presentation-rules-unavailable,
+.rules-card[data-role="presentation-rules-summary"] {
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.official-help-viewport[hidden],
+.presentation-rules-unavailable[hidden],
+.rules-card[data-role="presentation-rules-summary"][hidden] {
+  display: none;
+}
+
+.official-help-viewport {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.official-help-projection {
+  position: relative;
+  width: 100%;
+  height: 0;
+  margin: 0 auto;
+  overflow: clip;
+  contain: layout size paint;
+}
+
+.official-help {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: block;
+  width: 750px;
+  max-width: none;
+  transform: scale(var(--official-help-scale, 1));
+  transform-origin: top left;
+  text-align: center;
+}
+
+.official-help__section {
+  display: flex;
+  width: 750px;
+  min-width: 750px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  margin: 0 0 80px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.official-help__section > h4 {
+  width: 750px;
+  height: 60px;
+  margin: 0 0 20px;
+  color: #ff710a;
+  background: linear-gradient(180deg, #ff250a, #ff710a);
+  background-clip: text;
+  font-family: "ROBOTO_CONDENSED_BOLD", "Primal Roboto Condensed", "Arial Narrow", sans-serif;
+  font-size: 45px;
+  font-weight: normal;
+  letter-spacing: 0;
+  line-height: 60px;
+  paint-order: stroke fill;
+  text-align: center;
+  text-shadow: none;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  -webkit-text-stroke: 10px #5c0001;
+}
+
+.official-help__artwork {
+  display: grid;
+  width: 750px;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  align-content: center;
+  align-items: center;
+  justify-items: center;
+  gap: 10px;
+  margin: 0 auto 20px;
+}
+
+.official-help__artwork img {
+  display: block;
+  width: var(--official-help-art-width);
+  max-width: none;
+  height: var(--official-help-art-height);
+  max-height: none;
+  object-fit: contain;
+  filter: none;
+}
+
+.official-help__copy {
+  width: 750px;
+}
+
+.official-help__copy p {
+  display: flex;
+  width: 750px;
+  height: var(--official-help-line-box-height, 40px);
+  min-height: var(--official-help-line-box-height, 40px);
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: #FFFFFF;
+  font-family: "ROBOTO_CONDENSED_REGULAR", "Primal Roboto Condensed Regular", "Arial Narrow", sans-serif;
+  font-size: 30px;
+  font-weight: normal;
+  letter-spacing: 0;
+  line-height: 40px;
+  text-align: center;
+}
+
+.official-help__section--paying-symbols {
+  width: 750px;
+  max-width: none;
+}
+
+.official-help__section--paying-symbols > h4 {
+  color: #ff710a;
+}
+
+.official-help__section--wild .wild-paytable {
+  width: 750px;
+  max-width: 750px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 0;
+  margin: 0 0 20px;
+}
+
+.official-help__section--wild .wild-paytable__item img {
+  width: 150px;
+  height: 128px;
+  object-fit: contain;
+}
+
+.official-help__section--paying-symbols .base-paytable__grid {
+  display: grid;
+  width: 750px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+}
+
+.official-help__section--paying-symbols .base-paytable__item {
+  min-height: 195px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.official-help__section--paying-symbols .base-paytable__item img {
+  height: 150px;
+  object-fit: contain;
+}
+
+.presentation-rules-meta {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-align: center;
+}
+
+.presentation-rules-unavailable {
+  padding: 22px 24px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: #202222;
+  text-align: left;
+}
+
+.presentation-rules-unavailable strong {
+  color: #fff;
+  font-size: 14px;
+}
+
+.presentation-rules-unavailable p {
+  margin: 7px 0 0;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.game-frame[data-channel="mobile"] .game-menu {
+  display: flex;
+  flex-direction: column;
+  grid-template-columns: none;
+}
+
+.game-frame[data-channel="mobile"] .game-menu__tabs {
+  position: absolute;
+  right: 52px;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  flex-direction: row;
+  width: auto;
+  margin: 8px 0 0 8px;
+  gap: 4px;
+  padding: 4px;
+  border: 0;
+  border-radius: 18px;
+}
+
+.game-frame[data-channel="mobile"] .game-menu__tab {
+  min-width: 0;
+  min-height: 36px;
+  flex: 1 1 0;
+  padding: 0 6px;
+  font-size: clamp(8px, 2.2cqw, 11px);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.game-frame[data-channel="mobile"] .game-menu__close {
+  right: 6px;
+  top: 6px;
+  z-index: 3;
+  width: 42px;
+  height: 42px;
+  border-radius: 21px;
+  font-size: 24px;
+}
+
+.game-frame[data-channel="mobile"] .game-menu__content {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 58px clamp(10px, 3.2cqw, 24px) 24px;
+}
+
+.game-frame[data-channel="mobile"] #game-menu-paytable {
+  margin-left: 0;
+  padding-top: 0;
+  text-align: left;
+}
+
+.game-frame[data-channel="mobile"] #game-menu-paytable > h3 {
+  display: none;
+}
+
+.game-frame[data-channel="mobile"] .official-help {
+  width: 750px;
+  max-width: none;
+}
+
+.game-frame[data-channel="mobile"] .official-help__section {
+  display: flex;
+  width: 750px;
+  min-width: 750px;
+  gap: 0;
+  padding: 0;
+}
+
+.game-frame[data-channel="mobile"] .official-help__section > h4,
+.game-frame[data-channel="mobile"] .official-help__section--paying-symbols > h4 {
+  width: 750px;
+  height: 60px;
+  font-size: 45px;
+  line-height: 60px;
+  text-align: center;
+}
+
+.game-frame[data-channel="mobile"] .official-help__artwork img {
+  width: var(--official-help-art-width);
+  max-width: none;
+  height: var(--official-help-art-height);
+  max-height: none;
+}
+
+.game-frame[data-channel="mobile"] .official-help__copy p {
+  width: 750px;
+  font-size: 30px;
+  line-height: 40px;
+}
+
+/* 帮助页内部只保留官方 750 逻辑像素几何；外层舞台负责唯一一次等比缩放。 */
+.game-frame[data-channel="mobile"][data-mobile-layout="pt"] .wild-paytable {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 0;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="pt"] .wild-paytable__item img {
+  width: 150px;
+  height: 128px;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="pt"] .base-paytable__grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* 手机、平板与旋转态都不得重排或挤压官方帮助页内部内容。 */
+.game-frame[data-channel="mobile"][data-mobile-layout="iPad_pt"] .wild-paytable {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 0;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="iPad_pt"] .wild-paytable__item img {
+  width: 150px;
+  height: 128px;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="iPad_pt"] .base-paytable__grid,
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .base-paytable__grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* 手机或平板旋转到横向时保持顶部菜单；它是旋转回归，不是独立第三端。 */
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .wild-paytable {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 0;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .game-menu__content {
+  padding-top: 54px;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .official-help__section {
+  display: flex;
+  width: 750px;
+  min-width: 750px;
+}
+
+/* 三端状态栏最终合约：桌面使用 1280x720 官方投影，移动端只消费 ResponsiveLayout 注入的物理区域变量。 */
+.game-frame:not([data-channel="mobile"]) .status-panel {
+  height: 24px;
+  min-height: 24px;
+  color: #cccccc;
+  font-family: "ROBOTO_CONDENSED_REGULAR", "Primal Roboto Condensed Regular", "Arial Narrow", sans-serif;
+  font-size: 14.4px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+.game-frame:not([data-channel="mobile"]) .status-metric {
+  height: 24px;
+  gap: 0;
+  line-height: 24px;
+}
+
+.status-metric__label {
+  white-space: pre;
+}
+
+.game-frame:not([data-channel="mobile"]) .status-metric strong {
+  line-height: 24px;
+}
+
+/* 桌面原版没有移动端 Balance/Bet 背板；保留状态条自身的官方纹理。 */
+.game-frame:not([data-channel="mobile"]) .status-metric--balance,
+.game-frame:not([data-channel="mobile"]) .status-metric--bet {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.game-frame[data-channel="mobile"] .status-panel {
+  font-family: "ROBOTO_CONDENSED_BOLD", "Primal Roboto Condensed", "Arial Narrow", sans-serif;
+  font-size: clamp(12px, 3.6cqw, var(--mobile-status-font-size));
+  font-style: normal;
+  font-weight: normal;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.game-frame[data-channel="mobile"] .status-metric--balance,
+.game-frame[data-channel="mobile"] .status-metric--bet {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.game-frame[data-channel="mobile"] .status-metric--win {
+  background: transparent;
 }

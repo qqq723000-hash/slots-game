@@ -13,6 +13,14 @@ import type {
 } from "../app/state/types";
 import { createSpineView, type Spine } from "./spine/SpineAdapter";
 import { loadPrimalSpineSet } from "./spine/PrimalSpineAssets";
+import {
+  resolveResponsiveMinBound,
+  type MobileHandMode,
+  type MobileLayoutProfile,
+  type ResponsiveLayoutSnapshot,
+  type ResponsiveMinBound,
+  type ResponsiveNodeTransform,
+} from "./ResponsiveLayout";
 
 export const FREE_SPIN_HUD_ANIMATION_MS = Object.freeze({
   counter: Object.freeze({
@@ -90,6 +98,100 @@ export const FREE_SPIN_HUD_DESKTOP_LAYOUT = Object.freeze({
   counter: Object.freeze({ x: 260, y: 124, scale: 0.8 }),
   retrigger: Object.freeze({ x: 640, y: 280, scale: 0.8 }),
 });
+
+interface FreeSpinHudMobileNodeLayout {
+  readonly minBound: ResponsiveMinBound;
+  readonly horizontalAlign: number;
+  readonly verticalAlign: number;
+}
+
+type FreeSpinHudMobileLayout = Readonly<Record<
+  "counter" | "retrigger",
+  FreeSpinHudMobileNodeLayout
+>>;
+
+function mobileHudNode(
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  horizontalAlign = 0.5,
+  verticalAlign = 0.5,
+): FreeSpinHudMobileNodeLayout {
+  return Object.freeze({
+    minBound: Object.freeze({ left, top, width, height }),
+    horizontalAlign,
+    verticalAlign,
+  });
+}
+
+/** 从原版 mobile config 提取的 Free Spins HUD 根节点投影。 */
+export const FREE_SPIN_HUD_MOBILE_LAYOUTS: Readonly<
+  Record<MobileHandMode, Readonly<Record<MobileLayoutProfile, FreeSpinHudMobileLayout>>>
+> = Object.freeze({
+  right: Object.freeze({
+    pt: Object.freeze({
+      counter: mobileHudNode(-130, -1_220, 800, 1_600, 0.5, 0.9),
+      retrigger: mobileHudNode(-600, -350, 1_200, 900),
+    }),
+    iPad_pt: Object.freeze({
+      counter: mobileHudNode(-130, -830, 800, 1_100, 0.5, 0.9),
+      retrigger: mobileHudNode(-600, -350, 1_200, 900),
+    }),
+    ls: Object.freeze({
+      counter: mobileHudNode(-200, -110, 1_250, 900),
+      retrigger: mobileHudNode(-600, -350, 1_200, 900),
+    }),
+  }),
+  left: Object.freeze({
+    pt: Object.freeze({
+      counter: mobileHudNode(-650, -1_220, 800, 1_600, 0.5, 0.9),
+      retrigger: mobileHudNode(-600, -350, 1_200, 900),
+    }),
+    iPad_pt: Object.freeze({
+      counter: mobileHudNode(-670, -830, 800, 1_100, 0.5, 0.9),
+      retrigger: mobileHudNode(-600, -350, 1_200, 900),
+    }),
+    ls: Object.freeze({
+      counter: mobileHudNode(-1_050, -110, 1_250, 900),
+      retrigger: mobileHudNode(-600, -350, 1_200, 900),
+    }),
+  }),
+});
+
+export interface FreeSpinHudResponsiveLayout {
+  readonly counter: ResponsiveNodeTransform;
+  readonly retrigger: ResponsiveNodeTransform;
+}
+
+/**
+ * 将 HUD 投影到当前连续 gameplay 设计域。参考档位只选择原版节点规则，
+ * 不选择或锁定物理视口尺寸。
+ */
+export function freeSpinHudResponsiveLayout(
+  snapshot: ResponsiveLayoutSnapshot,
+): FreeSpinHudResponsiveLayout {
+  if (snapshot.channel === "desktop") {
+    return FREE_SPIN_HUD_DESKTOP_LAYOUT;
+  }
+  const profile = snapshot.mobileProfile;
+  if (!profile) return FREE_SPIN_HUD_DESKTOP_LAYOUT;
+  const layout = FREE_SPIN_HUD_MOBILE_LAYOUTS[snapshot.handMode][profile];
+  return Object.freeze({
+    counter: resolveResponsiveMinBound(
+      snapshot.gameplayRegion,
+      layout.counter.minBound,
+      layout.counter.horizontalAlign,
+      layout.counter.verticalAlign,
+    ),
+    retrigger: resolveResponsiveMinBound(
+      snapshot.gameplayRegion,
+      layout.retrigger.minBound,
+      layout.retrigger.horizontalAlign,
+      layout.retrigger.verticalAlign,
+    ),
+  });
+}
 
 export type FreeSpinHudFeatureState = Pick<
   FeatureState,
@@ -244,6 +346,15 @@ export class FreeSpinHudView extends Container {
 
   get artworkLoaded(): boolean {
     return this.counterView !== null && this.retriggerView !== null;
+  }
+
+  /** 布局提交只改变根节点矩阵，不重播动画，也不触碰权威计数。 */
+  setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
+    const layout = freeSpinHudResponsiveLayout(snapshot);
+    this.counterHost.position.set(layout.counter.x, layout.counter.y);
+    this.counterHost.scale.set(layout.counter.scale);
+    this.retriggerHost.position.set(layout.retrigger.x, layout.retrigger.y);
+    this.retriggerHost.scale.set(layout.retrigger.scale);
   }
 
   loadArtwork(signal?: AbortSignal): Promise<void> {
@@ -489,8 +600,10 @@ export class FreeSpinHudView extends Container {
 
   /** 将捕获的 `main:fsCounter` 变换转换为效果图层。 */
   getCollectTarget(targetSpace: Container): Point {
-    const layout = FREE_SPIN_HUD_DESKTOP_LAYOUT.counter;
-    return targetSpace.toLocal(this.toGlobal(new Point(layout.x, layout.y)));
+    return targetSpace.toLocal(this.toGlobal(new Point(
+      this.counterHost.position.x,
+      this.counterHost.position.y,
+    )));
   }
 
   /** 从主机渲染器中推进手动驱动的 Spine 实例。 */

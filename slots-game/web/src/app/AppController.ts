@@ -18,7 +18,11 @@ import {
   type WheelAwardedEvent,
 } from "./state/types";
 import { PresentationQueue } from "../presentation/PresentationQueue";
-import type { GameGateway, GatewayStatus } from "../protocol/GameGateway";
+import type {
+  GameGateway,
+  GatewayStatus,
+  ResultDeliveryStage,
+} from "../protocol/GameGateway";
 import {
   createConfiguredGameGateway,
   optionalWindowSessionStorage,
@@ -47,6 +51,7 @@ import {
   ResponsiveLayout,
   computeResponsiveLayoutSnapshot,
   responsiveChannelFromEnvironment,
+  responsiveLayoutChannel,
 } from "../renderer/ResponsiveLayout";
 import { setPrimalRuntimeAssetChannel } from "../assets/primalRuntimeAssets";
 import { DomOverlay } from "../ui/DomOverlay";
@@ -438,6 +443,7 @@ export interface AppControllerCreateOptions {
 
 interface ApplicationShell {
   readonly viewport: HTMLElement;
+  readonly safeArea: HTMLElement;
   readonly frame: HTMLElement;
   readonly canvasHost: HTMLElement;
   readonly overlayHost: HTMLElement;
@@ -483,9 +489,11 @@ export function mapPreloadToVisibleProgress(
 
 const APPLICATION_SHELL_HTML = `
   <main class="viewport" data-role="viewport">
-    <div class="game-frame" data-role="frame">
-      <div class="canvas-host" data-role="canvas"></div>
-      <div class="dom-overlay" data-role="overlay"></div>
+    <div class="game-safe-area" data-role="safe-area">
+      <div class="game-frame" data-role="frame">
+        <div class="canvas-host" data-role="canvas"></div>
+        <div class="dom-overlay" data-role="overlay"></div>
+      </div>
     </div>
     <div class="launch-loading-host" data-role="launch-host"></div>
     <section class="orientation-lock" role="status" aria-hidden="true" aria-label="Landscape orientation required">
@@ -508,6 +516,7 @@ function mountApplicationShell(root: HTMLElement): ApplicationShell {
   };
   const shell = {
     viewport: requireRole("viewport"),
+    safeArea: requireRole("safe-area"),
     frame: requireRole("frame"),
     canvasHost: requireRole("canvas"),
     overlayHost: requireRole("overlay"),
@@ -556,6 +565,24 @@ interface BufferedRecoveredSpinResult {
   readonly needsVisualSpinStart: boolean;
 }
 
+type RgsResultDeliveryStage =
+  | ResultDeliveryStage
+  | "callback"
+  | "buffer-clone"
+  | "buffer-validate"
+  | "buffer-reel-guard"
+  | "buffer-release"
+  | "recovered-spin-start"
+  | "accept-validate"
+  | "autoplay-finalize"
+  | "autoplay-arm"
+  | "reel-transition"
+  | "feature-transition"
+  | "game-transition"
+  | "accepted"
+  | "rejecting"
+  | "rejected";
+
 function immutableClone<T>(value: T): T {
   if (Array.isArray(value)) {
     return Object.freeze(value.map((item) => immutableClone(item))) as T;
@@ -597,6 +624,8 @@ export class AppController {
   private readonly reducedMotion: boolean;
   private readonly reducedMotionMedia: MediaQueryList | null;
   private snapshot: GameSnapshot = {
+    currency: "XXX",
+    currencyExponent: 2,
     balanceMinor: "0",
     selectedBetMinor: "100",
     betOptionsMinor: ["100"],
@@ -606,6 +635,12 @@ export class AppController {
   };
   /** 最后实际绘制的余额；已接受/恢复的经济状态可能更新。 */
   private visibleBalanceMinor: MoneyMinor = "0";
+  /** 同一 sessionId 的币种和小数指数只能由首个已解码会话确定一次。 */
+  private sessionMoneyBinding: Readonly<{
+    sessionId: string;
+    currency: string;
+    currencyExponent: number;
+  }> | null = null;
   /** 从收到已接受结果起，到收集动作使结算可见前为 true。 */
   private balanceVisibilityBlocked = false;
   private lastRoundId: string | null = null;
@@ -696,22 +731,31 @@ export class AppController {
         },
       );
 
-      const viewportWidth = shell.viewport.clientWidth || window.innerWidth || 1;
-      const viewportHeight = shell.viewport.clientHeight || window.innerHeight || 1;
+      const viewportWidth = shell.safeArea.clientWidth
+        || shell.viewport.clientWidth
+        || 1;
+      const viewportHeight = shell.safeArea.clientHeight
+        || shell.viewport.clientHeight
+        || 1;
       const initialLayout = computeResponsiveLayoutSnapshot(
         viewportWidth,
         viewportHeight,
-        { channel: assetChannel },
+        {
+          channel: responsiveLayoutChannel(viewportWidth, viewportHeight, {
+            search: window.location.search,
+            coarsePointer: window.matchMedia?.("(pointer: coarse)").matches ?? false,
+            finePointer: window.matchMedia?.("(pointer: fine)").matches ?? false,
+            touchPoints: window.navigator?.maxTouchPoints,
+          }),
+        },
       );
       const rendererOptions = {
         characterCollectRandomSource: dependencies.characterCollectRandomSource,
         rageCascadeCellOrderSource: dependencies.rageCascadeCellOrderSource,
-        initialSize: initialLayout.channel === "mobile"
-          ? {
-              width: initialLayout.viewportRegion.width,
-              height: initialLayout.viewportRegion.height,
-            }
-          : undefined,
+        initialSize: {
+          width: initialLayout.viewportRegion.width,
+          height: initialLayout.viewportRegion.height,
+        },
       };
       // 每个重量级最终负责人都在各自的已绘制帧边界上构造。PixiRenderer 采用这些确切实例；
       // 不会丢弃预检图，也不会向输入暴露部分构建的渲染器。
@@ -763,7 +807,6 @@ export class AppController {
     this.vaultUnlockCaptureEnabled = dependencies.vaultUnlockCaptureEnabled === true;
     this.startupFrameRequest = preparedView?.startupFrameRequest;
     const shell = preparedView ?? mountApplicationShell(root);
-    const viewport = shell.viewport;
     const frame = shell.frame;
     const assetChannel = preparedView?.assetChannel ?? responsiveChannelFromEnvironment({
       search: window.location.search,
@@ -790,9 +833,11 @@ export class AppController {
     this.renderer.attachFeaturePreviewCanvasHost(this.ui.getFeaturePreviewCanvasHost());
     this.audio = dependencies.audioManager ?? new AudioManager({ assetChannel });
     this.audio.bindUserGestures(root);
-    this.layout = new ResponsiveLayout(viewport, frame, (snapshot) => {
+    // 测试/嵌入式宿主可能仍只提供旧 viewport；生产 shell 始终优先观察安全区外框。
+    this.layout = new ResponsiveLayout(shell.safeArea ?? shell.viewport, frame, (snapshot) => {
+      this.ui.setResponsiveLayout(snapshot);
       this.renderer.setResponsiveLayout(snapshot);
-    }, { channel: assetChannel });
+    });
     this.stops = new StopSequencer(this.renderer.reels, {}, {
       onReelStopStart: ({ reel }) => {
         this.reelRound.transition({ type: "REEL_STOP_STARTED", reel });
@@ -977,6 +1022,7 @@ export class AppController {
       onSpinResult: (result, originFeatureState) => (
         this.handleSpinResult(result, originFeatureState)
       ),
+      onResultDeliveryStage: (stage) => this.markRgsResultDeliveryStage(stage),
       onSpinResultAcknowledged: () => this.refreshUi(),
       onOperatorSessionRequired: (error) => this.handleOperatorSessionRequired(error),
       onError: (error) => this.handleError(error),
@@ -1335,6 +1381,9 @@ export class AppController {
   private handleSession(session: SessionOpened): void {
     // 一次性 RGS code 已进入“向宿主索取新会话”状态时，迟到回调不得复活旧会话。
     if (this.initialSessionFailure && this.requiresOperatorSessionRecovery()) return;
+    if (!this.acceptSessionMoneyBinding(session)) return;
+    // 测试替身可省略该纯显示端口；生产 PixiRenderer 会把同一个冻结格式器下发到全部金额表面。
+    this.renderer.setMoneyDisplayBinding?.(session);
     this.clearInitialRgsSessionTimeout();
     // RGS 在调用已提交结果回调前清除网络待处理标记。该权威结果在启动流程之后等待期间，
     // 仍拥有轮次前特性和可见余额投影。
@@ -1359,6 +1408,8 @@ export class AppController {
       : session.featureState;
     this.snapshot = {
       ...this.snapshot,
+      currency: session.currency,
+      currencyExponent: session.currencyExponent,
       balanceMinor: session.balanceMinor,
       betOptionsMinor: session.betOptionsMinor,
       selectedBetMinor,
@@ -1378,6 +1429,9 @@ export class AppController {
       defaultBetMinor: this.snapshot.selectedBetMinor,
       featureState: effectiveFeatureState,
     });
+    // 该标记只在经过协议解码、会话绑定并应用到玩家界面后发布。
+    // 真实浏览器验收据此区分“入口已绘制”和“权威会话已实际生效”。
+    if (this.root?.dataset) this.root.dataset.rgsSession = "online";
     if (this.launch.canEnterGame && !preserveFeatureProjection) this.syncGameMusic();
 
     if (this.machine.phase === "connecting" || this.machine.phase === "recovering") {
@@ -1392,10 +1446,32 @@ export class AppController {
     this.refreshUi();
   }
 
+  private acceptSessionMoneyBinding(session: SessionOpened): boolean {
+    const current = this.sessionMoneyBinding;
+    if (current !== null && current !== undefined
+      && current.sessionId === session.sessionId
+      && (current.currency !== session.currency
+        || current.currencyExponent !== session.currencyExponent)) {
+      // 在更新 snapshot、余额或任一 DOM 文本之前关闭传输与输入，禁止同一金额被重新解释。
+      const error = new Error("Session money display binding changed");
+      this.machine.transition({ type: "FATAL_ERROR" });
+      this.gateway.close();
+      this.completeLaunchFailure(playerFacingErrorFor(error, "launch"));
+      return false;
+    }
+    this.sessionMoneyBinding = Object.freeze({
+      sessionId: session.sessionId,
+      currency: session.currency,
+      currencyExponent: session.currencyExponent,
+    });
+    return true;
+  }
+
   private handleSpinResult(
     result: SpinResult,
     recoveredOriginFeatureState?: Readonly<FeatureState>,
   ): void {
+    this.markRgsResultDeliveryStage("callback");
     if (recoveredOriginFeatureState !== undefined) {
       this.bufferRecoveredSpinResult(result, recoveredOriginFeatureState);
       return;
@@ -1423,10 +1499,12 @@ export class AppController {
 
     // 在持久权威结果可以启动隐藏转轴生命周期或最终可见重放前，先将其冻结并验证。
     // acceptSpinResult 中的第二道守卫仍是最终提交边界。
+    this.markRgsResultDeliveryStage("buffer-clone");
     const bufferedResult = immutableClone(result);
     const bufferedOriginFeatureState = immutableClone({
       ...recoveredOriginFeatureState,
     });
+    this.markRgsResultDeliveryStage("buffer-validate");
     try {
       this.validateAuthoritativeSpinResult(bufferedResult, bufferedOriginFeatureState);
     } catch (error) {
@@ -1435,6 +1513,7 @@ export class AppController {
     }
 
     let needsVisualSpinStart = false;
+    this.markRgsResultDeliveryStage("buffer-reel-guard");
     const reelSnapshot = this.reelRound.snapshot;
     if (reelSnapshot.state === "Idle") {
     // 整页持久恢复没有内存中的请求侧转轴生命周期。在启动界面真正离开前，
@@ -1451,6 +1530,7 @@ export class AppController {
       originFeatureState: bufferedOriginFeatureState,
       needsVisualSpinStart,
     };
+    this.markRgsResultDeliveryStage("buffer-release");
     this.releaseBufferedRecoveredSpinResult();
   }
 
@@ -1461,6 +1541,7 @@ export class AppController {
     // 在调用表现代码前先消费，确保同步回调和重复网络投递无法二次释放该权威结果。
     this.bufferedRecoveredSpinResult = null;
     if (buffered.needsVisualSpinStart) {
+      this.markRgsResultDeliveryStage("recovered-spin-start");
       try {
         this.reelRound.transition({
           type: "SPIN_ACCEPTED",
@@ -1520,6 +1601,7 @@ export class AppController {
         ?? this.snapshot.featureState),
     };
     let authoritativeRound;
+    this.markRgsResultDeliveryStage("accept-validate");
     try {
       authoritativeRound = this.validateAuthoritativeSpinResult(result, previousFeatureState);
     } catch (error) {
@@ -1528,9 +1610,11 @@ export class AppController {
     }
     // 只有上述权威形状/来源守卫成功后，请求侧计数器减量才会永久生效。
     // 恢复的 Free Spins 和 Wheel 输入没有付费预留，因此这里对它们不执行任何操作。
+    this.markRgsResultDeliveryStage("autoplay-finalize");
     this.ui?.finalizeAcceptedPaidAutoplaySpin?.();
     // 仅在服务端结果通过所有来源/形状守卫后，才快照四项 Auto Play 停止设置。
     // 下方表现里程碑拥有实际停止权；结果解码绝不修改运行中的计数器。
+    this.markRgsResultDeliveryStage("autoplay-arm");
     this.ui?.armAutoplayStopRound?.(result);
     this.activePresentationSequence = result.sequence;
     this.emitPresentationTrace({
@@ -1541,6 +1625,7 @@ export class AppController {
       balanceMinor: result.balanceMinor,
       winCount: result.wins.length,
     });
+    this.markRgsResultDeliveryStage("reel-transition");
     this.reelRound.transition({
       type: "RESULT_RECEIVED",
       roundId: authoritativeRound.roundId,
@@ -1550,9 +1635,12 @@ export class AppController {
     // 始终使用同一时钟配置。
     const roundFastPlay = this.fastPlay === true;
     this.roundOriginFeatureState = null;
+    this.markRgsResultDeliveryStage("feature-transition");
     const featureEnded = didFeatureModeEnd(previousFeatureState, result.featureState);
     this.lastRoundId = result.roundId;
+    this.markRgsResultDeliveryStage("game-transition");
     this.machine.transition({ type: "SPIN_RESULT" });
+    this.markRgsResultDeliveryStage("accepted");
     this.balanceVisibilityBlocked = true;
     this.observeRoundPresentationState("presenting");
     this.snapshot = {
@@ -1779,7 +1867,7 @@ export class AppController {
                 recordHoldDurationMs,
                 (milestone, record, resident) => {
                   if (milestone === "visible") {
-                    if (!bigWinMode) this.renderer.reels.highlight([...win.cells]);
+                    this.renderer.reels.highlight([...win.cells]);
                     // 每条无路径记录都从通用 ScatterWin 开始。随后 Rage/Vault/未知符号
                     // 解析到静默 LpWin 回退路径，而不是重复 MP2。
                     this.audio.playSymbolWin("scatter-win", {
@@ -1974,6 +2062,7 @@ export class AppController {
   }
 
   private rejectSpinResult(error: unknown): void {
+    this.markRgsResultDeliveryStage("rejecting");
     this.ui.rollbackAcceptedPaidAutoplaySpin?.();
     this.roundOriginFeatureState = null;
     this.stopRoundAudio(35);
@@ -1983,6 +2072,7 @@ export class AppController {
     this.machine.transition({ type: "SPIN_FAILED" });
     this.observeRoundPresentationState("failed");
     this.refreshUi();
+    this.markRgsResultDeliveryStage("rejected");
   }
 
   private async presentPostReelFeatureEvent(
@@ -2408,6 +2498,11 @@ export class AppController {
     }
   }
 
+  private markRgsResultDeliveryStage(stage: RgsResultDeliveryStage): void {
+    // 只发布固定阶段码；不得把轮次标识、响应内容、异常文本或堆栈写入 DOM。
+    if (this.root?.dataset) this.root.dataset.rgsDeliveryStage = stage;
+  }
+
   private reportPlayerError(
     cause: unknown,
     context: PlayerFacingErrorContext,
@@ -2434,6 +2529,8 @@ export class AppController {
   }
 
   private completeLaunchFailure(error: PlayerFacingError): void {
+    // 启动失败不得保留会话成功标记，避免探针把失败页面误判为可服务。
+    if (this.root?.dataset) delete this.root.dataset.rgsSession;
     this.launch.transition({ type: "FAIL" });
     this.syncLaunchUi();
     this.presentPlayerFacingError(error);
@@ -2525,6 +2622,34 @@ export class AppController {
 
   private handleOperatorSessionRequired(cause: ServerError | Error): void {
     if (this.destroyed) return;
+    // refresh 协议终止可能发生在服务器已收到 Spin、浏览器尚未取得结果的窗口。
+    // 只撤销本页未完成的表现状态；RGS 仍保留 pending/ledger，由新运营商会话恢复同一轮次。
+    if (this.machine.phase === "requesting") {
+      try {
+        this.ui.rollbackAcceptedPaidAutoplaySpin?.();
+      } catch {
+        // 自动播放计数是表现状态；清理失败不能阻止运营商恢复通知。
+      }
+      this.roundOriginFeatureState = null;
+      try {
+        this.stopRoundAudio(35);
+      } catch {
+        // 音频清理旁路不拥有恢复流程。
+      }
+      try {
+        this.renderer.cancelSpinPresentation();
+      } catch {
+        // 下方状态机仍必须离开 Spinning。
+      }
+      try {
+        this.reelRound.reset("operator-session-required");
+      } catch {
+        // RESET 正常不抛错；保持故障关闭并继续宿主通知。
+      }
+      if (this.machine.phase === "requesting") {
+        this.machine.transition({ type: "SPIN_FAILED" });
+      }
+    }
     const error = playerFacingError(
       PLAYER_FACING_ERROR_CODES.OPERATOR_SESSION_REQUIRED,
       cause,

@@ -1,6 +1,7 @@
-import { readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertAcyclicStaticChunkGraph } from "./production-javascript-import-contract.mjs";
 
 const maximumBytes = 500_000;
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,9 +23,14 @@ if (files.length === 0) {
 }
 
 const oversized = [];
+const artifacts = [];
 for (const path of files) {
   const bytes = (await stat(path)).size;
   if (bytes > maximumBytes) oversized.push({ path, bytes });
+  artifacts.push({
+    name: path.slice(assetsRoot.length + 1),
+    source: await readFile(path, "utf8"),
+  });
 }
 
 if (oversized.length > 0) {
@@ -34,4 +40,8 @@ if (oversized.length > 0) {
   throw new Error(`生产 JavaScript 单文件超过体积预算：\n${details}`);
 }
 
-process.stdout.write(`生产 JavaScript 体积预算通过：${files.length} 个文件，每个不超过 ${maximumBytes} bytes。\n`);
+assertAcyclicStaticChunkGraph(artifacts);
+
+process.stdout.write(
+  `生产 JavaScript 契约通过：${files.length} 个文件均不超过 ${maximumBytes} bytes，静态分块依赖图无循环。\n`,
+);

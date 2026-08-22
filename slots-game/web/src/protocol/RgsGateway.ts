@@ -8,6 +8,7 @@ import type {
 import type {
   GameGateway,
   GatewayCallbacks,
+  ResultDeliveryStage,
 } from "./GameGateway";
 import { createRequestId } from "./messages";
 import {
@@ -810,6 +811,11 @@ function retryableHttp(error: RgsHttpError): boolean {
   return error.status === 202 || error.status === 429 || error.status >= 500;
 }
 
+function unrecoverableRefreshAuthorization(error: RgsHttpError): boolean {
+  return error.status === 401 || error.status === 403
+    || error.status === 410 || error.status === 423;
+}
+
 function serverError(
   error: RgsHttpError,
   sessionId?: string,
@@ -864,6 +870,14 @@ export class RgsGateway implements GameGateway {
 
   setCallbacks(callbacks: GatewayCallbacks): void {
     this.callbacks = callbacks;
+  }
+
+  private reportResultDeliveryStage(stage: ResultDeliveryStage): void {
+    try {
+      this.callbacks.onResultDeliveryStage?.(stage);
+    } catch {
+      // 固定诊断观察不属于传输或权威结果路径。
+    }
   }
 
   get hasPendingSpin(): boolean {
@@ -1098,9 +1112,6 @@ export class RgsGateway implements GameGateway {
     pending.acknowledgementExhausted = true;
     pending.acknowledgementInFlight = false;
     pending.blocked = true;
-    this.wageringBlocked = true;
-    this.clearAcknowledgementRetryTimer();
-    this.clearAcknowledgementDeadlineTimer();
     const requestId = cause instanceof RgsHttpError || cause instanceof RgsNetworkError
       ? cause.requestId
       : undefined;
@@ -1114,24 +1125,47 @@ export class RgsGateway implements GameGateway {
       message: "Committed result acknowledgement requires an operator relaunch",
       retryable: false,
     };
+    this.terminateForOperatorRelaunch(terminal);
+  }
+
+  /**
+   * 终止一个无法在当前页安全恢复的授权上下文。此边界故意保留 pending 与持久账本，
+   * 让运营商新会话仍能按同一经济身份查询/交付可能已经提交的结果。
+   */
+  private terminateForOperatorRelaunch(cause: ServerError | Error): void {
+    if (this.closed) return;
     const notifyOffline = this.connected || this.connecting;
-    // 达到页内硬上限后等价于终止旧传输：取消 ACK/刷新/其他在途请求并
-    // 失效当前代次，但绝不清除待处理项或持久账本。新宿主会话仍会
-    // 从服务端唯一游标取回同一结果。
+    if (this.pending) {
+      this.pending.blocked = true;
+      this.pending.acknowledgementInFlight = false;
+    }
+    this.wageringBlocked = true;
     this.closed = true;
     this.connected = false;
     this.connecting = false;
     this.generation += 1;
     this.clearPollTimer();
+    this.clearAcknowledgementRetryTimer();
+    this.clearAcknowledgementDeadlineTimer();
     this.clearRefreshTimer();
     for (const controller of this.activeRequests) controller.abort();
     this.activeRequests.clear();
     this.accessToken = null;
     this.launchCode = null;
-    if (notifyOffline) this.callbacks.onStatus("offline");
-    this.callbacks.onError(terminal);
+    if (notifyOffline) {
+      try {
+        this.callbacks.onStatus("offline");
+      } catch {
+        // 状态观察者不拥有终止流程；即使 UI 状态回调故障，也必须继续通知诊断与宿主恢复。
+      }
+    }
     try {
-      this.callbacks.onOperatorSessionRequired?.(terminal);
+      this.callbacks.onError(cause);
+    } catch {
+      // 诊断观察者与宿主接管相互隔离，禁止前者异常吞掉唯一的恢复通知。
+    }
+    try {
+      this.callbacks.onOperatorSessionRequired?.(cause);
     } catch {
       // 宿主接管通知是旁路；回调异常不能复活旧令牌或解除结果交付栅栏。
     }
@@ -1362,7 +1396,14 @@ export class RgsGateway implements GameGateway {
           betMinor: pending.ledger.betMinor,
           startRevision: pending.ledger.startRevision,
         },
-        (raw, requestId) => decodeRgsSpin(raw, requestId),
+        (raw, requestId) => {
+          this.reportResultDeliveryStage("post-response-before-decode");
+          const result = decodeRgsSpin(raw, requestId, (stage) => {
+            this.reportResultDeliveryStage(stage);
+          });
+          this.reportResultDeliveryStage("decoded");
+          return result;
+        },
       );
       this.acceptCommitted(pending, decoded);
     } catch (error) {
@@ -1475,6 +1516,7 @@ export class RgsGateway implements GameGateway {
     const session = this.requireSession();
     const binding = session.binding;
     const result = decoded.result;
+    this.reportResultDeliveryStage("economic-identity");
     if (!partialBindingMatches(decoded, binding)
       || result.sessionId !== binding.sessionId
       || result.roundId !== pending.ledger.roundId
@@ -1486,6 +1528,7 @@ export class RgsGateway implements GameGateway {
       || (pending.roundKind === "FREE_SPIN" && result.chargedBetMinor !== "0")) {
       throw new RgsProtocolError("committed RGS result does not match the pending economic identity");
     }
+    this.reportResultDeliveryStage("sequence-guard");
     const guardState = {
       sessionId: binding.sessionId,
       pendingRoundId: pending.ledger.roundId,
@@ -1501,9 +1544,12 @@ export class RgsGateway implements GameGateway {
       // 已交付结果在控制器确认可见展示或兜底提交前必须保持持久；
       // 重复网络响应不得 ACK 它。
       if (pending.deliveredSequence !== result.sequence) this.clearPending(pending);
+      this.reportResultDeliveryStage("delivered");
       return;
     }
+    this.reportResultDeliveryStage("origin-reconstructed");
     const origin = reconstructOriginFeatureState(pending, result);
+    this.reportResultDeliveryStage("origin-validated");
     validateSpinResultAgainstOrigin(origin, result);
     const nextSession = Object.freeze({
       ...session,
@@ -1512,6 +1558,7 @@ export class RgsGateway implements GameGateway {
       sequence: result.sequence,
       featureState: cloneFeatureState(result.featureState),
     });
+    this.reportResultDeliveryStage("controller-dispatch");
     try {
       this.callbacks.onSpinResult(result, origin);
     } catch (error) {
@@ -1530,6 +1577,7 @@ export class RgsGateway implements GameGateway {
     pending.deliveredResultHash = decoded.resultHash;
     pending.acknowledgementInFlight = false;
     this.clearPollTimer();
+    this.reportResultDeliveryStage("delivered");
   }
 
   private finishRejectedRound(pending: PendingRound, code: string, message: string): void {
@@ -1602,25 +1650,41 @@ export class RgsGateway implements GameGateway {
     if (this.refreshPromise) return this.refreshPromise;
     const generation = this.generation;
     const refresh = (async (): Promise<void> => {
-      const sessionBefore = this.requireSession();
-      const requestId = this.nextRequestId();
-      const raw = await this.post(
-        this.config.refreshUrl,
-        bindingPayload(sessionBefore.binding),
-        requestId,
-        this.requireAccessToken(),
-      );
-      const exchange = decodeRgsExchange(
-        raw,
-        requestId,
-        sessionBefore.binding.operatorId,
-        sessionBefore.binding.sessionId,
-      );
-      if (exchange.session.status !== "ACTIVE"
-        || !sameCompleteBinding(exchange.session.binding, sessionBefore.binding)) {
-        throw new RgsProtocolError("RGS refresh changed the immutable session binding or status");
+      let exchange: DecodedRgsExchange;
+      try {
+        const sessionBefore = this.requireSession();
+        const requestId = this.nextRequestId();
+        const raw = await this.post(
+          this.config.refreshUrl,
+          bindingPayload(sessionBefore.binding),
+          requestId,
+          this.requireAccessToken(),
+        );
+        exchange = decodeRgsExchange(
+          raw,
+          requestId,
+          sessionBefore.binding.operatorId,
+          sessionBefore.binding.sessionId,
+        );
+        if (exchange.session.status !== "ACTIVE"
+          || !sameCompleteBinding(exchange.session.binding, sessionBefore.binding)) {
+          throw new RgsProtocolError("RGS refresh changed the immutable session binding or status");
+        }
+        this.validateRefreshedSession(exchange.session);
+      } catch (error) {
+        if (this.isCurrent(generation)) {
+          if (error instanceof RgsProtocolError) {
+            this.terminateForOperatorRelaunch(error);
+          } else if (error instanceof RgsHttpError && unrecoverableRefreshAuthorization(error)) {
+            this.terminateForOperatorRelaunch(serverError(
+              error,
+              this.session?.binding.sessionId,
+              this.pending?.ledger.roundId,
+            ));
+          }
+        }
+        throw error;
       }
-      this.validateRefreshedSession(exchange.session);
       if (!this.isCurrent(generation)) return;
       this.accessToken = exchange.accessToken;
       this.session = exchange.session;
@@ -1649,10 +1713,20 @@ export class RgsGateway implements GameGateway {
       }
       return;
     }
-    const start = BigInt(this.pending.ledger.startRevision);
-    const revision = BigInt(refreshed.revision);
-    if (revision < start || revision > start + 1n) {
-      throw new RgsProtocolError("refreshed RGS session is outside the pending round revision window");
+    const startRevision = BigInt(this.pending.ledger.startRevision);
+    const currentRevision = BigInt(current.revision);
+    const refreshedRevision = BigInt(refreshed.revision);
+    const revisionDelta = refreshedRevision - currentRevision;
+    // pending 轮次至多提交一次：refresh 可以保持当前游标，或同时推进 revision/sequence 一步。
+    // 已观察到提交后的当前游标绝不能倒退回 startRevision。
+    if (refreshedRevision < startRevision
+      || refreshedRevision > startRevision + 1n
+      || revisionDelta < 0n
+      || revisionDelta > 1n
+      || refreshed.sequence !== current.sequence + Number(revisionDelta)) {
+      throw new RgsProtocolError(
+        "refreshed RGS session is outside the pending round revision/sequence window",
+      );
     }
   }
 
@@ -1670,7 +1744,6 @@ export class RgsGateway implements GameGateway {
       this.refreshTimer = null;
       void this.refreshAccessToken().catch((error: unknown) => {
         if (this.closed) return;
-        this.reportError(error, this.pending ?? undefined);
         if (error instanceof RgsNetworkError
           || (error instanceof RgsHttpError && retryableHttp(error))) {
           const lifetime = compactTokenLifetime(token);
@@ -1679,6 +1752,7 @@ export class RgsGateway implements GameGateway {
           const backoff = Math.min(30_000, 1_000 * 2 ** Math.min(this.proactiveRefreshAttempt, 5));
           this.proactiveRefreshAttempt += 1;
           if (remaining > backoff + 1_000) {
+            this.reportError(error, this.pending ?? undefined);
             this.scheduleProactiveRefreshAttempt(token, backoff);
             return;
           }
@@ -1690,19 +1764,12 @@ export class RgsGateway implements GameGateway {
 
   private failClosedAfterRefresh(error: unknown): void {
     if (this.closed) return;
-    const notifyOffline = this.connected;
-    this.wageringBlocked = true;
-    this.connected = false;
-    this.accessToken = null;
-    this.clearRefreshTimer();
-    if (notifyOffline) this.callbacks.onStatus("offline");
-    if (!(error instanceof RgsHttpError)) {
-      // 此 HTTP 故障已在上方标准化并上报；该标记说明原本可重试的传输故障
-      // 为何转为终止状态。
-      this.callbacks.onError(new RgsProtocolError(
+    const terminal = error instanceof RgsHttpError && !retryableHttp(error)
+      ? serverError(error, this.session?.binding.sessionId, this.pending?.ledger.roundId)
+      : new RgsProtocolError(
         "RGS access token could not be refreshed before expiry; operator relaunch is required",
-      ));
-    }
+      );
+    this.terminateForOperatorRelaunch(terminal);
   }
 
   private async getPendingResult(

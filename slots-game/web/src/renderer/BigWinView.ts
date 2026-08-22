@@ -25,6 +25,10 @@ import {
   type ResponsiveRendererRegion,
 } from "./ResponsiveLayout";
 import { LOGICAL_HEIGHT, LOGICAL_WIDTH } from "./theme";
+import {
+  DEFAULT_MINOR_UNIT_FORMATTER,
+  type MinorUnitFormatter,
+} from "../protocol/moneyFormatter";
 
 export type BigWinTier = "bigwin" | "super" | "mega" | "ultra";
 
@@ -392,7 +396,7 @@ interface ActiveBigWinPresentation {
 export class BigWinView extends Container {
   private readonly amountPoint = new Vector2();
   private readonly coinShower = new BigWinCoinShower();
-  private readonly formatter: NonNullable<BigWinViewOptions["formatAmount"]>;
+  private formatter: NonNullable<BigWinViewOptions["formatAmount"]>;
   private milestoneListener: BigWinViewOptions["onMilestone"];
   private spine: Spine | null = null;
   private amountText: Text | BitmapText | null = null;
@@ -414,13 +418,19 @@ export class BigWinView extends Container {
     // 从构建开始就拥有淋浴间，而不仅仅是在艺术品加载后。它的 150 个精灵池是跨帧构建的，因此在该工作期间被破坏的所有者必须在提交之前处理分离的尝试。
     this.addChild(this.coinShower);
     this.setResponsiveLayout(BIG_WIN_DESKTOP_REGION);
-    this.formatter = options.formatAmount ?? ((amount) => amount.toString());
+    this.formatter = options.formatAmount
+      ?? ((amount) => DEFAULT_MINOR_UNIT_FORMATTER.format(amount.toString(), false));
     this.milestoneListener = options.onMilestone;
     this.visualTelemetry = options.visualTelemetry ?? null;
     this.visible = false;
     this.interactive = false;
     this.buttonMode = false;
     this.on("pointertap", () => this.requestAdvance());
+  }
+
+  setMoneyFormatter(formatter: MinorUnitFormatter): void {
+    this.formatter = (amount) => formatter.format(amount.toString(), false);
+    this.setDisplayedAmount(this.displayedAmountMinor);
   }
 
   /** 在物理移动设备调整大小后保持此场景级叠加居中。 */
