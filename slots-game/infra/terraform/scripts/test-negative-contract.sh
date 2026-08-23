@@ -62,12 +62,50 @@ reject_mutation missing-autoscaling-kms-grant modules/kms/main.tf \
   'kms:GrantIsForAWSResource' 'kms:GrantIsForOtherResource'
 reject_mutation unscoped-cloudwatch-kms modules/kms/main.tf \
   'kms:EncryptionContext:aws:logs:arn' 'kms:EncryptionContext:other'
+reject_mutation omit-encrypted-cloudwatch-alarm-kms-principal modules/kms/main.tf \
+  'principal  = "cloudwatch.amazonaws.com"' 'principal  = "events.amazonaws.com"'
+reject_mutation broaden-encrypted-cloudwatch-alarm-kms-source modules/kms/main.tf \
+  'source_arn = "arn:${data.aws_partition.current.partition}:cloudwatch:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:alarm:${var.name_prefix}-*"' 'source_arn = "*"'
+reject_mutation omit-alert-topic-sns-kms-principal modules/kms/main.tf \
+  'identifiers = ["sns.amazonaws.com"]' 'identifiers = ["events.amazonaws.com"]'
+reject_mutation remove-alert-topic-kms-encryption-context modules/kms/main.tf \
+  'variable = "kms:EncryptionContext:aws:sns:topicArn"' 'variable = "kms:EncryptionContext:other"'
 reject_mutation public-rds modules/rds/main.tf \
   'publicly_accessible    = false' 'publicly_accessible    = true'
 reject_mutation unencrypted-rds-logs modules/rds/main.tf \
   'kms_key_id        = var.log_kms_key_arn' 'kms_key_id        = null'
 reject_mutation mismatched-rds-parameter-family modules/rds/main.tf \
   'var.parameter_group_family == "postgres${split(".", var.engine_version)[0]}"' 'var.parameter_group_family != "postgres${split(".", var.engine_version)[0]}"'
+reject_mutation disable-rds-cpu-capacity-alarm modules/rds/main.tf \
+  'metric_name = "CPUUtilization"' 'metric_name = "CPUUtilizationDisabled"'
+reject_mutation disable-rds-high-capacity-alarm-set modules/rds/main.tf \
+  'for_each = local.capacity_high_alarm_metrics' 'for_each = {}'
+reject_mutation corrupt-rds-high-capacity-namespace modules/rds/main.tf \
+  'namespace           = "AWS/RDS"' 'namespace           = "AWS/RDS_DISABLED"'
+reject_mutation invert-rds-low-capacity-comparator modules/rds/main.tf \
+  'comparison_operator = "LessThanOrEqualToThreshold"' 'comparison_operator = "GreaterThanOrEqualToThreshold"'
+reject_mutation invert-rds-low-capacity-statistic modules/rds/main.tf \
+  'statistic   = "Minimum"' 'statistic   = "Maximum"'
+reject_mutation weaken-rds-capacity-alarm-debounce modules/rds/main.tf \
+  'datapoints_to_alarm = 2' 'datapoints_to_alarm = 1'
+reject_mutation remove-rds-capacity-recovery-notification modules/rds/main.tf \
+  'ok_actions          = [var.alert_topic_arn]' 'ok_actions          = []'
+reject_mutation bypass-rds-connection-threshold-validation modules/rds/variables.tf \
+  'var.alarm_thresholds.database_connections <= 1000000' 'true'
+reject_mutation omit-explicit-rds-connection-threshold environments/dev/terraform.tfvars.example \
+  'database_connections     = 100' 'removed_connections        = 100'
+reject_mutation omit-rds-alarm-threshold-wiring stacks/application-platform/main.tf \
+  'alarm_thresholds          = var.rds_alarm_thresholds' 'removed_alarm_thresholds  = var.rds_alarm_thresholds'
+reject_mutation omit-cloudwatch-alarm-sns-principal modules/observability/main.tf \
+  'identifiers = ["cloudwatch.amazonaws.com"]' 'identifiers = ["events.amazonaws.com"]'
+reject_mutation broaden-cloudwatch-alarm-sns-source modules/observability/main.tf \
+  'values   = [local.alert_source_arns.cloudwatch]' 'values   = ["*"]'
+reject_mutation broaden-cloudwatch-alarm-sns-source-binding modules/observability/main.tf \
+  'cloudwatch = "arn:${data.aws_partition.current.partition}:cloudwatch:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:alarm:${var.name_prefix}-*"' 'cloudwatch = "*"'
+reject_mutation use-wrong-rds-event-publisher modules/observability/main.tf \
+  'identifiers = ["events.rds.amazonaws.com"]' 'identifiers = ["rds.amazonaws.com"]'
+reject_mutation omit-alert-topic-policy-dependency modules/observability/outputs.tf \
+  'depends_on  = [aws_sns_topic_policy.alerts]' 'depends_on  = []'
 reject_mutation weak-valkey-tls modules/cache/main.tf \
   'transit_encryption_mode    = "required"' 'transit_encryption_mode    = "preferred"'
 reject_mutation authoritative-cache modules/cache/main.tf \
@@ -117,10 +155,49 @@ reject_mutation reject-normal-terraform-data-computed-fields scripts/verify-valk
 reject_mutation allow-extra-resource-in-hmac-plan scripts/verify-valkey-rotation-plan.rb \
   'assert(actual_addresses.sort == expected_addresses.sort, "HMAC #{transition == :hmac_entry ? "入口" : "出口"} plan 的非 no-op 资源集合不符合精确 allowlist")' \
   'assert(true, "HMAC #{transition == :hmac_entry ? "入口" : "出口"} plan 的非 no-op 资源集合不符合精确 allowlist")'
+reject_mutation allow-steady-valkey-acl-schema-change scripts/verify-valkey-rotation-plan.rb \
+  'assert(transition == :hmac_entry, "Valkey ACL schema 迁移只能进入有静默证据的 HMAC 维护计划")' \
+  'assert(true, "Valkey ACL schema 迁移只能进入有静默证据的 HMAC 维护计划")'
 reject_mutation broad-valkey-keyspace modules/cache/main.tf \
-  '~rgs:shared-admission:v1:*' '~*'
+  '~rgs:shared-admission:v2:*' '~*'
+reject_mutation legacy-valkey-keyspace modules/cache/main.tf \
+  '~rgs:shared-admission:v2:*' '~rgs:shared-admission:v1:*'
+reject_mutation missing-valkey-pttl modules/cache/main.tf \
+  '+evalsha +eval +get +pttl +set' '+evalsha +eval +get +set'
+reject_mutation reintroduce-legacy-valkey-commands modules/cache/main.tf \
+  '+evalsha +eval +get +pttl +set' '+evalsha +eval +get +pttl +set +time +hmget +hset +pexpire'
+reject_mutation bypass-valkey-acl-maintenance-transition modules/cache/outputs.tf \
+  'acl_schema_transition                         = "maintenance-quiesced"' 'acl_schema_transition                         = "rolling"'
+reject_mutation allow-rolling-valkey-acl-schema modules/cache/outputs.tf \
+  'acl_schema_rolling_compatible                 = false' 'acl_schema_rolling_compatible                 = true'
+reject_mutation allow-dual-valkey-acl-schema modules/cache/outputs.tf \
+  'acl_schema_dual_permissions_allowed           = false' 'acl_schema_dual_permissions_allowed           = true'
+reject_mutation bypass-valkey-acl-quiesce modules/cache/outputs.tf \
+  'acl_schema_migration_requires_quiesced        = true' 'acl_schema_migration_requires_quiesced        = false'
+reject_mutation omit-valkey-acl-contract-from-handoff stacks/application-platform/outputs.tf \
+  'valkey_rotation_contract        = module.cache.rotation_contract' 'removed_valkey_rotation_contract = module.cache.rotation_contract'
 reject_mutation invalid-valkey-alarm-dimension modules/cache/main.tf \
   'CacheClusterId = "${aws_elasticache_replication_group.this.id}-${format("%03d", count.index + 1)}"' 'ReplicationGroupId = aws_elasticache_replication_group.this.id'
+reject_mutation invalid-valkey-capacity-alarm-dimension modules/cache/main.tf \
+  'ReplicationGroupId = aws_elasticache_replication_group.this.id' 'CacheClusterId = aws_elasticache_replication_group.this.id'
+reject_mutation disable-valkey-traffic-management-alarm modules/cache/main.tf \
+  'metric_name         = "TrafficManagementActive"' 'metric_name         = "TrafficManagementInactive"'
+reject_mutation disable-valkey-eval-latency-alarm modules/cache/main.tf \
+  'metric_name         = "EvalBasedCmdsLatency"' 'metric_name         = "EvalBasedCmds"'
+reject_mutation weaken-valkey-binary-alarm-threshold modules/cache/main.tf \
+  'threshold           = 0' 'threshold           = 1'
+reject_mutation weaken-valkey-alarm-debounce modules/cache/main.tf \
+  'datapoints_to_alarm = 2' 'datapoints_to_alarm = 1'
+reject_mutation remove-valkey-alarm-recovery-notification modules/cache/main.tf \
+  'ok_actions          = [var.alert_topic_arn]' 'ok_actions          = []'
+reject_mutation bypass-valkey-engine-cpu-threshold-validation modules/cache/variables.tf \
+  'var.valkey_alarm_thresholds.engine_cpu_utilization_percent <= 100' 'true'
+reject_mutation omit-explicit-valkey-connection-threshold environments/dev/terraform.tfvars.example \
+  '    current_connections                               = 100' '    removed_connections                               = 100'
+reject_mutation allow-rolling-valkey-v1-v2-migration README.md \
+  '该协议迁移禁止作为普通 Helm rolling upgrade' '该协议迁移允许作为普通 Helm rolling upgrade'
+reject_mutation remove-valkey-acl-maintenance-state README.md \
+  '`acl_schema_transition=maintenance-quiesced`' '`acl_schema_transition=rolling`'
 reject_mutation mutable-valkey-secret-name modules/cache/main.tf \
   'rgs-shared-admission-v${var.secret_version}' 'rgs-shared-admission-v1'
 reject_mutation mutable-application-secret-name modules/secrets/main.tf \

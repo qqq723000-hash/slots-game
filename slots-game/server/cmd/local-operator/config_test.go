@@ -17,3 +17,17 @@ func TestProductionDatabaseURLRequiresVerifyFullAndRootCA(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyWalletCompatibilityFlagIsStrictAndDefaultsOff(t *testing.T) {
+	if value, err := parseStrictBool("", false); err != nil || value {
+		t.Fatalf("default legacy flag = %t, %v", value, err)
+	}
+	if value, err := parseStrictBool("true", false); err != nil || !value {
+		t.Fatalf("enabled legacy flag = %t, %v", value, err)
+	}
+	for _, invalid := range []string{"TRUE", "1", "yes", " false "} {
+		if _, err := parseStrictBool(invalid, false); err == nil {
+			t.Fatalf("invalid legacy flag accepted: %q", invalid)
+		}
+	}
+}

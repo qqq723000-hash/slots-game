@@ -382,6 +382,32 @@ AWS 应用部署工作流必须在 Helm 前读取现网 API 与 Worker Deploymen
 含 schema 变化时，执行维护窗口或已独立验证的扩展—兼容—收缩流程；含数学定义变化时，按入口
 分群并排空旧会话，或先实现多定义注册协议。禁止关闭精确清单检查来制造“无停机”。
 
+### 9.4 非滚动数据库迁移
+
+先用同 schema、同数学定义的准备发布交付 Chart 双组件静默能力。HMAC 轮换仍只设置
+`rgs.maintenanceQuiesced=true`，此时 API 为零但 Worker 继续资金恢复；它不是数据库维护状态。
+数据库迁移必须在同一份受保护 values 中同时设置：
+
+```yaml
+rgs:
+  maintenanceQuiesced: true
+worker:
+  maintenanceQuiesced: true
+```
+
+Chart 会把 API/Worker Deployment 固定为零并删除二者 HPA；Worker 单独为 `true` 会失败关闭。
+Helm 成功不等于排空完成：发布系统必须保存渲染 diff，并等待两个 Deployment 的期望、更新、可用
+副本全部为零、旧 ReplicaSet/终止中 Pod 归零、两个 HPA 缺失且 PostgreSQL 无旧 writer 活动事务，
+才可执行候选 migrator `up` 与 `verify`。
+
+迁移成功后先保持两个值为 `true`，用候选 runtime 摘要完成 Helm `verify` 和零副本清单替换；确认
+候选 schema、权限、钱包 profile/route binding 与镜像一致后，再在一次受保护变更中把两个值恢复
+为 `false`。AWS 覆盖固定 `web.enabled=false`，因此恢复渲染必须移除 API/Worker 固定副本并重新
+出现 API 与 Worker 两个 HPA；Web 由 CloudFront/S3 独立发布。随后按第 10 节从零放量。迁移失败时
+保持双组件静默并前向修复，不执行自动 down，不恢复不能验证新账本的旧 runtime。目标消失、未
+就绪和 HPA 缺失告警只允许使用绑定变更单、owner 与到期时间的临时静默，恢复后立即撤销。详细
+数据库步骤见[数据库迁移手册](database-migrations.md)。
+
 ## 10. 分阶段放量
 
 建议的正式流量阶段如下，每阶段都有明确观察窗口和停止条件：

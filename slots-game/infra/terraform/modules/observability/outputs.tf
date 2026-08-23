@@ -1,6 +1,7 @@
 output "alert_topic_arn" {
   description = "基础设施与应用告警 SNS topic ARN"
   value       = aws_sns_topic.alerts.arn
+  depends_on  = [aws_sns_topic_policy.alerts]
 }
 
 output "amp_workspace_id" {

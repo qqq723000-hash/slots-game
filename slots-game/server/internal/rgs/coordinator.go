@@ -21,26 +21,35 @@ func (f DefinitionResolverFunc) Resolve(ctx context.Context, gameID, version, ha
 }
 
 type CoordinatorConfig struct {
-	WalletLease         time.Duration
-	PendingWait         time.Duration
-	PollInterval        time.Duration
-	PollMaximumInterval time.Duration
-	MaxWalletAttempts   int
+	WalletLease           time.Duration
+	WalletFastPathTimeout time.Duration
+	PendingWait           time.Duration
+	PollInterval          time.Duration
+	PollMaximumInterval   time.Duration
+	MaxWalletAttempts     int
 }
 
 type Coordinator struct {
-	repository          Repository
-	wallet              WalletPort
-	definitions         DefinitionRegistry
-	walletLease         time.Duration
-	pendingWait         time.Duration
-	pollInterval        time.Duration
-	pollMaximumInterval time.Duration
-	maxWalletAttempts   int
-	observer            RoundObserver
+	repository            Repository
+	wallet                WalletResolutionPort
+	intentAdmitter        walletIntentAdmitter
+	definitions           DefinitionRegistry
+	walletLease           time.Duration
+	walletFastPathTimeout time.Duration
+	pendingWait           time.Duration
+	pollInterval          time.Duration
+	pollMaximumInterval   time.Duration
+	maxWalletAttempts     int
+	observer              RoundObserver
 }
 
 const persistedRoundIntegrityFailure = "persisted round integrity validation failed"
+
+// walletIntentAdmitter 只进行本进程、无副作用的快速容量检查。最终准入仍由
+// SubmitRound 的非阻塞舱壁决定，因此检查成功绝不构成资金操作已获准的承诺。
+type walletIntentAdmitter interface {
+	AdmitNewIntent(string) error
+}
 
 func NewCoordinator(
 	config CoordinatorConfig,
@@ -52,7 +61,12 @@ func NewCoordinator(
 	if repository == nil || wallet == nil || definitions == nil {
 		return nil, errors.New("rgs: repository, wallet, and definition registry are required")
 	}
-	if config.WalletLease < 0 || config.PendingWait < 0 || config.PollInterval < 0 ||
+	resolutionWallet, ok := wallet.(WalletResolutionPort)
+	if !ok {
+		return nil, errors.New("rgs: wallet must implement the versioned resolution contract")
+	}
+	if config.WalletLease < 0 || config.WalletFastPathTimeout < 0 ||
+		config.PendingWait < 0 || config.PollInterval < 0 ||
 		config.PollMaximumInterval < 0 {
 		return nil, errors.New("rgs: coordinator durations cannot be negative")
 	}
@@ -64,6 +78,15 @@ func NewCoordinator(
 	}
 	if config.WalletLease == 0 {
 		config.WalletLease = 5 * time.Second
+	}
+	if config.WalletFastPathTimeout == 0 {
+		config.WalletFastPathTimeout = time.Second
+		if config.WalletFastPathTimeout > config.WalletLease {
+			config.WalletFastPathTimeout = config.WalletLease
+		}
+	}
+	if config.WalletFastPathTimeout > config.WalletLease {
+		return nil, errors.New("rgs: wallet fast-path timeout cannot exceed the wallet lease")
 	}
 	if config.PendingWait == 0 {
 		config.PendingWait = time.Second
@@ -81,11 +104,13 @@ func NewCoordinator(
 		config.MaxWalletAttempts = 100
 	}
 	return &Coordinator{
-		repository: repository, wallet: wallet, definitions: definitions,
+		repository: repository, wallet: resolutionWallet, definitions: definitions,
 		walletLease: config.WalletLease, pendingWait: config.PendingWait,
-		pollInterval: config.PollInterval, pollMaximumInterval: config.PollMaximumInterval,
+		walletFastPathTimeout: config.WalletFastPathTimeout,
+		pollInterval:          config.PollInterval, pollMaximumInterval: config.PollMaximumInterval,
 		maxWalletAttempts: config.MaxWalletAttempts,
 		observer:          firstRoundObserver(observers),
+		intentAdmitter:    firstWalletIntentAdmitter(wallet),
 	}, nil
 }
 
@@ -96,7 +121,36 @@ func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (SpinResult
 		return SpinResult{}, err
 	}
 	fingerprint := FingerprintFor(request)
-	record, prepared, err := c.repository.PrepareRound(ctx, request, fingerprint, func(session Session) (SpinResult, error) {
+	walletProfile, err := c.wallet.ProfileFor(request.OperatorID)
+	if err != nil || !SupportedSettlementProfile(walletProfile) {
+		// 已持久化终态的精确重放不依赖当前钱包路由是否在线。只有新意图才需要
+		// 当前 Profile；这避免配置摘除或供应商故障破坏历史结果交付。
+		existing, existingErr := c.repository.GetRound(ctx, request.Key())
+		if existingErr == nil {
+			if existing.Fingerprint != fingerprint {
+				c.observe(func(observer RoundObserver) { observer.IdempotencyConflict() })
+				return SpinResult{}, ErrIdempotencyConflict
+			}
+			result, replayErr := c.waitForRound(ctx, existing)
+			if replayErr == nil {
+				c.observe(func(observer RoundObserver) { observer.RoundReplayed() })
+			}
+			return result, replayErr
+		}
+		if claimIntegrityFailure(existingErr) {
+			return SpinResult{}, c.quarantinePersistedRound(ctx, request.Key())
+		}
+		if !errors.Is(existingErr, ErrRoundNotFound) {
+			return SpinResult{}, existingErr
+		}
+		return SpinResult{}, errors.Join(ErrWalletUnavailable, err)
+	}
+	record, prepared, err := c.repository.PrepareRound(ctx, request, fingerprint, walletProfile, func(session Session) (SpinResult, error) {
+		if c.intentAdmitter != nil {
+			if err := c.intentAdmitter.AdmitNewIntent(request.OperatorID); err != nil {
+				return SpinResult{}, errors.Join(ErrWalletUnavailable, err)
+			}
+		}
 		return c.prepareOutcome(ctx, session, request)
 	})
 	if err != nil {
@@ -108,7 +162,14 @@ func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (SpinResult
 	if prepared {
 		c.observe(func(observer RoundObserver) { observer.RoundPrepared() })
 	}
-	result, err := c.resolveRound(ctx, record)
+	var result SpinResult
+	if prepared {
+		result, err = c.resolvePreparedRound(ctx, record)
+	} else {
+		// 已存在轮次的客户端重试只观察持久状态；恢复钱包的唯一所有者是持有
+		// fenced claim 的初始请求或 Worker，禁止重试请求再次触发外部写入。
+		result, err = c.waitForRound(ctx, record)
+	}
 	if err == nil && !prepared {
 		c.observe(func(observer RoundObserver) { observer.RoundReplayed() })
 	}
@@ -127,7 +188,17 @@ func (c *Coordinator) Reconcile(ctx context.Context, key RoundKey) (SpinResult, 
 		}
 		return SpinResult{}, err
 	}
-	return c.resolveRound(ctx, record)
+	if result, done, terminalErr := terminalRoundResult(record); done {
+		return result, terminalErr
+	}
+	claim, claimed, err := c.repository.ClaimWallet(ctx, key, c.walletLease)
+	if err != nil {
+		return SpinResult{}, err
+	}
+	if !claimed {
+		return SpinResult{}, ErrWalletPending
+	}
+	return c.executeClaimAndSchedule(ctx, ctx, claim)
 }
 
 // GetRound 是只读状态查询路径。持久化完整性校验失败时，它只允许执行故障安全隔离迁移；
@@ -219,7 +290,24 @@ func (c *Coordinator) prepareOutcome(ctx context.Context, session Session, reque
 	}, nil
 }
 
-func (c *Coordinator) resolveRound(ctx context.Context, initial RoundRecord) (SpinResult, error) {
+func (c *Coordinator) resolvePreparedRound(ctx context.Context, record RoundRecord) (SpinResult, error) {
+	if result, done, err := terminalRoundResult(record); done {
+		return result, err
+	}
+	claim, claimed, err := c.repository.ClaimWallet(ctx, record.Key, c.walletLease)
+	if err != nil {
+		if errors.Is(err, ErrManualReview) {
+			return SpinResult{}, c.quarantinePersistedRound(ctx, record.Key)
+		}
+		return SpinResult{}, err
+	}
+	if !claimed {
+		return c.waitForRound(ctx, claim.Record)
+	}
+	return c.executeClaimAndScheduleDetached(ctx, claim)
+}
+
+func (c *Coordinator) waitForRound(ctx context.Context, initial RoundRecord) (SpinResult, error) {
 	deadline := time.Now().Add(c.pendingWait)
 	pollInterval := c.pollInterval
 	record := initial
@@ -227,84 +315,9 @@ func (c *Coordinator) resolveRound(ctx context.Context, initial RoundRecord) (Sp
 		if result, done, err := terminalRoundResult(record); done {
 			return result, err
 		}
-
-		now := time.Now()
-		claimed, ownsWallet, err := c.repository.ClaimWallet(
-			ctx, record.Key, now, now.Add(c.walletLease),
-		)
-		if err != nil {
-			if errors.Is(err, ErrSessionIntegrity) {
-				return SpinResult{}, ErrSessionIntegrity
-			}
-			if errors.Is(err, ErrManualReview) {
-				return SpinResult{}, c.quarantinePersistedRound(ctx, record.Key)
-			}
-			return SpinResult{}, err
-		}
-		record = claimed
-		if result, done, err := terminalRoundResult(record); done {
-			return result, err
-		}
-
-		if ownsWallet {
-			if record.RetryCount > c.maxWalletAttempts {
-				if _, changed, err := c.repository.MarkManualReview(
-					ctx, record.Key, "wallet retry limit exceeded",
-				); err != nil {
-					return SpinResult{}, err
-				} else if changed {
-					c.observe(func(observer RoundObserver) { observer.RoundManualReview() })
-				}
-				return SpinResult{}, ErrManualReview
-			}
-			receipt, applyErr := c.wallet.ApplyRound(ctx, record.WalletCommand)
-			switch {
-			case applyErr == nil:
-				return c.commitReceipt(ctx, record.Key, receipt)
-			case errors.Is(applyErr, ErrWalletRejected):
-				if _, _, err := c.repository.RejectRound(ctx, record.Key, applyErr.Error()); err != nil {
-					return SpinResult{}, err
-				}
-				return SpinResult{}, ErrWalletRejected
-			case errors.Is(applyErr, ErrIdempotencyConflict),
-				errors.Is(applyErr, ErrWalletReceiptInvalid):
-				if errors.Is(applyErr, ErrIdempotencyConflict) {
-					c.observe(func(observer RoundObserver) { observer.IdempotencyConflict() })
-				}
-				if _, changed, err := c.repository.MarkManualReview(ctx, record.Key, applyErr.Error()); err != nil {
-					return SpinResult{}, errors.Join(applyErr, err)
-				} else if changed {
-					c.observe(func(observer RoundObserver) { observer.RoundManualReview() })
-				}
-				return SpinResult{}, ErrManualReview
-			default:
-				// 未知传输/服务端故障的资金结果不确定；必须保留 WALLET_PENDING，
-				// 并用稳定操作标识查询，禁止重新扣款或重新运行 RNG。
-			}
-		}
-
-		receipt, found, lookupErr := c.wallet.Lookup(
-			ctx, record.WalletCommand.OperatorID, record.WalletCommand.OperationID,
-		)
-		if lookupErr == nil && found {
-			return c.commitReceipt(ctx, record.Key, receipt)
-		}
-		if errors.Is(lookupErr, ErrIdempotencyConflict) ||
-			errors.Is(lookupErr, ErrWalletReceiptInvalid) {
-			if errors.Is(lookupErr, ErrIdempotencyConflict) {
-				c.observe(func(observer RoundObserver) { observer.IdempotencyConflict() })
-			}
-			if _, changed, err := c.repository.MarkManualReview(ctx, record.Key, lookupErr.Error()); err != nil {
-				return SpinResult{}, errors.Join(lookupErr, err)
-			} else if changed {
-				c.observe(func(observer RoundObserver) { observer.RoundManualReview() })
-			}
-			return SpinResult{}, ErrManualReview
-		}
-
 		latest, err := c.repository.GetRound(ctx, record.Key)
 		if err != nil {
-			if errors.Is(err, ErrManualReview) {
+			if claimIntegrityFailure(err) {
 				return SpinResult{}, c.quarantinePersistedRound(ctx, record.Key)
 			}
 			return SpinResult{}, err
@@ -313,7 +326,7 @@ func (c *Coordinator) resolveRound(ctx context.Context, initial RoundRecord) (Sp
 		if result, done, err := terminalRoundResult(record); done {
 			return result, err
 		}
-		now = time.Now()
+		now := time.Now()
 		if !now.Before(deadline) {
 			return SpinResult{}, ErrWalletPending
 		}
@@ -330,6 +343,187 @@ func (c *Coordinator) resolveRound(ctx context.Context, initial RoundRecord) (Sp
 	}
 }
 
+// ReconcileClaim 只执行存储层声明的一项钱包动作。APPLY claim 在返回调用者前已经
+// 持久推进为 LOOKUP，因此任何进程崩溃都只能从状态查询继续，不会盲目重扣。
+func (c *Coordinator) ReconcileClaim(
+	ctx context.Context,
+	claim WalletRecoveryClaim,
+) (SpinResult, WalletRecoveryDisposition, error) {
+	if !claim.Action.Valid() || claim.LeaseUntil.IsZero() ||
+		claim.Record.Key != claim.Record.Request.Key() ||
+		!claim.Record.WalletLeaseUntil.Equal(claim.LeaseUntil) {
+		return SpinResult{}, WalletRecoveryDisposition{Terminal: true}, ErrInvalidRequest
+	}
+	if result, done, err := terminalRoundResult(claim.Record); done {
+		return result, WalletRecoveryDisposition{Terminal: true}, err
+	}
+	if claim.Action == WalletRecoveryApply && claim.Record.WalletApplyAttempts > c.maxWalletAttempts {
+		return c.markClaimForManualReview(ctx, claim, "wallet apply attempt limit exceeded", nil)
+	}
+	if err := ValidateWalletCommand(claim.Record.WalletCommand); err != nil {
+		return c.markClaimForManualReview(ctx, claim, "wallet command binding is invalid", err)
+	}
+	profile, err := c.wallet.ProfileFor(claim.Record.WalletCommand.OperatorID)
+	if err != nil {
+		return SpinResult{}, WalletRecoveryDisposition{
+			NextAction:   claim.Action,
+			ApplyNotSent: claim.Action == WalletRecoveryApply,
+		}, ErrWalletPending
+	}
+	if !SupportedSettlementProfile(claim.Record.WalletProfile) ||
+		!SupportedSettlementProfile(profile) || profile != claim.Record.WalletProfile {
+		return c.markClaimForManualReview(
+			ctx, claim, "wallet settlement profile changed after round preparation", nil,
+		)
+	}
+
+	var resolution Resolution
+	if claim.Action == WalletRecoveryApply {
+		resolution = c.wallet.SubmitRound(ctx, claim.Record.WalletCommand)
+	} else {
+		resolution = c.wallet.Resolve(ctx, OperationRefFor(claim.Record.WalletCommand))
+	}
+	return c.applyWalletResolution(ctx, claim, profile, resolution)
+}
+
+func (c *Coordinator) applyWalletResolution(
+	ctx context.Context,
+	claim WalletRecoveryClaim,
+	profile Profile,
+	resolution Resolution,
+) (SpinResult, WalletRecoveryDisposition, error) {
+	if !resolution.Status.Valid() {
+		return c.markClaimForManualReview(ctx, claim, "wallet returned an invalid resolution", resolution.Cause)
+	}
+	switch resolution.Status {
+	case ResolutionSucceeded:
+		result, err := c.commitReceipt(ctx, claim, resolution.Receipt)
+		return result, WalletRecoveryDisposition{Terminal: true}, err
+	case ResolutionRejectedFinal:
+		failureCode := resolution.Code
+		if failureCode == "" {
+			failureCode = "WALLET_REJECTED"
+		}
+		if _, _, err := c.repository.RejectClaim(ctx, claim, failureCode); err != nil {
+			if errors.Is(err, ErrStaleWalletClaim) {
+				return c.resolveStaleClaim(ctx, claim.Record.Key)
+			}
+			if errors.Is(err, ErrManualReview) {
+				return SpinResult{}, WalletRecoveryDisposition{Terminal: true},
+					c.quarantinePersistedRound(ctx, claim.Record.Key)
+			}
+			return SpinResult{}, WalletRecoveryDisposition{Terminal: true}, err
+		}
+		return SpinResult{}, WalletRecoveryDisposition{Terminal: true}, ErrWalletRejected
+	case ResolutionConflict:
+		if errors.Is(resolution.Cause, ErrIdempotencyConflict) {
+			c.observe(func(observer RoundObserver) { observer.IdempotencyConflict() })
+		}
+		return c.markClaimForManualReview(ctx, claim, "wallet operation identity conflict", resolution.Cause)
+	case ResolutionPending, ResolutionUnknown:
+		return SpinResult{}, WalletRecoveryDisposition{NextAction: WalletRecoveryLookup}, ErrWalletPending
+	case ResolutionNotSent:
+		return SpinResult{}, WalletRecoveryDisposition{
+			NextAction:   claim.Action,
+			ApplyNotSent: claim.Action == WalletRecoveryApply,
+		}, ErrWalletPending
+	case ResolutionNotFound:
+		if claim.Action != WalletRecoveryLookup {
+			return c.markClaimForManualReview(ctx, claim, "wallet apply returned NOT_FOUND", resolution.Cause)
+		}
+		if !profile.Capabilities.ReapplySameOperationAfterNotFound {
+			return c.markClaimForManualReview(ctx, claim, "wallet operation is absent and cannot be reapplied", nil)
+		}
+		return SpinResult{}, WalletRecoveryDisposition{
+			NextAction:   WalletRecoveryApply,
+			MinimumDelay: profile.Capabilities.NotFoundConsistencyWindow,
+		}, ErrWalletPending
+	default:
+		return c.markClaimForManualReview(ctx, claim, "wallet returned an unsupported resolution", resolution.Cause)
+	}
+}
+
+func (c *Coordinator) markClaimForManualReview(
+	ctx context.Context,
+	claim WalletRecoveryClaim,
+	reason string,
+	cause error,
+) (SpinResult, WalletRecoveryDisposition, error) {
+	_, changed, err := c.repository.MarkClaimManualReview(ctx, claim, reason)
+	if err != nil {
+		if errors.Is(err, ErrStaleWalletClaim) {
+			return c.resolveStaleClaim(ctx, claim.Record.Key)
+		}
+		if claimIntegrityFailure(err) {
+			return SpinResult{}, WalletRecoveryDisposition{Terminal: true},
+				errors.Join(cause, c.quarantinePersistedRound(ctx, claim.Record.Key))
+		}
+		return SpinResult{}, WalletRecoveryDisposition{Terminal: true}, errors.Join(cause, err)
+	}
+	if changed {
+		c.observe(func(observer RoundObserver) { observer.RoundManualReview() })
+	}
+	return SpinResult{}, WalletRecoveryDisposition{Terminal: true}, ErrManualReview
+}
+
+func (c *Coordinator) executeClaimAndSchedule(
+	scheduleCtx context.Context,
+	executionCtx context.Context,
+	claim WalletRecoveryClaim,
+) (SpinResult, error) {
+	result, disposition, err := c.ReconcileClaim(executionCtx, claim)
+	return c.scheduleClaimDisposition(scheduleCtx, claim, result, disposition, err)
+}
+
+// executeClaimAndScheduleDetached 在 PREPARE+claim 已经提交后脱离客户端取消信号，
+// 但保留 trace/value。外部调用和后续 DB 写各自有独立硬截止，确保客户端断线不会
+// 把已持久化 saga 留在已知 NOT_SENT 却无法退款、或钱包成功却无法提交的半状态。
+func (c *Coordinator) executeClaimAndScheduleDetached(
+	parent context.Context,
+	claim WalletRecoveryClaim,
+) (SpinResult, error) {
+	base := context.WithoutCancel(parent)
+	executionCtx, cancelExecution := context.WithTimeout(base, c.walletFastPathTimeout)
+	result, disposition, err := c.ReconcileClaim(executionCtx, claim)
+	cancelExecution()
+	if disposition.Terminal {
+		return result, err
+	}
+	scheduleCtx, cancelSchedule := context.WithTimeout(base, c.walletFastPathTimeout)
+	defer cancelSchedule()
+	return c.scheduleClaimDisposition(scheduleCtx, claim, result, disposition, err)
+}
+
+func (c *Coordinator) scheduleClaimDisposition(
+	scheduleCtx context.Context,
+	claim WalletRecoveryClaim,
+	result SpinResult,
+	disposition WalletRecoveryDisposition,
+	err error,
+) (SpinResult, error) {
+	if disposition.Terminal {
+		return result, err
+	}
+	if validateErr := ValidateWalletRecoveryDisposition(disposition); validateErr != nil {
+		return SpinResult{}, errors.Join(err, validateErr)
+	}
+	scheduled, scheduleErr := c.repository.ScheduleWalletRecovery(
+		scheduleCtx, claim, disposition, 0,
+	)
+	if scheduleErr != nil {
+		return SpinResult{}, errors.Join(err, scheduleErr)
+	}
+	if !scheduled {
+		latest, latestErr := c.repository.GetRound(scheduleCtx, claim.Record.Key)
+		if latestErr == nil {
+			if terminal, done, terminalErr := terminalRoundResult(latest); done {
+				return terminal, terminalErr
+			}
+		}
+	}
+	return SpinResult{}, ErrWalletPending
+}
+
 func (c *Coordinator) quarantinePersistedRound(ctx context.Context, key RoundKey) error {
 	_, changed, err := c.repository.MarkManualReview(ctx, key, persistedRoundIntegrityFailure)
 	if err != nil {
@@ -341,8 +535,8 @@ func (c *Coordinator) quarantinePersistedRound(ctx context.Context, key RoundKey
 	return ErrManualReview
 }
 
-func (c *Coordinator) commitReceipt(ctx context.Context, key RoundKey, receipt WalletReceipt) (SpinResult, error) {
-	record, changed, err := c.repository.CommitRound(ctx, key, receipt)
+func (c *Coordinator) commitReceipt(ctx context.Context, claim WalletRecoveryClaim, receipt WalletReceipt) (SpinResult, error) {
+	record, changed, err := c.repository.CommitClaim(ctx, claim, receipt)
 	if err == nil {
 		if changed {
 			c.observe(func(observer RoundObserver) { observer.RoundCommitted() })
@@ -352,8 +546,19 @@ func (c *Coordinator) commitReceipt(ctx context.Context, key RoundKey, receipt W
 	if errors.Is(err, ErrSessionIntegrity) {
 		return SpinResult{}, ErrSessionIntegrity
 	}
-	if errors.Is(err, ErrWalletReceiptInvalid) || errors.Is(err, ErrManualReview) {
-		_, manualReviewChanged, markErr := c.repository.MarkManualReview(ctx, key, err.Error())
+	if errors.Is(err, ErrStaleWalletClaim) {
+		result, _, latestErr := c.resolveStaleClaim(ctx, claim.Record.Key)
+		return result, latestErr
+	}
+	if errors.Is(err, ErrWalletReceiptInvalid) || claimIntegrityFailure(err) {
+		_, manualReviewChanged, markErr := c.repository.MarkClaimManualReview(ctx, claim, err.Error())
+		if errors.Is(markErr, ErrStaleWalletClaim) {
+			result, _, latestErr := c.resolveStaleClaim(ctx, claim.Record.Key)
+			return result, latestErr
+		}
+		if claimIntegrityFailure(markErr) {
+			return SpinResult{}, errors.Join(err, c.quarantinePersistedRound(ctx, claim.Record.Key))
+		}
 		if markErr != nil {
 			return SpinResult{}, errors.Join(err, markErr)
 		}
@@ -365,6 +570,26 @@ func (c *Coordinator) commitReceipt(ctx context.Context, key RoundKey, receipt W
 	return SpinResult{}, err
 }
 
+func claimIntegrityFailure(err error) bool {
+	return errors.Is(err, ErrManualReview) || errors.Is(err, ErrRevisionConflict)
+}
+
+// resolveStaleClaim 绝不重放旧 claim 的写操作。它只读取最新持久状态；若新的 owner
+// 仍在处理则保持 pending，若已终结则复用统一的终态映射。
+func (c *Coordinator) resolveStaleClaim(
+	ctx context.Context,
+	key RoundKey,
+) (SpinResult, WalletRecoveryDisposition, error) {
+	latest, err := c.repository.GetRound(ctx, key)
+	if err != nil {
+		return SpinResult{}, WalletRecoveryDisposition{Terminal: true}, err
+	}
+	if result, done, terminalErr := terminalRoundResult(latest); done {
+		return result, WalletRecoveryDisposition{Terminal: true}, terminalErr
+	}
+	return SpinResult{}, WalletRecoveryDisposition{Terminal: true}, ErrWalletPending
+}
+
 func (c *Coordinator) observe(notify func(RoundObserver)) {
 	notifyRoundObserver(c.observer, notify)
 }
@@ -374,6 +599,11 @@ func firstRoundObserver(observers []RoundObserver) RoundObserver {
 		return nil
 	}
 	return observers[0]
+}
+
+func firstWalletIntentAdmitter(wallet WalletPort) walletIntentAdmitter {
+	admitter, _ := wallet.(walletIntentAdmitter)
+	return admitter
 }
 
 func terminalRoundResult(record RoundRecord) (SpinResult, bool, error) {

@@ -27,9 +27,11 @@ func TestExpectedSchemaManifestIsFrozen(t *testing.T) {
 		{Version: "0005_session_integrity_quarantine", Checksum: "33a6ba5c45342e9e1712b4184f911bead1e26d25197cf166a322a147164ecf9b"},
 		{Version: "0006_round_input_feature_state", Checksum: "e533823abbc3512577bdcd473771e26ae106954091916302a4ebf428d476254a"},
 		{Version: "0007_result_delivery_cursor", Checksum: "2dffbfb97d2cf2c8e1bfd9c93348c1e63237e29e417340d31e0200b3e7316586"},
+		{Version: "0008_wallet_recovery_scheduler", Checksum: "73c7c28413a4c7313b5f451f95750e2a6be986fca21717e48763c9f9f4062420"},
+		{Version: "0009_postgres_hot_path", Checksum: "fe05563382fa6f558ecfb8944658740f718551032274a81521711b2d25e8314c"},
 	}
 	if manifest.Version != want[len(want)-1].Version ||
-		manifest.SHA256 != "bdfef08c7e2619492ea8a56ce4612cd7a97567b4eac1d87799c7807b102cb518" ||
+		manifest.SHA256 != "856304eb1796eb81f54f6d41e12c6bbe071f17b69e665f381dfc55d410b7ae6e" ||
 		!reflect.DeepEqual(manifest.Migrations, want) {
 		t.Fatalf("manifest = %+v, want version/checksum freeze %+v", manifest, want)
 	}

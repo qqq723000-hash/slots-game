@@ -116,7 +116,7 @@ GitHub 仓库设置中**预先**创建以下两个 Environment；仅在 YAML 中
   `https://github.com/<owner>/<repo>/.github/workflows/supply-chain-release.yml@<protected-tag>`，
   issuer 必须精确等于 `https://token.actions.githubusercontent.com`。
 
-受保护 ref 本身不等于该 SHA 已通过测试。发布 workflow 用四个 job 闭合真实执行结果与
+受保护 ref 本身不等于该 SHA 已通过测试。发布 workflow 用五个权限域闭合真实执行结果与
 候选字节之间的 TOCTOU 和权限边界：
 
 1. `verify-source-conformance` 只有 `contents: read`，在 clean checkout 上先执行当前发布提交
@@ -139,12 +139,17 @@ GitHub 仓库设置中**预先**创建以下两个 Environment；仅在 YAML 中
    凭据，并把真实 source tree、四项公开生产配置、受保护 tag、完整 commit 及 exact
    approval SHA-256、规范化审批元数据 SHA-256 与规范化 UTC `expiresAt` 绑定到 schema v2 包清单和
    job outputs；审批引用、辖区与资产明文不会进入 bundle；
-5. `publish-sign` 是唯一绑定 `supply-chain-release` 且具有 `id-token: write` 的 job。它先在无
+5. `bind-release-artifact` 不 checkout、不绑定 Environment，也没有 OIDC/Registry 权限；它唯一的
+   `actions: read` 权限只用于从 GitHub Actions API 回读所选 artifact ID，并将服务端 archive digest、
+   本次 workflow run、完整 commit SHA、未过期状态和唯一 artifact 名称逐项绑定。陈旧 ID、摘要
+   不一致或跨 run 制品会在进入最终发布 Environment 前失败关闭；
+6. `publish-sign` 是唯一绑定 `supply-chain-release` 且具有 `id-token: write` 的 job。它先在无
    AWS 身份的阶段离线复核全部字节，随后才用 GitHub OIDC 换取短期发布角色并登录精确 ECR；它不
    checkout、不 setup 工具、不运行 npm/Go/make/test/build/scanner，只按同一 workflow run 返回的
    immutable artifact ID 下载被选中的 RGS/Web bundle。
 
-静态契约按完整 permissions block 做精确白名单比较：前三个 job 只能是 `contents: read`；
+静态契约按完整 permissions block 做精确白名单比较：前三个执行源码的 job 只能是 `contents: read`，
+`bind-release-artifact` 只能是 `actions: read`；
 `publish-sign` 只能额外拥有 `id-token: write`、`attestations: write` 和
 `artifact-metadata: write`。即使新增 `packages`、`actions` 或 `security-events` 等写权限也会由
 负向夹具失败关闭，不能以“仍包含 contents: read”为由放行。
@@ -159,6 +164,12 @@ repository/tag、公开配置摘要、Web approval/规范化元数据摘要及 U
 archive 随后由固定 digest、`--network=none`、无 OIDC env/Registry/Docker socket 的 Skopeo
 转换成 Docker 明确定义可 load 的 archive；本地 Docker daemon 不可用时无法动态演练此转换与
 load，CI 中任何转换/load 失败都会失败关闭，而不会回退到重新 build。
+
+Web 浏览器 smoke 的 OCI→Docker 转换同样不向 Skopeo 容器挂载宿主 Docker socket：转换容器只读
+审批后 bundle、写入独立短命目录，宿主随后 `docker load` 并提取静态根。最终发布 job 也把转换后的
+完整 Docker archive 留在独立 work 目录，并在上传审计证据前删除 bundle 与 work；90 天证据只保留
+摘要、Cosign 验证结果和 Sigstore attestation，不会把完整镜像或授权素材借由 evidence artifact
+延长留存。全部 release evidence 上传使用 `if-no-files-found: error`，缺失证据不能以 warning 通过。
 
 只有离线复核与转换成功后才读取 Registry secret、登录、load 相同制品字节。Web candidate push
 紧前会以当前时钟复核包内 `expiresAt`，推送本次 run

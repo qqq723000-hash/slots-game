@@ -28,7 +28,14 @@ const (
 	maxWalletRootCABytes   int64 = 1 << 20
 )
 
-var moneyPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+var errWalletResponseAuthentication = errors.New("wallet response authentication failed")
+
+var (
+	moneyPattern               = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+	walletCodePattern          = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,127}$`)
+	walletIdentifierPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	walletCommandDigestPattern = regexp.MustCompile(`^rgs-wallet-cmd-v1:[a-f0-9]{64}$`)
+)
 
 type HTTPConfig struct {
 	BaseURL                  string
@@ -153,6 +160,7 @@ type roundRequest struct {
 	OperatorID        string        `json:"operatorId"`
 	PlayerID          string        `json:"playerId"`
 	WalletAccountID   string        `json:"walletAccountId"`
+	WalletSessionRef  string        `json:"walletSessionRef,omitempty"`
 	SessionID         string        `json:"rgsSessionId"`
 	RoundID           string        `json:"roundId"`
 	GameID            string        `json:"gameId"`
@@ -162,11 +170,14 @@ type roundRequest struct {
 	Currency          string        `json:"currency"`
 	DebitMinor        string        `json:"debitMinor"`
 	CreditMinor       string        `json:"creditMinor"`
+	CommandDigest     string        `json:"commandDigest,omitempty"`
 }
 
 type lookupRequest struct {
-	OperatorID  string `json:"operatorId"`
-	OperationID string `json:"operationId"`
+	OperatorID    string `json:"operatorId"`
+	OperationID   string `json:"operationId"`
+	Fingerprint   string `json:"fingerprint,omitempty"`
+	CommandDigest string `json:"commandDigest,omitempty"`
 }
 
 type rollbackRequest struct {
@@ -187,159 +198,397 @@ type walletResponse struct {
 	DebitMinor    string `json:"debitMinor,omitempty"`
 	CreditMinor   string `json:"creditMinor,omitempty"`
 	BalanceMinor  string `json:"balanceMinor,omitempty"`
+	CommandDigest string `json:"commandDigest,omitempty"`
+	RollbackID    string `json:"rollbackId,omitempty"`
+}
+
+func (w *HTTPWallet) ProfileFor(operatorID string) (rgs.Profile, error) {
+	if w == nil || operatorID != w.operator {
+		return rgs.Profile{}, rgs.ErrWalletReceiptInvalid
+	}
+	canonicalTarget, err := canonicalLedgerTarget(w.baseURL.String())
+	if err != nil {
+		return rgs.Profile{}, err
+	}
+	profile := rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
+		canonicalTarget,
+	))
+	if err := rgs.ValidateProfile(profile); err != nil {
+		return rgs.Profile{}, err
+	}
+	return profile, nil
+}
+
+// SubmitRound 是 v2 结算入口；它会在发出请求前拒绝损坏的命令绑定，并返回显式供应商终态。
+func (w *HTTPWallet) SubmitRound(ctx context.Context, command rgs.WalletRound) rgs.Resolution {
+	return w.submitRound(ctx, command, true)
 }
 
 func (w *HTTPWallet) ApplyRound(ctx context.Context, command rgs.WalletRound) (rgs.WalletReceipt, error) {
+	return legacyApplyResult(w.submitRound(ctx, command, false))
+}
+
+func (w *HTTPWallet) submitRound(
+	ctx context.Context,
+	command rgs.WalletRound,
+	requireV2Binding bool,
+) rgs.Resolution {
 	if command.OperatorID != w.operator {
-		return rgs.WalletReceipt{}, rgs.ErrWalletReceiptInvalid
+		return rgs.Resolution{Status: rgs.ResolutionNotSent, Cause: rgs.ErrWalletReceiptInvalid}
+	}
+	if err := validateCommandBinding(command, requireV2Binding); err != nil {
+		return rgs.Resolution{Status: rgs.ResolutionNotSent, Cause: err}
+	}
+	walletSessionRef, commandDigest := "", ""
+	if requireV2Binding {
+		// 旧 ApplyRound 兼容面继续发送 v1 JSON；只有显式 v2 SubmitRound 才扩展线协议。
+		// 即使走旧面，只要命令已携带绑定字段，上方仍会先完成本地摘要校验。
+		walletSessionRef, commandDigest = command.WalletSessionRef, command.CommandDigest
 	}
 	payload := roundRequest{
 		OperationID: command.OperationID, Fingerprint: command.Fingerprint,
 		OperatorID: command.OperatorID, PlayerID: command.PlayerID,
-		WalletAccountID: command.WalletAccountID, SessionID: command.SessionID,
-		RoundID: command.RoundID, GameID: command.GameID,
+		WalletAccountID: command.WalletAccountID, WalletSessionRef: walletSessionRef,
+		SessionID: command.SessionID,
+		RoundID:   command.RoundID, GameID: command.GameID,
 		DefinitionVersion: command.DefinitionVersion, DefinitionHash: command.DefinitionHash,
 		RoundKind: command.RoundKind, Currency: command.Currency,
-		DebitMinor:  strconv.FormatInt(command.DebitMinor, 10),
-		CreditMinor: strconv.FormatInt(command.CreditMinor, 10),
+		DebitMinor:    strconv.FormatInt(command.DebitMinor, 10),
+		CreditMinor:   strconv.FormatInt(command.CreditMinor, 10),
+		CommandDigest: commandDigest,
 	}
-	response, status, err := w.do(ctx, "/wallet/v1/rounds/apply", command.OperationID, payload)
-	if err != nil {
-		return rgs.WalletReceipt{}, err
+	exchange := w.do(ctx, "/wallet/v1/rounds/apply", command.OperationID, payload)
+	if exchange.Cause != nil {
+		return resolutionForExchangeFailure(exchange)
 	}
-	switch status {
+	switch exchange.StatusCode {
 	case http.StatusOK:
-		if response.Status != "SUCCEEDED" {
-			return rgs.WalletReceipt{}, rgs.ErrWalletReceiptInvalid
+		if exchange.Response.Status != string(rgs.ResolutionSucceeded) {
+			return protocolConflict("wallet http: apply success has invalid status")
 		}
-		return receiptFromResponse(response)
+		if requireV2Binding && exchange.Response.CommandDigest != command.CommandDigest {
+			return protocolConflict("wallet http: apply success has invalid command digest")
+		}
+		receipt, err := receiptFromResponse(exchange.Response)
+		if err != nil || rgs.ValidateWalletReceipt(command, receipt) != nil {
+			return protocolConflict("wallet http: apply returned an invalid receipt")
+		}
+		return rgs.Resolution{Status: rgs.ResolutionSucceeded, Receipt: receipt}
 	case http.StatusConflict:
-		return rgs.WalletReceipt{}, rgs.ErrIdempotencyConflict
+		if exchange.Response.Status != "CONFLICT" {
+			return protocolConflict("wallet http: apply conflict has invalid status")
+		}
+		return rgs.Resolution{
+			Status: rgs.ResolutionConflict, Code: boundedCode(exchange.Response.Code),
+			Cause: rgs.ErrIdempotencyConflict,
+		}
 	case http.StatusUnprocessableEntity:
-		return rgs.WalletReceipt{}, fmt.Errorf("%w: %s", rgs.ErrWalletRejected, boundedCode(response.Code))
+		if !validTerminalRejection(
+			exchange.Response, rgs.OperationRefFor(command), requireV2Binding,
+		) {
+			return protocolConflict("wallet http: apply rejection has invalid identity")
+		}
+		code := boundedCode(exchange.Response.Code)
+		return rgs.Resolution{
+			Status: rgs.ResolutionRejectedFinal, Code: code,
+			Cause: fmt.Errorf("%w: %s", rgs.ErrWalletRejected, code),
+		}
 	case http.StatusAccepted:
-		return rgs.WalletReceipt{}, rgs.ErrWalletPending
+		if exchange.Response.Status != "PENDING" {
+			return protocolConflict("wallet http: apply pending response has invalid status")
+		}
+		return rgs.Resolution{
+			Status: rgs.ResolutionPending, Code: boundedCode(exchange.Response.Code),
+			Cause: rgs.ErrWalletPending,
+		}
 	default:
-		return rgs.WalletReceipt{}, fmt.Errorf("wallet http: apply returned status %d", status)
+		return rgs.Resolution{
+			Status: rgs.ResolutionUnknown, Code: boundedCode(exchange.Response.Code),
+			Cause: fmt.Errorf("wallet http: apply returned authenticated status %d", exchange.StatusCode),
+		}
 	}
+}
+
+// Resolve 查询一个完整持久化操作；命令摘要校验失败时不接受调用方提供的替代身份。
+func (w *HTTPWallet) Resolve(ctx context.Context, reference rgs.OperationRef) rgs.Resolution {
+	return w.resolve(ctx, reference, true)
 }
 
 func (w *HTTPWallet) Lookup(
 	ctx context.Context,
 	operatorID, operationID string,
 ) (rgs.WalletReceipt, bool, error) {
-	if operatorID != w.operator {
-		return rgs.WalletReceipt{}, false, rgs.ErrWalletReceiptInvalid
-	}
-	response, status, err := w.do(ctx, "/wallet/v1/transactions/status", operationID, lookupRequest{
+	return legacyLookupResult(w.resolve(ctx, rgs.OperationRef{
 		OperatorID: operatorID, OperationID: operationID,
-	})
-	if err != nil {
-		return rgs.WalletReceipt{}, false, err
+	}, false))
+}
+
+func (w *HTTPWallet) resolve(
+	ctx context.Context,
+	reference rgs.OperationRef,
+	requireV2Binding bool,
+) rgs.Resolution {
+	if reference.OperatorID != w.operator {
+		return rgs.Resolution{Status: rgs.ResolutionNotSent, Cause: rgs.ErrWalletReceiptInvalid}
 	}
-	switch status {
+	if err := validateCommandBinding(reference.WalletRound(), requireV2Binding); err != nil {
+		return rgs.Resolution{Status: rgs.ResolutionNotSent, Cause: err}
+	}
+	payload := lookupRequest{OperatorID: reference.OperatorID, OperationID: reference.OperationID}
+	if requireV2Binding {
+		payload.Fingerprint = reference.Fingerprint
+		payload.CommandDigest = reference.CommandDigest
+	}
+	exchange := w.do(ctx, "/wallet/v1/transactions/status", reference.OperationID, payload)
+	if exchange.Cause != nil {
+		return resolutionForExchangeFailure(exchange)
+	}
+	switch exchange.StatusCode {
 	case http.StatusOK:
-		if response.Status != "SUCCEEDED" {
-			return rgs.WalletReceipt{}, false, rgs.ErrWalletReceiptInvalid
+		if exchange.Response.Status != string(rgs.ResolutionSucceeded) {
+			return protocolConflict("wallet http: lookup success has invalid status")
 		}
-		receipt, err := receiptFromResponse(response)
-		return receipt, err == nil, err
+		if requireV2Binding && exchange.Response.CommandDigest != reference.CommandDigest {
+			return protocolConflict("wallet http: lookup success has invalid command digest")
+		}
+		receipt, err := receiptFromResponse(exchange.Response)
+		if err != nil {
+			return protocolConflict("wallet http: lookup returned an invalid receipt")
+		}
+		if requireV2Binding && rgs.ValidateWalletReceipt(reference.WalletRound(), receipt) != nil {
+			return protocolConflict("wallet http: lookup receipt does not match operation")
+		}
+		return rgs.Resolution{Status: rgs.ResolutionSucceeded, Receipt: receipt}
+	case http.StatusUnprocessableEntity:
+		code := boundedCode(exchange.Response.Code)
+		if !validTerminalRejection(exchange.Response, reference, requireV2Binding) {
+			return protocolConflict("wallet http: lookup rejection has invalid identity")
+		}
+		return rgs.Resolution{
+			Status: rgs.ResolutionRejectedFinal, Code: code,
+			Cause: fmt.Errorf("%w: %s", rgs.ErrWalletRejected, code),
+		}
 	case http.StatusNotFound:
-		return rgs.WalletReceipt{}, false, nil
+		if exchange.Response.Status != "NOT_FOUND" ||
+			(requireV2Binding && !lookupResponseMatches(exchange.Response, reference)) {
+			return protocolConflict("wallet http: lookup not-found response has invalid status")
+		}
+		return rgs.Resolution{
+			Status: rgs.ResolutionNotFound, Code: boundedCode(exchange.Response.Code),
+		}
 	case http.StatusAccepted:
-		return rgs.WalletReceipt{}, false, rgs.ErrWalletPending
+		if exchange.Response.Status != "PENDING" {
+			return protocolConflict("wallet http: lookup pending response has invalid status")
+		}
+		return rgs.Resolution{
+			Status: rgs.ResolutionPending, Code: boundedCode(exchange.Response.Code),
+			Cause: rgs.ErrWalletPending,
+		}
 	case http.StatusConflict:
 		// 状态查询冲突表示钱包发现同一资金身份对应不兼容数据，并非暂时或未知结果；
 		// 协调器必须阻断会话并转人工复核。
-		return rgs.WalletReceipt{}, false, rgs.ErrIdempotencyConflict
+		if exchange.Response.Status != "CONFLICT" {
+			return protocolConflict("wallet http: lookup conflict has invalid status")
+		}
+		return rgs.Resolution{
+			Status: rgs.ResolutionConflict, Code: boundedCode(exchange.Response.Code),
+			Cause: rgs.ErrIdempotencyConflict,
+		}
 	default:
-		return rgs.WalletReceipt{}, false, fmt.Errorf("wallet http: lookup returned status %d", status)
+		return rgs.Resolution{
+			Status: rgs.ResolutionUnknown, Code: boundedCode(exchange.Response.Code),
+			Cause: fmt.Errorf("wallet http: lookup returned authenticated status %d", exchange.StatusCode),
+		}
 	}
 }
 
+func lookupResponseMatches(response walletResponse, reference rgs.OperationRef) bool {
+	return response.OperatorID == reference.OperatorID &&
+		response.OperationID == reference.OperationID &&
+		response.Fingerprint == reference.Fingerprint &&
+		response.CommandDigest == reference.CommandDigest
+}
+
 func (w *HTTPWallet) Rollback(ctx context.Context, rollback rgs.WalletRollback) (rgs.WalletReceipt, error) {
-	if rollback.OperatorID != w.operator {
+	if rollback.OperatorID != w.operator ||
+		!walletIdentifierPattern.MatchString(rollback.OperationID) ||
+		!walletIdentifierPattern.MatchString(rollback.RollbackID) ||
+		rollback.Reason == "" || len(rollback.Reason) > 512 {
 		return rgs.WalletReceipt{}, rgs.ErrWalletReceiptInvalid
 	}
-	response, status, err := w.do(ctx, "/wallet/v1/transactions/rollback", rollback.RollbackID, rollbackRequest{
+	exchange := w.do(ctx, "/wallet/v1/transactions/rollback", rollback.RollbackID, rollbackRequest{
 		OperatorID: rollback.OperatorID, OperationID: rollback.OperationID,
 		RollbackID: rollback.RollbackID, Reason: rollback.Reason,
 	})
-	if err != nil {
-		return rgs.WalletReceipt{}, err
+	if exchange.Cause != nil {
+		return rgs.WalletReceipt{}, exchange.Cause
 	}
-	switch status {
+	switch exchange.StatusCode {
 	case http.StatusOK:
-		if response.Status != "ROLLED_BACK" && response.Status != "SUCCEEDED" {
+		if exchange.Response.Status != "ROLLED_BACK" && exchange.Response.Status != "SUCCEEDED" {
 			return rgs.WalletReceipt{}, rgs.ErrWalletReceiptInvalid
 		}
-		return receiptFromResponse(response)
+		if exchange.Response.OperatorID != rollback.OperatorID ||
+			exchange.Response.OperationID != rollback.OperationID ||
+			exchange.Response.RollbackID != rollback.RollbackID ||
+			(exchange.Response.CommandDigest != "" &&
+				!walletCommandDigestPattern.MatchString(exchange.Response.CommandDigest)) {
+			return rgs.WalletReceipt{}, rgs.ErrWalletReceiptInvalid
+		}
+		return receiptFromResponse(exchange.Response)
 	case http.StatusConflict:
 		return rgs.WalletReceipt{}, rgs.ErrIdempotencyConflict
 	case http.StatusUnprocessableEntity:
-		return rgs.WalletReceipt{}, fmt.Errorf("%w: %s", rgs.ErrWalletRejected, boundedCode(response.Code))
+		return rgs.WalletReceipt{}, fmt.Errorf(
+			"%w: %s", rgs.ErrWalletRejected, boundedCode(exchange.Response.Code),
+		)
 	case http.StatusAccepted:
 		return rgs.WalletReceipt{}, rgs.ErrWalletPending
 	default:
-		return rgs.WalletReceipt{}, fmt.Errorf("wallet http: rollback returned status %d", status)
+		return rgs.WalletReceipt{}, fmt.Errorf(
+			"wallet http: rollback returned status %d", exchange.StatusCode,
+		)
 	}
+}
+
+type httpExchange struct {
+	Response      walletResponse
+	StatusCode    int
+	Sent          bool
+	Authenticated bool
+	Cause         error
 }
 
 func (w *HTTPWallet) do(
 	ctx context.Context,
 	path, idempotencyKey string,
 	payload any,
-) (walletResponse, int, error) {
+) httpExchange {
+	if err := ctx.Err(); err != nil {
+		return httpExchange{Cause: fmt.Errorf("wallet http: request not sent: %w", err)}
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return walletResponse{}, 0, fmt.Errorf("wallet http: encode request: %w", err)
+		return httpExchange{Cause: fmt.Errorf("wallet http: encode request: %w", err)}
 	}
 	endpoint := *w.baseURL
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + path
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
 	if err != nil {
-		return walletResponse{}, 0, fmt.Errorf("wallet http: create request: %w", err)
+		return httpExchange{Cause: fmt.Errorf("wallet http: create request: %w", err)}
 	}
 	requestID, nonce, err := newCorrelation()
 	if err != nil {
-		return walletResponse{}, 0, err
+		return httpExchange{Cause: err}
 	}
 	now := time.Now().UTC()
 	if err := operator.SignRequest(request, body, w.signing, operator.RequestSignatureParams{
 		RequestID: requestID, IdempotencyKey: idempotencyKey, Nonce: nonce,
 		Created: now, Expires: now.Add(time.Minute),
 	}); err != nil {
-		return walletResponse{}, 0, fmt.Errorf("wallet http: sign request: %w", err)
+		return httpExchange{Cause: fmt.Errorf("wallet http: sign request: %w", err)}
 	}
 	response, err := w.client.Do(request)
 	if err != nil {
 		// 传输故障后的资金结果不确定；协调器必须使用完全相同的操作标识
 		// 查询状态，禁止重新创建资金操作。
-		return walletResponse{}, 0, fmt.Errorf("wallet http: transport outcome unknown: %w", err)
+		return httpExchange{
+			Sent: true, Cause: fmt.Errorf("wallet http: transport outcome unknown: %w", err),
+		}
 	}
 	defer response.Body.Close()
+	exchange := httpExchange{StatusCode: response.StatusCode, Sent: true}
 	limited := io.LimitReader(response.Body, maxWalletResponseBytes+1)
 	responseBody, err := io.ReadAll(limited)
 	if err != nil {
-		return walletResponse{}, response.StatusCode, fmt.Errorf("wallet http: read response: %w", err)
+		exchange.Cause = fmt.Errorf("wallet http: unauthenticated response read failed: %w", err)
+		return exchange
 	}
 	if int64(len(responseBody)) > maxWalletResponseBytes {
-		return walletResponse{}, response.StatusCode, fmt.Errorf(
-			"%w: wallet response exceeds size limit", rgs.ErrWalletReceiptInvalid,
-		)
+		exchange.Cause = errors.New("wallet http: unauthenticated response exceeds size limit")
+		return exchange
 	}
 	if err := w.responses.Verify(ctx, response, responseBody, w.operator, requestID); err != nil {
-		return walletResponse{}, response.StatusCode, fmt.Errorf(
-			"%w: response authentication failed: %v", rgs.ErrWalletReceiptInvalid, err,
-		)
+		exchange.Cause = fmt.Errorf("%w: %v", errWalletResponseAuthentication, err)
+		return exchange
 	}
+	exchange.Authenticated = true
 	var decoded walletResponse
 	if err := decodeStrictObject(responseBody, &decoded); err != nil {
-		return walletResponse{}, response.StatusCode, fmt.Errorf(
+		exchange.Cause = fmt.Errorf(
 			"%w: %v", rgs.ErrWalletReceiptInvalid, err,
 		)
+		return exchange
 	}
-	return decoded, response.StatusCode, nil
+	exchange.Response = decoded
+	return exchange
+}
+
+func validateCommandBinding(command rgs.WalletRound, required bool) error {
+	if !required && command.WalletSessionRef == "" && command.CommandDigest == "" {
+		return nil
+	}
+	return rgs.ValidateWalletCommand(command)
+}
+
+func resolutionForExchangeFailure(exchange httpExchange) rgs.Resolution {
+	status := rgs.ResolutionNotSent
+	if exchange.Sent {
+		status = rgs.ResolutionUnknown
+	}
+	if exchange.Authenticated {
+		status = rgs.ResolutionConflict
+	}
+	return rgs.Resolution{Status: status, Cause: exchange.Cause}
+}
+
+func protocolConflict(message string) rgs.Resolution {
+	return rgs.Resolution{
+		Status: rgs.ResolutionConflict,
+		Cause:  fmt.Errorf("%w: %s", rgs.ErrWalletReceiptInvalid, message),
+	}
+}
+
+func validTerminalRejection(
+	response walletResponse,
+	reference rgs.OperationRef,
+	requireV2Binding bool,
+) bool {
+	return response.Status == "REJECTED" && walletCodePattern.MatchString(response.Code) &&
+		response.OperationID == reference.OperationID &&
+		response.OperatorID == reference.OperatorID &&
+		(reference.Fingerprint == "" || response.Fingerprint == reference.Fingerprint) &&
+		(!requireV2Binding || response.CommandDigest == reference.CommandDigest)
+}
+
+func legacyApplyResult(resolution rgs.Resolution) (rgs.WalletReceipt, error) {
+	switch resolution.Status {
+	case rgs.ResolutionSucceeded:
+		return resolution.Receipt, nil
+	case rgs.ResolutionRejectedFinal, rgs.ResolutionPending, rgs.ResolutionConflict,
+		rgs.ResolutionUnknown, rgs.ResolutionNotSent:
+		if resolution.Cause != nil {
+			return rgs.WalletReceipt{}, resolution.Cause
+		}
+	case rgs.ResolutionNotFound:
+		return rgs.WalletReceipt{}, rgs.ErrWalletPending
+	}
+	return rgs.WalletReceipt{}, errors.New("wallet http: invalid apply resolution")
+}
+
+func legacyLookupResult(resolution rgs.Resolution) (rgs.WalletReceipt, bool, error) {
+	switch resolution.Status {
+	case rgs.ResolutionSucceeded:
+		return resolution.Receipt, true, nil
+	case rgs.ResolutionNotFound:
+		return rgs.WalletReceipt{}, false, nil
+	case rgs.ResolutionRejectedFinal, rgs.ResolutionPending, rgs.ResolutionConflict,
+		rgs.ResolutionUnknown, rgs.ResolutionNotSent:
+		if resolution.Cause != nil {
+			return rgs.WalletReceipt{}, false, resolution.Cause
+		}
+	}
+	return rgs.WalletReceipt{}, false, errors.New("wallet http: invalid lookup resolution")
 }
 
 func receiptFromResponse(response walletResponse) (rgs.WalletReceipt, error) {
@@ -431,3 +680,4 @@ func decodeStrictObject(encoded []byte, target any) error {
 }
 
 var _ rgs.WalletPort = (*HTTPWallet)(nil)
+var _ rgs.WalletResolutionPort = (*HTTPWallet)(nil)

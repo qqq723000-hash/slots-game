@@ -6,6 +6,59 @@ locals {
     "postgresql",
     "upgrade",
   ])
+  capacity_high_alarm_metrics = {
+    cpu = {
+      suffix      = "cpu-high"
+      description = "RDS CPU 持续高负载；需检查慢查询、锁竞争和实例容量"
+      metric_name = "CPUUtilization"
+      statistic   = "Average"
+      threshold   = var.alarm_thresholds.cpu_utilization_percent
+    }
+    connections = {
+      suffix      = "connections-high"
+      description = "RDS 连接数持续超出经容量评审的应用与运维总预算"
+      metric_name = "DatabaseConnections"
+      statistic   = "Maximum"
+      threshold   = var.alarm_thresholds.database_connections
+    }
+    read_latency = {
+      suffix      = "read-latency-high"
+      description = "RDS 平均读取延迟持续超出经压测批准的阈值"
+      metric_name = "ReadLatency"
+      statistic   = "Average"
+      threshold   = var.alarm_thresholds.read_latency_seconds
+    }
+    write_latency = {
+      suffix      = "write-latency-high"
+      description = "RDS 平均写入延迟持续超出经压测批准的阈值"
+      metric_name = "WriteLatency"
+      statistic   = "Average"
+      threshold   = var.alarm_thresholds.write_latency_seconds
+    }
+    disk_queue = {
+      suffix      = "disk-queue-high"
+      description = "RDS 磁盘队列持续堆积；需检查 IOPS、吞吐和写放大"
+      metric_name = "DiskQueueDepth"
+      statistic   = "Maximum"
+      threshold   = var.alarm_thresholds.disk_queue_depth
+    }
+  }
+  capacity_low_alarm_metrics = {
+    freeable_memory = {
+      suffix      = "freeable-memory-low"
+      description = "RDS 可用内存持续低于经容量评审的安全余量"
+      metric_name = "FreeableMemory"
+      statistic   = "Minimum"
+      threshold   = var.alarm_thresholds.freeable_memory_bytes
+    }
+    free_storage = {
+      suffix      = "free-storage-low"
+      description = "RDS 可用存储持续低于安全余量；自动扩容不能替代人工容量处置"
+      metric_name = "FreeStorageSpace"
+      statistic   = "Minimum"
+      threshold   = var.alarm_thresholds.free_storage_space_bytes
+    }
+  }
 }
 
 resource "aws_db_subnet_group" "this" {
@@ -173,6 +226,54 @@ resource "aws_db_instance" "this" {
       error_message = "RDS 自动扩容上限至少应为初始容量的两倍。"
     }
   }
+}
+
+resource "aws_cloudwatch_metric_alarm" "capacity_high" {
+  for_each = local.capacity_high_alarm_metrics
+
+  alarm_name          = "${var.name_prefix}-postgresql-${each.value.suffix}"
+  alarm_description   = each.value.description
+  namespace           = "AWS/RDS"
+  metric_name         = each.value.metric_name
+  statistic           = each.value.statistic
+  period              = 60
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  threshold           = each.value.threshold
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
+  ok_actions          = [var.alert_topic_arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.this.identifier
+  }
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "capacity_low" {
+  for_each = local.capacity_low_alarm_metrics
+
+  alarm_name          = "${var.name_prefix}-postgresql-${each.value.suffix}"
+  alarm_description   = each.value.description
+  namespace           = "AWS/RDS"
+  metric_name         = each.value.metric_name
+  statistic           = each.value.statistic
+  period              = 60
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  threshold           = each.value.threshold
+  comparison_operator = "LessThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
+  ok_actions          = [var.alert_topic_arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.this.identifier
+  }
+
+  tags = var.tags
 }
 
 resource "aws_db_event_subscription" "this" {

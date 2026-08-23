@@ -8,6 +8,7 @@ import {
   JsonRgsRecoveryLedgerStorage,
   RgsGateway,
   RgsGatewayConfigurationError,
+  distributedRetryDelayMs,
   type RgsGatewayConfig,
 } from "../src/protocol/RgsGateway";
 import type {
@@ -353,6 +354,7 @@ function config(
     defaultBetMinor: "100",
     fetch: fetchWithAcknowledgements,
     requestId: () => `request-${++id}`,
+    retryJitter: () => 0,
     requestTimeoutMs: 5_000,
     pollDelayMs: 10,
     maxPollAttempts: 6,
@@ -386,6 +388,34 @@ afterEach(() => {
 });
 
 describe("RgsGateway", () => {
+  it("spreads ten thousand retry clients without violating the server delay floor", () => {
+    let state = 0x6d2b79f5;
+    const sample = (): number => {
+      state = Math.imul(state ^ state >>> 15, state | 1);
+      state ^= state + Math.imul(state ^ state >>> 7, state | 61);
+      return ((state ^ state >>> 14) >>> 0) / 4_294_967_296;
+    };
+    const buckets = new Map<number, number>();
+    const delays = Array.from({ length: 10_000 }, () => {
+      const delay = distributedRetryDelayMs(250, 1_000, sample);
+      const bucket = Math.floor((delay - 1_000) / 10);
+      buckets.set(bucket, (buckets.get(bucket) ?? 0) + 1);
+      return delay;
+    });
+    expect(Math.min(...delays)).toBeGreaterThanOrEqual(1_000);
+    expect(Math.max(...delays)).toBeLessThan(2_000);
+    expect(buckets.size).toBeGreaterThanOrEqual(95);
+    expect(Math.max(...buckets.values())).toBeLessThan(160);
+  });
+
+  it("uses a safe midpoint when the retry jitter source fails", () => {
+    expect(distributedRetryDelayMs(500, 1_000, () => {
+      throw new Error("unavailable jitter source");
+    })).toBe(1_500);
+    expect(distributedRetryDelayMs(500, 0, () => Number.NaN)).toBe(750);
+    expect(distributedRetryDelayMs(0, 0, () => 0.9)).toBe(0);
+  });
+
   it("rejects and cancels an RGS body whose declared byte length exceeds the protocol cap", async () => {
     const cancelled = vi.fn();
     const fetchImplementation = vi.fn<typeof fetch>(async (_url, init) => {
@@ -456,6 +486,26 @@ describe("RgsGateway", () => {
       operatorId: "operator-a",
       sessionId: "session-a",
     });
+  });
+
+  it("parks an unspent launch while unavailable and exchanges it once on foreground recovery", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (_url, init) => (
+      response(exchangeEnvelope(requestId(init)))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+
+    gateway.setRuntimeAvailability({ online: false, visible: true });
+    gateway.connect();
+    await Promise.resolve();
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(observed.log.statuses).toEqual(["recovering"]);
+
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await waitForSession(observed.log);
+    expect(fetchImplementation).toHaveBeenCalledOnce();
+    expect(observed.log.statuses).toEqual(["recovering", "connecting", "online"]);
   });
 
   it("submits one BASE round with the exchanged binding/revision and decodes COMMITTED", async () => {
@@ -1070,9 +1120,120 @@ describe("RgsGateway", () => {
     expect(storage.clear).not.toHaveBeenCalled();
   });
 
-  it("cancels a scheduled acknowledgement retry on close", async () => {
+  it("rejects a successful acknowledgement that arrives after an absolute deadline timer was throttled", async () => {
+    vi.useFakeTimers();
+    let now = 0;
+    let resolveAcknowledgement: ((value: Response) => void) | undefined;
+    let acknowledgementRequestId = "";
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        return response(successEnvelope(requestId(init), committedResult()));
+      }
+      acknowledgementRequestId = requestId(init);
+      return new Promise<Response>((resolve) => { resolveAcknowledgement = resolve; });
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      ledgerStorage: storage,
+      now: () => now,
+      acknowledgementRetryBaseDelayMs: 100,
+      acknowledgementRetryMaxDelayMs: 500,
+      acknowledgementMaxAttempts: 5,
+      acknowledgementRetryWindowMs: 1_000,
+    }, false));
+    const observed = callbacks();
+    const acknowledged = vi.fn();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onSpinResultAcknowledged: acknowledged,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(gateway.acknowledgeSpinResult("round-a", 1)).toBe(true);
+    await vi.runAllTicks();
+    // 模拟后台冻结：绝对时钟已过期，但 deadline timer 尚未获得调度机会。
+    now = 1_000;
+    resolveAcknowledgement?.(response(acknowledgementEnvelope(
+      acknowledgementRequestId,
+      committedResult(),
+    )));
+    await vi.runAllTicks();
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
+    expect(acknowledged).not.toHaveBeenCalled();
+    expect(storage.clear).not.toHaveBeenCalled();
+    expect(gateway.hasPendingSpin).toBe(true);
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+  });
+
+  it("parks ACK retries while offline without replaying the delivered session on recovery", async () => {
     vi.useFakeTimers();
     let acknowledgementAttempts = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        return response(successEnvelope(requestId(init), committedResult()));
+      }
+      acknowledgementAttempts += 1;
+      return acknowledgementAttempts === 1
+        ? responseWithRetryAfter(
+          errorEnvelope(requestId(init), "TEMPORARY_UNAVAILABLE"),
+          503,
+          "2",
+        )
+        : response(acknowledgementEnvelopeFromRequest(init));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      acknowledgementRetryBaseDelayMs: 100,
+      acknowledgementRetryMaxDelayMs: 3_000,
+      acknowledgementMaxAttempts: 5,
+      acknowledgementRetryWindowMs: 5_000,
+    }, false));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(gateway.acknowledgeSpinResult("round-a", 1)).toBe(true);
+    await vi.runAllTicks();
+    expect(acknowledgementAttempts).toBe(1);
+    gateway.setRuntimeAvailability({ online: false, visible: true });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(acknowledgementAttempts).toBe(1);
+
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(acknowledgementAttempts).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(gateway.hasPendingSpin).toBe(false));
+    expect(acknowledgementAttempts).toBe(2);
+    // 已交付轮次不能通过重复 SESSION_OPENED 把控制器推进回 requesting。
+    expect(observed.log.statuses).toEqual(["connecting", "online"]);
+    expect(observed.log.sessions).toHaveLength(1);
+  });
+
+  it("cancels a scheduled acknowledgement retry and releases memory on close without clearing the ledger", async () => {
+    vi.useFakeTimers();
+    let acknowledgementAttempts = 0;
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
     const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
       const target = String(url);
       if (target.endsWith("/sessions/exchange")) {
@@ -1089,6 +1250,7 @@ describe("RgsGateway", () => {
       );
     });
     const gateway = new RgsGateway(config(fetchImplementation, {
+      ledgerStorage: storage,
       acknowledgementRetryBaseDelayMs: 100,
       acknowledgementRetryMaxDelayMs: 5_000,
       acknowledgementMaxAttempts: 5,
@@ -1111,7 +1273,34 @@ describe("RgsGateway", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(acknowledgementAttempts).toBe(1);
     expect(operatorRecovery).not.toHaveBeenCalled();
-    expect(gateway.hasPendingSpin).toBe(true);
+    expect(gateway.hasPendingSpin).toBe(false);
+    expect(storage.save).toHaveBeenCalledOnce();
+    expect(storage.clear).not.toHaveBeenCalled();
+  });
+
+  it("keeps close idempotent and releases observers even when the offline observer throws", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (_url, init) => (
+      response(exchangeEnvelope(requestId(init)))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    const throwingStatus = vi.fn(() => { throw new Error("observer failed"); });
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onStatus: throwingStatus,
+    });
+    expect(() => gateway.close()).not.toThrow();
+    expect(() => gateway.close()).not.toThrow();
+    expect(throwingStatus).toHaveBeenCalledOnce();
+
+    const lateObserver = vi.fn();
+    gateway.setCallbacks({ ...observed.callbacks, onStatus: lateObserver });
+    gateway.setRuntimeAvailability({ online: false, visible: false });
+    expect(lateObserver).not.toHaveBeenCalled();
   });
 
   it("refreshes one expired token and retries the exact acknowledgement tuple", async () => {
@@ -1322,6 +1511,715 @@ describe("RgsGateway", () => {
     ]);
     expect(economicRequests.filter(({ url }) => url.endsWith("/spins"))).toHaveLength(1);
     expect(observed.log.errors).toEqual([]);
+  });
+
+  it.each([
+    { name: "offline", unavailable: { online: false, visible: true } },
+    { name: "background", unavailable: { online: true, visible: false } },
+  ])("parks $name polling without consuming attempts and resumes the same ledger", async ({
+    unavailable,
+  }) => {
+    vi.useFakeTimers();
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        return response(errorEnvelope(requestId(init), "ROUND_PENDING"), 202);
+      }
+      statusCalls += 1;
+      return response(statusEnvelope(requestId(init), "COMMITTED", committedResult()));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      pollDelayMs: 100,
+      maxPollAttempts: 1,
+    }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+
+    gateway.setRuntimeAvailability(unavailable);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(statusCalls).toBe(0);
+    expect(observed.log.results).toEqual([]);
+    expect(observed.log.errors).toEqual([]);
+
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+    expect(statusCalls).toBe(1);
+    expect(observed.log.results[0]?.result.roundId).toBe("round-a");
+    expect(observed.log.errors).toEqual([]);
+  });
+
+  it("returns an in-flight polling attempt when COMMITTED arrives while backgrounded", async () => {
+    vi.useFakeTimers();
+    let statusCalls = 0;
+    let firstStatusRequestId = "";
+    let resolveFirstStatus: ((value: Response) => void) | undefined;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        return response(errorEnvelope(requestId(init), "ROUND_PENDING"), 202);
+      }
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        firstStatusRequestId = requestId(init);
+        return new Promise<Response>((resolve) => { resolveFirstStatus = resolve; });
+      }
+      return response(statusEnvelope(requestId(init), "COMMITTED", committedResult()));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      pollDelayMs: 100,
+      maxPollAttempts: 1,
+    }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(statusCalls).toBe(1);
+    gateway.setRuntimeAvailability({ online: true, visible: false });
+    resolveFirstStatus?.(response(statusEnvelope(
+      firstStatusRequestId,
+      "COMMITTED",
+      committedResult(),
+    )));
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(observed.log.results).toEqual([]);
+
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+    expect(statusCalls).toBe(2);
+    expect(observed.log.errors).toEqual([]);
+    expect(observed.log.statuses).toEqual(["connecting", "online", "recovering", "online"]);
+    expect(observed.log.sessions).toHaveLength(2);
+  });
+
+  it("does not start a second poll when foreground recovery races an in-flight request", async () => {
+    vi.useFakeTimers();
+    let statusCalls = 0;
+    let statusRequestId = "";
+    let resolveStatus: ((value: Response) => void) | undefined;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        return response(errorEnvelope(requestId(init), "ROUND_PENDING"), 202);
+      }
+      statusCalls += 1;
+      statusRequestId = requestId(init);
+      return new Promise<Response>((resolve) => { resolveStatus = resolve; });
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      pollDelayMs: 100,
+      maxPollAttempts: 2,
+    }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(statusCalls).toBe(1);
+    gateway.setRuntimeAvailability({ online: true, visible: false });
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statusCalls).toBe(1);
+    expect(observed.log.results).toEqual([]);
+
+    resolveStatus?.(response(statusEnvelope(
+      statusRequestId,
+      "COMMITTED",
+      committedResult(),
+    )));
+    await vi.runAllTicks();
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+    expect(statusCalls).toBe(1);
+    expect(observed.log.errors).toEqual([]);
+    expect(observed.log.statuses).toEqual(["connecting", "online", "recovering", "online"]);
+    expect(observed.log.sessions).toHaveLength(2);
+  });
+
+  it.each([
+    { name: "backgrounded", unavailable: { online: true, visible: false } },
+    { name: "offline", unavailable: { online: false, visible: true } },
+  ])("defers an in-flight direct ROUND_REJECTED response while $name until status recovery", async ({
+    unavailable,
+  }) => {
+    vi.useFakeTimers();
+    let spinCalls = 0;
+    let statusCalls = 0;
+    let spinRequestId = "";
+    let resolveSpin: ((value: Response) => void) | undefined;
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        spinCalls += 1;
+        spinRequestId = requestId(init);
+        return new Promise<Response>((resolve) => { resolveSpin = resolve; });
+      }
+      statusCalls += 1;
+      return response(statusEnvelope(requestId(init), "REJECTED"));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      ledgerStorage: storage,
+      pollDelayMs: 100,
+      maxPollAttempts: 1,
+    }));
+    const observed = callbacks();
+    const timeline: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onStatus: (status) => {
+        observed.callbacks.onStatus(status);
+        timeline.push(`status:${status}`);
+      },
+      onSession: (session) => {
+        observed.callbacks.onSession(session);
+        timeline.push("session");
+      },
+      onError: (error) => {
+        observed.callbacks.onError(error);
+        timeline.push("error");
+      },
+    });
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+    expect(spinCalls).toBe(1);
+
+    gateway.setRuntimeAvailability(unavailable);
+    resolveSpin?.(response(errorEnvelope(spinRequestId, "ROUND_REJECTED"), 409));
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(observed.log.errors).toEqual([]);
+    expect(gateway.hasPendingSpin).toBe(true);
+    expect(storage.clear).not.toHaveBeenCalled();
+
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+    expect(observed.log.errors[0]).toMatchObject({
+      code: "ROUND_REJECTED",
+      roundId: "round-a",
+      retryable: false,
+    });
+    expect(spinCalls).toBe(1);
+    expect(statusCalls).toBe(1);
+    expect(observed.log.sessions).toHaveLength(2);
+    expect(timeline.lastIndexOf("session")).toBeLessThan(timeline.indexOf("error"));
+    expect(gateway.hasPendingSpin).toBe(false);
+    expect(storage.clear).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { name: "backgrounded", unavailable: { online: true, visible: false } },
+    { name: "offline", unavailable: { online: false, visible: true } },
+  ])("defers an in-flight polled REJECTED state while $name until status recovery", async ({
+    unavailable,
+  }) => {
+    vi.useFakeTimers();
+    let spinCalls = 0;
+    let statusCalls = 0;
+    let firstStatusRequestId = "";
+    let resolveFirstStatus: ((value: Response) => void) | undefined;
+    const storage = { load: () => null, save: vi.fn(), clear: vi.fn() };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        spinCalls += 1;
+        return response(errorEnvelope(requestId(init), "ROUND_PENDING"), 202);
+      }
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        firstStatusRequestId = requestId(init);
+        return new Promise<Response>((resolve) => { resolveFirstStatus = resolve; });
+      }
+      return response(statusEnvelope(requestId(init), "REJECTED"));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      ledgerStorage: storage,
+      pollDelayMs: 100,
+      maxPollAttempts: 1,
+    }));
+    const observed = callbacks();
+    const timeline: string[] = [];
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onStatus: (status) => {
+        observed.callbacks.onStatus(status);
+        timeline.push(`status:${status}`);
+      },
+      onSession: (session) => {
+        observed.callbacks.onSession(session);
+        timeline.push("session");
+      },
+      onError: (error) => {
+        observed.callbacks.onError(error);
+        timeline.push("error");
+      },
+    });
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spinCalls).toBe(1);
+    expect(statusCalls).toBe(1);
+
+    gateway.setRuntimeAvailability(unavailable);
+    resolveFirstStatus?.(response(statusEnvelope(firstStatusRequestId, "REJECTED")));
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(observed.log.errors).toEqual([]);
+    expect(gateway.hasPendingSpin).toBe(true);
+    expect(storage.clear).not.toHaveBeenCalled();
+
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+    expect(observed.log.errors[0]).toMatchObject({
+      code: "ROUND_REJECTED",
+      roundId: "round-a",
+      retryable: false,
+    });
+    expect(spinCalls).toBe(1);
+    expect(statusCalls).toBe(2);
+    expect(observed.log.sessions).toHaveLength(2);
+    expect(timeline.lastIndexOf("session")).toBeLessThan(timeline.indexOf("error"));
+    expect(gateway.hasPendingSpin).toBe(false);
+    expect(storage.clear).toHaveBeenCalledOnce();
+  });
+
+  it("uses status Retry-After as the lower bound for retryable polling", async () => {
+    vi.useFakeTimers();
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (String(url).endsWith("/spins")) {
+        return response(errorEnvelope(requestId(init), "ROUND_PENDING"), 202);
+      }
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        return responseWithRetryAfter(
+          errorEnvelope(requestId(init), "RGS_UNAVAILABLE"),
+          503,
+          "2",
+        );
+      }
+      return response(statusEnvelope(requestId(init), "COMMITTED", committedResult()));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { pollDelayMs: 100 }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(statusCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(statusCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(statusCalls).toBe(2);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+  });
+
+  it("preserves a polling Retry-After floor across a background suspension", async () => {
+    vi.useFakeTimers();
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        return responseWithRetryAfter(
+          errorEnvelope(requestId(init), "ROUND_PENDING"),
+          202,
+          "2",
+        );
+      }
+      statusCalls += 1;
+      return response(statusEnvelope(requestId(init), "COMMITTED", committedResult()));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { pollDelayMs: 100 }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+
+    await vi.advanceTimersByTimeAsync(500);
+    gateway.setRuntimeAvailability({ online: true, visible: false });
+    await vi.advanceTimersByTimeAsync(1_000);
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await vi.advanceTimersByTimeAsync(499);
+    expect(statusCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+    expect(statusCalls).toBe(1);
+  });
+
+  it("ignores an invalid status Retry-After without shortening exponential polling", async () => {
+    vi.useFakeTimers();
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (String(url).endsWith("/spins")) {
+        return response(errorEnvelope(requestId(init), "ROUND_PENDING"), 202);
+      }
+      statusCalls += 1;
+      if (statusCalls === 1) {
+        return responseWithRetryAfter(
+          errorEnvelope(requestId(init), "RGS_UNAVAILABLE"),
+          503,
+          "0",
+        );
+      }
+      return response(statusEnvelope(requestId(init), "COMMITTED", committedResult()));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { pollDelayMs: 100 }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(statusCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(199);
+    expect(statusCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(statusCalls).toBe(2);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+  });
+
+  it.each([2, 3])(
+    "recovers after %i consecutive WALLET_UNAVAILABLE responses without changing ledger identity",
+    async (walletFailures) => {
+      vi.useFakeTimers();
+      const requests: SeenRequest[] = [];
+      let spinCalls = 0;
+      let statusCalls = 0;
+      const pollDelayMs = 600;
+      const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+        const request = seenRequest(url, init);
+        requests.push(request);
+        if (request.url.endsWith("/sessions/exchange")) {
+          return response(exchangeEnvelope(requestId(init)));
+        }
+        if (request.url.endsWith("/spins")) {
+          spinCalls += 1;
+          if (spinCalls <= walletFailures) {
+            return responseWithRetryAfter(
+              errorEnvelope(requestId(init), "WALLET_UNAVAILABLE"),
+              503,
+              "1",
+            );
+          }
+          return response(successEnvelope(requestId(init), committedResult()));
+        }
+        statusCalls += 1;
+        return response(errorEnvelope(requestId(init), "ROUND_NOT_FOUND"), 404);
+      });
+      const gateway = new RgsGateway(config(fetchImplementation, {
+        pollDelayMs,
+        maxPollAttempts: 6,
+      }));
+      const observed = callbacks();
+      gateway.setCallbacks(observed.callbacks);
+      gateway.connect();
+      await vi.runAllTicks();
+      await waitForSession(observed.log);
+
+      expect(gateway.requestSpin("round-a", "100")).toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(spinCalls).toBe(1);
+
+      for (let pollAttempt = 0; pollAttempt < walletFailures; pollAttempt += 1) {
+        const exponentialDelayMs = Math.min(
+          8_000,
+          pollDelayMs * 2 ** Math.min(pollAttempt, 5),
+        );
+        const effectiveDelayMs = Math.max(1_000, exponentialDelayMs);
+        await vi.advanceTimersByTimeAsync(effectiveDelayMs - 1);
+        expect(statusCalls).toBe(pollAttempt);
+        expect(spinCalls).toBe(pollAttempt + 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(statusCalls).toBe(pollAttempt + 1);
+        expect(spinCalls).toBe(pollAttempt + 2);
+      }
+      await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+      const spinRequests = requests.filter(({ url }) => url.endsWith("/spins"));
+      expect(spinRequests).toHaveLength(walletFailures + 1);
+      expect(spinRequests.map(({ body }) => body)).toEqual(
+        Array.from({ length: walletFailures + 1 }, () => spinRequests[0]!.body),
+      );
+      expect(spinRequests[0]?.body).toMatchObject({
+        operatorId: "operator-a",
+        sessionId: "session-a",
+        roundId: "round-a",
+        roundKind: "BASE",
+        betMinor: "100",
+        startRevision: "0",
+      });
+      expect(observed.log.results[0]?.result).toMatchObject({
+        roundId: "round-a",
+        sequence: 1,
+      });
+      expect(observed.log.errors).toHaveLength(walletFailures);
+    },
+  );
+
+  it.each([
+    { status: 429, code: "RATE_LIMITED" },
+    { status: 503, code: "ADMISSION_UNAVAILABLE" },
+    { status: 503, code: "WALLET_UNAVAILABLE" },
+    { status: 503, code: "CAPACITY_UNAVAILABLE" },
+  ])("retries a provably pre-transaction $status $code with the same ledger", async ({
+    status,
+    code,
+  }) => {
+    vi.useFakeTimers();
+    const spinRequests: SeenRequest[] = [];
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/spins")) {
+        spinRequests.push(request);
+        if (spinRequests.length === 1) {
+          return responseWithRetryAfter(errorEnvelope(requestId(init), code), status, "1");
+        }
+        return response(successEnvelope(requestId(init), committedResult()));
+      }
+      statusCalls += 1;
+      return response(errorEnvelope(requestId(init), "ROUND_NOT_FOUND"), 404);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      pollDelayMs: 100,
+      maxPollAttempts: 3,
+    }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(spinRequests).toHaveLength(1);
+    expect(statusCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(statusCalls).toBe(1);
+    expect(spinRequests).toHaveLength(2);
+    expect(spinRequests[1]?.body).toEqual(spinRequests[0]?.body);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+  });
+
+  it("does not resubmit an unclassified service failure after status 404", async () => {
+    vi.useFakeTimers();
+    let spinCalls = 0;
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (String(url).endsWith("/spins")) {
+        spinCalls += 1;
+        return response(errorEnvelope(requestId(init), "SERVICE_UNAVAILABLE"), 503);
+      }
+      statusCalls += 1;
+      return response(errorEnvelope(requestId(init), "ROUND_NOT_FOUND"), 404);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      pollDelayMs: 100,
+      maxPollAttempts: 3,
+    }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(spinCalls).toBe(1);
+    expect(statusCalls).toBe(1);
+    expect(gateway.hasPendingSpin).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(spinCalls).toBe(1);
+    expect(statusCalls).toBe(1);
+  });
+
+  it("clears a synchronous final rejection and permits a new round", async () => {
+    const spinRequests: SeenRequest[] = [];
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/results/acknowledgements")) {
+        return response(acknowledgementEnvelopeFromRequest(init));
+      }
+      if (request.url.endsWith("/spins")) {
+        spinRequests.push(request);
+        if (request.body.roundId === "round-a") {
+          return response(errorEnvelope(requestId(init), "ROUND_REJECTED"), 409);
+        }
+        return response(successEnvelope(
+          requestId(init),
+          committedResult({ roundId: "round-b" }),
+        ));
+      }
+      throw new Error(`unexpected request ${request.url}`);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+    expect(observed.log.errors[0]).toMatchObject({
+      code: "ROUND_REJECTED",
+      roundId: "round-a",
+      retryable: false,
+    });
+    expect(gateway.hasPendingSpin).toBe(false);
+    expect(gateway.requestSpin("round-b", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+    expect(observed.log.results[0]?.result.roundId).toBe("round-b");
+    expect(spinRequests.map(({ body }) => body.roundId)).toEqual(["round-a", "round-b"]);
+  });
+
+  it("stops WALLET_UNAVAILABLE resubmission at maxPollAttempts without a tail request", async () => {
+    vi.useFakeTimers();
+    const spinRequests: SeenRequest[] = [];
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/spins")) {
+        spinRequests.push(request);
+        return responseWithRetryAfter(
+          errorEnvelope(requestId(init), "WALLET_UNAVAILABLE"),
+          503,
+          "1",
+        );
+      }
+      statusCalls += 1;
+      return response(errorEnvelope(requestId(init), "ROUND_NOT_FOUND"), 404);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      pollDelayMs: 100,
+      maxPollAttempts: 2,
+    }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(spinRequests).toHaveLength(2);
+    expect(statusCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(spinRequests).toHaveLength(2);
+    expect(statusCalls).toBe(2);
+    expect(observed.log.errors.at(-1)).toMatchObject({
+      code: "ROUND_RECOVERY_EXHAUSTED",
+      roundId: "round-a",
+    });
+    expect(spinRequests[1]?.body).toEqual(spinRequests[0]?.body);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(spinRequests).toHaveLength(2);
+    expect(statusCalls).toBe(2);
+    expect(gateway.hasPendingSpin).toBe(true);
+    expect(gateway.requestSpin("round-b", "100")).toBe(false);
+  });
+
+  it("does not turn an unrelated non-retryable status 404 into a spin resubmission", async () => {
+    vi.useFakeTimers();
+    let spinCalls = 0;
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (String(url).endsWith("/spins")) {
+        spinCalls += 1;
+        return response(errorEnvelope(requestId(init), "ROUND_PENDING"), 202);
+      }
+      statusCalls += 1;
+      return response(errorEnvelope(requestId(init), "ROUND_NOT_FOUND"), 404);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(spinCalls).toBe(1);
+    expect(statusCalls).toBe(1);
+    expect(observed.log.errors.at(-1)).toMatchObject({
+      code: "ROUND_NOT_FOUND",
+      retryable: false,
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(spinCalls).toBe(1);
+    expect(statusCalls).toBe(1);
   });
 
   it("treats MANUAL_REVIEW as a hard non-economic block and retains recovery evidence", async () => {
@@ -1646,6 +2544,38 @@ describe("RgsGateway", () => {
 
     expect(observed.log.sessions).toHaveLength(2);
     expect(observed.log.errors).toEqual([]);
+    gateway.close();
+  });
+
+  it("preserves the proactive refresh target across a brief offline interval", async () => {
+    vi.useFakeTimers();
+    let now = 100_000;
+    const hintedToken = schedulingToken(100, 200);
+    let refreshCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init), {}, hintedToken));
+      }
+      refreshCalls += 1;
+      return response(exchangeEnvelope(requestId(init), {}, TOKEN_TWO));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { now: () => now }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    now = 110_000;
+    gateway.setRuntimeAvailability({ online: false, visible: true });
+    await vi.advanceTimersByTimeAsync(10_000);
+    now = 120_000;
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await vi.advanceTimersByTimeAsync(49_999);
+    expect(refreshCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(refreshCalls).toBe(1));
     gateway.close();
   });
 

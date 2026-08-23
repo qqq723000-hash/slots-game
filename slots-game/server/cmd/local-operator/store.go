@@ -18,7 +18,19 @@ import (
 //go:embed migrations/*.sql
 var localOperatorMigrations embed.FS
 
-const localOperatorMigrationLock int64 = 6_804_151_912_426
+// 0002 曾在未显式排除 NULL 的情况下依赖 PostgreSQL CHECK；其 UNKNOWN 结果可放行
+// half-bound v2 行。允许且只允许这一份已知历史摘要升级清单，随后 0003 在同一迁移事务
+// 中安装强约束。任意其他历史漂移仍然失败关闭。
+var acceptedLocalOperatorMigrationChecksums = map[string]map[string]struct{}{
+	"0002_wallet_v2_binding.sql": {
+		"a1fb48dfa1a2a8a5ca508d0995f31b1ecfbf0a864d92a6ee607af6e2f73be71c": {},
+	},
+}
+
+const (
+	localOperatorMigrationLock  int64 = 6_804_151_912_426
+	localOperatorWalletLockSeed int64 = 4_315_227_091
+)
 
 type postgresStore struct {
 	database *sql.DB
@@ -78,8 +90,21 @@ func migrateLocalOperator(ctx context.Context, database *sql.DB, ownerRole, runt
 			`SELECT checksum FROM local_operator_schema_migrations WHERE version=$1`, entry.Name(),
 		).Scan(&existing)
 		switch {
-		case err == nil && existing != checksum:
+		case err == nil && existing != checksum && !acceptedLocalOperatorMigrationChecksum(entry.Name(), existing):
 			return fmt.Errorf("local operator migration %s checksum changed", entry.Name())
+		case err == nil && existing != checksum:
+			updated, err := tx.ExecContext(ctx, `
+				UPDATE local_operator_schema_migrations
+				SET checksum=$2 WHERE version=$1 AND checksum=$3`,
+				entry.Name(), checksum, existing,
+			)
+			if err != nil {
+				return fmt.Errorf("upgrade local operator migration manifest %s: %w", entry.Name(), err)
+			}
+			if rows, rowsErr := updated.RowsAffected(); rowsErr != nil || rows != 1 {
+				return fmt.Errorf("upgrade local operator migration manifest %s: stale ledger", entry.Name())
+			}
+			continue
 		case err == nil:
 			continue
 		case !errors.Is(err, sql.ErrNoRows):
@@ -98,24 +123,41 @@ func migrateLocalOperator(ctx context.Context, database *sql.DB, ownerRole, runt
 	quotedRole := `"` + runtimeRole + `"`
 	if _, err := tx.ExecContext(ctx, `
 		REVOKE ALL ON TABLE local_operator_accounts,
-			local_operator_wallet_operations, local_operator_wallet_rollbacks,
+			local_operator_wallet_sessions, local_operator_wallet_rejections,
+			local_operator_wallet_operations,
+			local_operator_wallet_rollbacks,
 			local_operator_nonces FROM PUBLIC;
 		REVOKE ALL ON TABLE local_operator_accounts,
-			local_operator_wallet_operations, local_operator_wallet_rollbacks,
+			local_operator_wallet_sessions, local_operator_wallet_rejections,
+			local_operator_wallet_operations,
+			local_operator_wallet_rollbacks,
 			local_operator_nonces FROM `+quotedRole+`;
 		GRANT USAGE ON SCHEMA public TO `+quotedRole+`;
 		GRANT SELECT ON TABLE local_operator_accounts,
-			local_operator_wallet_operations, local_operator_wallet_rollbacks,
+			local_operator_wallet_sessions, local_operator_wallet_rejections,
+			local_operator_wallet_operations,
+			local_operator_wallet_rollbacks,
 			local_operator_nonces TO `+quotedRole+`;
 		GRANT INSERT (operator_id, wallet_account_id, currency, balance_minor)
 			ON local_operator_accounts TO `+quotedRole+`;
 		GRANT UPDATE (balance_minor, updated_at)
 			ON local_operator_accounts TO `+quotedRole+`;
 		GRANT INSERT (
+			operator_id, wallet_session_ref, player_id, wallet_account_id,
+			rgs_session_id, game_id, definition_version, definition_hash,
+			currency, expires_at
+		) ON local_operator_wallet_sessions TO `+quotedRole+`;
+		GRANT INSERT (
 			operator_id, operation_id, request_digest, fingerprint, player_id,
-			wallet_account_id, rgs_session_id, round_id, game_id, definition_version,
+			wallet_account_id, wallet_session_ref, rgs_session_id, round_id,
+			game_id, definition_version, definition_hash, round_kind, currency,
+			debit_minor, credit_minor, command_digest, rejection_code
+		) ON local_operator_wallet_rejections TO `+quotedRole+`;
+		GRANT INSERT (
+			operator_id, operation_id, request_digest, fingerprint, player_id,
+			wallet_account_id, wallet_session_ref, rgs_session_id, round_id, game_id, definition_version,
 			definition_hash, round_kind, currency, debit_minor, credit_minor,
-			balance_minor, transaction_id
+			command_digest, balance_minor, transaction_id
 		) ON local_operator_wallet_operations TO `+quotedRole+`;
 		GRANT UPDATE (rolled_back, updated_at)
 			ON local_operator_wallet_operations TO `+quotedRole+`;
@@ -133,6 +175,12 @@ func migrateLocalOperator(ctx context.Context, database *sql.DB, ownerRole, runt
 		return fmt.Errorf("commit local operator migrations: %w", err)
 	}
 	return nil
+}
+
+func acceptedLocalOperatorMigrationChecksum(version, checksum string) bool {
+	accepted := acceptedLocalOperatorMigrationChecksums[version]
+	_, ok := accepted[checksum]
+	return ok
 }
 
 func verifyOwnerDatabaseRole(ctx context.Context, database *sql.DB, expectedRole string) error {
@@ -172,6 +220,8 @@ func verifyRuntimeDatabaseRole(ctx context.Context, database *sql.DB, expectedRo
 			   AND has_schema_privilege(rolname, 'public', 'USAGE')
 			   AND NOT EXISTS (SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid OR roleid=pg_roles.oid)
 			   AND has_table_privilege(rolname, 'local_operator_accounts', 'SELECT')
+			   AND has_table_privilege(rolname, 'local_operator_wallet_sessions', 'SELECT')
+			   AND has_table_privilege(rolname, 'local_operator_wallet_rejections', 'SELECT')
 			   AND has_table_privilege(rolname, 'local_operator_wallet_operations', 'SELECT')
 			   AND has_table_privilege(rolname, 'local_operator_wallet_rollbacks', 'SELECT')
 			   AND has_table_privilege(rolname, 'local_operator_nonces', 'SELECT')
@@ -180,7 +230,17 @@ func verifyRuntimeDatabaseRole(ctx context.Context, database *sql.DB, expectedRo
 			   AND NOT has_column_privilege(rolname, 'local_operator_accounts', 'updated_at', 'INSERT')
 			   AND has_column_privilege(rolname, 'local_operator_accounts', 'balance_minor', 'UPDATE')
 			   AND NOT has_column_privilege(rolname, 'local_operator_accounts', 'operator_id', 'UPDATE')
+			   AND has_column_privilege(rolname, 'local_operator_wallet_sessions', 'wallet_session_ref', 'INSERT')
+			   AND has_column_privilege(rolname, 'local_operator_wallet_sessions', 'expires_at', 'INSERT')
+			   AND NOT has_column_privilege(rolname, 'local_operator_wallet_sessions', 'created_at', 'INSERT')
+			   AND NOT has_column_privilege(rolname, 'local_operator_wallet_sessions', 'wallet_session_ref', 'UPDATE')
+			   AND has_column_privilege(rolname, 'local_operator_wallet_rejections', 'operation_id', 'INSERT')
+			   AND has_column_privilege(rolname, 'local_operator_wallet_rejections', 'rejection_code', 'INSERT')
+			   AND NOT has_column_privilege(rolname, 'local_operator_wallet_rejections', 'created_at', 'INSERT')
+			   AND NOT has_column_privilege(rolname, 'local_operator_wallet_rejections', 'operation_id', 'UPDATE')
 			   AND has_column_privilege(rolname, 'local_operator_wallet_operations', 'operation_id', 'INSERT')
+			   AND has_column_privilege(rolname, 'local_operator_wallet_operations', 'wallet_session_ref', 'INSERT')
+			   AND has_column_privilege(rolname, 'local_operator_wallet_operations', 'command_digest', 'INSERT')
 			   AND NOT has_column_privilege(rolname, 'local_operator_wallet_operations', 'rolled_back', 'INSERT')
 			   AND NOT has_column_privilege(rolname, 'local_operator_wallet_operations', 'created_at', 'INSERT')
 			   AND NOT has_column_privilege(rolname, 'local_operator_wallet_operations', 'updated_at', 'INSERT')
@@ -197,6 +257,14 @@ func verifyRuntimeDatabaseRole(ctx context.Context, database *sql.DB, expectedRo
 			   AND NOT has_table_privilege(rolname, 'local_operator_accounts', 'TRUNCATE')
 			   AND NOT has_table_privilege(rolname, 'local_operator_accounts', 'REFERENCES')
 			   AND NOT has_table_privilege(rolname, 'local_operator_accounts', 'TRIGGER')
+			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_sessions', 'DELETE')
+			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_sessions', 'TRUNCATE')
+			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_sessions', 'REFERENCES')
+			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_sessions', 'TRIGGER')
+			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_rejections', 'DELETE')
+			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_rejections', 'TRUNCATE')
+			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_rejections', 'REFERENCES')
+			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_rejections', 'TRIGGER')
 			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_operations', 'DELETE')
 			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_operations', 'TRUNCATE')
 			   AND NOT has_table_privilege(rolname, 'local_operator_wallet_operations', 'REFERENCES')
@@ -223,9 +291,21 @@ func (s *postgresStore) Ping(ctx context.Context) error {
 	var ready bool
 	if err := s.database.QueryRowContext(ctx, `
 		SELECT to_regclass('local_operator_accounts') IS NOT NULL
+		   AND to_regclass('local_operator_wallet_sessions') IS NOT NULL
+		   AND to_regclass('local_operator_wallet_rejections') IS NOT NULL
 		   AND to_regclass('local_operator_wallet_operations') IS NOT NULL
 		   AND to_regclass('local_operator_wallet_rollbacks') IS NOT NULL
-		   AND to_regclass('local_operator_nonces') IS NOT NULL`).Scan(&ready); err != nil {
+		   AND to_regclass('local_operator_nonces') IS NOT NULL
+		   AND EXISTS (
+			   SELECT 1 FROM information_schema.columns
+			   WHERE table_schema='public' AND table_name='local_operator_wallet_operations'
+			     AND column_name='wallet_session_ref'
+		   )
+		   AND EXISTS (
+			   SELECT 1 FROM information_schema.columns
+			   WHERE table_schema='public' AND table_name='local_operator_wallet_operations'
+			     AND column_name='command_digest'
+		   )`).Scan(&ready); err != nil {
 		return err
 	}
 	if !ready {
@@ -255,12 +335,52 @@ func (s *postgresStore) EnsureAccount(ctx context.Context, seed accountSeed) err
 	return nil
 }
 
+func (s *postgresStore) RegisterWalletSession(
+	ctx context.Context,
+	seed walletSessionSeed,
+) error {
+	if !allIdentifiers(
+		seed.OperatorID, seed.WalletSessionRef, seed.PlayerID, seed.WalletAccountID,
+		seed.SessionID, seed.GameID, seed.DefinitionVersion,
+	) || !digestPattern.MatchString(seed.DefinitionHash) ||
+		!currencyPattern.MatchString(seed.Currency) || !seed.ExpiresAt.After(time.Now().UTC()) {
+		return errWalletSessionInvalid
+	}
+	result, err := s.database.ExecContext(ctx, `
+		INSERT INTO local_operator_wallet_sessions (
+			operator_id, wallet_session_ref, player_id, wallet_account_id,
+			rgs_session_id, game_id, definition_version, definition_hash,
+			currency, expires_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (operator_id, wallet_session_ref) DO NOTHING`,
+		seed.OperatorID, seed.WalletSessionRef, seed.PlayerID, seed.WalletAccountID,
+		seed.SessionID, seed.GameID, seed.DefinitionVersion, seed.DefinitionHash,
+		seed.Currency, seed.ExpiresAt.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("register wallet session: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect wallet session registration: %w", err)
+	}
+	if inserted != 1 {
+		return errWalletSessionInvalid
+	}
+	return nil
+}
+
 func (s *postgresStore) Apply(ctx context.Context, request validatedRound) (storedOperation, error) {
 	tx, err := s.database.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return storedOperation{}, fmt.Errorf("begin wallet apply: %w", err)
 	}
 	defer tx.Rollback()
+	// 成功与拒绝分表保存，但同一 operation 必须共享一个事务级决策锁；否则两个
+	// 并发副本可能分别观察空表，并在余额变化前后写出相互矛盾的资金终态。
+	if err := lockWalletOperationDecision(ctx, tx, request.OperatorID, request.OperationID); err != nil {
+		return storedOperation{}, fmt.Errorf("lock wallet operation decision: %w", err)
+	}
 	existing, found, err := loadOperation(ctx, tx, request.OperatorID, request.OperationID, false)
 	if err != nil {
 		return storedOperation{}, err
@@ -271,33 +391,69 @@ func (s *postgresStore) Apply(ctx context.Context, request validatedRound) (stor
 		}
 		return existing, nil
 	}
+	rejection, found, err := loadRejection(ctx, tx, request.OperatorID, request.OperationID)
+	if err != nil {
+		return storedOperation{}, err
+	}
+	if found {
+		if rejection.RequestDigest != request.RequestDigest {
+			return storedOperation{}, errIdempotencyConflict
+		}
+		return storedOperation{}, rejectionError(rejection.Code)
+	}
+	if request.WalletSessionRef != "" {
+		var matches bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM local_operator_wallet_sessions
+				WHERE operator_id=$1 AND wallet_session_ref=$2 AND player_id=$3
+				  AND wallet_account_id=$4 AND rgs_session_id=$5 AND game_id=$6
+				  AND definition_version=$7 AND definition_hash=$8 AND currency=$9
+			)`,
+			request.OperatorID, request.WalletSessionRef, request.PlayerID,
+			request.WalletAccountID, request.SessionID, request.GameID,
+			request.DefinitionVersion, request.DefinitionHash, request.Currency,
+		).Scan(&matches); err != nil {
+			return storedOperation{}, fmt.Errorf("verify wallet session binding: %w", err)
+		}
+		// 会话到期阻止新游戏意图，但不能阻止已预备资金命令在恢复流程中结算；
+		// 因此这里验证不可变归属绑定，不用当前时间推断这项命令是否曾被发送。
+		if !matches {
+			return persistWalletRejection(ctx, tx, request, walletRejectionSessionInvalid)
+		}
+	}
 	var balance int64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT balance_minor FROM local_operator_accounts
 		WHERE operator_id=$1 AND wallet_account_id=$2 AND currency=$3
 		FOR UPDATE`, request.OperatorID, request.WalletAccountID, request.Currency).Scan(&balance); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return storedOperation{}, errAccountNotFound
+			return persistWalletRejection(ctx, tx, request, walletRejectionAccountNotFound)
 		}
 		return storedOperation{}, fmt.Errorf("lock wallet account: %w", err)
 	}
 	updatedBalance, err := checkedBalance(balance, request.Debit, request.Credit)
 	if err != nil {
+		if errors.Is(err, errInsufficientFunds) {
+			return persistWalletRejection(ctx, tx, request, walletRejectionInsufficientFunds)
+		}
 		return storedOperation{}, err
 	}
 	transactionID := deterministicTransactionID("wtx", request.OperationID)
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO local_operator_wallet_operations (
 			operator_id, operation_id, request_digest, fingerprint, player_id,
-			wallet_account_id, rgs_session_id, round_id, game_id, definition_version,
+			wallet_account_id, wallet_session_ref, rgs_session_id, round_id, game_id, definition_version,
 			definition_hash, round_kind, currency, debit_minor, credit_minor,
-			balance_minor, transaction_id
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			command_digest, balance_minor, transaction_id
+		) VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10,$11,$12,$13,$14,$15,$16,NULLIF($17,''),$18,$19)
 		ON CONFLICT (operator_id, operation_id) DO NOTHING`,
 		request.OperatorID, request.OperationID, request.RequestDigest, request.Fingerprint,
-		request.PlayerID, request.WalletAccountID, request.SessionID, request.RoundID,
+		request.PlayerID, request.WalletAccountID, request.WalletSessionRef,
+		request.SessionID, request.RoundID,
 		request.GameID, request.DefinitionVersion, request.DefinitionHash, request.RoundKind,
-		request.Currency, request.Debit, request.Credit, updatedBalance, transactionID,
+		request.Currency, request.Debit, request.Credit, request.CommandDigest,
+		updatedBalance, transactionID,
 	)
 	if err != nil {
 		return storedOperation{}, fmt.Errorf("insert wallet operation: %w", err)
@@ -337,12 +493,62 @@ func (s *postgresStore) Lookup(
 	return loadOperation(ctx, s.database, operatorID, operationID, false)
 }
 
+func (s *postgresStore) LookupRejection(
+	ctx context.Context,
+	operatorID, operationID string,
+) (storedRejection, bool, error) {
+	return loadRejection(ctx, s.database, operatorID, operationID)
+}
+
+func persistWalletRejection(
+	ctx context.Context,
+	tx *sql.Tx,
+	request validatedRound,
+	code string,
+) (storedOperation, error) {
+	if tx == nil {
+		return storedOperation{}, errors.New("persist wallet rejection: transaction is required")
+	}
+	if _, valid := rejectionCode(rejectionError(code)); !valid {
+		return storedOperation{}, errors.New("persist wallet rejection: invalid code")
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO local_operator_wallet_rejections (
+			operator_id, operation_id, request_digest, fingerprint, player_id,
+			wallet_account_id, wallet_session_ref, rgs_session_id, round_id,
+			game_id, definition_version, definition_hash, round_kind, currency,
+			debit_minor, credit_minor, command_digest, rejection_code
+		) VALUES (
+			$1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10,$11,$12,$13,$14,$15,$16,
+			NULLIF($17,''),$18
+		)`,
+		request.OperatorID, request.OperationID, request.RequestDigest, request.Fingerprint,
+		request.PlayerID, request.WalletAccountID, request.WalletSessionRef,
+		request.SessionID, request.RoundID, request.GameID, request.DefinitionVersion,
+		request.DefinitionHash, request.RoundKind, request.Currency, request.Debit,
+		request.Credit, request.CommandDigest, code,
+	)
+	if err != nil {
+		return storedOperation{}, fmt.Errorf("persist wallet rejection: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return storedOperation{}, fmt.Errorf("commit wallet rejection: %w", err)
+	}
+	return storedOperation{}, rejectionError(code)
+}
+
 func (s *postgresStore) Rollback(ctx context.Context, request validatedRollback) (storedOperation, error) {
 	tx, err := s.database.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return storedOperation{}, fmt.Errorf("begin wallet rollback: %w", err)
 	}
 	defer tx.Rollback()
+	// Apply、确定拒绝与人工 rollback 必须先取得完全相同的 operation 决策锁，
+	// 再按 operation→account 顺序读取。否则 rollback 可在 Apply 尚未落账时误报不存在，
+	// 或与 Apply 形成相反的资金终态。
+	if err := lockWalletOperationDecision(ctx, tx, request.OperatorID, request.OperationID); err != nil {
+		return storedOperation{}, fmt.Errorf("lock wallet rollback decision: %w", err)
+	}
 	if replay, found, err := loadRollback(ctx, tx, request.OperatorID, request.RollbackID); err != nil {
 		return storedOperation{}, err
 	} else if found {
@@ -418,6 +624,22 @@ func (s *postgresStore) Rollback(ctx context.Context, request validatedRollback)
 	return operation, nil
 }
 
+func lockWalletOperationDecision(
+	ctx context.Context,
+	tx *sql.Tx,
+	operatorID, operationID string,
+) error {
+	if tx == nil || operatorID == "" || operationID == "" {
+		return errors.New("wallet operation decision lock: invalid input")
+	}
+	_, err := tx.ExecContext(ctx, `
+		SELECT pg_advisory_xact_lock(hashtextextended($1,$2))`,
+		fmt.Sprintf("%d:%s%s", len(operatorID), operatorID, operationID),
+		localOperatorWalletLockSeed,
+	)
+	return err
+}
+
 // Consume 让所有本机服务副本共享 nonce 防重放状态；数据库时间是唯一到期时钟。
 func (s *postgresStore) Consume(
 	ctx context.Context,
@@ -461,9 +683,10 @@ func loadOperation(
 ) (storedOperation, bool, error) {
 	statement := `
 		SELECT o.operation_id, o.fingerprint, o.operator_id, o.player_id,
-			o.wallet_account_id, o.rgs_session_id, o.round_id, o.game_id,
+			o.wallet_account_id, COALESCE(o.wallet_session_ref,''),
+			o.rgs_session_id, o.round_id, o.game_id,
 			o.definition_version, o.definition_hash, o.round_kind, o.currency,
-			o.debit_minor, o.credit_minor,
+			o.debit_minor, o.credit_minor, COALESCE(o.command_digest,''),
 			CASE WHEN o.rolled_back THEN COALESCE(r.balance_minor, o.balance_minor) ELSE o.balance_minor END,
 			CASE WHEN o.rolled_back THEN COALESCE(r.transaction_id, o.transaction_id) ELSE o.transaction_id END,
 			o.request_digest, o.rolled_back
@@ -477,10 +700,12 @@ func loadOperation(
 	var operation storedOperation
 	err := query.QueryRowContext(ctx, statement, operatorID, operationID).Scan(
 		&operation.OperationID, &operation.Fingerprint, &operation.OperatorID,
-		&operation.PlayerID, &operation.WalletAccountID, &operation.SessionID,
+		&operation.PlayerID, &operation.WalletAccountID, &operation.WalletSessionRef,
+		&operation.SessionID,
 		&operation.RoundID, &operation.GameID, &operation.DefinitionVersion,
 		&operation.DefinitionHash, &operation.RoundKind, &operation.Currency,
-		&operation.DebitMinor, &operation.CreditMinor, &operation.BalanceMinor,
+		&operation.DebitMinor, &operation.CreditMinor, &operation.CommandDigest,
+		&operation.BalanceMinor,
 		&operation.TransactionID, &operation.RequestDigest, &operation.RolledBack,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -492,6 +717,40 @@ func loadOperation(
 	return operation, true, nil
 }
 
+func loadRejection(
+	ctx context.Context,
+	query rowQuerier,
+	operatorID, operationID string,
+) (storedRejection, bool, error) {
+	var rejection storedRejection
+	err := query.QueryRowContext(ctx, `
+		SELECT operation_id, fingerprint, operator_id, player_id, wallet_account_id,
+			COALESCE(wallet_session_ref,''), rgs_session_id, round_id, game_id,
+			definition_version, definition_hash, round_kind, currency,
+			debit_minor, credit_minor, COALESCE(command_digest,''),
+			request_digest, rejection_code
+		FROM local_operator_wallet_rejections
+		WHERE operator_id=$1 AND operation_id=$2`, operatorID, operationID,
+	).Scan(
+		&rejection.OperationID, &rejection.Fingerprint, &rejection.OperatorID,
+		&rejection.PlayerID, &rejection.WalletAccountID, &rejection.WalletSessionRef,
+		&rejection.SessionID, &rejection.RoundID, &rejection.GameID,
+		&rejection.DefinitionVersion, &rejection.DefinitionHash, &rejection.RoundKind,
+		&rejection.Currency, &rejection.DebitMinor, &rejection.CreditMinor,
+		&rejection.CommandDigest, &rejection.RequestDigest, &rejection.Code,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storedRejection{}, false, nil
+	}
+	if err != nil {
+		return storedRejection{}, false, fmt.Errorf("load wallet rejection: %w", err)
+	}
+	if _, valid := rejectionCode(rejectionError(rejection.Code)); !valid {
+		return storedRejection{}, false, errors.New("load wallet rejection: invalid code")
+	}
+	return rejection, true, nil
+}
+
 func loadRollback(
 	ctx context.Context,
 	query rowQuerier,
@@ -500,9 +759,11 @@ func loadRollback(
 	var operation storedOperation
 	err := query.QueryRowContext(ctx, `
 		SELECT o.operation_id, o.fingerprint, o.operator_id, o.player_id,
-			o.wallet_account_id, o.rgs_session_id, o.round_id, o.game_id,
+			o.wallet_account_id, COALESCE(o.wallet_session_ref,''),
+			o.rgs_session_id, o.round_id, o.game_id,
 			o.definition_version, o.definition_hash, o.round_kind, o.currency,
-			o.debit_minor, o.credit_minor, r.balance_minor, r.transaction_id,
+			o.debit_minor, o.credit_minor, COALESCE(o.command_digest,''),
+			r.balance_minor, r.transaction_id,
 			r.request_digest, true
 		FROM local_operator_wallet_rollbacks r
 		JOIN local_operator_wallet_operations o
@@ -510,10 +771,12 @@ func loadRollback(
 		WHERE r.operator_id=$1 AND r.rollback_id=$2`, operatorID, rollbackID,
 	).Scan(
 		&operation.OperationID, &operation.Fingerprint, &operation.OperatorID,
-		&operation.PlayerID, &operation.WalletAccountID, &operation.SessionID,
+		&operation.PlayerID, &operation.WalletAccountID, &operation.WalletSessionRef,
+		&operation.SessionID,
 		&operation.RoundID, &operation.GameID, &operation.DefinitionVersion,
 		&operation.DefinitionHash, &operation.RoundKind, &operation.Currency,
-		&operation.DebitMinor, &operation.CreditMinor, &operation.BalanceMinor,
+		&operation.DebitMinor, &operation.CreditMinor, &operation.CommandDigest,
+		&operation.BalanceMinor,
 		&operation.TransactionID, &operation.RequestDigest, &operation.RolledBack,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

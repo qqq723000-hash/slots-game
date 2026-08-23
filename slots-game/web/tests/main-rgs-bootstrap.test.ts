@@ -32,6 +32,8 @@ describe("main RGS bootstrap boundary", () => {
       querySelector: vi.fn(() => loading),
     };
     const createElement = vi.fn();
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
     const replaceState = vi.fn();
     const dispatched: TestCustomEvent<unknown>[] = [];
     const dispatchEvent = vi.fn((event: TestCustomEvent<unknown>) => {
@@ -47,6 +49,9 @@ describe("main RGS bootstrap boundary", () => {
     const browserWindow = {
       location: { href: pageUrl },
       history: { state: null, replaceState },
+      navigator: { onLine: true },
+      addEventListener,
+      removeEventListener,
       dispatchEvent,
       parent: { postMessage },
       get sessionStorage(): Storage {
@@ -56,8 +61,11 @@ describe("main RGS bootstrap boundary", () => {
     const fetchImplementation = vi.fn<typeof fetch>();
 
     vi.stubGlobal("document", {
+      visibilityState: "visible",
       querySelector: vi.fn(() => root),
       createElement,
+      addEventListener,
+      removeEventListener,
     });
     vi.stubGlobal("window", browserWindow);
     vi.stubGlobal("CustomEvent", TestCustomEvent);

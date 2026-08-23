@@ -91,22 +91,26 @@
           "required": [
             "databaseMaxOpenConnections",
             "databaseMaxIdleConnections",
+            "databaseCriticalReserveConnections",
             "maxInFlightRequests",
             "maxConnectionsPerListener",
             "ratePerSecondPerPod",
             "rateBurstPerPod",
             "successAccessLogSamplePerMillion",
+            "walletFastPathTimeoutSeconds",
             "walletTimeoutSeconds",
             "walletMaxAttempts"
           ],
           "properties": {
             "databaseMaxOpenConnections": {"type": "integer", "minimum": 2, "maximum": 200},
             "databaseMaxIdleConnections": {"type": "integer", "minimum": 1, "maximum": 200},
+            "databaseCriticalReserveConnections": {"type": "integer", "minimum": 1, "maximum": 199},
             "maxInFlightRequests": {"type": "integer", "minimum": 1, "maximum": 4096},
             "maxConnectionsPerListener": {"type": "integer", "minimum": 16, "maximum": 16384},
             "ratePerSecondPerPod": {"type": "number", "exclusiveMinimum": 0, "maximum": 100000},
             "rateBurstPerPod": {"type": "integer", "minimum": 1, "maximum": 1000000},
             "successAccessLogSamplePerMillion": {"type": "integer", "minimum": 0, "maximum": 1000000},
+            "walletFastPathTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 13},
             "walletTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 14},
             "walletMaxAttempts": {"type": "integer", "minimum": 1, "maximum": 1000}
           }
@@ -117,6 +121,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "maintenanceQuiesced",
         "terminationGracePeriodSeconds",
         "preStopSeconds",
         "shutdownTimeoutSeconds",
@@ -126,6 +131,7 @@
         "runtime"
       ],
       "properties": {
+        "maintenanceQuiesced": {"type": "boolean"},
         "terminationGracePeriodSeconds": {"type": "integer", "minimum": 10, "maximum": 300},
         "preStopSeconds": {"type": "integer", "minimum": 5, "maximum": 30},
         "shutdownTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 290},

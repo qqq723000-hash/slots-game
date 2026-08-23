@@ -232,3 +232,62 @@ func TestRoundInputFeatureMigrationBackfillsOnlyProvableOpenRounds(t *testing.T)
 	}
 	t.Fatal("0006_round_input_feature_state migration is missing")
 }
+
+func TestWalletRecoveryMigrationQuarantinesUnboundLegacyActions(t *testing.T) {
+	items, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations returned error: %v", err)
+	}
+	for _, item := range items {
+		if item.version != "0008_wallet_recovery_scheduler" {
+			continue
+		}
+		for _, required := range []string{
+			"wallet_phase text NOT NULL DEFAULT ''",
+			"wallet_profile jsonb",
+			"WALLET_PROFILE_SNAPSHOT_MISSING",
+			"status = 'MANUAL_REVIEW'",
+			"SET status = 'BLOCKED'",
+			"event_type, payload",
+			"WHERE status IN ('PREPARED', 'WALLET_PENDING')",
+			"ALTER COLUMN wallet_phase SET DEFAULT 'APPLY'",
+			"wallet_command_digest varchar(82)",
+			"rgs-wallet-cmd-v1:[a-f0-9]{64}",
+			"rgs_rounds_wallet_profile",
+			"rgs_rounds_wallet_recovery_due",
+		} {
+			if !strings.Contains(item.contents, required) {
+				t.Fatalf("wallet recovery migration is missing %q", required)
+			}
+		}
+		return
+	}
+	t.Fatal("0008_wallet_recovery_scheduler migration is missing")
+}
+
+func TestHighConcurrencyMigrationIndexesClaimPathsAndRemovesSupersededWriteAmplification(t *testing.T) {
+	items, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations returned error: %v", err)
+	}
+	for _, item := range items {
+		if item.version != "0009_postgres_hot_path" {
+			continue
+		}
+		for _, required := range []string{
+			"rgs_wallet_transactions_round_claim",
+			"operator_id, session_id, round_id, transaction_id",
+			"DROP INDEX IF EXISTS rgs_rounds_recovery",
+			"DROP INDEX IF EXISTS rgs_outbox_dispatch",
+			"DROP INDEX IF EXISTS rgs_outbox_claim",
+			"ON rgs_outbox (available_at, id)",
+			"rgs_outbox_unpublished_age",
+		} {
+			if !strings.Contains(item.contents, required) {
+				t.Fatalf("high-concurrency migration is missing %q", required)
+			}
+		}
+		return
+	}
+	t.Fatal("0009_postgres_hot_path migration is missing")
+}

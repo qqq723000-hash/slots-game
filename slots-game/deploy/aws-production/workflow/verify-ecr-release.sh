@@ -2,6 +2,7 @@
 
 # 调用方必须已经通过 GitHub OIDC 取得只读 ECR 临时凭据并完成 ECR 登录。
 set -eu
+umask 077
 
 fail() {
   printf '%s\n' "ECR 发布制品校验失败：$*" >&2

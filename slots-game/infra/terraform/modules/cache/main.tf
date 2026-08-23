@@ -129,7 +129,7 @@ resource "aws_elasticache_user" "rate_limiter_a" {
   user_id       = local.acl_user_ids.a
   user_name     = local.acl_user_ids.a
   engine        = "valkey"
-  access_string = "on ~rgs:shared-admission:v1:* -@all +evalsha +eval +time +hmget +hset +pexpire +ping +hello +auth +client|setname +client|setinfo"
+  access_string = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +ping +hello +auth +client|setname +client|setinfo"
   passwords_wo  = var.valkey_password_a
 
   passwords_wo_version = var.valkey_password_version_a
@@ -143,7 +143,7 @@ resource "aws_elasticache_user" "rate_limiter_b" {
   user_id       = local.acl_user_ids.b
   user_name     = local.acl_user_ids.b
   engine        = "valkey"
-  access_string = "on ~rgs:shared-admission:v1:* -@all +evalsha +eval +time +hmget +hset +pexpire +ping +hello +auth +client|setname +client|setinfo"
+  access_string = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +ping +hello +auth +client|setname +client|setinfo"
   passwords_wo  = var.valkey_password_b
 
   passwords_wo_version = var.valkey_password_version_b
@@ -327,6 +327,153 @@ resource "aws_cloudwatch_metric_alarm" "key_authorization_failures" {
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
   alarm_actions       = [var.alert_topic_arn]
+
+  dimensions = {
+    CacheClusterId = "${aws_elasticache_replication_group.this.id}-${format("%03d", count.index + 1)}"
+    CacheNodeId    = "0001"
+  }
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "engine_cpu_utilization" {
+  count = 3
+
+  alarm_name          = "${var.name_prefix}-valkey-${format("%03d", count.index + 1)}-engine-cpu-high"
+  alarm_description   = "Valkey 引擎线程持续高负载；需扩容或降低共享准入脚本压力"
+  namespace           = "AWS/ElastiCache"
+  metric_name         = "EngineCPUUtilization"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  threshold           = var.valkey_alarm_thresholds.engine_cpu_utilization_percent
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
+  ok_actions          = [var.alert_topic_arn]
+
+  dimensions = {
+    CacheClusterId = "${aws_elasticache_replication_group.this.id}-${format("%03d", count.index + 1)}"
+    CacheNodeId    = "0001"
+  }
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "database_capacity_usage" {
+  alarm_name          = "${var.name_prefix}-valkey-database-capacity-high"
+  alarm_description   = "Valkey 可逐出数据容量持续逼近上限；需扩容并检查 TTL 和流量基数"
+  namespace           = "AWS/ElastiCache"
+  metric_name         = "DatabaseCapacityUsageCountedForEvictPercentage"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  threshold           = var.valkey_alarm_thresholds.database_capacity_usage_counted_for_evict_percent
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
+  ok_actions          = [var.alert_topic_arn]
+
+  dimensions = {
+    ReplicationGroupId = aws_elasticache_replication_group.this.id
+  }
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "current_connections" {
+  count = 3
+
+  alarm_name          = "${var.name_prefix}-valkey-${format("%03d", count.index + 1)}-connections-high"
+  alarm_description   = "Valkey 当前连接数持续超出经容量评审的客户端连接预算"
+  namespace           = "AWS/ElastiCache"
+  metric_name         = "CurrConnections"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  threshold           = var.valkey_alarm_thresholds.current_connections
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
+  ok_actions          = [var.alert_topic_arn]
+
+  dimensions = {
+    CacheClusterId = "${aws_elasticache_replication_group.this.id}-${format("%03d", count.index + 1)}"
+    CacheNodeId    = "0001"
+  }
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "traffic_management_active" {
+  count = 3
+
+  alarm_name          = "${var.name_prefix}-valkey-${format("%03d", count.index + 1)}-traffic-management-active"
+  alarm_description   = "ElastiCache 持续主动整形 Valkey 流量，表明节点无法及时处理进入的命令"
+  namespace           = "AWS/ElastiCache"
+  metric_name         = "TrafficManagementActive"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
+  ok_actions          = [var.alert_topic_arn]
+
+  dimensions = {
+    CacheClusterId = "${aws_elasticache_replication_group.this.id}-${format("%03d", count.index + 1)}"
+    CacheNodeId    = "0001"
+  }
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "replication_lag" {
+  count = 3
+
+  alarm_name          = "${var.name_prefix}-valkey-${format("%03d", count.index + 1)}-replication-lag-high"
+  alarm_description   = "Valkey 只读副本持续落后；三个固定节点都建告警以覆盖自动故障转移后的角色变化"
+  namespace           = "AWS/ElastiCache"
+  metric_name         = "ReplicationLag"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  threshold           = var.valkey_alarm_thresholds.replication_lag_seconds
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
+  ok_actions          = [var.alert_topic_arn]
+
+  dimensions = {
+    CacheClusterId = "${aws_elasticache_replication_group.this.id}-${format("%03d", count.index + 1)}"
+    CacheNodeId    = "0001"
+  }
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "eval_command_latency" {
+  count = 3
+
+  alarm_name          = "${var.name_prefix}-valkey-${format("%03d", count.index + 1)}-eval-latency-high"
+  alarm_description   = "共享准入 EVAL/EVALSHA 命令平均延迟持续超出容量预算"
+  namespace           = "AWS/ElastiCache"
+  metric_name         = "EvalBasedCmdsLatency"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  threshold           = var.valkey_alarm_thresholds.eval_based_commands_latency_microseconds
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alert_topic_arn]
+  ok_actions          = [var.alert_topic_arn]
 
   dimensions = {
     CacheClusterId = "${aws_elasticache_replication_group.this.id}-${format("%03d", count.index + 1)}"

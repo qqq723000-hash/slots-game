@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 在私网 runner 上受控停止或恢复 API，并用版本化 S3 对象交付可审计证据。
 set -euo pipefail
+umask 077
 
 AWS_BIN=${AWS_BIN:-aws}
 KUBECTL_BIN=${KUBECTL_BIN:-kubectl}
@@ -9,6 +10,7 @@ temporary_directory=$(mktemp -d "${RUNNER_TEMP:-/tmp}/slots-hmac-quiesce.XXXXXX"
 delivery_head="$temporary_directory/delivery-head.json"
 delivery_file="$temporary_directory/terraform-delivery.json"
 identity_file="$temporary_directory/caller-identity.json"
+cluster_file="$temporary_directory/eks-cluster.json"
 api_deployment="$temporary_directory/api-deployment.json"
 worker_deployment="$temporary_directory/worker-deployment.json"
 api_hpa="$temporary_directory/api-hpa.json"
@@ -204,6 +206,15 @@ verify_aws_identity_and_cluster() {
     (.Arn | test("^arn:aws:sts::" + $account + ":assumed-role/" + $role + "/[^/]+$"))
   ' "$identity_file" >/dev/null || fail '当前 AWS 身份不是固定 HMAC quiesce OIDC role'
   cluster_arn="arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${AWS_EKS_CLUSTER_NAME}"
+  "$AWS_BIN" eks describe-cluster --name "$AWS_EKS_CLUSTER_NAME" --region "$AWS_REGION" \
+    --output json > "$cluster_file"
+  jq -e --arg cluster_arn "$cluster_arn" '
+    .cluster.arn == $cluster_arn and
+    .cluster.status == "ACTIVE" and
+    .cluster.resourcesVpcConfig.endpointPrivateAccess == true and
+    .cluster.resourcesVpcConfig.endpointPublicAccess == false
+  ' "$cluster_file" >/dev/null || \
+    fail 'HMAC quiesce 只允许访问 ACTIVE 且 private-only 的固定 EKS 集群'
   "$AWS_BIN" eks update-kubeconfig --name "$AWS_EKS_CLUSTER_NAME" --region "$AWS_REGION" \
     --kubeconfig "$KUBECONFIG" --alias "$cluster_arn" >/dev/null
   test "$("$KUBECTL_BIN" config current-context)" = "$cluster_arn" || fail 'kubectl context 不是固定 EKS 集群'

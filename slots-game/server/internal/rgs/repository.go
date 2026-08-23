@@ -16,17 +16,46 @@ type Repository interface {
 	GetRound(context.Context, RoundKey) (RoundRecord, error)
 	GetPendingResultDelivery(context.Context, string, string) (ResultDelivery, error)
 	AcknowledgeResultDelivery(context.Context, ResultDeliveryAcknowledgement) (ResultDelivery, bool, error)
-	PrepareRound(context.Context, SpinRequest, string, PrepareOutcome) (RoundRecord, bool, error)
-	ClaimWallet(context.Context, RoundKey, time.Time, time.Time) (RoundRecord, bool, error)
+	PrepareRound(context.Context, SpinRequest, string, Profile, PrepareOutcome) (RoundRecord, bool, error)
+	ClaimWallet(context.Context, RoundKey, time.Duration) (WalletRecoveryClaim, bool, error)
+	ScheduleWalletRecovery(
+		context.Context,
+		WalletRecoveryClaim,
+		WalletRecoveryDisposition,
+		time.Duration,
+	) (bool, error)
 	// 转换方法返回的布尔值仅在本次调用将轮次持久改为请求状态时为真，
 	// 防止并发重试及幂等重放重复累计业务转换指标。
-	CommitRound(context.Context, RoundKey, WalletReceipt) (RoundRecord, bool, error)
-	RejectRound(context.Context, RoundKey, string) (RoundRecord, bool, error)
+	CommitClaim(context.Context, WalletRecoveryClaim, WalletReceipt) (RoundRecord, bool, error)
+	RejectClaim(context.Context, WalletRecoveryClaim, string) (RoundRecord, bool, error)
+	MarkClaimManualReview(context.Context, WalletRecoveryClaim, string) (RoundRecord, bool, error)
+	// MarkManualReview 是不依赖钱包 claim 的数据完整性隔离入口。正常钱包结果必须使用
+	// MarkClaimManualReview，防止旧 worker 绕过租约栅栏覆盖新 owner 的状态。
 	MarkManualReview(context.Context, RoundKey, string) (RoundRecord, bool, error)
 }
 
-// RecoveryRepository 由可在进程崩溃后枚举未终结轮次的持久适配器实现。枚举仅供参考；
-// 多个副本可能返回同一键，因为实际租约由 ClaimWallet 提供，且所有钱包操作均保持幂等。
+// RecoveryRepository 由可在进程崩溃后领取未终结轮次的持久适配器实现。领取必须以
+// 存储时钟、行级跳锁和租约栅栏原子完成，避免多个 Worker 重复扫描或同时外呼钱包。
 type RecoveryRepository interface {
-	ListRecoverableRounds(context.Context, time.Time, int) ([]RoundKey, error)
+	ClaimRecoverableRounds(context.Context, int, time.Duration) ([]WalletRecoveryClaim, error)
+	ScheduleWalletRecovery(
+		context.Context,
+		WalletRecoveryClaim,
+		WalletRecoveryDisposition,
+		time.Duration,
+	) (bool, error)
+	// RecoverySnapshot 返回数据库全局持久调度恢复积压的有界下界，而不是当前 Worker
+	// 本地领取数。Backlog 达到 RecoverySnapshotBacklogLimit 表示实际值至少达到该值；
+	// OldestDueAge 仍使用存储时钟计算全局最早 next_attempt_at 的逾期时间。
+	RecoverySnapshot(context.Context) (RecoverySnapshot, error)
+}
+
+// RecoverySnapshotBacklogLimit 是饱和告警门槛：返回 501 只证明实际积压至少
+// 达到 501，同时避免观测查询在事故积压上做无界精确计数。
+const RecoverySnapshotBacklogLimit int64 = 501
+
+type RecoverySnapshot struct {
+	Backlog      int64
+	OldestDueAge time.Duration
+	ObservedAt   time.Time
 }

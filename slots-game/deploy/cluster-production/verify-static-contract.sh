@@ -99,6 +99,20 @@ grep -F '无关 release 的 HPA 不得填补 Worker 缺口' "$script_directory/p
   fail 'HPA 告警没有覆盖同 namespace 旁路 release 干扰'
 grep -F 'API HPA 重复抓取不得填补 Worker 缺口' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
   fail 'HPA 告警没有覆盖高可用 kube-state-metrics 重复抓取'
+grep -F '新经济意图触发数据库保留容量时必须告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '新经济意图数据库保留容量告警缺少行为测试'
+grep -F '钱包隔离拒绝必须触发告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '钱包隔离拒绝告警缺少行为测试'
+grep -F '钱包待定结果持续出现必须触发告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '钱包持续待定告警缺少行为测试'
+grep -F '新增人工审查轮次必须触发告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '人工审查告警缺少行为测试'
+grep -F 'Worker 可抓取但缺少恢复快照时间戳必须告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '恢复快照新鲜度告警缺少指标消失行为测试'
+grep -F 'Worker 恢复快照时间戳新鲜时不得告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '恢复快照新鲜度告警缺少正常行为测试'
+grep -F '陈旧高值不得覆盖另一 Worker 的新鲜低值' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '恢复积压与年龄告警缺少陈旧副本隔离行为测试'
 grep -F 'go run ./scripts/third-party-notices --check' "$script_directory/Dockerfile.services" >/dev/null ||
   fail '集群生产构建没有校验 Go 第三方许可声明'
 backend_notice_copy='COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt'
@@ -157,11 +171,34 @@ fi
   --output-dir "$rendered_directory/maintenance-quiesced" >/dev/null
 "$helm_binary" template slots "$chart_directory" --namespace slots-production \
   -f "$example_values" \
+  --set rgs.maintenanceQuiesced=true \
+  --set worker.maintenanceQuiesced=true \
+  --output-dir "$rendered_directory/database-maintenance" >/dev/null
+"$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" \
+  --set rgs.maintenanceQuiesced=false \
+  --set worker.maintenanceQuiesced=false \
+  --output-dir "$rendered_directory/maintenance-restored" >/dev/null
+"$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" \
   --set-string externalSecrets.sharedAdmission.name=slots-rgs-shared-admission-v999 \
   --output-dir "$rendered_directory/shared-admission-rotated" >/dev/null
 if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
   -f "$example_values" --set-string rgs.maintenanceQuiesced=true >/dev/null 2>&1; then
-  fail 'maintenanceQuiesced 的字符串类型被错误接受'
+  fail 'RGS maintenanceQuiesced 的字符串类型被错误接受'
+fi
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set-string worker.maintenanceQuiesced=true >/dev/null 2>&1; then
+  fail 'Worker maintenanceQuiesced 的字符串类型被错误接受'
+fi
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set worker.maintenanceQuiesced=true >/dev/null 2>&1; then
+  fail 'Worker 被错误允许在 API 仍运行时单独进入数据库维护静默'
+fi
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set rgs.runtime.walletFastPathTimeoutSeconds=4 \
+  --set rgs.runtime.walletTimeoutSeconds=4 >/dev/null 2>&1; then
+  fail '钱包快速路径预算达到故障截止时被错误接受'
 fi
 
 rendered_root="$rendered_directory/slots-cluster-production/templates"
@@ -169,6 +206,8 @@ upgrade_rendered_root="$rendered_directory/upgrade/slots-cluster-production/temp
 long_release_root="$rendered_directory/long-release/slots-cluster-production/templates"
 long_override_root="$rendered_directory/long-override/slots-cluster-production/templates"
 maintenance_root="$rendered_directory/maintenance-quiesced/slots-cluster-production/templates"
+database_maintenance_root="$rendered_directory/database-maintenance/slots-cluster-production/templates"
+maintenance_restored_root="$rendered_directory/maintenance-restored/slots-cluster-production/templates"
 shared_rotated_root="$rendered_directory/shared-admission-rotated/slots-cluster-production/templates"
 test -d "$rendered_root" || fail 'Helm 未生成模板目录'
 test -d "$upgrade_rendered_root" || fail 'Helm 未生成升级模板目录'
@@ -182,10 +221,34 @@ ruby -ryaml -e '
   abort "HMAC 维护态 API Deployment 未固定零副本" unless deployment.dig("spec", "replicas") == 0
   abort "HMAC 维护态 API 模板缺少失败闭合标记" unless
     deployment.dig("spec", "template", "metadata", "annotations", "slots-game.io/hmac-maintenance-quiesced") == "true"
+  worker = YAML.load(File.binread(File.join(root, "worker-deployment.yaml")))
+  abort "HMAC-only 维护错误固定 Worker 副本" if worker.fetch("spec").key?("replicas")
   autoscalers = YAML.load_stream(File.binread(File.join(root, "autoscaling.yaml"))).compact
   components = autoscalers.map { |item| item.dig("metadata", "labels", "app.kubernetes.io/component") }.sort
   abort "HMAC 维护态错误渲染 API HPA 或删除其他 HPA" unless components == ["rgs-worker", "web"]
 ' "$maintenance_root"
+ruby -ryaml -e '
+  root = ARGV.fetch(0)
+  deployments = %w[rgs-deployment.yaml worker-deployment.yaml].to_h do |file|
+    document = YAML.load(File.binread(File.join(root, file)))
+    [document.dig("metadata", "labels", "app.kubernetes.io/component"), document]
+  end
+  abort "数据库维护态 API Deployment 未固定零副本" unless deployments.fetch("rgs").dig("spec", "replicas") == 0
+  abort "数据库维护态 Worker Deployment 未固定零副本" unless deployments.fetch("rgs-worker").dig("spec", "replicas") == 0
+  autoscalers = YAML.load_stream(File.binread(File.join(root, "autoscaling.yaml"))).compact
+  components = autoscalers.map { |item| item.dig("metadata", "labels", "app.kubernetes.io/component") }.sort
+  abort "数据库维护态仍渲染 API/Worker HPA 或误删 Web HPA" unless components == ["web"]
+' "$database_maintenance_root"
+ruby -ryaml -e '
+  root = ARGV.fetch(0)
+  %w[rgs-deployment.yaml worker-deployment.yaml].each do |file|
+    deployment = YAML.load(File.binread(File.join(root, file)))
+    abort "退出维护后 Deployment 仍固定 replicas" if deployment.fetch("spec").key?("replicas")
+  end
+  autoscalers = YAML.load_stream(File.binread(File.join(root, "autoscaling.yaml"))).compact
+  components = autoscalers.map { |item| item.dig("metadata", "labels", "app.kubernetes.io/component") }.sort
+  abort "退出维护后 API/Worker/Web HPA 未完整恢复" unless components == ["rgs", "rgs-worker", "web"]
+' "$maintenance_restored_root"
 ruby -ryaml -e '
   baseline = ARGV.fetch(0)
   rotated = ARGV.fetch(1)
@@ -272,6 +335,9 @@ require_rendered 'maxUnavailable: 0' "$rendered_root/worker-deployment.yaml"
 require_rendered 'preStop:' "$rendered_root/worker-deployment.yaml"
 require_rendered 'value: worker' "$rendered_root/worker-deployment.yaml"
 require_rendered 'fieldPath: metadata.name' "$rendered_root/worker-deployment.yaml"
+if grep -E '^  replicas:' "$rendered_root/worker-deployment.yaml" >/dev/null; then
+  fail '普通发布的 Worker Deployment 不得抢占 HPA 的 replicas 所有权'
+fi
 require_rendered 'helm.sh/hook: pre-install,pre-upgrade' "$rendered_root/migrator-job.yaml"
 require_rendered '            - up' "$rendered_root/migrator-job.yaml"
 require_rendered '            - verify' "$upgrade_rendered_root/migrator-job.yaml"
@@ -285,16 +351,35 @@ require_rendered 'alert: SlotsRGSWorkerTargetUnavailable' "$rendered_root/promet
 require_rendered 'alert: SlotsRGSIntegrityQuarantine' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSAuthReplay' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSHPAUnableToScale' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSNewIntentCapacityRejected' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSWalletResponseAuthenticationInvalid' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSWalletLatencyHigh' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSWalletRequestsStalled' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSRecoveryBacklogHigh' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSRecoveryOldestDue' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSRecoveryLoopStale' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSRecoverySnapshotStale' "$rendered_root/prometheusrule.yaml"
+require_rendered 'sum(increase(rgs_new_intent_capacity_rejected_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
 require_rendered 'sum(increase(rgs_auth_replays_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
 require_rendered 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'horizontalpodautoscaler=~"slots-slots-cluster-production-rgs|slots-slots-cluster-production-rgs-worker"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'count(max by (horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_condition' "$rendered_root/prometheusrule.yaml"
-test "$(grep -F -c '} == 1' "$rendered_root/prometheusrule.yaml" || true)" -eq 2 ||
+test "$(grep -F 'kube_horizontalpodautoscaler_status_condition' "$rendered_root/prometheusrule.yaml" | grep -F -c '} == 1' || true)" -eq 2 ||
   fail 'HPA 告警没有分别拒绝 ScalingActive true=0 和指标缺失'
 require_rendered 'or absent(kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'or absent(rgs_ready{job="slots-rgs",namespace="slots-production"})' "$rendered_root/prometheusrule.yaml"
 require_rendered 'or absent(rgs_ready{job="slots-rgs-worker",namespace="slots-production"})' "$rendered_root/prometheusrule.yaml"
 require_rendered 'kind: NetworkPolicy' "$rendered_root/networkpolicies.yaml"
+require_rendered 'name: RGS_WALLET_FAST_PATH_TIMEOUT' "$rendered_root/rgs-deployment.yaml"
+require_rendered 'value: "1s"' "$rendered_root/rgs-deployment.yaml"
+require_rendered 'name: RGS_DB_CRITICAL_RESERVE_CONNS' "$rendered_root/rgs-deployment.yaml"
+require_rendered 'value: "5"' "$rendered_root/rgs-deployment.yaml"
+if grep -F 'RGS_DB_CRITICAL_RESERVE_CONNS' "$rendered_root/worker-deployment.yaml" >/dev/null; then
+  fail 'Worker 不得使用 API 新意图数据库保留配置'
+fi
+if grep -F 'RGS_WALLET_FAST_PATH_TIMEOUT' "$rendered_root/worker-deployment.yaml" >/dev/null; then
+  fail 'Worker 不得使用 API 钱包快速路径预算'
+fi
 require_rendered 'policyTypes:' "$rendered_root/networkpolicies.yaml"
 require_rendered 'cidr: 10.20.0.0/24' "$rendered_root/networkpolicies.yaml"
 require_rendered 'cidr: 10.30.0.0/24' "$rendered_root/networkpolicies.yaml"
@@ -316,8 +401,19 @@ for metric in \
   rgs_http_server_failures_total \
   rgs_http_requests_total \
   rgs_capacity_rejected_total \
+  rgs_new_intent_capacity_rejected_total \
   rgs_auth_replays_total \
   rgs_wallet_unknown_outcomes_total \
+  rgs_wallet_isolation_rejected_total \
+  rgs_wallet_breakers \
+  rgs_wallet_request_duration_seconds_count \
+  rgs_wallet_request_duration_seconds_bucket \
+  rgs_wallet_inflight \
+  rgs_recovery_backlog \
+  rgs_recovery_oldest_due_age_seconds \
+  rgs_recovery_loop_last_success_timestamp_seconds \
+  rgs_recovery_snapshot_last_success_timestamp_seconds \
+  rgs_rounds_manual_review_total \
   rgs_round_integrity_quarantines_total \
   rgs_session_integrity_quarantines_total \
   rgs_outbox_deferred_total \
@@ -382,6 +478,7 @@ for override in \
   'rgs.publicBaseURL=https://wrong.example.com' \
   'ingress.webHost=rgs.example.com' \
   'rgs.runtime.databaseMaxOpenConnections=2,rgs.runtime.databaseMaxIdleConnections=3' \
+  'rgs.runtime.databaseMaxOpenConnections=20,rgs.runtime.databaseCriticalReserveConnections=20' \
   'rgs.runtime.databaseMaxOpenConnections=201' \
   'rgs.runtime.maxInFlightRequests=4097' \
   'rgs.runtime.maxConnectionsPerListener=16385' \

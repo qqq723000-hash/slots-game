@@ -3,6 +3,7 @@ package rgs
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -15,11 +16,26 @@ type MemoryRepository struct {
 }
 
 type memorySession struct {
-	mu         sync.Mutex
-	session    Session
-	rounds     map[string]RoundRecord
-	deliveries map[string]ResultDelivery
+	mu                 sync.Mutex
+	session            Session
+	rounds             map[string]RoundRecord
+	walletTransactions map[string]memoryWalletTransaction
+	deliveries         map[string]ResultDelivery
 }
+
+type memoryWalletTransaction struct {
+	Command WalletRound
+	Kind    string
+	Status  string
+}
+
+const (
+	memoryWalletKindPlay      = "PLAY"
+	memoryWalletStatusPending = "PENDING"
+	memoryWalletStatusUnknown = "UNKNOWN"
+	memoryWalletStatusSuccess = "SUCCEEDED"
+	memoryWalletStatusFailed  = "FAILED"
+)
 
 func NewMemoryRepository() *MemoryRepository {
 	return &MemoryRepository{sessions: make(map[string]*memorySession)}
@@ -43,7 +59,8 @@ func (r *MemoryRepository) CreateSession(ctx context.Context, session Session) e
 	}
 	r.sessions[key] = &memorySession{
 		session: session, rounds: make(map[string]RoundRecord),
-		deliveries: make(map[string]ResultDelivery),
+		walletTransactions: make(map[string]memoryWalletTransaction),
+		deliveries:         make(map[string]ResultDelivery),
 	}
 	return nil
 }
@@ -142,6 +159,7 @@ func (r *MemoryRepository) PrepareRound(
 	ctx context.Context,
 	request SpinRequest,
 	fingerprint string,
+	walletProfile Profile,
 	prepare PrepareOutcome,
 ) (RoundRecord, bool, error) {
 	if prepare == nil {
@@ -152,6 +170,9 @@ func (r *MemoryRepository) PrepareRound(
 	}
 	if fingerprint != FingerprintFor(request) {
 		return RoundRecord{}, false, fmt.Errorf("%w: non-canonical fingerprint", ErrInvalidRequest)
+	}
+	if !SupportedSettlementProfile(walletProfile) {
+		return RoundRecord{}, false, fmt.Errorf("%w: unsupported wallet settlement profile", ErrInvalidRequest)
 	}
 	entry, err := r.lookupSession(ctx, request.OperatorID, request.SessionID)
 	if err != nil {
@@ -197,6 +218,18 @@ func (r *MemoryRepository) PrepareRound(
 		return RoundRecord{}, false, err
 	}
 	now := time.Now().UTC()
+	walletCommand := WalletRound{
+		OperationID: walletOperationID(request), Fingerprint: fingerprint,
+		OperatorID: request.OperatorID, PlayerID: entry.session.PlayerID,
+		WalletAccountID:  entry.session.WalletAccountID,
+		WalletSessionRef: entry.session.WalletSessionID,
+		SessionID:        request.SessionID, RoundID: request.RoundID,
+		GameID: request.GameID, DefinitionVersion: request.DefinitionVersion,
+		DefinitionHash: request.DefinitionHash, RoundKind: request.RoundKind,
+		Currency: request.Currency, DebitMinor: result.ChargedBetMinor,
+		CreditMinor: result.TotalWinMinor,
+	}
+	walletCommand.CommandDigest = CommandDigestFor(walletCommand)
 	record := RoundRecord{
 		Key:               request.Key(),
 		Fingerprint:       fingerprint,
@@ -205,63 +238,58 @@ func (r *MemoryRepository) PrepareRound(
 		Result:            result,
 		InputFeatureState: entry.session.Feature,
 		OutcomeHash:       outcomeHash,
-		WalletCommand: WalletRound{
-			OperationID: walletOperationID(request), Fingerprint: fingerprint,
-			OperatorID: request.OperatorID, PlayerID: entry.session.PlayerID,
-			WalletAccountID: entry.session.WalletAccountID,
-			SessionID:       request.SessionID, RoundID: request.RoundID,
-			GameID: request.GameID, DefinitionVersion: request.DefinitionVersion,
-			DefinitionHash: request.DefinitionHash, RoundKind: request.RoundKind,
-			Currency: request.Currency, DebitMinor: result.ChargedBetMinor,
-			CreditMinor: result.TotalWinMinor,
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
+		WalletCommand:     walletCommand,
+		WalletProfile:     walletProfile,
+		WalletPhase:       WalletRecoveryApply,
+		NextAttemptAt:     now,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 	entry.session.PendingRoundID = request.RoundID
 	entry.rounds[request.RoundID] = cloneRound(record)
+	entry.walletTransactions[walletCommand.OperationID] = memoryWalletTransaction{
+		Command: walletCommand, Kind: memoryWalletKindPlay, Status: memoryWalletStatusPending,
+	}
 	return cloneRound(record), true, nil
 }
 
 func (r *MemoryRepository) ClaimWallet(
 	ctx context.Context,
 	key RoundKey,
-	now time.Time,
-	leaseUntil time.Time,
-) (RoundRecord, bool, error) {
-	if !leaseUntil.After(now) {
-		return RoundRecord{}, false, fmt.Errorf("%w: wallet lease must be in the future", ErrInvalidRequest)
+	leaseDuration time.Duration,
+) (WalletRecoveryClaim, bool, error) {
+	if leaseDuration <= 0 || leaseDuration > 24*time.Hour {
+		return WalletRecoveryClaim{}, false, fmt.Errorf("%w: wallet lease duration must be positive", ErrInvalidRequest)
 	}
 	entry, err := r.lookupSession(ctx, key.OperatorID, key.SessionID)
 	if err != nil {
-		return RoundRecord{}, false, err
+		return WalletRecoveryClaim{}, false, err
 	}
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return RoundRecord{}, false, err
+		return WalletRecoveryClaim{}, false, err
 	}
 	record, exists := entry.rounds[key.RoundID]
 	if !exists {
-		return RoundRecord{}, false, ErrRoundNotFound
+		return WalletRecoveryClaim{}, false, ErrRoundNotFound
 	}
-	claimable := record.Status == RoundPrepared ||
-		(record.Status == RoundWalletPending && !record.WalletLeaseUntil.After(now))
-	if !claimable {
-		return cloneRound(record), false, nil
+	if (record.Status == RoundPrepared || record.Status == RoundWalletPending) &&
+		(validateWalletRecoveryMemoryBinding(entry, record) != nil) {
+		quarantineMemoryWalletClaim(entry, key.RoundID, "persisted wallet ledger integrity validation failed")
+		return WalletRecoveryClaim{}, false, ErrManualReview
 	}
-	if entry.session.PendingRoundID != key.RoundID || entry.session.Revision != record.Request.StartRevision {
-		return RoundRecord{}, false, fmt.Errorf("%w: pending round/session state mismatch", ErrManualReview)
+	claim, claimed, err := claimMemoryWallet(record, entry.session, time.Now().UTC(), leaseDuration)
+	if err != nil || !claimed {
+		claim.Record = cloneRound(record)
+		return claim, false, err
 	}
-	record.Status = RoundWalletPending
-	record.WalletLeaseUntil = leaseUntil.UTC()
-	record.RetryCount++
-	record.UpdatedAt = now.UTC()
-	entry.rounds[key.RoundID] = cloneRound(record)
-	return cloneRound(record), true, nil
+	entry.rounds[key.RoundID] = cloneRound(claim.Record)
+	return claim, true, nil
 }
 
-func (r *MemoryRepository) CommitRound(ctx context.Context, key RoundKey, receipt WalletReceipt) (RoundRecord, bool, error) {
+func (r *MemoryRepository) CommitClaim(ctx context.Context, claim WalletRecoveryClaim, receipt WalletReceipt) (RoundRecord, bool, error) {
+	key := claim.Record.Key
 	entry, err := r.lookupSession(ctx, key.OperatorID, key.SessionID)
 	if err != nil {
 		return RoundRecord{}, false, err
@@ -275,20 +303,8 @@ func (r *MemoryRepository) CommitRound(ctx context.Context, key RoundKey, receip
 	if !exists {
 		return RoundRecord{}, false, ErrRoundNotFound
 	}
-	if record.Status == RoundCommitted {
-		if record.WalletReceipt == nil || !sameWalletReceipt(*record.WalletReceipt, receipt) {
-			return RoundRecord{}, false, ErrWalletReceiptInvalid
-		}
-		return cloneRound(record), false, nil
-	}
-	if record.Status == RoundRejected {
-		return RoundRecord{}, false, ErrRoundRejected
-	}
-	if record.Status == RoundManualReview {
-		return RoundRecord{}, false, ErrManualReview
-	}
-	if record.Status != RoundWalletPending {
-		return RoundRecord{}, false, fmt.Errorf("%w: round is not wallet-pending", ErrWalletPending)
+	if !ownsWalletClaim(record, claim) {
+		return RoundRecord{}, false, ErrStaleWalletClaim
 	}
 	if err := validateWalletReceipt(record.WalletCommand, receipt); err != nil {
 		return RoundRecord{}, false, err
@@ -305,6 +321,8 @@ func (r *MemoryRepository) CommitRound(ctx context.Context, key RoundKey, receip
 	record.Result.WalletTransactionID = receipt.TransactionID
 	record.Result.EndRevision = record.Request.StartRevision + 1
 	record.WalletReceipt = cloneWalletReceipt(receipt)
+	record.WalletPhase = ""
+	record.NextAttemptAt = time.Time{}
 	record.WalletLeaseUntil = time.Time{}
 	record.UpdatedAt = time.Now().UTC()
 	resultHash, err := CommittedResultHashFor(record.Result)
@@ -317,6 +335,9 @@ func (r *MemoryRepository) CommitRound(ctx context.Context, key RoundKey, receip
 	entry.session.Feature = record.Result.FeatureState
 	entry.session.PendingRoundID = ""
 	entry.rounds[key.RoundID] = cloneRound(record)
+	walletTransaction := entry.walletTransactions[record.WalletCommand.OperationID]
+	walletTransaction.Status = memoryWalletStatusSuccess
+	entry.walletTransactions[record.WalletCommand.OperationID] = walletTransaction
 	entry.deliveries[key.RoundID] = ResultDelivery{
 		OperatorID: key.OperatorID, SessionID: key.SessionID, RoundID: key.RoundID,
 		Sequence: record.Result.Sequence, ResultHash: resultHash,
@@ -330,7 +351,22 @@ func cloneResultDelivery(delivery ResultDelivery) ResultDelivery {
 	return delivery
 }
 
-func (r *MemoryRepository) RejectRound(ctx context.Context, key RoundKey, reason string) (RoundRecord, bool, error) {
+func (r *MemoryRepository) RejectClaim(ctx context.Context, claim WalletRecoveryClaim, reason string) (RoundRecord, bool, error) {
+	return r.transitionClaimFailure(ctx, claim, RoundRejected, reason, true)
+}
+
+func (r *MemoryRepository) MarkClaimManualReview(ctx context.Context, claim WalletRecoveryClaim, reason string) (RoundRecord, bool, error) {
+	return r.transitionClaimFailure(ctx, claim, RoundManualReview, reason, false)
+}
+
+func (r *MemoryRepository) transitionClaimFailure(
+	ctx context.Context,
+	claim WalletRecoveryClaim,
+	target RoundStatus,
+	reason string,
+	clearPending bool,
+) (RoundRecord, bool, error) {
+	key := claim.Record.Key
 	entry, err := r.lookupSession(ctx, key.OperatorID, key.SessionID)
 	if err != nil {
 		return RoundRecord{}, false, err
@@ -344,23 +380,35 @@ func (r *MemoryRepository) RejectRound(ctx context.Context, key RoundKey, reason
 	if !exists {
 		return RoundRecord{}, false, ErrRoundNotFound
 	}
-	switch record.Status {
-	case RoundRejected:
-		return cloneRound(record), false, nil
-	case RoundCommitted:
-		return RoundRecord{}, false, fmt.Errorf("%w: committed round cannot be rejected", ErrManualReview)
-	case RoundManualReview:
-		return RoundRecord{}, false, ErrManualReview
+	if !ownsWalletClaim(record, claim) {
+		return RoundRecord{}, false, ErrStaleWalletClaim
 	}
-	record.Status = RoundRejected
+	record.Status = target
 	record.FailureReason = boundedReason(reason)
+	record.WalletPhase = ""
+	record.NextAttemptAt = time.Time{}
 	record.WalletLeaseUntil = time.Time{}
 	record.UpdatedAt = time.Now().UTC()
-	if entry.session.PendingRoundID == key.RoundID {
+	if clearPending && entry.session.PendingRoundID == key.RoundID {
 		entry.session.PendingRoundID = ""
+	} else if !clearPending {
+		entry.session.Status = SessionBlocked
+		entry.session.PendingRoundID = key.RoundID
 	}
 	entry.rounds[key.RoundID] = cloneRound(record)
+	walletTransaction := entry.walletTransactions[record.WalletCommand.OperationID]
+	if target == RoundManualReview {
+		walletTransaction.Status = memoryWalletStatusUnknown
+	} else {
+		walletTransaction.Status = memoryWalletStatusFailed
+	}
+	entry.walletTransactions[record.WalletCommand.OperationID] = walletTransaction
 	return cloneRound(record), true, nil
+}
+
+func ownsWalletClaim(record RoundRecord, claim WalletRecoveryClaim) bool {
+	return (record.Status == RoundPrepared || record.Status == RoundWalletPending) &&
+		!claim.LeaseUntil.IsZero() && record.WalletLeaseUntil.Equal(claim.LeaseUntil)
 }
 
 func (r *MemoryRepository) MarkManualReview(ctx context.Context, key RoundKey, reason string) (RoundRecord, bool, error) {
@@ -385,51 +433,356 @@ func (r *MemoryRepository) MarkManualReview(ctx context.Context, key RoundKey, r
 	}
 	record.Status = RoundManualReview
 	record.FailureReason = boundedReason(reason)
+	record.WalletPhase = ""
+	record.NextAttemptAt = time.Time{}
 	record.WalletLeaseUntil = time.Time{}
 	record.UpdatedAt = time.Now().UTC()
 	entry.session.Status = SessionBlocked
 	entry.session.PendingRoundID = key.RoundID
 	entry.rounds[key.RoundID] = cloneRound(record)
+	for operationID, walletTransaction := range entry.walletTransactions {
+		if walletTransaction.Command.RoundID == key.RoundID {
+			if walletTransaction.Status == memoryWalletStatusPending {
+				walletTransaction.Status = memoryWalletStatusUnknown
+			}
+			entry.walletTransactions[operationID] = walletTransaction
+		}
+	}
 	return cloneRound(record), true, nil
 }
 
-func (r *MemoryRepository) ListRecoverableRounds(
+func (r *MemoryRepository) ClaimRecoverableRounds(
 	ctx context.Context,
-	olderThan time.Time,
 	limit int,
-) ([]RoundKey, error) {
+	leaseDuration time.Duration,
+) ([]WalletRecoveryClaim, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if limit < 1 || limit > 10_000 || olderThan.IsZero() {
+	if limit < 1 || limit > MaxWalletRecoveryClaimBatch ||
+		leaseDuration <= 0 || leaseDuration > 24*time.Hour {
 		return nil, ErrInvalidRequest
 	}
 	r.mu.RLock()
-	entries := make([]*memorySession, 0, len(r.sessions))
-	for _, entry := range r.sessions {
-		entries = append(entries, entry)
+	type namedSession struct {
+		key   string
+		entry *memorySession
+	}
+	entries := make([]namedSession, 0, len(r.sessions))
+	for key, entry := range r.sessions {
+		entries = append(entries, namedSession{key: key, entry: entry})
 	}
 	r.mu.RUnlock()
+	sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
+	for _, item := range entries {
+		item.entry.mu.Lock()
+	}
+	defer func() {
+		for index := len(entries) - 1; index >= 0; index-- {
+			entries[index].entry.mu.Unlock()
+		}
+	}()
 
-	keys := make([]RoundKey, 0, limit)
+	now := time.Now().UTC()
+	type candidate struct {
+		entry  *memorySession
+		record RoundRecord
+		rank   int
+	}
+	byOperator := make(map[string][]candidate)
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		entry.mu.Lock()
-		for _, record := range entry.rounds {
-			if (record.Status == RoundPrepared || record.Status == RoundWalletPending) &&
-				!record.UpdatedAt.After(olderThan) {
-				keys = append(keys, record.Key)
-				if len(keys) == limit {
-					entry.mu.Unlock()
-					return keys, nil
-				}
+		for _, record := range entry.entry.rounds {
+			normalizeLegacyRecoveryState(&record)
+			if recoveryRecordDue(record, entry.entry.session, now) {
+				byOperator[record.Key.OperatorID] = append(
+					byOperator[record.Key.OperatorID],
+					candidate{entry: entry.entry, record: record},
+				)
 			}
 		}
-		entry.mu.Unlock()
 	}
-	return keys, nil
+	var candidates []candidate
+	for operatorID := range byOperator {
+		items := byOperator[operatorID]
+		sort.Slice(items, func(i, j int) bool {
+			if !items[i].record.NextAttemptAt.Equal(items[j].record.NextAttemptAt) {
+				return items[i].record.NextAttemptAt.Before(items[j].record.NextAttemptAt)
+			}
+			if !items[i].record.UpdatedAt.Equal(items[j].record.UpdatedAt) {
+				return items[i].record.UpdatedAt.Before(items[j].record.UpdatedAt)
+			}
+			if items[i].record.Key.SessionID != items[j].record.Key.SessionID {
+				return items[i].record.Key.SessionID < items[j].record.Key.SessionID
+			}
+			return items[i].record.Key.RoundID < items[j].record.Key.RoundID
+		})
+		for index := range items {
+			items[index].rank = index + 1
+		}
+		candidates = append(candidates, items...)
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].rank != candidates[j].rank {
+			return candidates[i].rank < candidates[j].rank
+		}
+		if !candidates[i].record.NextAttemptAt.Equal(candidates[j].record.NextAttemptAt) {
+			return candidates[i].record.NextAttemptAt.Before(candidates[j].record.NextAttemptAt)
+		}
+		return candidates[i].record.Key.OperatorID < candidates[j].record.Key.OperatorID
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	for _, candidate := range candidates {
+		if err := validateWalletRecoveryMemoryBinding(candidate.entry, candidate.record); err != nil {
+			quarantineMemoryWalletClaim(
+				candidate.entry, candidate.record.Key.RoundID,
+				"persisted wallet ledger integrity validation failed",
+			)
+			return nil, ErrManualReview
+		}
+	}
+	claims := make([]WalletRecoveryClaim, 0, len(candidates))
+	for _, candidate := range candidates {
+		claim, claimed, err := claimMemoryWallet(
+			candidate.record, candidate.entry.session, now, leaseDuration,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !claimed {
+			continue
+		}
+		candidate.entry.rounds[claim.Record.Key.RoundID] = cloneRound(claim.Record)
+		claims = append(claims, claim)
+	}
+	return claims, nil
+}
+
+// RecoverySnapshot 为内存契约适配器提供与 PostgreSQL 相同的数据库全局有界下界语义。
+// 它只用于测试和一致性验证；生产指标仍由 PostgreSQL 存储时钟生成。
+func (r *MemoryRepository) RecoverySnapshot(ctx context.Context) (RecoverySnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return RecoverySnapshot{}, err
+	}
+	r.mu.RLock()
+	type namedSnapshotSession struct {
+		key   string
+		entry *memorySession
+	}
+	entries := make([]namedSnapshotSession, 0, len(r.sessions))
+	for key, entry := range r.sessions {
+		entries = append(entries, namedSnapshotSession{key: key, entry: entry})
+	}
+	r.mu.RUnlock()
+	sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
+	for _, item := range entries {
+		item.entry.mu.Lock()
+	}
+	defer func() {
+		for index := len(entries) - 1; index >= 0; index-- {
+			entries[index].entry.mu.Unlock()
+		}
+	}()
+
+	now := time.Now().UTC()
+	snapshot := RecoverySnapshot{ObservedAt: now}
+	for _, item := range entries {
+		if err := ctx.Err(); err != nil {
+			return RecoverySnapshot{}, err
+		}
+		for _, stored := range item.entry.rounds {
+			record := cloneRound(stored)
+			normalizeLegacyRecoveryState(&record)
+			if !recoveryRecordScheduledForObservation(record) {
+				continue
+			}
+			if snapshot.Backlog < RecoverySnapshotBacklogLimit {
+				snapshot.Backlog++
+			}
+			if age := now.Sub(record.NextAttemptAt); age > snapshot.OldestDueAge {
+				snapshot.OldestDueAge = age
+			}
+		}
+	}
+	return snapshot, nil
+}
+
+func (r *MemoryRepository) ScheduleWalletRecovery(
+	ctx context.Context,
+	claim WalletRecoveryClaim,
+	disposition WalletRecoveryDisposition,
+	jitterDelay time.Duration,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if disposition.Terminal || ValidateWalletRecoveryDisposition(disposition) != nil ||
+		jitterDelay < 0 || jitterDelay > 24*time.Hour || claim.LeaseUntil.IsZero() ||
+		(disposition.ApplyNotSent &&
+			(claim.Action != WalletRecoveryApply || claim.Record.WalletApplyAttempts < 1)) {
+		return false, ErrInvalidRequest
+	}
+	entry, err := r.lookupSession(ctx, claim.Record.Key.OperatorID, claim.Record.Key.SessionID)
+	if err != nil {
+		return false, err
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	record, exists := entry.rounds[claim.Record.Key.RoundID]
+	if !exists {
+		return false, ErrRoundNotFound
+	}
+	if (record.Status != RoundPrepared && record.Status != RoundWalletPending) ||
+		!record.WalletLeaseUntil.Equal(claim.LeaseUntil) {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	effectiveDelay := jitterDelay
+	if disposition.MinimumDelay > effectiveDelay {
+		effectiveDelay = disposition.MinimumDelay
+	}
+	nextAttemptAt := now.Add(effectiveDelay)
+	if disposition.NextAttemptAt.After(nextAttemptAt) {
+		nextAttemptAt = disposition.NextAttemptAt.UTC()
+	}
+	record.WalletPhase = disposition.NextAction
+	if disposition.ApplyNotSent {
+		if record.WalletApplyAttempts < 1 {
+			return false, ErrManualReview
+		}
+		// 只归还能够证明未越过发送边界的经济 APPLY 预算。RetryCount 是持久调度
+		// 压力计数，必须保留来扩大退避，否则持续熔断会退化为固定短周期热循环。
+		record.WalletApplyAttempts--
+	}
+	record.NextAttemptAt = nextAttemptAt
+	record.WalletLeaseUntil = time.Time{}
+	record.UpdatedAt = now
+	entry.rounds[record.Key.RoundID] = cloneRound(record)
+	return true, nil
+}
+
+func claimMemoryWallet(
+	record RoundRecord,
+	session Session,
+	now time.Time,
+	leaseDuration time.Duration,
+) (WalletRecoveryClaim, bool, error) {
+	normalizeLegacyRecoveryState(&record)
+	if !recoveryRecordDue(record, session, now) {
+		return WalletRecoveryClaim{Record: cloneRound(record)}, false, nil
+	}
+	if session.PendingRoundID != record.Key.RoundID || session.Revision != record.Request.StartRevision {
+		return WalletRecoveryClaim{}, false, fmt.Errorf("%w: pending round/session state mismatch", ErrManualReview)
+	}
+	action := record.WalletPhase
+	record.Status = RoundWalletPending
+	record.WalletLeaseUntil = now.Add(leaseDuration)
+	record.NextAttemptAt = record.WalletLeaseUntil
+	if action == WalletRecoveryApply {
+		// APPLY 的持久后继必须先变为 LOOKUP，再把执行权交给外部调用者。
+		record.WalletPhase = WalletRecoveryLookup
+		record.WalletApplyAttempts++
+		record.RetryCount++
+	} else {
+		record.WalletLookupAttempts++
+	}
+	record.UpdatedAt = now
+	return WalletRecoveryClaim{
+		Record: cloneRound(record), Action: action, LeaseUntil: record.WalletLeaseUntil,
+	}, true, nil
+}
+
+func validateWalletRecoveryMemoryBinding(entry *memorySession, record RoundRecord) error {
+	if err := ValidateWalletRecoveryRecord(entry.session, record); err != nil {
+		return err
+	}
+	matching := 0
+	for operationID, walletTransaction := range entry.walletTransactions {
+		if walletTransaction.Command.RoundID != record.Key.RoundID {
+			continue
+		}
+		matching++
+		if operationID != record.WalletCommand.OperationID ||
+			walletTransaction.Command != record.WalletCommand ||
+			walletTransaction.Kind != memoryWalletKindPlay ||
+			(walletTransaction.Status != memoryWalletStatusPending &&
+				walletTransaction.Status != memoryWalletStatusUnknown) {
+			return ErrManualReview
+		}
+	}
+	if matching != 1 {
+		return ErrManualReview
+	}
+	return nil
+}
+
+func quarantineMemoryWalletClaim(entry *memorySession, roundID, reason string) {
+	record, exists := entry.rounds[roundID]
+	if !exists {
+		return
+	}
+	now := time.Now().UTC()
+	record.Status = RoundManualReview
+	record.FailureReason = boundedReason(reason)
+	record.WalletPhase = ""
+	record.NextAttemptAt = time.Time{}
+	record.WalletLeaseUntil = time.Time{}
+	record.UpdatedAt = now
+	entry.rounds[roundID] = cloneRound(record)
+	entry.session.Status = SessionBlocked
+	entry.session.PendingRoundID = roundID
+	for operationID, walletTransaction := range entry.walletTransactions {
+		if walletTransaction.Command.RoundID != roundID {
+			continue
+		}
+		if walletTransaction.Status == memoryWalletStatusPending {
+			walletTransaction.Status = memoryWalletStatusUnknown
+		}
+		entry.walletTransactions[operationID] = walletTransaction
+	}
+}
+
+func normalizeLegacyRecoveryState(record *RoundRecord) {
+	if record.WalletPhase.Valid() {
+		return
+	}
+	switch record.Status {
+	case RoundPrepared:
+		record.WalletPhase = WalletRecoveryApply
+	case RoundWalletPending:
+		record.WalletPhase = WalletRecoveryLookup
+	default:
+		return
+	}
+	if record.NextAttemptAt.IsZero() {
+		record.NextAttemptAt = record.UpdatedAt
+		if record.WalletLeaseUntil.After(record.NextAttemptAt) {
+			record.NextAttemptAt = record.WalletLeaseUntil
+		}
+	}
+	if record.WalletApplyAttempts == 0 && record.RetryCount > 0 {
+		record.WalletApplyAttempts = record.RetryCount
+	}
+}
+
+func recoveryRecordDue(record RoundRecord, session Session, now time.Time) bool {
+	return recoveryRecordScheduled(record, session) && !record.NextAttemptAt.After(now) &&
+		!record.WalletLeaseUntil.After(now)
+}
+
+func recoveryRecordScheduled(record RoundRecord, session Session) bool {
+	return recoveryRecordScheduledForObservation(record) &&
+		session.Status == SessionActive && session.PendingRoundID == record.Key.RoundID &&
+		session.Revision == record.Request.StartRevision
+}
+
+func recoveryRecordScheduledForObservation(record RoundRecord) bool {
+	return (record.Status == RoundPrepared || record.Status == RoundWalletPending) &&
+		record.WalletPhase.Valid() && !record.NextAttemptAt.IsZero()
 }
 
 func (r *MemoryRepository) lookupSession(ctx context.Context, operatorID, sessionID string) (*memorySession, error) {

@@ -36,6 +36,7 @@ reset_fixture() {
   cp "$repository_root/Makefile" "$fixture/Makefile"
   cp "$repository_root/web/package.json" "$fixture/web/package.json"
   cp "$repository_root/docs/aws-production-deployment.md" "$fixture/docs/aws-production-deployment.md"
+  cp "$repository_root/docs/backend-release-gates.md" "$fixture/docs/backend-release-gates.md"
   cp -R "$repository_root/deploy/supply-chain" "$fixture/deploy/supply-chain"
   cp "$repository_root/deploy/cluster-production/Dockerfile.services" "$fixture/deploy/cluster-production/Dockerfile.services"
   cp "$repository_root/deploy/cluster-production/verify-kubeconform.sh" "$fixture/deploy/cluster-production/verify-kubeconform.sh"
@@ -68,7 +69,7 @@ insert_job_permission() {
   file=$3
   awk -v job="  $job_name:" -v permission="$permission" '
     $0 == job { inside = 1 }
-    inside && !done && $0 == "      contents: read" {
+    inside && !done && $0 ~ /^      (contents|actions): read$/ {
       print
       print permission
       done = 1
@@ -675,6 +676,10 @@ insert_job_permission build-approved-web '      security-events: write' "$fixtur
 expect_rejected 'Web approval build received an extra security-events write permission'
 
 reset_fixture
+insert_job_permission bind-release-artifact '      contents: write' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'artifact binding job received an extra contents write permission'
+
+reset_fixture
 insert_job_permission publish-sign '      packages: write' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'publish/sign job received a permission outside its exact allowlist'
 
@@ -719,12 +724,50 @@ replace_once 'needs.build-rgs.outputs.artifact_id }}' 'needs.verify-source-confo
 expect_rejected 'publish artifact ID was not selected from the isolated builder'
 
 reset_fixture
+replace_once '.digest == $digest and .workflow_run.id == $run_id and' \
+  '.workflow_run.id == $run_id and' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'release artifact service digest was not bound before privileged publish'
+
+reset_fixture
+replace_once 'needs.bind-release-artifact.result == '\''success'\''' \
+  'needs.bind-release-artifact.result != '\''failure'\''' \
+  "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'publish accepted a non-success artifact metadata binding result'
+
+reset_fixture
 replace_once 'END { exit bad || NR != 6 }' 'END { exit NR == 6 ? 0 : 1 }' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'checksum allowlist END block could override an invalid line'
 
 reset_fixture
 replace_once '--read-only --network=none' '--read-only' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'offline OCI conversion regained network access'
+
+reset_fixture
+replace_once '--volume "$conversion_root:/output"' \
+  '--volume /var/run/docker.sock:/var/run/docker.sock' \
+  "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'approved Web conversion container regained the host Docker socket'
+
+reset_fixture
+replace_once 'docker load --input "$PUBLISH_WORK_DIR/release-image.docker.tar"' \
+  'docker load --input "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar"' \
+  "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'privileged publish retained complete image bytes in the audit evidence directory'
+
+reset_fixture
+replace_once '          if-no-files-found: error' '          if-no-files-found: warn' \
+  "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'release evidence upload silently accepted missing evidence'
+
+reset_fixture
+replace_once '          if-no-files-found: error' '          if-no-files-found: warn' \
+  "$fixture/.github/workflows/backend-conformance.yml"
+expect_rejected 'backend conformance silently accepted missing evidence'
+
+reset_fixture
+replace_once '不等于生产容量认证' '等于生产容量认证' \
+  "$fixture/docs/backend-release-gates.md"
+expect_rejected 'backend release gate misrepresented correctness tests as production capacity certification'
 
 reset_fixture
 replace_once '      --format json --output "/out/$report_name.trivy.json"' '__swap_trivy_report_output__' "$fixture/deploy/supply-chain/scan.sh"

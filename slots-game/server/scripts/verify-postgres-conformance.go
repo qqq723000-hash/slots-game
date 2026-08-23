@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -17,6 +18,13 @@ var expectedTests = []string{
 	"TestPostgresFeatureRoundInputStateRecovery",
 	"TestPostgresOutboxConcurrentClaimsOrderingAndFencing",
 	"TestPostgresConcurrentSessionIntegrityQuarantinePreservesEconomicEvidence",
+	"TestPostgresRecoveryFairnessPersistsAcrossClaimWaves",
+	"TestPostgresRecoveryQuarantinesPoisonBeforeNextClaim",
+	"TestPostgresRecoverySkipsSessionLockedByBusinessTransaction",
+	"TestPostgresWalletClaimsQuarantineLedgerAndCommandIntegrityFailures",
+	"TestPostgresPendingRoundRequiresImmutableCommandDigest",
+	"TestPostgresNotSentApplyReturnsReservedAttemptBudget",
+	"TestPostgresIntegrityQuarantinePreservesSucceededWalletEvidence",
 }
 
 type testEvent struct {
@@ -31,8 +39,16 @@ type testCount struct {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--pattern" {
+		quoted := make([]string, 0, len(expectedTests))
+		for _, name := range expectedTests {
+			quoted = append(quoted, regexp.QuoteMeta(name))
+		}
+		fmt.Printf("^(%s)$\n", strings.Join(quoted, "|"))
+		return
+	}
 	if len(os.Args) != 2 {
-		fatalf("usage: verify-postgres-conformance <go-test-json-file>")
+		fatalf("usage: verify-postgres-conformance <go-test-json-file>|--pattern")
 	}
 
 	evidence, err := os.Open(os.Args[1])

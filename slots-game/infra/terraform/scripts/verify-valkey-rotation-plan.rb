@@ -10,6 +10,8 @@ module ValkeyRotationPlanContract
 
   HMAC_SECRET_REPLACEMENT_ACTIONS = [["create", "delete"]].freeze
   HMAC_SECRET_VERSION_REPLACEMENT_ACTIONS = [["delete", "create"]].freeze
+  LEGACY_SHARED_ADMISSION_ACL = "on ~rgs:shared-admission:v1:* -@all +evalsha +eval +time +hmget +hset +pexpire +ping +hello +auth +client|setname +client|setinfo".freeze
+  CURRENT_SHARED_ADMISSION_ACL = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +ping +hello +auth +client|setname +client|setinfo".freeze
   SHARED_ADMISSION_SECRET_ATTRIBUTE_KEYS = %w[
     arn description force_overwrite_replica_secret id kms_key_id name name_prefix policy
     recovery_window_in_days region tags tags_all type
@@ -370,13 +372,15 @@ module ValkeyRotationPlanContract
     guard_address = "#{cache_prefix}.terraform_data.rotation_guard"
     secret_address = "#{cache_prefix}.aws_secretsmanager_secret.shared_admission"
     secret_version_address = "#{cache_prefix}.aws_secretsmanager_secret_version.shared_admission"
+    acl_addresses = %w[a b].map { |slot| "#{cache_prefix}.aws_elasticache_user.rate_limiter_#{slot}" }
+    actual_addresses = actionful.map { |resource| resource.fetch("address", nil) }
+    migrating_acl = (actual_addresses & acl_addresses).any?
 
     expected_addresses = if transition == :hmac_entry
-      [guard_address, secret_address, secret_version_address]
+      [guard_address, secret_address, secret_version_address] + (migrating_acl ? acl_addresses : [])
     else
       [guard_address]
     end
-    actual_addresses = actionful.map { |resource| resource.fetch("address", nil) }
     assert(actual_addresses.sort == expected_addresses.sort, "HMAC #{transition == :hmac_entry ? "入口" : "出口"} plan 的非 no-op 资源集合不符合精确 allowlist")
     assert(actual_addresses.uniq.length == actual_addresses.length, "HMAC 维护 plan 包含重复资源地址")
 
@@ -402,6 +406,45 @@ module ValkeyRotationPlanContract
     validate_shared_admission_secret_version_change(secret_version, before_guard, after_guard)
   rescue KeyError => error
     raise Violation, "HMAC 维护 plan 资源结构缺失: #{error.message}"
+  end
+
+  def validate_acl_schema_plan_change_set(plan, transition, guard_resource)
+    resources = plan.fetch("resource_changes", [])
+    assert(resources.is_a?(Array), "plan.resource_changes 必须是数组")
+    cache_prefix = guard_resource.fetch("address").delete_suffix(".terraform_data.rotation_guard")
+    expected = %w[a b].to_h do |slot|
+      address = "#{cache_prefix}.aws_elasticache_user.rate_limiter_#{slot}"
+      [address, "rate_limiter_#{slot}"]
+    end
+    changes = resources.select do |resource|
+      expected.key?(resource.fetch("address", nil)) &&
+        resource.fetch("change").fetch("actions") != ["no-op"]
+    end
+    return if changes.empty?
+
+    assert(transition == :hmac_entry, "Valkey ACL schema 迁移只能进入有静默证据的 HMAC 维护计划")
+    addresses = changes.map { |resource| resource.fetch("address") }
+    assert(addresses.sort == expected.keys.sort, "Valkey ACL schema 迁移必须在同一计划精确更新 A/B 两个用户")
+    assert(addresses.uniq.length == addresses.length, "Valkey ACL schema 迁移包含重复资源地址")
+    changes.each do |resource|
+      address = resource.fetch("address")
+      validate_resource_identity(
+        resource, address, "aws_elasticache_user", expected.fetch(address),
+        "registry.terraform.io/hashicorp/aws", [["update"]],
+      )
+      change = resource.fetch("change")
+      before = change.fetch("before")
+      after = change.fetch("after")
+      assert(before.is_a?(Hash) && after.is_a?(Hash), "Valkey ACL schema 迁移缺少完整前后态")
+      assert(before.fetch("access_string", nil) == LEGACY_SHARED_ADMISSION_ACL, "Valkey ACL schema 迁移前态不是唯一受支持的 v1 契约")
+      assert(after.fetch("access_string", nil) == CURRENT_SHARED_ADMISSION_ACL, "Valkey ACL schema 迁移后态不是唯一受支持的 v2 契约")
+      assert(changed_keys(before, after) == ["access_string"], "Valkey ACL schema 迁移禁止夹带密码、身份、标签或其他资源变化")
+      after_unknown = change.fetch("after_unknown", {})
+      assert(after_unknown.is_a?(Hash), "Valkey ACL schema after_unknown 必须是对象")
+      assert(!unknown?(after_unknown.fetch("access_string", false)), "Valkey ACL schema 目标权限不得未知")
+    end
+  rescue KeyError => error
+    raise Violation, "Valkey ACL schema plan 资源结构缺失: #{error.message}"
   end
 
   def verify_transition(before, after, evidence_payload: nil, now: Time.now.utc)
@@ -510,6 +553,7 @@ module ValkeyRotationPlanContract
     before_input = before.fetch("input")
     transition = verify_transition(before_input, after_input, evidence_payload: evidence_payload, now: now)
     validate_hmac_plan_change_set(plan, transition, changes.first, before_input, after_input)
+    validate_acl_schema_plan_change_set(plan, transition, changes.first)
     true
   end
 end

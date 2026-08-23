@@ -47,15 +47,18 @@ rgs:
   runtime:
     databaseMaxOpenConnections: 20
     databaseMaxIdleConnections: 5
+    databaseCriticalReserveConnections: 5
     maxInFlightRequests: 128
     maxConnectionsPerListener: 512
     ratePerSecondPerPod: 50
     rateBurstPerPod: 100
     successAccessLogSamplePerMillion: 10000
+    walletFastPathTimeoutSeconds: 1
     walletTimeoutSeconds: 4
     walletMaxAttempts: 100
 
 worker:
+  maintenanceQuiesced: false
   terminationGracePeriodSeconds: 45
   preStopSeconds: 5
   shutdownTimeoutSeconds: 30

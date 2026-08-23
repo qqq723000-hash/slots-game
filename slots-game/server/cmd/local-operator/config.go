@@ -88,6 +88,7 @@ type runtimeConfig struct {
 	SessionTTL             time.Duration
 	DefaultPlayerID        string
 	DefaultWalletAccountID string
+	AllowLegacyWalletV1    bool
 	ShutdownTimeout        time.Duration
 	RequestTimeout         time.Duration
 }
@@ -139,6 +140,11 @@ func loadRuntimeConfig(getenv func(string) string) (loadedRuntime, error) {
 		DefaultWalletAccountID: valueOrDefault(getenv("LOCAL_OPERATOR_DEFAULT_WALLET_ACCOUNT_ID"), "local-wallet"),
 	}
 	var err error
+	if config.AllowLegacyWalletV1, err = parseStrictBool(
+		getenv("LOCAL_OPERATOR_ALLOW_LEGACY_WALLET_V1"), false,
+	); err != nil {
+		return loadedRuntime{}, err
+	}
 	if config.CurrencyExponent, err = parseBoundedInt(getenv("LOCAL_OPERATOR_CURRENCY_EXPONENT"), 2, 0, 6); err != nil {
 		return loadedRuntime{}, err
 	}
@@ -552,6 +558,20 @@ func parseDuration(value string, fallback, minimum, maximum time.Duration) (time
 		return 0, errors.New("duration environment value is out of range")
 	}
 	return parsed, nil
+}
+
+func parseStrictBool(value string, fallback bool) (bool, error) {
+	if value == "" {
+		return fallback, nil
+	}
+	switch value {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, errors.New("boolean environment value must be true or false")
+	}
 }
 
 func subtleCompare(left, right []byte) int {

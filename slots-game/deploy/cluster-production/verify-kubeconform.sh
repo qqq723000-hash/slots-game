@@ -26,18 +26,44 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-for phase in install upgrade; do
-  if test "$phase" = upgrade; then
+for phase in install upgrade hmac-maintenance database-maintenance maintenance-restored; do
+  case "$phase" in
+  upgrade)
     "$helm_binary" template slots "$chart_directory" \
       --namespace slots-production --is-upgrade \
       --kube-version 1.30.0 -f "$example_values" \
       >"$rendered_directory/$phase.yaml"
-  else
+    ;;
+  hmac-maintenance)
+    "$helm_binary" template slots "$chart_directory" \
+      --namespace slots-production \
+      --kube-version 1.30.0 -f "$example_values" \
+      --set rgs.maintenanceQuiesced=true \
+      >"$rendered_directory/$phase.yaml"
+    ;;
+  database-maintenance)
+    "$helm_binary" template slots "$chart_directory" \
+      --namespace slots-production \
+      --kube-version 1.30.0 -f "$example_values" \
+      --set rgs.maintenanceQuiesced=true \
+      --set worker.maintenanceQuiesced=true \
+      >"$rendered_directory/$phase.yaml"
+    ;;
+  maintenance-restored)
+    "$helm_binary" template slots "$chart_directory" \
+      --namespace slots-production \
+      --kube-version 1.30.0 -f "$example_values" \
+      --set rgs.maintenanceQuiesced=false \
+      --set worker.maintenanceQuiesced=false \
+      >"$rendered_directory/$phase.yaml"
+    ;;
+  install)
     "$helm_binary" template slots "$chart_directory" \
       --namespace slots-production \
       --kube-version 1.30.0 -f "$example_values" \
       >"$rendered_directory/$phase.yaml"
-  fi
+    ;;
+  esac
   "$kubeconform_binary" \
     -strict \
     -summary \

@@ -72,6 +72,12 @@ ruby -ryaml -rjson -e '
   expected_rotation_keys = %w[
     active_slot
     active_user_name
+    acl_schema_dual_permissions_allowed
+    acl_schema_migration_order
+    acl_schema_migration_requires_quiesced
+    acl_schema_rolling_compatible
+    acl_schema_transition
+    acl_schema_version
     application_release_allowed
     both_users_remain_in_user_group
     contract_version
@@ -114,6 +120,15 @@ ruby -ryaml -rjson -e '
       rotation.fetch("hmac_maintenance_attestation_schema") == "slots-game/hmac-quiesce-attestation/v1" &&
       rotation.fetch("hmac_maintenance_evidence_maximum_ttl_seconds") == 3600 &&
       rotation.fetch("hmac_maintenance_persistent_lock_name") == "slots-hmac-maintenance-lock" &&
+      rotation.fetch("acl_schema_version") == "v2" &&
+      rotation.fetch("acl_schema_transition") == "maintenance-quiesced" &&
+      rotation.fetch("acl_schema_migration_requires_quiesced") == true &&
+      rotation.fetch("acl_schema_rolling_compatible") == false &&
+      rotation.fetch("acl_schema_dual_permissions_allowed") == false &&
+      rotation.fetch("acl_schema_migration_order") == %w[
+        stop-new-intents drain-old-api-pods apply-v2-acl start-v2-runtime
+        verify-v2-shared-admission resume-new-intents
+      ] &&
       rotation.fetch("hmac_maintenance_target_identity") == {
         "environment" => delivery.fetch("environment"),
         "aws_account_id" => delivery.fetch("aws_account_id"),

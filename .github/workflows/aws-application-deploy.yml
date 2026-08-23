@@ -145,9 +145,48 @@ jobs:
           include-hidden-files: false
           retention-days: 1
 
-  verify-release:
+  bind-deployment-source:
     if: github.event_name == 'workflow_dispatch'
     needs: static-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # 在任何云 OIDC job 消费源码前，先用 Actions API 绑定不可变 ID、服务端摘要与本次来源。
+    permissions:
+      actions: read
+    env:
+      SOURCE_ARTIFACT_ID: ${{ needs.static-contract.outputs.source_artifact_id }}
+      SOURCE_ARTIFACT_DIGEST: ${{ needs.static-contract.outputs.source_artifact_digest }}
+    steps:
+      - name: 失败闭合校验部署源码 artifact 元数据
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SOURCE_ARTIFACT_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s\n' "$SOURCE_ARTIFACT_DIGEST" | grep -Eq '^[0-9a-f]{64}$'
+          metadata="$RUNNER_TEMP/deployment-source-artifact-${SOURCE_ARTIFACT_ID}.json"
+          curl --fail --location --show-error --silent --proto '=https' --tlsv1.2 \
+            --retry 4 --retry-all-errors \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID" \
+            --output "$metadata"
+          jq -e --argjson artifact_id "$SOURCE_ARTIFACT_ID" \
+            --arg digest "sha256:$SOURCE_ARTIFACT_DIGEST" \
+            --arg name "aws-deployment-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --argjson run_id "$GITHUB_RUN_ID" --arg source_sha "$GITHUB_SHA" '
+            .id == $artifact_id and .name == $name and .expired == false and
+            .digest == $digest and .workflow_run.id == $run_id and
+            .workflow_run.head_sha == $source_sha
+          ' "$metadata" >/dev/null
+          rm -f "$metadata"
+
+  verify-release:
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - static-contract
+      - bind-deployment-source
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment:
@@ -301,11 +340,62 @@ jobs:
           docker logout "$registry" >/dev/null 2>&1 || true
           rm -rf "$DEPLOYMENT_SOURCE" "$RELEASE_EVIDENCE"
 
+  bind-deployment-artifacts:
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - static-contract
+      - verify-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # 该 job 不 checkout、不取得 Environment/OIDC/AWS 权限，只用 Actions API 将两个 artifact
+    # 的服务端 digest 与本次 run、commit、唯一名称绑定，避免私网部署 job 消费陈旧制品。
+    permissions:
+      actions: read
+    env:
+      SOURCE_ARTIFACT_ID: ${{ needs.static-contract.outputs.source_artifact_id }}
+      SOURCE_ARTIFACT_DIGEST: ${{ needs.static-contract.outputs.source_artifact_digest }}
+      EVIDENCE_ARTIFACT_ID: ${{ needs.verify-release.outputs.evidence_artifact_id }}
+      EVIDENCE_ARTIFACT_DIGEST: ${{ needs.verify-release.outputs.evidence_artifact_digest }}
+    steps:
+      - name: 对两个部署 artifact 执行服务端摘要和来源绑定
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          verify_artifact() {
+            artifact_id=$1
+            artifact_digest=$2
+            artifact_name=$3
+            metadata="$RUNNER_TEMP/artifact-${artifact_id}.json"
+            printf '%s\n' "$artifact_id" | grep -Eq '^[1-9][0-9]*$'
+            printf '%s\n' "$artifact_digest" | grep -Eq '^[0-9a-f]{64}$'
+            curl --fail --location --show-error --silent --proto '=https' --tlsv1.2 \
+              --retry 4 --retry-all-errors \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" \
+              --output "$metadata"
+            jq -e --argjson artifact_id "$artifact_id" \
+              --arg digest "sha256:$artifact_digest" --arg name "$artifact_name" \
+              --argjson run_id "$GITHUB_RUN_ID" --arg source_sha "$GITHUB_SHA" '
+              .id == $artifact_id and .name == $name and .expired == false and
+              .digest == $digest and .workflow_run.id == $run_id and
+              .workflow_run.head_sha == $source_sha
+            ' "$metadata" >/dev/null
+            rm -f "$metadata"
+          }
+          verify_artifact "$SOURCE_ARTIFACT_ID" "$SOURCE_ARTIFACT_DIGEST" \
+            "aws-deployment-source-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          verify_artifact "$EVIDENCE_ARTIFACT_ID" "$EVIDENCE_ARTIFACT_DIGEST" \
+            "verified-aws-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
   deploy:
     if: github.event_name == 'workflow_dispatch'
     needs:
       - static-contract
       - verify-release
+      - bind-deployment-artifacts
     runs-on:
       - self-hosted
       - linux
@@ -365,6 +455,12 @@ jobs:
       VERIFIED_RELEASE: /tmp/slots-aws-deploy-${{ github.run_id }}-${{ github.run_attempt }}/verified-release
       DEPLOYMENT_EVIDENCE: /tmp/slots-aws-deploy-${{ github.run_id }}-${{ github.run_attempt }}/evidence
     steps:
+      - name: 在下载前创建私网 runner 的私有工作目录
+        run: |
+          set -euo pipefail
+          umask 077
+          install -d -m 0700 "/tmp/slots-aws-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/downloads"
+
       - name: 下载精确部署源码和上游验证证据
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -425,10 +521,25 @@ jobs:
       - name: 验证账号、集群和版本化 Helm values
         run: |
           set -euo pipefail
+          umask 077
           test "$(aws sts get-caller-identity --query Account --output text)" = "$AWS_ACCOUNT_ID"
           mkdir -m 0700 "$DEPLOYMENT_EVIDENCE"
-          aws eks describe-cluster --name "$AWS_EKS_CLUSTER_NAME" --output json > \
-            "$DEPLOYMENT_EVIDENCE/eks-cluster.json"
+          cluster_raw="$RUNNER_TEMP/slots-eks-cluster-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          aws eks describe-cluster --name "$AWS_EKS_CLUSTER_NAME" --output json > "$cluster_raw"
+          jq -e '
+            .cluster |
+            select(.status == "ACTIVE" and
+              .resourcesVpcConfig.endpointPrivateAccess == true and
+              .resourcesVpcConfig.endpointPublicAccess == false) |
+            {cluster: {
+              arn: .arn,
+              version: .version,
+              status: .status,
+              endpointPrivateAccess: .resourcesVpcConfig.endpointPrivateAccess,
+              endpointPublicAccess: .resourcesVpcConfig.endpointPublicAccess
+            }}
+          ' "$cluster_raw" > "$DEPLOYMENT_EVIDENCE/eks-cluster.json"
+          rm -f "$cluster_raw"
           cluster_arn=$(jq -er '.cluster.arn' "$DEPLOYMENT_EVIDENCE/eks-cluster.json")
           printf '%s\n' "$cluster_arn" | \
             grep -Eq "^arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${AWS_EKS_CLUSTER_NAME}$"
@@ -526,6 +637,15 @@ jobs:
             $rotation.hmac_maintenance_attestation_schema == "slots-game/hmac-quiesce-attestation/v1" and
             $rotation.hmac_maintenance_evidence_maximum_ttl_seconds == 3600 and
             $rotation.hmac_maintenance_persistent_lock_name == "slots-hmac-maintenance-lock" and
+            $rotation.acl_schema_version == "v2" and
+            $rotation.acl_schema_transition == "maintenance-quiesced" and
+            $rotation.acl_schema_migration_requires_quiesced == true and
+            $rotation.acl_schema_rolling_compatible == false and
+            $rotation.acl_schema_dual_permissions_allowed == false and
+            $rotation.acl_schema_migration_order == [
+              "stop-new-intents", "drain-old-api-pods", "apply-v2-acl",
+              "start-v2-runtime", "verify-v2-shared-admission", "resume-new-intents"
+            ] and
             $rotation.hmac_maintenance_target_identity == {
               environment: $target, aws_account_id: $account, aws_region: $region,
               eks_cluster_name: $cluster, kubernetes_namespace: env.AWS_EKS_NAMESPACE,
@@ -825,7 +945,7 @@ jobs:
         with:
           name: aws-deployment-evidence-${{ inputs.target_environment }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.DEPLOYMENT_EVIDENCE }}
-          if-no-files-found: warn
+          if-no-files-found: error
           include-hidden-files: false
           retention-days: 90
 
@@ -840,4 +960,5 @@ jobs:
             "$RUNNER_TEMP/slots-helm-values-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.yaml" \
             "$RUNNER_TEMP/slots-terraform-delivery-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json" \
             "$RUNNER_TEMP/slots-kubeconfig-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            "$RUNNER_TEMP/slots-eks-cluster-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json" \
             "$RUNNER_TEMP/aws-deployment-tools" "$RUNNER_TEMP/helm-linux-amd64.tar.gz"

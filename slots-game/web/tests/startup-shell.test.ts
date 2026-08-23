@@ -25,6 +25,18 @@ describe("startup shell contract", () => {
       .toBeLessThan(mainSource.indexOf("await ApplicationController.create"));
   });
 
+  it("wires browser availability and unload cleanup without destroying a BFCache session", () => {
+    expect(mainSource).toContain('window.addEventListener("online", syncRuntimeAvailability)');
+    expect(mainSource).toContain('window.addEventListener("offline", syncRuntimeAvailability)');
+    expect(mainSource).toContain('document.addEventListener("visibilitychange", syncRuntimeAvailability)');
+    expect(mainSource).toContain('window.addEventListener("pageshow", handlePageShow)');
+    expect(mainSource).toContain('window.addEventListener("pagehide", handlePageHide)');
+    expect(mainSource).toContain("if (event.persisted)");
+    expect(mainSource).toContain("runtimeAvailability(false)");
+    expect(mainSource).toContain('disposeApplication("Application page was unloaded")');
+    expect(mainSource).toContain("configuredGateway?.close()");
+  });
+
   it("不会把渲染装配故障误报为运营方会话失效", () => {
     expect(mainSource).toContain(
       "presentStartupFailure(\n      error,\n      false,\n      launchGateway.operatorHostOrigin,",

@@ -5,7 +5,8 @@ AWS 是本仓库唯一正式生产主线。正式云架构、部署和运行责�
 [AWS 正式生产部署](aws-production-deployment.md)和
 [AWS 正式生产运维](aws-production-operations.md)为准。
 高并发缓存、异步边界、日志、弹性、数学版本和冷热数据治理必须同时遵守
-[高并发性能与数据生命周期契约](performance-optimization-contract.md)。
+[高并发性能与数据生命周期契约](performance-optimization-contract.md)。当前实现的优缺点、深层原
+因、传统方案对比与后续边界见[前后端核心架构评估](core-architecture-assessment.md)。
 
 本文保留应用级不变量、macOS Compose 本地集成验收细节和可移植 Kubernetes Chart 契约，便于开发
 排障与跨环境评审。下面的 Compose 树不是公司生产拓扑；“公司集群”章节描述的是通用应用交付
@@ -288,7 +289,7 @@ PostgreSQL 或本机 Compose 观测栈。
 │   ├── PrometheusRule（由 Chart 创建，CRD/求值器/Alertmanager 由公司平台提供）
 │   │   ├── ruleLabels 必须匹配公司 Prometheus 规则发现策略
 │   │   ├── 固定 API/Worker job + 当前 namespace，避免跨角色或跨环境串告警
-│   │   └── API/Worker 目标与就绪、5xx、容量、HPA 失效、共享准入、认证重放、钱包未知、完整性、outbox、DB 池十五条规则
+│   │   └── API/Worker 目标与就绪、5xx、容量/HPA、共享准入、认证重放、钱包结果/时延/停滞、恢复 backlog/年龄/循环及快照新鲜度、人工复核、完整性、outbox、DB 池二十七条规则
 │   └── Prometheus Pod → NetworkPolicy 允许 → operations Service:8081 → Alertmanager 外部路由
 │
 ├── 外部 Secret 引用树（六个职责 Secret 名称强制互异）
@@ -348,7 +349,7 @@ PostgreSQL 或本机 Compose 观测栈。
 
 | 组件 | 职责 | 禁止事项 |
 | --- | --- | --- |
-| `rgs-server` API 角色 | 认证、会话、轮次协调、首次钱包调用、公网与运维探针 | 不执行迁移、恢复或 Outbox 投递，不在日志输出凭据 |
+| `rgs-server` API 角色 | 认证、会话、轮次协调、一秒有界钱包快路径、公网与运维探针 | 不执行迁移、后台恢复或 Outbox 投递，不在日志输出凭据 |
 | `rgs-server` Worker 角色 | 钱包未知结果恢复、Outbox 投递、凭据清理与独立运维探针 | 不开放公网监听器，不接收玩家请求 |
 | `rgs-migrator` | 有序执行并验证 PostgreSQL schema | 不承载业务流量 |
 | `local-operator` | 本机运营入口、签名钱包、审计/日志接收 | 不接管 RGS 结算 |
@@ -368,23 +369,28 @@ sequenceDiagram
     participant W as 钱包
 
     B->>A: 签名会话请求 / spin
-    A->>D: PrepareRound（固定输入、结果、哈希）
-    A->>W: Apply(operationId，DEBIT+CREDIT)
-    W-->>A: 幂等收据或未知状态
+    A->>A: 钱包新意图非阻塞预准入
+    A->>D: PrepareRound（固定输入、结果、命令摘要、phase=APPLY）
+    A->>D: Claim APPLY；先持久推进 phase=LOOKUP
+    A->>W: SubmitRound(operationId，DEBIT+CREDIT)，最多等待一秒
+    W-->>A: 签名终态 / PENDING / UNKNOWN / NOT_SENT
     alt 已确认
         A->>D: CommitRound + outbox
         A-->>B: 已提交结果
         B->>A: 展示消费 ACK
     else 未知
-        A-->>B: 可恢复状态；不重复 RNG/扣款
-        K->>D: 租约认领同一 pending 轮次
-        K->>W: 查询同一 operationId
-        K->>D: 按同一结果提交或进入人工审查
+        A-->>B: HTTP 202；不重复 RNG/扣款
+        K->>D: 按 DB 时钟、SKIP LOCKED 领取持久动作
+        K->>W: Resolve 同一完整 operation；仅权威 NOT_FOUND 经窗口后重排同一 Apply
+        K->>D: 提交、拒绝、持久退避或进入人工审查
     end
 ```
 
-同一轮次只允许稳定 `operationId` 对应一条原子钱包命令。钱包结果未知时保留恢复状态并查询原
-命令；禁止重新运行 RNG、创建新轮次或重复扣款。结果展示 ACK 只推进交付状态，不改变经济结果。
+同一轮次只允许稳定 `operationId` 对应一条原子钱包命令。钱包 v2 状态机明确区分
+`NOT_SENT`（保持原动作）与 `UNKNOWN`（只能查询）；未认证响应不产生资金语义。客户端收到
+`WALLET_UNAVAILABLE` 时遵守合法 `Retry-After`，先查询同一 round，只有权威 404 才复用字节等价
+账本身份重提。任何路径都禁止重新运行 RNG、创建新轮次或改变经济字段。结果展示 ACK 只推进交付
+状态，不改变经济结果。
 
 ## 数据与恢复
 
@@ -420,4 +426,5 @@ smoke、秘密/漏洞扫描、CycloneDX/SPDX SBOM、镜像扫描、来源证明�
 - [访问令牌密钥轮换](access-token-key-rotation.md)
 - [事务性发件箱](outbox-delivery.md)
 - [多副本集群运行契约](cluster-runtime-contract.md)
+- [前后端核心架构评估](core-architecture-assessment.md)
 - [安全控制](security-compliance.md)

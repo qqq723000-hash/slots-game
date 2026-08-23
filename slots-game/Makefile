@@ -1,4 +1,4 @@
-.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
+.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
 
 BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid
 
@@ -24,6 +24,17 @@ test-postgres:
 
 benchmark-engine:
 	cd server && go test ./internal/game -run '^$$' -bench '^BenchmarkEngineSpinRepresentative$$' -benchmem -count=5
+
+# 高并发 profile 必须显式提供隔离环境/批准阈值；生成物写入 ignored .artifacts，
+# 不属于普通快速单测，也不能替代 AWS、第三方钱包或长时间 soak 认证。
+profile-http-high-concurrency:
+	./server/scripts/http-high-concurrency.sh
+
+profile-postgres-high-concurrency:
+	./server/scripts/postgres-high-concurrency.sh
+
+profile-valkey-high-concurrency:
+	./server/scripts/valkey-high-concurrency.sh
 
 migrate-postgres:
 	cd server && go run ./cmd/rgs-migrator up

@@ -7,6 +7,9 @@ metadata:
     app.kubernetes.io/component: rgs-worker
     slots-game.io/log-pipeline-provider: {{ .Values.externalControls.logPipelineProvider | quote }}
 spec:
+  {{- if .Values.worker.maintenanceQuiesced }}
+  replicas: 0
+  {{- end }}
   revisionHistoryLimit: 5
   minReadySeconds: 10
   progressDeadlineSeconds: 600

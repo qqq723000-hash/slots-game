@@ -253,7 +253,7 @@ jobs:
             ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/postgres-conformance/**/*
             ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/runtime-smoke/**/*
             ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/source-conformance.env
-          if-no-files-found: warn
+          if-no-files-found: error
           include-hidden-files: false
           retention-days: 90
 
@@ -394,7 +394,7 @@ jobs:
             ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/image-scan/**/*.txt
             ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/image-scan/**/*.sha256
             ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/docker-buildx-version.txt
-          if-no-files-found: warn
+          if-no-files-found: error
           include-hidden-files: false
           retention-days: 90
 
@@ -522,6 +522,7 @@ jobs:
           set -euo pipefail
           local_ref="slots-release-browser-smoke:${GITHUB_SHA}"
           static_root=$(mktemp -d "${RUNNER_TEMP%/}/slots-release-web-root.XXXXXX")
+          conversion_root=$(mktemp -d "${RUNNER_TEMP%/}/slots-release-web-conversion.XXXXXX")
           container_id=
           cleanup() {
             if [ -n "$container_id" ]; then
@@ -532,18 +533,27 @@ jobs:
               "${RUNNER_TEMP%/}"/slots-release-web-root.*) rm -rf -- "$static_root" ;;
               *) echo '拒绝清理异常 Web 静态根目录' >&2 ;;
             esac
+            case "$conversion_root" in
+              "${RUNNER_TEMP%/}"/slots-release-web-conversion.*) rm -rf -- "$conversion_root" ;;
+              *) echo '拒绝清理异常 Web 转换目录' >&2 ;;
+            esac
           }
           trap cleanup EXIT HUP INT TERM
           docker pull "$SKOPEO_IMAGE"
           docker run --rm --network=none --read-only --cap-drop=ALL \
             --security-opt=no-new-privileges \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp/skopeo-home \
             --env TMPDIR=/tmp \
             --tmpfs /tmp:rw,nosuid,nodev,size=64m,mode=1777 \
             --tmpfs /var/tmp:rw,nosuid,nodev,size=256m,mode=1777 \
-            --volume /var/run/docker.sock:/var/run/docker.sock \
             --volume "$SUPPLY_CHAIN_REPORT_DIR/bundle:/bundle:ro" \
+            --volume "$conversion_root:/output" \
             "$SKOPEO_IMAGE" copy --all \
-            oci-archive:/bundle/release-image.oci.tar "docker-daemon:$local_ref"
+            oci-archive:/bundle/release-image.oci.tar \
+            "docker-archive:/output/release-image.docker.tar:$local_ref"
+          test -s "$conversion_root/release-image.docker.tar"
+          docker load --input "$conversion_root/release-image.docker.tar" >/dev/null
           container_id=$(docker create "$local_ref")
           docker cp "$container_id:/usr/share/nginx/html/." "$static_root"
           docker rm "$container_id" >/dev/null
@@ -598,11 +608,11 @@ jobs:
             ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/image-scan/**/*.txt
             ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/image-scan/**/*.sha256
             ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/docker-buildx-version.txt
-          if-no-files-found: warn
+          if-no-files-found: error
           include-hidden-files: false
           retention-days: 90
 
-  publish-sign:
+  bind-release-artifact:
     needs:
       - verify-source-conformance
       - build-rgs
@@ -610,6 +620,53 @@ jobs:
     if: >-
       always() &&
       needs.verify-source-conformance.result == 'success' &&
+      ((inputs.artifact == 'web-runtime' && needs.build-approved-web.result == 'success' && needs.build-rgs.result == 'skipped') ||
+       (inputs.artifact != 'web-runtime' && needs.build-rgs.result == 'success' && needs.build-approved-web.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # 独立、无 checkout 的 job 用 Actions API 把不可变 artifact ID 与服务端 archive digest、
+    # 当前 run、commit 和唯一名称绑定；最终发布 job 不需要扩大到 actions:read。
+    permissions:
+      actions: read
+    env:
+      EXPECTED_ARTIFACT_ID: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.artifact_id || needs.build-rgs.outputs.artifact_id }}
+      EXPECTED_ARTIFACT_DIGEST: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.artifact_digest || needs.build-rgs.outputs.artifact_digest }}
+    steps:
+      - name: Fail closed on stale or digest-mismatched release artifact metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$EXPECTED_ARTIFACT_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s\n' "$EXPECTED_ARTIFACT_DIGEST" | grep -Eq '^[0-9a-f]{64}$'
+          metadata="$RUNNER_TEMP/release-artifact-metadata.json"
+          curl --fail --location --show-error --silent --proto '=https' --tlsv1.2 \
+            --retry 4 --retry-all-errors \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_ARTIFACT_ID" \
+            --output "$metadata"
+          jq -e --argjson artifact_id "$EXPECTED_ARTIFACT_ID" \
+            --arg digest "sha256:$EXPECTED_ARTIFACT_DIGEST" \
+            --arg name "release-bundle-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --argjson run_id "$GITHUB_RUN_ID" --arg source_sha "$GITHUB_SHA" '
+            .id == $artifact_id and .name == $name and .expired == false and
+            .digest == $digest and .workflow_run.id == $run_id and
+            .workflow_run.head_sha == $source_sha
+          ' "$metadata" >/dev/null
+          rm -f "$metadata"
+
+  publish-sign:
+    needs:
+      - verify-source-conformance
+      - build-rgs
+      - build-approved-web
+      - bind-release-artifact
+    if: >-
+      always() &&
+      needs.verify-source-conformance.result == 'success' &&
+      needs.bind-release-artifact.result == 'success' &&
       ((inputs.artifact == 'web-runtime' && needs.build-approved-web.result == 'success' && needs.build-rgs.result == 'skipped') ||
        (inputs.artifact != 'web-runtime' && needs.build-rgs.result == 'success' && needs.build-approved-web.result == 'skipped'))
     runs-on: ubuntu-latest
@@ -630,6 +687,7 @@ jobs:
       SUPPLY_CHAIN_EXPECTED_CERTIFICATE_IDENTITY: ${{ inputs.expected_certificate_identity }}
       SUPPLY_CHAIN_EXPECTED_OIDC_ISSUER: ${{ inputs.expected_oidc_issuer }}
       BUNDLE_DOWNLOAD_DIR: /tmp/slots-release-publish-${{ github.run_id }}-${{ github.run_attempt }}/bundle
+      PUBLISH_WORK_DIR: /tmp/slots-release-publish-${{ github.run_id }}-${{ github.run_attempt }}/work
       PUBLISH_EVIDENCE_DIR: /tmp/slots-release-publish-${{ github.run_id }}-${{ github.run_attempt }}/evidence
       RGS_BASE_URL: ${{ inputs.rgs_base_url }}
       RGS_BET_OPTIONS_MINOR: ${{ inputs.rgs_bet_options_minor }}
@@ -773,17 +831,18 @@ jobs:
           fi
           # 纯 OCI layout 已完成离线复核；使用断网、固定 digest 的 Skopeo 只做格式转换，
           # 生成 Docker 明确定义可 load 的归档。转换容器拿不到 OIDC、Registry 或 Docker socket。
-          mkdir -p "$PUBLISH_EVIDENCE_DIR"
+          install -d -m 0700 "$PUBLISH_WORK_DIR" "$PUBLISH_EVIDENCE_DIR"
           docker run --rm --user "$(id -u):$(id -g)" --read-only --network=none \
             --tmpfs /tmp:rw,nosuid,nodev,size=256m \
             --env HOME=/tmp/skopeo-home \
             --mount "type=bind,src=$BUNDLE_DOWNLOAD_DIR,dst=/input,readonly" \
-            --mount "type=bind,src=$PUBLISH_EVIDENCE_DIR,dst=/out" \
+            --mount "type=bind,src=$PUBLISH_WORK_DIR,dst=/out" \
             "$SKOPEO_IMAGE" copy \
               oci-archive:/input/release-image.oci.tar \
               "docker-archive:/out/release-image.docker.tar:$local_ref"
-          test -s "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar"
-          sha256sum "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar" > \
+          test -s "$PUBLISH_WORK_DIR/release-image.docker.tar"
+          docker_archive_sha256=$(sha256sum "$PUBLISH_WORK_DIR/release-image.docker.tar" | awk '{ print $1 }')
+          printf '%s  release-image.docker.tar\n' "$docker_archive_sha256" > \
             "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar.sha256"
 
       - name: Assume the release-only AWS role after offline bundle verification
@@ -856,10 +915,10 @@ jobs:
               exit 2
             fi
           }
-          mkdir -p "$PUBLISH_EVIDENCE_DIR"
+          install -d -m 0700 "$PUBLISH_EVIDENCE_DIR"
           local_ref="slots-release-bundle:${SUPPLY_CHAIN_ARTIFACT}-${GITHUB_SHA}"
           candidate_ref="$SUPPLY_CHAIN_IMAGE_REPOSITORY:candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          docker load --input "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar"
+          docker load --input "$PUBLISH_WORK_DIR/release-image.docker.tar"
           docker image inspect "$local_ref" >/dev/null
           docker tag "$local_ref" "$candidate_ref"
           require_current_web_approval
@@ -961,12 +1020,20 @@ jobs:
           docker image inspect --format '{{join .RepoDigests "\n"}}' "$final_ref" | \
             grep -F -x "$SUPPLY_CHAIN_IMAGE_REPOSITORY@$SUPPLY_CHAIN_IMAGE_DIGEST"
 
+      - name: Remove transient release bytes before audit evidence upload
+        if: always()
+        run: |
+          set -euo pipefail
+          registry="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          docker logout "$registry" >/dev/null 2>&1 || true
+          rm -rf "$PUBLISH_WORK_DIR" "$BUNDLE_DOWNLOAD_DIR"
+
       - name: Upload privileged publish/sign evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-publish-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.PUBLISH_EVIDENCE_DIR }}
-          if-no-files-found: warn
+          if-no-files-found: error
           include-hidden-files: false
           retention-days: 90

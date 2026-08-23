@@ -70,7 +70,9 @@ type Config struct {
 	DatabaseLockTimeout              time.Duration
 	DatabaseMaxOpenConns             int
 	DatabaseMaxIdleConns             int
+	DatabaseCriticalReserveConns     int
 	WalletTimeout                    time.Duration
+	WalletFastPathTimeout            time.Duration
 	WalletRootCAFile                 string
 	WalletMaxAttempts                int
 	LaunchTTL                        time.Duration
@@ -131,7 +133,9 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		DatabaseLockTimeout:              2 * time.Second,
 		DatabaseMaxOpenConns:             40,
 		DatabaseMaxIdleConns:             10,
+		DatabaseCriticalReserveConns:     5,
 		WalletTimeout:                    4 * time.Second,
+		WalletFastPathTimeout:            time.Second,
 		WalletMaxAttempts:                100,
 		LaunchTTL:                        2 * time.Minute,
 		AccessTokenTTL:                   15 * time.Minute,
@@ -212,6 +216,7 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		"RGS_DB_STATEMENT_TIMEOUT":        &config.DatabaseStatementTimeout,
 		"RGS_DB_LOCK_TIMEOUT":             &config.DatabaseLockTimeout,
 		"RGS_WALLET_TIMEOUT":              &config.WalletTimeout,
+		"RGS_WALLET_FAST_PATH_TIMEOUT":    &config.WalletFastPathTimeout,
 		"RGS_LAUNCH_TTL":                  &config.LaunchTTL,
 		"RGS_ACCESS_TOKEN_TTL":            &config.AccessTokenTTL,
 		"RGS_SHARED_ADMISSION_TIMEOUT":    &config.SharedAdmissionTimeout,
@@ -258,6 +263,9 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		return Config{}, err
 	}
 	if err := intValue(lookup, "RGS_DB_MAX_IDLE_CONNS", &config.DatabaseMaxIdleConns); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_DB_CRITICAL_RESERVE_CONNS", &config.DatabaseCriticalReserveConns); err != nil {
 		return Config{}, err
 	}
 	if err := intValue(lookup, "RGS_OUTBOX_BATCH_SIZE", &config.OutboxBatchSize); err != nil {
@@ -396,6 +404,7 @@ func (c Config) Validate() error {
 		"database statement timeout": c.DatabaseStatementTimeout,
 		"database lock timeout":      c.DatabaseLockTimeout,
 		"wallet timeout":             c.WalletTimeout,
+		"wallet fast path timeout":   c.WalletFastPathTimeout,
 		"launch TTL":                 c.LaunchTTL,
 		"access token TTL":           c.AccessTokenTTL,
 	} {
@@ -424,6 +433,9 @@ func (c Config) Validate() error {
 	}
 	if c.WalletTimeout >= c.RequestTimeout {
 		return errors.New("RGS_WALLET_TIMEOUT must be shorter than RGS_REQUEST_TIMEOUT")
+	}
+	if c.WalletFastPathTimeout >= c.WalletTimeout {
+		return errors.New("RGS_WALLET_FAST_PATH_TIMEOUT must be shorter than RGS_WALLET_TIMEOUT")
 	}
 	if c.LaunchTTL > 5*time.Minute || c.AccessTokenTTL > time.Hour {
 		return errors.New("launch/access credentials exceed maximum TTL")
@@ -457,6 +469,9 @@ func (c Config) Validate() error {
 	}
 	if c.DatabaseMaxIdleConns < 0 || c.DatabaseMaxIdleConns > c.DatabaseMaxOpenConns {
 		return errors.New("RGS_DB_MAX_IDLE_CONNS must be between 0 and RGS_DB_MAX_OPEN_CONNS")
+	}
+	if c.DatabaseCriticalReserveConns < 1 || c.DatabaseCriticalReserveConns >= c.DatabaseMaxOpenConns {
+		return errors.New("RGS_DB_CRITICAL_RESERVE_CONNS must be between 1 and RGS_DB_MAX_OPEN_CONNS-1")
 	}
 	return nil
 }
@@ -513,6 +528,9 @@ func (c Config) validateSharedAdmission() error {
 	if c.SharedAdmissionRatePerSecond < 0.001 || c.SharedAdmissionRatePerSecond > 100_000 ||
 		c.SharedAdmissionRateBurst < 1 || c.SharedAdmissionRateBurst > 1_000_000 {
 		return errors.New("invalid shared admission rate limit configuration")
+	}
+	if float64(c.SharedAdmissionRateBurst)/c.SharedAdmissionRatePerSecond > (24*time.Hour - time.Second).Seconds() {
+		return errors.New("shared admission full-refill TTL must not exceed 24 hours")
 	}
 	return nil
 }

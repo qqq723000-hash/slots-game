@@ -3,6 +3,7 @@
 # 本脚本只从调用方已完成 Cosign/attestation 验证并按 digest 拉取的 Web 镜像提取 S3 输入。
 # 它不会接受 tag，也不会读取工作区 web/dist；docker create 只建立文件系统视图，不启动镜像。
 set -eu
+umask 077
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 static_verifier="$script_dir/verify-web-static-root.mjs"

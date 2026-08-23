@@ -134,10 +134,14 @@ type Config struct {
 	// ClientAdmission 的键只能来自已验证声明，禁止使用请求头、RemoteAddr
 	// 或 X-Forwarded-For 构造，避免伪造键和反向代理后的跨玩家误限流。
 	ClientAdmission Admission
-	// LaunchAdmission 与 SpinAdmission 只保护创建新经济意图的路径。共享后端故障时，
-	// 状态查询、待交付结果、确认和令牌续期仍由进程内准入保护并保持可用。
-	LaunchAdmission      Admission
-	SpinAdmission        Admission
+	// LaunchAdmission 与 SpinAdmission 只保护创建新经济意图的路径，并分别按已验证
+	// operator 聚合，避免大量 session 把共享配额乘开。共享后端故障时，状态查询、
+	// 待交付结果、确认和令牌续期仍由进程内准入保护并保持可用。
+	LaunchAdmission Admission
+	SpinAdmission   Admission
+	// NewIntentCapacity 为 launch/spin 持有一个进程内硬许可，使公网新意图不能耗尽
+	// PostgreSQL 为 status、pending result、ACK 和 refresh 预留的连接预算。
+	NewIntentCapacity    NewIntentCapacity
 	SecurityEvents       SecurityEventObserver
 	MaxRequestBytes      int64
 	ResponseSignatureTTL time.Duration

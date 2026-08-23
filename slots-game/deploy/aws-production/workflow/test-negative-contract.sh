@@ -144,6 +144,48 @@ replace_once 'grep -F -x -- "$verified_image" "$VERIFIED_RELEASE/verified-images
 expect_rejected '部署 Environment 没有绑定制品验证 Environment 的精确 ECR 引用'
 
 reset_fixture
+replace_once '.digest == $digest and .workflow_run.id == $run_id and' \
+  '.workflow_run.id == $run_id and' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected 'OIDC 前部署源码 artifact 服务端摘要未绑定'
+
+reset_fixture
+replace_once '      - bind-deployment-source' \
+  '      - static-contract # source artifact binding dependency removed' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected 'ECR OIDC 验证没有等待源码 artifact 元数据绑定成功'
+
+reset_fixture
+replace_once '      - bind-deployment-artifacts' \
+  '      - verify-release # artifact binding dependency removed' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected '私网部署没有等待 artifact 元数据绑定成功'
+
+reset_fixture
+replace_once '    permissions:
+      actions: read
+    env:
+      SOURCE_ARTIFACT_ID:' \
+  '    permissions:
+      actions: read
+      contents: write
+    env:
+      SOURCE_ARTIFACT_ID:' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected 'artifact 元数据绑定 job 获得额外写权限'
+
+reset_fixture
+replace_once 'install -d -m 0700 "/tmp/slots-aws-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/downloads"' \
+  'mkdir -p "/tmp/slots-aws-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/downloads"' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected '私网 runner 下载目录退回宽松默认权限'
+
+reset_fixture
+replace_once '          if-no-files-found: error' '          if-no-files-found: warn' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected '应用部署证据缺失仍只给 warning'
+
+reset_fixture
 replace_once '--atomic --wait --wait-for-jobs --timeout 20m' '--wait --timeout 20m' \
   "$fixture_root/.github/workflows/aws-application-deploy.yml"
 expect_rejected '非 atomic Helm 发布'
@@ -183,6 +225,31 @@ reset_fixture
 replace_once 'artifact-ids: ${{ needs.terraform-plan.outputs.artifact_id }}' \
   'name: mutable-plan-name' "$fixture_root/.github/workflows/aws-infrastructure.yml"
 expect_rejected '按可变名称下载 Terraform plan'
+
+reset_fixture
+replace_once '.digest == $digest and .workflow_run.id == $run_id and' \
+  '.workflow_run.id == $run_id and' \
+  "$fixture_root/.github/workflows/aws-infrastructure.yml"
+expect_rejected 'Terraform plan artifact 服务端摘要未绑定'
+
+reset_fixture
+replace_once '      - bind-terraform-plan' \
+  '      - terraform-plan # artifact binding dependency removed' \
+  "$fixture_root/.github/workflows/aws-infrastructure.yml"
+expect_rejected 'Terraform apply 没有等待 plan artifact 元数据绑定成功'
+
+reset_fixture
+replace_once '    permissions:
+      actions: read
+    env:
+      PLAN_ARTIFACT_ID:' \
+  '    permissions:
+      actions: read
+      contents: write
+    env:
+      PLAN_ARTIFACT_ID:' \
+  "$fixture_root/.github/workflows/aws-infrastructure.yml"
+expect_rejected 'Terraform plan artifact 元数据绑定 job 获得额外写权限'
 
 reset_fixture
 replace_once '          test "$GITHUB_REF_PROTECTED" = true' \
@@ -424,6 +491,29 @@ replace_once 'test "$current_cluster" = "$expected_cluster_arn" || {' \
 expect_rejected '写入 ExternalSecret 前跳过精确 EKS ARN 门禁'
 
 reset_fixture
+replace_once '.resourcesVpcConfig.endpointPublicAccess == false' \
+  '.resourcesVpcConfig.endpointPublicAccess == true' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected '应用部署接受公开 EKS API endpoint'
+
+reset_fixture
+replace_once '.cluster.resourcesVpcConfig.endpointPublicAccess == false' \
+  '.cluster.resourcesVpcConfig.endpointPublicAccess == true' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/manage-hmac-quiesce-evidence.sh"
+expect_rejected 'HMAC 停机接受公开 EKS API endpoint'
+
+reset_fixture
+replace_once '.cluster.arn == $cluster_arn and' \
+  '.cluster.arn != $cluster_arn and' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/manage-hmac-quiesce-evidence.sh"
+expect_rejected 'HMAC 停机未绑定精确 EKS ARN'
+
+reset_fixture
+replace_once 'rm -f "$cluster_raw"' 'true # raw cluster topology retained' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected '应用部署审计前未删除完整 EKS 拓扑响应'
+
+reset_fixture
 replace_once '--kubeconfig "$kubeconfig"' \
   '--alias mutable-cluster-name --kubeconfig "$kubeconfig"' \
   "$fixture_root/.github/workflows/aws-application-deploy.yml"
@@ -433,6 +523,11 @@ reset_fixture
 replace_once "--if-none-match '*'" '--no-guess-mime-type' \
   "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
 expect_rejected '允许覆盖 Web release 对象'
+
+reset_fixture
+replace_once 'test "$rollback_public_ready" = true' 'true # public rollback not verified' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'Web KVS 回退后未验证 CloudFront 公网读路径'
 
 reset_fixture
 replace_once "*.avif) printf '%s\\n' 'image/avif'" \
@@ -486,6 +581,66 @@ replace_once '--if-match "$kvs_etag_before" --key active-release --value "$relea
   '--key active-release --value "$release_id"' \
   "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
 expect_rejected '切换接口未执行 ETag 乐观锁校验'
+
+reset_fixture
+replace_once 'if aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN"' \
+  'aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN"' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'KVS 切换命令非零后被 set -e 直接退出'
+
+reset_fixture
+replace_once 'if ! read_active_release_authoritatively "$active_json"; then' \
+  'if false; then' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected '模糊成功后跳过 active-release 权威回读'
+
+reset_fixture
+replace_once 'CAS fence 已推进原 ETag 且 active-release 保持旧状态' \
+  '单次旧值读取被错误当作安全失败' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected '切换未应用时没有先推进原 ETag'
+
+reset_fixture
+replace_once '--if-match "$kvs_etag_before" --key active-release --value "$previous_release"' \
+  '--if-match "$kvs_etag_before" --key active-release --value "$release_id"' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected '旧 release CAS fence 被改成重复 promotion'
+
+reset_fixture
+replace_once 'test "$authoritative_kvs_etag" != "$kvs_etag_before"' \
+  'test "$authoritative_kvs_etag" = "$kvs_etag_before"' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'CAS fence 未等待原 ETag 被消费'
+
+reset_fixture
+replace_once 'test "$fence_release_first" = "$fence_release_confirm"' \
+  'test "$fence_release_first" = "$fence_release_first"' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'CAS fence 接受 key 与 ETag 撕裂快照'
+
+reset_fixture
+replace_once 'manual_intervention promotion-reconciliation' \
+  'true # unknown promotion state ignored' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected '权威回读未知时仍允许自动写入'
+
+reset_fixture
+replace_once 'run_scenario applied-then-error "$previous_release" success' \
+  'true # applied-then-error fault fixture removed' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/test-web-release-switch-faults.sh"
+expect_rejected '删除 KVS applied-then-error 故障夹具'
+
+reset_fixture
+replace_once 'run_scenario lookup-error "$previous_release" failure' \
+  'true # lookup-error fault fixture removed' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/test-web-release-switch-faults.sh"
+expect_rejected '删除 KVS lookup-error 失败闭合夹具'
+
+reset_fixture
+replace_once 'run_scenario delayed-apply-after-read "$previous_release" success' \
+  'true # delayed-apply-after-read fault fixture removed' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/test-web-release-switch-faults.sh"
+expect_rejected '删除 KVS delayed-apply-after-read 迟到提交夹具'
 
 reset_fixture
 replace_once '.DistributionConfig.Origins.Items[0].DomainName == $origin' \
@@ -622,6 +777,16 @@ replace_once 'slots-game/hmac-finalize-attestation/v1' \
 expect_rejected '交付说明遗漏过期原证据的 finalize 恢复接口'
 
 reset_fixture
+replace_once '仍是明确的外部上线阻断' '已自动化生产就绪' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/README.md"
+expect_rejected 'AWS 交付说明误宣称非滚动 PostgreSQL 迁移已经自动化'
+
+reset_fixture
+replace_once '禁止宣称“全栈原子发布”' '可以宣称“全栈原子发布”' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/README.md"
+expect_rejected 'AWS 交付说明把两个组件原子边界误称为全栈原子发布'
+
+reset_fixture
 replace_once 'hmac-application-maintenance-gate.sh" \
               standard' \
   'hmac-application-maintenance-gate.sh" \
@@ -728,5 +893,8 @@ if env -i PATH="$PATH" \
   "$fingerprint_script" prod-primary >/dev/null 2>&1; then
   fail '缺少 Valkey B 槽密码仍生成 ephemeral 指纹'
 fi
+
+"$script_directory/test-web-release-switch-faults.sh" >/dev/null || \
+  fail 'Web KVS 模糊成功故障夹具未通过'
 
 printf '%s\n' 'AWS 工作流危险变体负向门禁通过。'

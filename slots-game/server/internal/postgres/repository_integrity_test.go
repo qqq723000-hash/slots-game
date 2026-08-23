@@ -22,10 +22,12 @@ var roundRowColumns = []string{
 	"request_fingerprint", "status", "round_kind", "game_id",
 	"definition_version", "definition_hash", "currency", "bet_minor",
 	"input_feature_state", "charged_minor", "win_minor", "starting_revision", "resulting_revision",
-	"sequence", "result_json", "outcome_hash", "wallet_transaction_id",
-	"wallet_balance_minor", "wallet_lease_until", "failure_code", "retry_count",
+	"sequence", "result_json", "outcome_hash",
+	"wallet_phase", "next_attempt_at", "apply_attempts", "lookup_attempts",
+	"wallet_command_digest", "wallet_profile", "wallet_transaction_id", "wallet_balance_minor",
+	"wallet_lease_until", "failure_code", "retry_count",
 	"created_at", "updated_at", "player_id", "wallet_account_id",
-	"session_status", "session_integrity_quarantined_at",
+	"wallet_session_id", "session_status", "session_integrity_quarantined_at",
 }
 
 type roundRowFixture struct {
@@ -44,6 +46,13 @@ type roundRowFixture struct {
 	sequence            int64
 	resultJSON          []byte
 	walletTransaction   any
+	walletPhase         string
+	nextAttemptAt       any
+	applyAttempts       int
+	lookupAttempts      int
+	walletCommandDigest any
+	omitCommandDigest   bool
+	walletProfileJSON   any
 	walletBalance       any
 	walletLease         any
 	createdAt           time.Time
@@ -116,7 +125,6 @@ func TestClaimWalletUsesDatabaseClockAcrossReplicas(t *testing.T) {
 	}
 	fixture := newRoundRowFixture(t, rgs.RoundPrepared)
 	databaseNow := fixture.createdAt.Add(time.Minute)
-	callerNow := databaseNow.Add(8 * time.Hour)
 	const leaseDuration = 45 * time.Second
 
 	mock.ExpectBegin()
@@ -128,15 +136,21 @@ func TestClaimWalletUsesDatabaseClockAcrossReplicas(t *testing.T) {
 		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3 FOR UPDATE OF r`)).
 		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
 		WillReturnRows(fixture.rows(t))
+	mock.ExpectQuery(regexp.QuoteMeta(walletClaimLedgerSelect)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
+		WillReturnRows(validWalletLedgerRows(fixture, "PENDING"))
 	mock.ExpectQuery(regexp.QuoteMeta(walletLeaseClockSQL)).
 		WillReturnRows(sqlmock.NewRows([]string{"clock_timestamp"}).AddRow(databaseNow))
 	mock.ExpectExec(regexp.QuoteMeta(`
-		UPDATE rgs_rounds SET status='WALLET_PENDING', wallet_lease_until=$4,
-			retry_count=retry_count+1, updated_at=$5
+		UPDATE rgs_rounds
+		SET status='WALLET_PENDING', wallet_phase=$4, next_attempt_at=$5,
+			wallet_lease_until=$5, apply_attempts=apply_attempts+$6,
+			lookup_attempts=lookup_attempts+$7, retry_count=retry_count+$8,
+			updated_at=$9
 		WHERE operator_id=$1 AND session_id=$2 AND round_id=$3`)).
 		WithArgs(
 			fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID,
-			databaseNow.Add(leaseDuration), databaseNow,
+			string(rgs.WalletRecoveryLookup), databaseNow.Add(leaseDuration), 1, 0, 1, databaseNow,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`
@@ -150,16 +164,18 @@ func TestClaimWalletUsesDatabaseClockAcrossReplicas(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
-	record, ownsWallet, err := repository.ClaimWallet(
-		context.Background(), fixture.request.Key(), callerNow, callerNow.Add(leaseDuration),
+	claim, ownsWallet, err := repository.ClaimWallet(
+		context.Background(), fixture.request.Key(), leaseDuration,
 	)
 	if err != nil || !ownsWallet {
 		t.Fatalf("ClaimWallet() = owns:%v error:%v", ownsWallet, err)
 	}
-	if !record.UpdatedAt.Equal(databaseNow) ||
-		!record.WalletLeaseUntil.Equal(databaseNow.Add(leaseDuration)) {
+	if claim.Action != rgs.WalletRecoveryApply ||
+		claim.Record.WalletPhase != rgs.WalletRecoveryLookup ||
+		!claim.Record.UpdatedAt.Equal(databaseNow) ||
+		!claim.LeaseUntil.Equal(databaseNow.Add(leaseDuration)) {
 		t.Fatalf("database lease clock = updated:%s until:%s",
-			record.UpdatedAt, record.WalletLeaseUntil)
+			claim.Record.UpdatedAt, claim.LeaseUntil)
 	}
 	assertRepositoryExpectations(t, mock)
 }
@@ -173,7 +189,6 @@ func TestClaimWalletDoesNotLetFastReplicaStealUnexpiredDatabaseLease(t *testing.
 	fixture := newRoundRowFixture(t, rgs.RoundWalletPending)
 	databaseNow := fixture.createdAt.Add(time.Minute)
 	fixture.walletLease = databaseNow.Add(30 * time.Second)
-	callerNow := databaseNow.Add(8 * time.Hour)
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+`
@@ -184,18 +199,164 @@ func TestClaimWalletDoesNotLetFastReplicaStealUnexpiredDatabaseLease(t *testing.
 		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3 FOR UPDATE OF r`)).
 		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
 		WillReturnRows(fixture.rows(t))
+	mock.ExpectQuery(regexp.QuoteMeta(walletClaimLedgerSelect)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
+		WillReturnRows(validWalletLedgerRows(fixture, "PENDING"))
 	mock.ExpectQuery(regexp.QuoteMeta(walletLeaseClockSQL)).
 		WillReturnRows(sqlmock.NewRows([]string{"clock_timestamp"}).AddRow(databaseNow))
 	mock.ExpectCommit()
 
-	record, ownsWallet, err := repository.ClaimWallet(
-		context.Background(), fixture.request.Key(), callerNow, callerNow.Add(time.Minute),
+	claim, ownsWallet, err := repository.ClaimWallet(
+		context.Background(), fixture.request.Key(), time.Minute,
 	)
 	if err != nil || ownsWallet {
 		t.Fatalf("ClaimWallet() = owns:%v error:%v", ownsWallet, err)
 	}
-	if !record.WalletLeaseUntil.Equal(fixture.walletLease.(time.Time)) {
-		t.Fatalf("preserved lease = %s", record.WalletLeaseUntil)
+	if !claim.Record.WalletLeaseUntil.Equal(fixture.walletLease.(time.Time)) {
+		t.Fatalf("preserved lease = %s", claim.Record.WalletLeaseUntil)
+	}
+	assertRepositoryExpectations(t, mock)
+}
+
+func TestCommitClaimRejectsLeaseReplacedByAnotherWorker(t *testing.T) {
+	db, mock := newRepositoryMock(t)
+	repository, err := NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := newRoundRowFixture(t, rgs.RoundWalletPending)
+	newLease := fixture.createdAt.Add(2 * time.Minute)
+	fixture.walletLease = newLease
+	oldClaim := rgs.WalletRecoveryClaim{
+		Record:     rgs.RoundRecord{Key: fixture.request.Key()},
+		Action:     rgs.WalletRecoveryLookup,
+		LeaseUntil: fixture.createdAt.Add(time.Minute),
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+`
+		WHERE operator_id=$1 AND session_id=$2 FOR UPDATE`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
+		WillReturnRows(validSessionRows(t, fixture))
+	mock.ExpectQuery(regexp.QuoteMeta(roundSelect+`
+		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3 FOR UPDATE OF r`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
+		WillReturnRows(fixture.rows(t))
+	mock.ExpectRollback()
+
+	_, changed, err := repository.CommitClaim(context.Background(), oldClaim, rgs.WalletReceipt{})
+	if !errors.Is(err, rgs.ErrStaleWalletClaim) || changed {
+		t.Fatalf("CommitClaim() = changed:%v error:%v, want stale claim", changed, err)
+	}
+	assertRepositoryExpectations(t, mock)
+}
+
+func TestRejectClaimFencesRoundAndRequiresWalletLedgerTransition(t *testing.T) {
+	db, mock := newRepositoryMock(t)
+	repository, err := NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := newRoundRowFixture(t, rgs.RoundWalletPending)
+	leaseUntil := fixture.createdAt.Add(time.Minute)
+	fixture.walletLease = leaseUntil
+	claim := rgs.WalletRecoveryClaim{
+		Record:     rgs.RoundRecord{Key: fixture.request.Key()},
+		Action:     rgs.WalletRecoveryLookup,
+		LeaseUntil: leaseUntil,
+	}
+	const failureCode = "LIMIT_EXCEEDED"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+`
+		WHERE operator_id=$1 AND session_id=$2 FOR UPDATE`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
+		WillReturnRows(validSessionRows(t, fixture))
+	mock.ExpectQuery(regexp.QuoteMeta(roundSelect+`
+		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3 FOR UPDATE OF r`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
+		WillReturnRows(fixture.rows(t))
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE rgs_rounds SET status=$4, failure_code=$5,
+			wallet_phase='', next_attempt_at=NULL, wallet_lease_until=NULL, updated_at=$6
+		WHERE operator_id=$1 AND session_id=$2 AND round_id=$3
+		  AND status IN ('PREPARED','WALLET_PENDING') AND wallet_lease_until=$7`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID,
+			string(rgs.RoundRejected), failureCode, sqlmock.AnyArg(), leaseUntil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE rgs_wallet_transactions
+		SET status=$3, failure_code=$4, updated_at=$5
+		WHERE operator_id=$1 AND transaction_id=$2
+		  AND status IN ('PENDING','UNKNOWN')`)).
+		WithArgs(fixture.request.OperatorID, fixture.serverTransactionID, "FAILED", failureCode, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`
+			UPDATE rgs_sessions SET pending_round_id=NULL, updated_at=$3
+			WHERE operator_id=$1 AND session_id=$2 AND pending_round_id=$4 AND revision=$5`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, sqlmock.AnyArg(),
+			fixture.request.RoundID, int64(fixture.request.StartRevision)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`
+		INSERT INTO rgs_outbox (
+			operator_id, aggregate_type, aggregate_id, event_type, payload
+		) VALUES ($1,$2,$3,$4,$5)`)).
+		WithArgs(fixture.request.OperatorID, "round", fixture.serverTransactionID,
+			"ROUND_REJECTED", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	record, changed, err := repository.RejectClaim(context.Background(), claim, failureCode)
+	if err != nil || !changed || record.Status != rgs.RoundRejected || record.FailureReason != failureCode {
+		t.Fatalf("RejectClaim() = record:%+v changed:%v error:%v", record, changed, err)
+	}
+	assertRepositoryExpectations(t, mock)
+}
+
+func TestRejectClaimRollsBackWhenWalletLedgerIsMissing(t *testing.T) {
+	db, mock := newRepositoryMock(t)
+	repository, err := NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := newRoundRowFixture(t, rgs.RoundWalletPending)
+	leaseUntil := fixture.createdAt.Add(time.Minute)
+	fixture.walletLease = leaseUntil
+	claim := rgs.WalletRecoveryClaim{
+		Record: rgs.RoundRecord{Key: fixture.request.Key()}, Action: rgs.WalletRecoveryLookup,
+		LeaseUntil: leaseUntil,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+`
+		WHERE operator_id=$1 AND session_id=$2 FOR UPDATE`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
+		WillReturnRows(validSessionRows(t, fixture))
+	mock.ExpectQuery(regexp.QuoteMeta(roundSelect+`
+		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3 FOR UPDATE OF r`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
+		WillReturnRows(fixture.rows(t))
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE rgs_rounds SET status=$4, failure_code=$5,
+			wallet_phase='', next_attempt_at=NULL, wallet_lease_until=NULL, updated_at=$6
+		WHERE operator_id=$1 AND session_id=$2 AND round_id=$3
+		  AND status IN ('PREPARED','WALLET_PENDING') AND wallet_lease_until=$7`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID,
+			string(rgs.RoundRejected), "WALLET_REJECTED", sqlmock.AnyArg(), leaseUntil).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta(`
+		UPDATE rgs_wallet_transactions
+		SET status=$3, failure_code=$4, updated_at=$5
+		WHERE operator_id=$1 AND transaction_id=$2
+		  AND status IN ('PENDING','UNKNOWN')`)).
+		WithArgs(fixture.request.OperatorID, fixture.serverTransactionID,
+			"FAILED", "WALLET_REJECTED", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	_, changed, err := repository.RejectClaim(context.Background(), claim, "WALLET_REJECTED")
+	if !errors.Is(err, rgs.ErrManualReview) || changed {
+		t.Fatalf("RejectClaim() = changed:%v error:%v, want ledger integrity failure", changed, err)
 	}
 	assertRepositoryExpectations(t, mock)
 }
@@ -242,7 +403,8 @@ func TestAcknowledgeResultDeliveryQuarantinesCorruptCommittedRound(t *testing.T)
 		}).AddRow(fixture.serverTransactionID, string(fixture.status), false))
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE rgs_rounds
-		SET status=$4, failure_code=$5, wallet_lease_until=NULL, updated_at=$6,
+		SET status=$4, failure_code=$5, wallet_phase='', next_attempt_at=NULL,
+			wallet_lease_until=NULL, updated_at=$6,
 			integrity_quarantined_at=$6
 		WHERE operator_id=$1 AND session_id=$2 AND round_id=$3`)).
 		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID,
@@ -370,6 +532,30 @@ func TestGetRoundRejectsPersistedIntegrityMismatches(t *testing.T) {
 			name: "request fingerprint disagrees with columns", status: rgs.RoundPrepared,
 			mutate: func(_ *testing.T, fixture *roundRowFixture) {
 				fixture.fingerprint = "rgs-fp-v2:" + strings.Repeat("b", 64)
+			},
+		},
+		{
+			name: "wallet command digest disagrees with persisted identity", status: rgs.RoundPrepared,
+			mutate: func(_ *testing.T, fixture *roundRowFixture) {
+				fixture.walletCommandDigest = "rgs-wallet-cmd-v1:" + strings.Repeat("b", 64)
+			},
+		},
+		{
+			name: "open wallet phase is invalid", status: rgs.RoundPrepared,
+			mutate: func(_ *testing.T, fixture *roundRowFixture) {
+				fixture.walletPhase = "UNSAFE"
+			},
+		},
+		{
+			name: "open wallet schedule is absent", status: rgs.RoundPrepared,
+			mutate: func(_ *testing.T, fixture *roundRowFixture) {
+				fixture.nextAttemptAt = nil
+			},
+		},
+		{
+			name: "wallet attempt counter is negative", status: rgs.RoundPrepared,
+			mutate: func(_ *testing.T, fixture *roundRowFixture) {
+				fixture.lookupAttempts = -1
 			},
 		},
 		{
@@ -521,14 +707,7 @@ func TestMarkManualReviewQuarantinesUndecodableRoundWithoutWalletSideEffect(t *t
 	reason := "persisted round integrity validation failed"
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+`
-		WHERE operator_id=$1 AND session_id=$2 FOR UPDATE`)).
-		WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
-		WillReturnRows(validSessionRows(t, fixture))
-	mock.ExpectQuery(regexp.QuoteMeta(roundSelect+`
-		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3 FOR UPDATE OF r`)).
-		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
-		WillReturnRows(fixture.rows(t))
+	expectIntegritySessionLock(t, mock, fixture)
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT server_transaction_id, status, integrity_quarantined_at IS NOT NULL
 		FROM rgs_rounds
@@ -539,7 +718,8 @@ func TestMarkManualReviewQuarantinesUndecodableRoundWithoutWalletSideEffect(t *t
 			AddRow(fixture.serverTransactionID, string(fixture.status), false))
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE rgs_rounds
-		SET status=$4, failure_code=$5, wallet_lease_until=NULL, updated_at=$6,
+		SET status=$4, failure_code=$5, wallet_phase='', next_attempt_at=NULL,
+			wallet_lease_until=NULL, updated_at=$6,
 			integrity_quarantined_at=$6
 		WHERE operator_id=$1 AND session_id=$2 AND round_id=$3`)).
 		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID,
@@ -547,7 +727,8 @@ func TestMarkManualReviewQuarantinesUndecodableRoundWithoutWalletSideEffect(t *t
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(`
 			UPDATE rgs_wallet_transactions
-			SET status='UNKNOWN', failure_code=$3, updated_at=$4
+			SET status=CASE WHEN status='PENDING' THEN 'UNKNOWN' ELSE status END,
+				failure_code=$3, updated_at=$4
 			WHERE operator_id=$1 AND transaction_id=$2`)).
 		WithArgs(fixture.request.OperatorID, fixture.serverTransactionID, reason, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -593,14 +774,7 @@ func TestCommittedCorruptRoundSignalsIntegrityWithoutChangingEconomicStatus(t *t
 	reason := "persisted round integrity validation failed"
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+`
-		WHERE operator_id=$1 AND session_id=$2 FOR UPDATE`)).
-		WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
-		WillReturnRows(validSessionRows(t, fixture))
-	mock.ExpectQuery(regexp.QuoteMeta(roundSelect+`
-		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3 FOR UPDATE OF r`)).
-		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
-		WillReturnRows(fixture.rows(t))
+	expectIntegritySessionLock(t, mock, fixture)
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT server_transaction_id, status, integrity_quarantined_at IS NOT NULL
 		FROM rgs_rounds
@@ -612,7 +786,8 @@ func TestCommittedCorruptRoundSignalsIntegrityWithoutChangingEconomicStatus(t *t
 		}).AddRow(fixture.serverTransactionID, string(fixture.status), false))
 	mock.ExpectExec(regexp.QuoteMeta(`
 		UPDATE rgs_rounds
-		SET status=$4, failure_code=$5, wallet_lease_until=NULL, updated_at=$6,
+		SET status=$4, failure_code=$5, wallet_phase='', next_attempt_at=NULL,
+			wallet_lease_until=NULL, updated_at=$6,
 			integrity_quarantined_at=$6
 		WHERE operator_id=$1 AND session_id=$2 AND round_id=$3`)).
 		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID,
@@ -659,14 +834,7 @@ func TestRepeatedIntegrityQuarantineIsIdempotentAndEmitsNoDuplicateOutboxEvent(t
 			reason := "persisted round integrity validation failed"
 
 			mock.ExpectBegin()
-			mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+`
-		WHERE operator_id=$1 AND session_id=$2 FOR UPDATE`)).
-				WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
-				WillReturnRows(validSessionRows(t, fixture))
-			mock.ExpectQuery(regexp.QuoteMeta(roundSelect+`
-		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3 FOR UPDATE OF r`)).
-				WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
-				WillReturnRows(fixture.rows(t))
+			expectIntegritySessionLock(t, mock, fixture)
 			mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT server_transaction_id, status, integrity_quarantined_at IS NOT NULL
 		FROM rgs_rounds
@@ -698,6 +866,14 @@ func TestRepeatedIntegrityQuarantineIsIdempotentAndEmitsNoDuplicateOutboxEvent(t
 			assertRepositoryExpectations(t, mock)
 		})
 	}
+}
+
+func expectIntegritySessionLock(t *testing.T, mock sqlmock.Sqlmock, fixture roundRowFixture) {
+	t.Helper()
+	mock.ExpectQuery(regexp.QuoteMeta(sessionSelect+`
+		WHERE operator_id=$1 AND session_id=$2 FOR UPDATE`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
+		WillReturnRows(validSessionRows(t, fixture))
 }
 
 type countingIntegrityObserver struct {
@@ -757,6 +933,20 @@ func newRoundRowFixture(t *testing.T, status rgs.RoundStatus) roundRowFixture {
 		sequence: int64(result.Sequence), createdAt: time.Date(2026, 7, 26, 4, 5, 6, 0, time.UTC),
 		sessionStatus: string(rgs.SessionActive),
 	}
+	profileJSON, err := json.Marshal(rgs.AtomicHTTPProfile(
+		rgs.WalletRouteBindingIDForCanonicalTarget("https://wallet.test.invalid/ledger"),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.walletProfileJSON = profileJSON
+	if status == rgs.RoundPrepared || status == rgs.RoundWalletPending {
+		fixture.walletPhase = string(rgs.WalletRecoveryApply)
+		if status == rgs.RoundWalletPending {
+			fixture.walletPhase = string(rgs.WalletRecoveryLookup)
+		}
+		fixture.nextAttemptAt = fixture.createdAt
+	}
 	if status == rgs.RoundCommitted {
 		fixture.result.EndRevision = request.StartRevision + 1
 		fixture.result.WalletTransactionID = "wallet-tx-a"
@@ -764,7 +954,6 @@ func newRoundRowFixture(t *testing.T, status rgs.RoundStatus) roundRowFixture {
 		fixture.walletTransaction = fixture.result.WalletTransactionID
 		fixture.walletBalance = fixture.result.BalanceMinor
 	}
-	var err error
 	fixture.inputFeatureJSON, err = json.Marshal(fixture.inputFeature)
 	if err != nil {
 		t.Fatal(err)
@@ -841,6 +1030,19 @@ func (fixture roundRowFixture) rows(t *testing.T) *sqlmock.Rows {
 			t.Fatal(err)
 		}
 	}
+	walletCommandDigest := fixture.walletCommandDigest
+	if walletCommandDigest == nil && !fixture.omitCommandDigest {
+		walletCommandDigest = rgs.CommandDigestFor(rgs.WalletRound{
+			OperationID: fixture.serverTransactionID, Fingerprint: fixture.fingerprint,
+			OperatorID: fixture.request.OperatorID, PlayerID: "player-a",
+			WalletAccountID: "wallet-account-a", WalletSessionRef: "wallet-session-a",
+			SessionID: fixture.request.SessionID, RoundID: fixture.request.RoundID,
+			GameID: fixture.request.GameID, DefinitionVersion: fixture.request.DefinitionVersion,
+			DefinitionHash: fixture.request.DefinitionHash, RoundKind: fixture.request.RoundKind,
+			Currency: fixture.request.Currency, DebitMinor: fixture.chargedMinor,
+			CreditMinor: fixture.winMinor,
+		})
+	}
 	return sqlmock.NewRows(roundRowColumns).AddRow(
 		fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID,
 		fixture.serverTransactionID, fixture.fingerprint, string(fixture.status),
@@ -849,8 +1051,12 @@ func (fixture roundRowFixture) rows(t *testing.T) *sqlmock.Rows {
 		fixture.request.Currency, fixture.betMinor, fixture.inputFeatureJSON,
 		fixture.chargedMinor, fixture.winMinor,
 		int64(fixture.request.StartRevision), fixture.endRevision, fixture.sequence,
-		resultJSON, fixture.outcomeHash, fixture.walletTransaction, fixture.walletBalance,
-		fixture.walletLease, nil, 1, fixture.createdAt, fixture.createdAt, "player-a", "wallet-account-a",
+		resultJSON, fixture.outcomeHash, fixture.walletPhase, fixture.nextAttemptAt,
+		fixture.applyAttempts, fixture.lookupAttempts, walletCommandDigest,
+		fixture.walletProfileJSON,
+		fixture.walletTransaction, fixture.walletBalance,
+		fixture.walletLease, nil, 1, fixture.createdAt, fixture.createdAt,
+		"player-a", "wallet-account-a", "wallet-session-a",
 		fixture.sessionStatus, fixture.sessionQuarantined,
 	)
 }
@@ -900,6 +1106,17 @@ func validSessionRows(t *testing.T, fixture roundRowFixture) *sqlmock.Rows {
 		fixture.request.DefinitionHash, fixture.request.Currency, 2, "MT", string(rgs.SessionActive),
 		10_000, 7, int64(fixture.request.StartRevision), featureJSON,
 		fixture.request.RoundID, fixture.createdAt.Add(time.Hour), nil,
+	)
+}
+
+func validWalletLedgerRows(fixture roundRowFixture, status string) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"operator_id", "transaction_id", "session_id", "round_id", "kind", "status",
+		"currency", "amount_minor", "request_fingerprint",
+	}).AddRow(
+		fixture.request.OperatorID, fixture.serverTransactionID,
+		fixture.request.SessionID, fixture.request.RoundID, "PLAY", status,
+		fixture.request.Currency, fixture.chargedMinor, fixture.fingerprint,
 	)
 }
 

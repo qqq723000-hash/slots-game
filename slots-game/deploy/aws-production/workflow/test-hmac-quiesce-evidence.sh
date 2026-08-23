@@ -73,6 +73,21 @@ jq --arg account "$AWS_ACCOUNT_ID" --arg region "$AWS_REGION" --arg cluster "$AW
   .cluster_arn = ("arn:aws:eks:" + $region + ":" + $account + ":cluster/" + $cluster)
 ' "$fixture_directory/live-delivery.json" > "$delivery"
 
+for failure_mode in inactive-cluster public-cluster-endpoint wrong-cluster-arn; do
+  reset_state
+  export INPUT_OPERATION=quiesce
+  export INPUT_EVIDENCE_VERSION_ID=''
+  export INPUT_EVIDENCE_SHA256=''
+  export MOCK_HMAC_AWS_MODE=$failure_mode
+  if "$script_directory/manage-hmac-quiesce-evidence.sh" >/dev/null 2>&1; then
+    fail "$failure_mode 仍允许 HMAC 停机操作"
+  fi
+  unset MOCK_HMAC_AWS_MODE
+  test -f "$state/api-hpa-present" || fail "$failure_mode 在集群边界失败后修改了 API HPA"
+  test "$(cat "$state/api-replicas")" = 2 || fail "$failure_mode 在集群边界失败后修改了 API 副本"
+  test ! -f "$state/evidence.json" || fail "$failure_mode 在集群边界失败后提交了证据"
+done
+
 reset_state
 export INPUT_OPERATION=quiesce
 export INPUT_EVIDENCE_VERSION_ID=''

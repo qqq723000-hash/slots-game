@@ -144,6 +144,31 @@ def unrelated_update(address, type, name, provider_name = "registry.terraform.io
   )
 end
 
+def acl_schema_change(slot, before_access: ValkeyRotationPlanContract::LEGACY_SHARED_ADMISSION_ACL,
+  after_access: ValkeyRotationPlanContract::CURRENT_SHARED_ADMISSION_ACL)
+  address = "#{CACHE_PREFIX}.aws_elasticache_user.rate_limiter_#{slot}"
+  stable = {
+    "engine" => "valkey",
+    "user_id" => "slotsprodprimary-rgs-#{slot}",
+    "user_name" => "slotsprodprimary-rgs-#{slot}",
+    "passwords_wo_version" => 1,
+    "tags" => { "Environment" => "prod-primary" },
+  }
+  managed_change(
+    address: address,
+    type: "aws_elasticache_user",
+    name: "rate_limiter_#{slot}",
+    provider_name: "registry.terraform.io/hashicorp/aws",
+    actions: ["update"],
+    before: stable.merge("access_string" => before_access),
+    after: stable.merge("access_string" => after_access),
+  )
+end
+
+def acl_schema_changes
+  %w[a b].map { |slot| acl_schema_change(slot) }
+end
+
 def with_computed_resource_fields(payload)
   candidate = deep_copy(payload)
   candidate["resource_changes"][0]["change"]["after_unknown"] = {
@@ -382,6 +407,29 @@ evidence_hash = attestation(base, hmac_maintenance)
 evidence_payload = bind_evidence(hmac_maintenance, evidence_hash)
 hmac_maintenance_plan = hmac_entry_plan(base, hmac_maintenance)
 expect_accept("单个已保存 plan 内执行受证据绑定的 HMAC 维护", hmac_maintenance_plan, evidence: evidence_payload)
+
+acl_migration_plan = deep_copy(hmac_maintenance_plan)
+acl_migration_plan.fetch("resource_changes").concat(acl_schema_changes)
+expect_accept("API 静默证据绑定的 HMAC 入口同时精确迁移 ACL v1 到 v2", acl_migration_plan, evidence: evidence_payload)
+
+expect_reject("steady plan 禁止迁移 ACL schema", plan(base, base, ["no-op"], acl_schema_changes))
+
+partial_acl_migration = deep_copy(hmac_maintenance_plan)
+partial_acl_migration.fetch("resource_changes") << acl_schema_change("a")
+expect_reject("ACL schema 禁止只迁移单一凭据槽", partial_acl_migration, evidence: evidence_payload)
+
+wrong_acl_source = deep_copy(hmac_maintenance_plan)
+wrong_acl_source.fetch("resource_changes").concat([
+  acl_schema_change("a", before_access: "on ~unexpected:* -@all +get"),
+  acl_schema_change("b"),
+])
+expect_reject("ACL schema 迁移拒绝未知前态", wrong_acl_source, evidence: evidence_payload)
+
+acl_with_password_change = deep_copy(hmac_maintenance_plan)
+changed_acl_resources = acl_schema_changes
+changed_acl_resources.first.fetch("change").fetch("after")["passwords_wo_version"] = 2
+acl_with_password_change.fetch("resource_changes").concat(changed_acl_resources)
+expect_reject("ACL schema 迁移禁止夹带密码版本", acl_with_password_change, evidence: evidence_payload)
 
 intrusive_resources = {
   "HMAC 入口夹带 RDS 变化" => unrelated_update(

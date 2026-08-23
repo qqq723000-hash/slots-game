@@ -32,7 +32,7 @@
 | 启动码 | 摘要、绑定、消费时间和会话创建均持久化；重复消费失败即关闭 | 所有副本使用同一数据库与同一 launch 密钥代际 |
 | 会话 | `(operator_id, session_id)` 是权威身份；修改前锁定会话行并校验版本、定义、货币与辖区 | 不要求入口会话粘滞；数据库必须提供一致的行锁语义 |
 | 轮次 | `(operator_id, session_id, round_id)`、不可变请求指纹、结果哈希与钱包操作 ID 共同防重 | 客户端和运营商重试必须复用完全相同的身份及内容 |
-| 钱包恢复 | Worker 副本可枚举同一轮次，真正执行权由持久租约决定；租约判断及写入统一使用 PostgreSQL 时钟 | 钱包必须按稳定操作 ID 幂等，并提供同一操作 ID 的状态查询 |
+| 钱包恢复 | PostgreSQL 按到期时间和运营商公平顺序选择候选；Worker 用 `SKIP LOCKED` 领取持久 `APPLY/LOOKUP` 动作，租约、调度及 fencing 统一使用数据库时钟 | 钱包必须通过 v2 能力档案声明原子轮次、稳定操作 ID 幂等、状态查询和 `NOT_FOUND` 一致性窗口 |
 | 发件箱 | Worker 使用 `SKIP LOCKED` 领取、数据库时钟、随机租约令牌围栏和聚合内顺序共同约束投递 | 下游按发件箱 ID 去重；投递语义是至少一次，不是恰好一次 |
 
 进程内 `MemoryRepository`、`MemoryNonceStore` 只用于单元测试和显式开发夹具。生产启动路径固定构
@@ -46,16 +46,29 @@
 ## 3. 钱包恢复租约
 
 钱包租约的持续时间由协调器给出，但 PostgreSQL 事务在锁定会话和轮次后读取
-`clock_timestamp()`，使用该时间判断旧租约是否到期并计算新到期时间。容器本地时钟只用于表达
-租约时长，快时钟副本不能提前抢占仍有效的租约。
+`clock_timestamp()`，使用该时间判断旧租约是否到期并计算新到期时间。首次 `PREPARED` 的
+`next_attempt_at/created_at/updated_at` 也来自同一数据库时钟；容器本地时钟只用于表达租约时长，
+快时钟副本既不能提前抢占仍有效的租约，也不能把新轮次错误推迟到未来。
 
 钱包租约不是对外部副作用的恰好一次证明。安全性还依赖以下组合：
 
 1. 游戏结果、钱包命令和操作 ID 在调用钱包前持久化；恢复不重新运行 RNG。
 2. 同一会话只允许一个待处理轮次，PostgreSQL 行锁串行化余额和特性状态迁移。
-3. 所有重试使用相同操作 ID；超时后先查询该操作，不能生成替代经济意图。
-4. 收据字段与原命令逐项匹配；不同收据、幂等冲突或无法判定的状态进入人工审核。
-5. 进程崩溃不主动删除租约；其他副本只在数据库判定到期后接管。
+3. 存储层为每次 claim 指定唯一 `APPLY` 或 `LOOKUP` 动作；领取 `APPLY` 时先持久推进为
+   `LOOKUP`，外呼后的崩溃不会让接管者盲目重放写请求。
+4. `UNKNOWN/PENDING` 只转查询；可证明未发送的 `NOT_SENT` 才保持原动作；查询的权威
+   `NOT_FOUND` 只有在能力档案允许且数据库时钟等待最短一致性窗口后才重排相同 `APPLY`。
+5. 所有重试使用相同操作 ID、完整命令摘要和钱包会话绑定；不能生成替代经济意图。
+6. 收据字段与原命令逐项匹配；不同收据、幂等冲突或无法判定的状态进入人工审核。
+7. 进程崩溃不主动删除租约；其他副本只在数据库判定到期后接管，旧租约 token 的迟到调度被围栏
+   拒绝。
+
+批量恢复查询只选择 `next_attempt_at` 到期、会话仍可恢复的行。它先在每个运营商内部排序，再跨运
+营商轮转，最后用 `FOR UPDATE ... SKIP LOCKED` 让并发 Worker 分摊互不重叠的候选。非终态动作
+按独立 apply/lookup 次数执行有上限指数退避与 full-jitter；能力档案最短窗口和显式 not-before
+（若适配器提供）只会延长调度，绝不会缩短抖动。当前原子 HTTP v2 不宣称消费供应商
+`Retry-After`。公平选择防止单一运营商长期占满每批前部，但它不是加权 SLA 或集群级租户配额；
+若业务需要不同运营商权重，必须另行设计并压测。
 
 因此，平台不得把时钟同步当作钱包租约正确性的唯一保障，但节点和应用时钟仍须同步，用于签名时
 间窗、日志关联和证书校验。PostgreSQL 时钟异常必须作为数据库故障处理。
@@ -76,21 +89,40 @@ RGS 业务正确性不依赖全局实例 ID。集中日志、指标和链路平�
 
 ## 5. 限流与容量
 
-API 先使用每副本有界限制器保护本机资源，再对已验证身份调用共享 Valkey 令牌桶。共享桶只覆盖
-会创建新经济意图的 operator launch 与 client spin；键由可信 operator/session 绑定经 HMAC-SHA256
-生成，脚本使用 Valkey `TIME` 原子计算。状态、待交付结果、确认和令牌续期不依赖 Valkey，避免准
-入故障阻断已提交结果恢复。不得直接信任客户端传入的 `X-Forwarded-For`。
+API 先使用每副本、每 session 的有界限制器保护本机资源，再对已验证身份调用共享 Valkey 令牌桶。
+共享桶只覆盖会创建新经济意图的 operator launch 与 client spin；launch 与 spin 使用相互独立、按
+可信 operator 聚合的 HMAC-SHA256 键，避免爆款跨大量 session 时把每运营商配额乘开。脚本从
+Valkey `PTTL` 原子推导经过时间，不使用 Pod 时钟。状态、待交付结果、确认和令牌续期不依赖 Valkey，
+避免准入故障阻断已提交结果恢复。不得直接信任客户端传入的 `X-Forwarded-For`。
 
 Valkey 不保存或裁决 operation ID、余额、轮次、钱包收据和提交状态。它不可用时，新 launch/spin
 返回带 `Retry-After` 的 503；PostgreSQL 仍是上述状态唯一权威。生产 `api` 角色必须通过绝对文件
 取得独立 ACL password、键摘要 HMAC 密钥和显式 TLS 根 CA；`worker` 角色携带这些配置会拒绝启动。
 单机 `combined` 可以不启用共享准入以保持本机兼容。
 
+钱包还有一层独立的非阻塞故障隔离。当前每个进程按规范化后端地址共享 apply/lookup 舱壁，基线
+分别为 24/8 个执行许可，从连接层为状态查询保留容量；每个运营商另有 8 个 apply 许可。apply 与
+lookup 使用相互独立的熔断器：连续 5 次远端失败后打开 5 秒，半开最多 1 个探针，连续 2 次成功后
+关闭。本地舱壁满或熔断打开时立即返回，不在进程内排队。新经济意图还在 RNG 和 `PREPARED` 前做
+只读预准入；失败返回签名的 HTTP 503 `WALLET_UNAVAILABLE` 与 `Retry-After: 1`，因此不能制造一批
+明知暂时无法发送的钱包轮次。预检查不占许可且存在竞态，持久化后的 `SubmitRound` 仍是最终闸门。
+
+这些舱壁与熔断状态是**每进程**的故障边界，不是跨 Pod 全局配额。集群总上限仍由
+`副本数 × 每副本许可`、HPA 上限、NetworkPolicy、钱包合同容量和压测共同约束；熔断半开探针也可
+在多个 Pod 各发生一次。不得把进程内隔离误报成外部钱包已经具备全局流控。
+
 每个副本还分别限制：
 
 - `RGS_MAX_IN_FLIGHT_REQUESTS`：进入签名、令牌和数据库路径的并发请求；
 - `RGS_MAX_CONNECTIONS_PER_LISTENER`：已接受连接、慢请求头、TLS 状态和文件描述符；
 - `RGS_DB_MAX_OPEN_CONNS` 与 `RGS_DB_MAX_IDLE_CONNS`：本副本数据库连接池；
+- `RGS_DB_CRITICAL_RESERVE_CONNS`：仅 API 使用的结果闭环保留连接；新 launch/spin 的 Pod 级 permit
+  等于 `RGS_DB_MAX_OPEN_CONNS - RGS_DB_CRITICAL_RESERVE_CONNS`，status、pending result、ACK 和
+  refresh 不占该 permit；实现使用 `InUse + outstanding reservation` 的保守上界，可能提前 shed，
+  但不会在快照竞态下穿透保留预算。若要消除同池双计，必须评审独立 critical 连接池；
+- `RGS_WALLET_FAST_PATH_TIMEOUT`：持久化 PREPARED 后同步等待钱包的最大时间，默认 1 秒且必须短于
+  `RGS_WALLET_TIMEOUT`；超时后返回 pending 并由同一 operation ID 的持久调度恢复，客户端取消不会
+  取消已经持久化的经济 saga；
 - 钱包、恢复和发件箱并行数，以及正文、请求、写入和关闭超时。
 
 上线前必须满足以下容量不等式，并给数据库故障转移、管理和观测连接保留余量：
@@ -108,6 +140,11 @@ Valkey 不保存或裁决 operation ID、余额、轮次、钱包收据和提交
 上限”核算。受 HPA 管理的 API/Worker Deployment 不写 `spec.replicas`，避免 Helm 在升级时与 HPA
 争抢副本期望值。API 的三个暖副本和 Worker 的两个暖副本分别仅由各自 HPA
 `minReplicas` 控制。任一自动扩缩容上限变更必须重新评审这些总预算，不能只看单 Pod 压测。
+
+数据库保留闸门是过载时的优先级隔离，不是容量来源。新意图 permit 与 `sql.DB` 的 `InUse` 阈值一起
+快速拒绝 launch/spin，避免它们排队耗尽 status/result/ACK 的闭环能力；它不限制其他数据库客户端，
+也不保证 RDS 仍有连接。上线压测必须同时证明保留路径在新意图饱和时可完成、拒绝响应携带
+`503 CAPACITY_UNAVAILABLE` 与 `Retry-After`，并且总连接仍满足上述不等式。
 
 当前 Chart 只把 CPU 与内存作为已交付的 HPA 信号。基于并发请求、QPS、数据库等待或钱包待恢复
 量的自定义扩缩容，必须先交付低基数指标定义、目标值、Prometheus Adapter 或云厂商指标适配器、
@@ -130,9 +167,9 @@ Worker 使用同名 `operator_keys` 检查自己的最小密钥边界，仅验�
 不要求也不读取 API 专属密钥。Worker 在数据库、模式、权限、角色密钥与生命周期检查之外，还必须包含
 `outbox_delivery`：扫描
 循环已完成且足够新、存储访问成功、未发布事件的最大积压年龄在界内。该检查及发件箱指标只从
-Worker job 暴露，不得让审计出口故障拖累 API readiness。Worker 当前的钱包恢复失败通过有界指标
-与日志告警暴露；若要把恢复循环本身升级为独立 readiness 条件，必须先定义避免瞬时钱包故障导致
-全部 Worker 同时摘除的退避与可用性策略。
+Worker job 暴露，不得让审计出口故障拖累 API readiness。Worker 当前的钱包恢复失败通过有界指
+标、隔离拒绝、apply/lookup 熔断状态和日志告警暴露；若要把恢复循环本身升级为独立 readiness 条
+件，必须先定义避免瞬时钱包故障导致全部 Worker 同时摘除的退避与可用性策略。
 
 收到 `SIGTERM` 或 `SIGINT` 后顺序固定为：
 
@@ -202,7 +239,9 @@ Chart 把三元组同时写入 API/Worker Pod template 的 `slots-game.io/defini
   练；应用租约只接受主库的单一写入权威。
 - 在可信入口实施跨副本共享限流、TLS、正文与连接保护、就绪摘流和幂等安全重试。
 - 运维监听器的网络隔离与 Bearer 注入；集中采集 `/metrics`、结构化日志和发布实例元数据。
-- 正式钱包必须支持稳定操作 ID 幂等、签名响应、状态查询、超时后结果恢复和运营商级对账。
+- 正式钱包必须通过 `rgs-wallet-contract-v2` / `atomic-http-v2` 认证：原子扣款与派彩、稳定操作 ID
+  幂等、完整命令摘要和钱包会话绑定、签名响应、权威余额、状态查询、`NOT_FOUND` 一致性窗口、
+  超时恢复和运营商级对账。仓库中的本机 conformance 不能代替真实第三方认证。
 - 正式审计接收端必须持久化后才返回成功、按事件 ID 去重、校验 HMAC，并监控自身可用性和积压。
 - 容器终止宽限、反亲和、Pod 中断预算、可用区容量及负载均衡传播时间必须与应用超时共同演练。
 - 集群机密由批准的密钥系统以只读文件注入；不得从本机集成验收目录、镜像层或 `local-operator` 复制
@@ -228,6 +267,8 @@ go vet ./...
 - `internal/postgres/security_store_test.go`：共享 nonce 与启动凭据原子消费；
 - `internal/postgres/repository_integrity_test.go`：会话/轮次完整性，以及副本时钟偏差下的钱包租约；
 - `internal/postgres/outbox_store_integration_test.go`：双存储实例并发领取、聚合顺序和旧令牌围栏；
+- `internal/postgres/recovery_scheduler_test.go`、`internal/rgs/memory_recovery_test.go`：数据库时钟、
+  到期队列、运营商公平顺序、钱包租约围栏与内存模型一致性；
 - `internal/postgres/schema_test.go` 与 `migrate_test.go`：精确模式清单、迁移冻结及锁定流程；
 - `internal/platform/health_test.go` 与 `cmd/rgs-server/main_test.go`：摘流不可逆和关闭顺序；
 - `internal/platform/config_test.go`：API/Worker 角色、审计配置隔离和默认单机兼容模式；
@@ -237,7 +278,8 @@ go vet ./...
   指标及敏感字段禁止泄露；
 - `deploy/cluster-production/verify-static-contract.sh`：API 无后台能力、Worker 无公网端口、独立监控
   job、定义身份、密钥边界、审计专用出口和角色级资源/PDB 失败闭合；
-- `internal/rgs`、`internal/postgres/integration_test.go`：跨请求幂等、会话串行与持久恢复。
+- `internal/rgs`、`internal/wallet`、`internal/postgres/integration_test.go`：跨请求幂等、显式钱包状态、
+  命令绑定、非阻塞舱壁/熔断、会话串行与持久恢复。
 
 真实 PostgreSQL 并发门禁必须设置隔离的 `RGS_POSTGRES_TEST_URL`、
 `RGS_POSTGRES_MIGRATOR_TEST_URL` 和 `RGS_REQUIRE_POSTGRES_TESTS=1`。未提供这两套凭据时，普通单元套
