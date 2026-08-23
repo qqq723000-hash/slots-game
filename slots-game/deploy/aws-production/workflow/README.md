@@ -5,17 +5,18 @@ concurrency group；PR 与 push 的无凭据静态 run 使用“workflow identit
 已有 running 与 pending 时用新的 pending 替换并取消另一条 workflow 的 required check：
 
 - `aws-infrastructure.yml`：所有 PR 与 `main` 分支受控路径 push 只执行无凭据静态门禁；人工 dispatch 后，
-  计划角色生成二进制 Terraform plan，独立 apply Environment 审批后只下载并应用该次 job 返回的
-  精确 artifact ID。
+  计划角色生成二进制 Terraform plan；无云权限 job 先绑定精确 artifact ID、服务端 digest、run 与 commit，
+  独立 apply Environment 审批后才下载并应用该次计划。
 - `aws-application-deploy.yml`：所有 PR 都运行无凭据静态门禁；人工 dispatch 后先用只读角色验证三个 ECR
-  digest、Cosign 身份、SLSA provenance 和 SPDX SBOM，再由独立部署角色执行 Helm、不可变 S3 Web 发布与
-  CloudFront 切换。
+  digest、Cosign 身份、SLSA provenance 和 SPDX SBOM；源码 artifact 在该 OIDC job 下载前先由无云权限 job
+  绑定服务端 digest，源码/验证 artifact 在私网部署前再被二次绑定，最后才由独立部署角色执行 Helm、
+  不可变 S3 Web 发布与 CloudFront 切换。
 - `aws-hmac-quiesce-evidence.yml`：所有 PR 都运行无凭据静态门禁；只在受保护 Environment 人工 dispatch 后
   由固定私网 runner 运行。
   `quiesce` 删除 API HPA、把 API 缩到零并保持 Worker 就绪，生成最长 60 分钟的版本化证据；`resume`
   只允许在 Terraform delivery 仍是证据观察到的旧 `steady` 版本时恢复。PR 与 `main` push 只运行无凭据门禁。
 
-两个工作流都禁止长期 AWS access key。账号、区域、角色、仓库、bucket、集群和 CloudFront 标识只能
+三个工作流都禁止长期 AWS access key。账号、区域、角色、仓库、bucket、集群和 CloudFront 标识只能
 来自受保护 GitHub Environment 的 `vars`；dispatch 输入不能覆盖这些边界。取得 AWS 权限的 job 只使用
 `aws-actions/configure-aws-credentials` 换取 GitHub OIDC 短期凭据。
 
@@ -213,10 +214,25 @@ target delivery VersionId/SHA，并在 Phase A 前再次验证。任一实时状
 
 ## 精确计划与部署制品
 
-Terraform apply 不重新运行 plan，也不按 artifact 名称搜索。它只消费同一 workflow run 中 plan job
-返回的 `artifact-id`，并逐项核对源码 SHA、run ID/attempt、环境、账号、区域、state 坐标、Terraform
-版本和 plan SHA-256。state、Terraform delivery 与 Helm values 的 S3 key 都必须包含目标环境独立路径段；
-任何差异都会在申请 apply OIDC 凭据前失败。Terraform 计划只允许从 GitHub 标记为 protected 的 ref 运行。
+Terraform apply 不重新运行 plan，也不按 artifact 名称搜索。独立 `actions: read` job 先通过 Actions API
+回读 plan job 返回的 `artifact-id`，要求服务端 `sha256`、workflow run ID、完整 `head_sha`、环境/run-attempt
+唯一名称和未过期状态全部匹配；apply 只消费该 ID，并逐项核对源码 SHA、run ID/attempt、环境、账号、区域、
+state 坐标、Terraform 版本和 plan SHA-256。state、Terraform delivery 与 Helm values 的 S3 key 都必须包含
+目标环境独立路径段；任何差异都会在申请 apply OIDC 凭据前失败。Terraform 计划只允许从 GitHub 标记为
+protected 的 ref 运行，Actions API 元数据绑定失败不得降级为只相信下载动作的 warning。
+
+应用部署的源码与 ECR 验证证据也不只依赖 artifact 名称。源码 artifact 在 ECR 只读验证 job 取得 OIDC
+之前先经独立无云权限 job 绑定；私网部署前再通过 Actions API 回读源码与验证证据两个不可变 artifact ID，
+要求服务端 `sha256`、workflow run ID、完整 `head_sha`、run-attempt 唯一名称和未过期状态全部匹配。私网
+job 随后按这两个 ID 下载，并再次校验内部逐文件 checksum 与 release identity。
+私网 runner 会在下载前以 `0700` 创建本次 run/attempt 专属根目录，处理镜像、Kubeconfig、Web 静态根和
+证据的脚本统一使用 `umask 077`。部署证据上传固定为 `if-no-files-found: error`，不能在发布成功后用
+warning 掩盖审计制品缺失。Actions 服务真实可用性和 artifact API 权限仍是外部门禁，失败时不得跳过绑定。
+
+应用部署与 HMAC 停机在接触 Kubernetes 前都会实时回读 EKS：集群 ARN 必须精确属于目标账号、区域和名称，
+状态必须为 `ACTIVE`，且只能接受 `endpointPrivateAccess=true`、`endpointPublicAccess=false`。应用部署的
+完整 `describe-cluster` 响应只短暂写入 `RUNNER_TEMP` 并立即删除，90 天审计 artifact 只保留 ARN、版本、
+状态和两项端点布尔值，禁止持久化 subnet、security group、OIDC provider 或集群 endpoint 等拓扑元数据。
 
 应用部署只接受三个 `sha256:<64 位小写十六进制>` 摘要。工作流不接受镜像 tag、ECR host、仓库名、
 账号或区域输入。签名身份严格绑定生成 digest 的 `supply-chain-release.yml@refs/tags/<release_tag>`，
@@ -243,6 +259,19 @@ renderer 以 server-side apply 创建 namespace SecretStore 与六个版本化 E
 
 门禁只检查 key 存在性，不输出或解码 Secret 值。任何前置失败都在 Helm upgrade 之前失败闭合。
 
+### 非滚动 PostgreSQL 迁移边界
+
+AWS 普通应用升级中的 Migrator hook 固定执行 `verify`，不会自动执行 `up`；因此它能在任何 Deployment
+变化前拒绝“候选镜像包含未应用迁移”，但不能把数据库模式变更伪装成 atomic 滚动。当前仓库已预留
+Chart 的 `rgs.maintenanceQuiesced=true` + `worker.maintenanceQuiesced=true` 双组件零副本接口、独立
+Migrator digest/Secret 和前向恢复约束，但尚未交付一个能同时证明 PostgreSQL 旧 writer 活动事务归零、
+受保护执行 `up`、保存锁等待/耗时/执行计划并完成分阶段恢复的 AWS 自动化 workflow。
+
+所以任何非空生产迁移仍是明确的外部上线阻断：必须走 `docs/database-migrations.md` 的已审批维护序列，
+在目标私网和真实 RDS 上保存排空、迁移、`verify`、readiness 与渐进放量证据。禁止手工把 Helm values
+直接恢复、禁止 down migration，也不能把首次安装/CI 干净库上的 `up` 成功宣称为现网大表迁移已验证。
+在上述实时事务门禁实现并演练前，本仓库不会把该能力标记为自动化生产就绪。
+
 ## Web 不可变发布与切换接口
 
 Web 静态根只能从已经验证并按 digest 拉取的 OCI 镜像提取。每个对象使用 S3 `If-None-Match: *` 写入
@@ -267,8 +296,27 @@ active-release = sha256:<64 位小写十六进制>
 
 工作流随后同时回读 KVS API 和无 Cookie 的 CloudFront 公网入口。任何 ETag 冲突、KVS 回读不一致、
 公网 manifest/CSP 不一致都会失败关闭；若条件更新已经成功，则只在 KVS ETag 仍等于本次写入结果时
-自动恢复旧 `active-release`，绝不覆盖并发发布。应用发布禁止直接修改 distribution origin/path、
-CloudFront Function 或 Response Headers Policy。本地开发机不得调用正式 KVS 切换接口。
+自动恢复旧 `active-release`，绝不覆盖并发发布。回退后还会轮询公网读路径：有旧版本时必须重新读回旧
+`releaseId`，首次发布时必须恢复为 router 的受控 `503 release is not ready`；控制面或公网任一项未恢复
+都不得宣称回滚完成，必须立即人工处置。应用发布禁止直接修改 distribution origin/path、CloudFront
+Function 或 Response Headers Policy。本地开发机不得调用正式 KVS 切换接口。
+
+KVS 写命令返回非零不能直接退出：CLI 超时或响应丢失时服务端可能已经完成条件写入。发布器会保存旧状态，
+先用 `get-key` 进行第一次权威回读；若该调用失败，再以完整 `list-keys` 区分“key 确实不存在”和“控制面
+不可读”。精确读到目标 release 才会进入受控公网验证；第一次读到保存的旧状态仍不能直接判定未应用，
+因为超时请求可能仍在服务端排队。旧版存在时，发布器以原 ETag 条件写回旧值来推进版本并 fence 掉迟到请求；
+首次发布没有旧值可写回时，以相同目标重试消费原 ETag。随后只读轮询必须观察到 ETag 已离开切换前版本：
+由于 key 与 store ETag 来自两个 API，发布器还必须连续两次读到完全相同的 key/ETag pair，才会把它当作
+稳定快照；若 active-release 是目标则进入公网验证，若仍是旧状态才可安全失败。读到其他 release、畸形/重复 key、
+权威读取失败或 ETag 在时限内始终未推进时，立即冻结自动写入并生成权限为 `0600` 的
+`kvs-manual-intervention.env`，禁止猜测状态后盲目回退。回退命令本身的非零或损坏响应也执行同样的权威
+对账，并要求 ETag 离开回退前版本；只有已恢复保存状态才继续公网恢复验证。纯本地 fault fixture 固定覆盖 `applied-then-error`、
+`not-applied-error`、`lookup-error`、`delayed-apply-after-read`，并额外验证首次发布删除 key 后必须读回受控 503。
+
+Helm `--atomic` 与 Web KVS 的 ETag 条件切换是两个独立原子边界，不构成 EKS、S3 与 CloudFront 之间的
+分布式事务。标准发布先完成 RGS Helm revision，再发布 Web；如果 Web 最终回退，已经成功并可能处理交易的
+RGS revision 会保留，工作流不会盲目自动回滚服务端。整包商业发布因此还必须有同一组三个 digest 的前后向
+协议/配置兼容证据、分阶段放量与经批准的服务端回退判据；在该外部证据和审批未接入前，禁止宣称“全栈原子发布”。
 
 ## 本地只读门禁
 
@@ -280,6 +328,7 @@ deploy/aws-production/workflow/verify-contract.sh
 deploy/aws-production/workflow/test-negative-contract.sh
 deploy/aws-production/workflow/test-live-application-secrets.sh
 deploy/aws-production/workflow/test-live-definition-identity.sh
+deploy/aws-production/workflow/test-web-release-switch-faults.sh
 deploy/aws-production/workflow/test-hmac-quiesce-evidence.sh
 deploy/aws-production/workflow/test-hmac-application-maintenance.sh
 deploy/aws-production/workflow/test-hmac-only-release-diff.sh

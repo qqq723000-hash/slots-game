@@ -289,7 +289,7 @@ PostgreSQL 或本机 Compose 观测栈。
 │   ├── PrometheusRule（由 Chart 创建，CRD/求值器/Alertmanager 由公司平台提供）
 │   │   ├── ruleLabels 必须匹配公司 Prometheus 规则发现策略
 │   │   ├── 固定 API/Worker job + 当前 namespace，避免跨角色或跨环境串告警
-│   │   └── API/Worker 目标与就绪、5xx、进程/新意图容量、HPA 失效、共享准入、认证重放、钱包未知/隔离/熔断/待决、人工复核、完整性、outbox、DB 池二十条规则
+│   │   └── API/Worker 目标与就绪、5xx、容量/HPA、共享准入、认证重放、钱包结果/时延/停滞、恢复 backlog/年龄/循环及快照新鲜度、人工复核、完整性、outbox、DB 池二十七条规则
 │   └── Prometheus Pod → NetworkPolicy 允许 → operations Service:8081 → Alertmanager 外部路由
 │
 ├── 外部 Secret 引用树（六个职责 Secret 名称强制互异）

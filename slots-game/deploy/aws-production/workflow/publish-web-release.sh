@@ -2,6 +2,7 @@
 
 # 调用方必须先验证并拉取 Web digest；本脚本只写全新的不可变前缀，再调用固定版本切换接口。
 set -eu
+umask 077
 
 fail() {
   printf '%s\n' "AWS Web 发布失败：$*" >&2
@@ -218,31 +219,222 @@ case "$previous_count" in
   *) fail 'KeyValueStore 中存在重复 active-release' ;;
 esac
 
-promotion_json="$delivery_evidence/kvs-promotion.json"
-aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
-  --if-match "$kvs_etag_before" --key active-release --value "$release_id" \
-  --output json > "$promotion_json"
-kvs_etag_after=$(jq -er '.ETag | select(test("^[A-Za-z0-9_-]+$"))' "$promotion_json") || \
-  fail 'KeyValueStore 切换没有返回新 ETag'
+manual_intervention() {
+  intervention_stage=$1
+  intervention_reason=$2
+  observed_release=${3:-unknown}
+  intervention_file="$delivery_evidence/kvs-manual-intervention.env"
+  {
+    printf 'SCHEMA=%s\n' 'slots-game/web-release-manual-intervention/v1'
+    printf 'STAGE=%s\n' "$intervention_stage"
+    printf 'RELEASE_ID=%s\n' "$release_id"
+    printf 'PREVIOUS_RELEASE=%s\n' "$previous_release"
+    printf 'OBSERVED_ACTIVE_RELEASE=%s\n' "$observed_release"
+    printf 'ACTION=%s\n' 'freeze-and-authoritatively-reconcile'
+  } > "$intervention_file"
+  chmod 0600 "$intervention_file"
+  fail "$intervention_reason；状态未被安全证明，已停止自动写入，需要立即人工处置"
+}
 
-promotion_valid=true
+# get-key 是第一权威读；仅当 key 不存在或该读取失败时，再用完整 list-keys 区分
+# “确实没有 active-release”和“控制面不可读”。任何重复、畸形或双重读取失败都返回未知。
+read_active_release_authoritatively() {
+  authoritative_output=$1
+  authoritative_error="${authoritative_output%.json}.stderr"
+  authoritative_list="${authoritative_output%.json}-list.json"
+  authoritative_active_release=unknown
+  if aws cloudfront-keyvaluestore get-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
+    --key active-release --output json > "$authoritative_output" 2> "$authoritative_error"; then
+    authoritative_active_release=$(jq -er '
+      select(.Key == "active-release") | .Value |
+      select(test("^sha256:[0-9a-f]{64}$"))
+    ' "$authoritative_output") || return 1
+    return 0
+  fi
+  if ! aws cloudfront-keyvaluestore list-keys --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
+    --output json > "$authoritative_list" 2>> "$authoritative_error"; then
+    return 1
+  fi
+  authoritative_count=$(jq -er '
+    (.Items // []) as $items |
+    select(($items | type) == "array") |
+    [$items[] | select(.Key == "active-release")] | length
+  ' "$authoritative_list") || return 1
+  case "$authoritative_count" in
+    0) authoritative_active_release=none ;;
+    1)
+      authoritative_active_release=$(jq -er '
+        (.Items // [])[] | select(.Key == "active-release") | .Value |
+        select(test("^sha256:[0-9a-f]{64}$"))
+      ' "$authoritative_list") || return 1
+      ;;
+    *) authoritative_active_release=unknown; return 1 ;;
+  esac
+}
+
+read_ready_kvs_etag() {
+  ready_output=$1
+  ready_error="${ready_output%.json}.stderr"
+  authoritative_kvs_etag=unknown
+  if ! aws cloudfront-keyvaluestore describe-key-value-store \
+    --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" --output json > "$ready_output" 2> "$ready_error"; then
+    return 1
+  fi
+  authoritative_kvs_etag=$(jq -er --arg arn "$AWS_CLOUDFRONT_KVS_ARN" '
+    select(.KvsARN == $arn and .Status == "READY") | .ETag |
+    select(test("^[A-Za-z0-9_-]+$"))
+  ' "$ready_output") || return 1
+}
+
+is_previous_release() {
+  test "$1" = "$previous_release"
+}
+
+write_promotion_status() {
+  {
+    printf 'PROMOTION_COMMAND_STATUS=%s\n' "$promotion_command_status"
+    printf 'PROMOTION_FENCE_STATUS=%s\n' "$promotion_fence_status"
+    printf 'KVS_ETAG_BEFORE=%s\n' "$kvs_etag_before"
+    printf 'KVS_ETAG_AFTER=%s\n' "${kvs_etag_after:-unknown}"
+    printf 'OBSERVED_ACTIVE_RELEASE=%s\n' "${authoritative_active_release:-unknown}"
+  } > "$delivery_evidence/kvs-promotion-status.env"
+  chmod 0600 "$delivery_evidence/kvs-promotion-status.env"
+}
+
+promotion_json="$delivery_evidence/kvs-promotion.json"
+promotion_stderr="$delivery_evidence/kvs-promotion.stderr"
+promotion_command_status=success
+promotion_fence_status=not-required
+if aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
+  --if-match "$kvs_etag_before" --key active-release --value "$release_id" \
+  --output json > "$promotion_json" 2> "$promotion_stderr"; then
+  if ! kvs_etag_after=$(jq -er '.ETag | select(test("^[A-Za-z0-9_-]+$"))' \
+    "$promotion_json"); then
+    promotion_command_status=invalid-response
+  fi
+else
+  promotion_command_status=error
+fi
+
+# CLI 非零或响应损坏并不证明服务端未写入。一次立即回读到旧值也不能证明超时请求
+# 不会稍后提交，因此必须用原 ETag 做一次 CAS fence，并只读对账到 ETag 确认推进。
 active_json="$delivery_evidence/kvs-active-after.json"
-if ! aws cloudfront-keyvaluestore get-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
-  --key active-release --output json > "$active_json"; then
-  promotion_valid=false
-elif ! jq -e --arg release "$release_id" \
-  '.Key == "active-release" and .Value == $release' "$active_json" >/dev/null; then
-  promotion_valid=false
+if ! read_active_release_authoritatively "$active_json"; then
+  manual_intervention promotion-reconciliation \
+    'KVS 切换后无法权威读取 active-release' unknown
+fi
+
+if test "$promotion_command_status" != success && \
+  is_previous_release "$authoritative_active_release"; then
+  ambiguous_kvs="$delivery_evidence/kvs-ambiguous-before-fence.json"
+  if ! read_ready_kvs_etag "$ambiguous_kvs"; then
+    manual_intervention promotion-fence \
+      '切换结果不确定且无法读取 CAS fence 前的 READY KVS ETag' \
+      "$authoritative_active_release"
+  fi
+
+  if test "$authoritative_kvs_etag" = "$kvs_etag_before"; then
+    promotion_fence_json="$delivery_evidence/kvs-promotion-fence.json"
+    promotion_fence_stderr="$delivery_evidence/kvs-promotion-fence.stderr"
+    promotion_fence_status=success
+    if test "$previous_release" = none; then
+      # 首次发布没有可写回的旧值；用相同目标重试消费原 ETag，随后仍必须权威对账。
+      if ! aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
+        --if-match "$kvs_etag_before" --key active-release --value "$release_id" \
+        --output json > "$promotion_fence_json" 2> "$promotion_fence_stderr"; then
+        promotion_fence_status=error-reconcile-required
+      fi
+    elif ! aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
+      --if-match "$kvs_etag_before" --key active-release --value "$previous_release" \
+      --output json > "$promotion_fence_json" 2> "$promotion_fence_stderr"; then
+      # 条件写回旧值会推进 ETag；原超时请求随后只能收到 precondition failure。
+      promotion_fence_status=error-reconcile-required
+    fi
+  else
+    promotion_fence_status=etag-already-advanced
+  fi
+
+  fence_resolved=false
+  fence_attempt=1
+  while test "$fence_attempt" -le 30; do
+    fence_active="$delivery_evidence/kvs-active-after-fence-${fence_attempt}.json"
+    if ! read_active_release_authoritatively "$fence_active"; then
+      manual_intervention promotion-fence \
+        'CAS fence 后无法权威读取 active-release，拒绝继续自动写入' unknown
+    fi
+    fence_kvs="$delivery_evidence/kvs-after-fence-${fence_attempt}.json"
+    if ! read_ready_kvs_etag "$fence_kvs"; then
+      manual_intervention promotion-fence \
+        'CAS fence 后无法读取 READY KVS ETag，拒绝继续自动写入' \
+        "$authoritative_active_release"
+    fi
+    if test "$authoritative_kvs_etag" != "$kvs_etag_before"; then
+      fence_release_first=$authoritative_active_release
+      fence_etag_first=$authoritative_kvs_etag
+      # Key 与 store ETag 是两个 API；二次读取相同 pair，防止迟到写恰好落在两次读取之间。
+      fence_confirm_active="$delivery_evidence/kvs-active-after-fence-${fence_attempt}-confirm.json"
+      if ! read_active_release_authoritatively "$fence_confirm_active"; then
+        manual_intervention promotion-fence \
+          'CAS fence 确认读无法取得 active-release，拒绝使用撕裂快照' unknown
+      fi
+      fence_release_confirm=$authoritative_active_release
+      fence_confirm_kvs="$delivery_evidence/kvs-after-fence-${fence_attempt}-confirm.json"
+      if ! read_ready_kvs_etag "$fence_confirm_kvs"; then
+        manual_intervention promotion-fence \
+          'CAS fence 确认读无法取得 READY KVS ETag，拒绝使用撕裂快照' \
+          "$fence_release_confirm"
+      fi
+      fence_etag_confirm=$authoritative_kvs_etag
+      if test "$fence_release_first" = "$fence_release_confirm" && \
+        test "$fence_etag_first" = "$fence_etag_confirm"; then
+        fence_resolved=true
+        break
+      fi
+    fi
+    fence_attempt=$((fence_attempt + 1))
+    sleep 2
+  done
+  test "$fence_resolved" = true || \
+    manual_intervention promotion-fence \
+      'CAS fence 在时限内未推进原 ETag，迟到写入风险仍未消除' \
+      "$authoritative_active_release"
+
+  kvs_etag_after=$authoritative_kvs_etag
+  if is_previous_release "$authoritative_active_release"; then
+    promotion_command_status="${promotion_command_status}-fenced-not-applied"
+    write_promotion_status
+    fail 'KVS 切换命令结果不确定，但 CAS fence 已推进原 ETag 且 active-release 保持旧状态；迟到写入已被阻断'
+  fi
+  if test "$authoritative_active_release" != "$release_id"; then
+    manual_intervention promotion-fence \
+      'CAS fence 推进后 active-release 既不是目标 release 也不是保存的旧状态' \
+      "$authoritative_active_release"
+  fi
+fi
+
+if test "$authoritative_active_release" != "$release_id"; then
+  manual_intervention promotion-reconciliation \
+    'KVS 切换响应与权威 active-release 不一致，不能证明本次发布拥有当前状态' \
+    "$authoritative_active_release"
 fi
 
 kvs_after="$delivery_evidence/kvs-after.json"
-if ! aws cloudfront-keyvaluestore describe-key-value-store \
-  --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" --output json > "$kvs_after"; then
-  promotion_valid=false
-elif ! jq -e --arg arn "$AWS_CLOUDFRONT_KVS_ARN" --arg etag "$kvs_etag_after" \
-  '.KvsARN == $arn and .Status == "READY" and .ETag == $etag' "$kvs_after" >/dev/null; then
-  promotion_valid=false
+if ! read_ready_kvs_etag "$kvs_after"; then
+  manual_intervention promotion-reconciliation \
+    'active-release 已是目标 release，但无法取得 READY KVS ETag' "$release_id"
 fi
+if test "$promotion_command_status" = success; then
+  test "$authoritative_kvs_etag" = "$kvs_etag_after" || \
+    manual_intervention promotion-reconciliation \
+      'KVS 切换响应 ETag 与权威状态不一致，可能存在并发写入' "$release_id"
+else
+  kvs_etag_after=$authoritative_kvs_etag
+  promotion_command_status="${promotion_command_status}-reconciled-applied"
+fi
+
+write_promotion_status
+
+promotion_valid=true
 
 public_headers="$delivery_evidence/public-root-headers.txt"
 public_manifest="$delivery_evidence/public-root-manifest.json"
@@ -263,40 +455,120 @@ done
 test "$public_ready" = true || promotion_valid=false
 
 if test "$promotion_valid" != true; then
-  latest_etag=$(aws cloudfront-keyvaluestore describe-key-value-store \
-    --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" --query ETag --output text) || \
-    fail '发布验证失败且无法取得自动回退 ETag'
+  pre_rollback_active="$delivery_evidence/kvs-active-before-rollback.json"
+  if ! read_active_release_authoritatively "$pre_rollback_active"; then
+    manual_intervention rollback-precondition \
+      '公网验证失败后无法权威确认 active-release，拒绝盲目回退' unknown
+  fi
+  if test "$authoritative_active_release" != "$release_id"; then
+    if is_previous_release "$authoritative_active_release"; then
+      manual_intervention rollback-precondition \
+        '公网验证期间 active-release 已被恢复或并发修改，自动发布不拥有当前 ETag' \
+        "$authoritative_active_release"
+    fi
+    manual_intervention rollback-precondition \
+      '公网验证失败且 active-release 已变为其他 release，拒绝覆盖并发状态' \
+      "$authoritative_active_release"
+  fi
+
+  pre_rollback_kvs="$delivery_evidence/kvs-before-rollback.json"
+  if ! read_ready_kvs_etag "$pre_rollback_kvs"; then
+    manual_intervention rollback-precondition \
+      '公网验证失败且无法取得自动回退 ETag' "$release_id"
+  fi
+  latest_etag=$authoritative_kvs_etag
   test "$latest_etag" = "$kvs_etag_after" || \
-    fail '发布验证失败且 KVS 已被并发修改，拒绝覆盖新状态'
+    manual_intervention rollback-precondition \
+      '发布验证失败且 KVS 已被并发修改，拒绝覆盖新状态' "$release_id"
+
+  rollback_json="$delivery_evidence/kvs-rollback.json"
+  rollback_stderr="$delivery_evidence/kvs-rollback.stderr"
+  rollback_command_status=success
   if test "$previous_release" = none; then
-    aws cloudfront-keyvaluestore delete-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
+    if ! aws cloudfront-keyvaluestore delete-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
       --if-match "$latest_etag" --key active-release --output json > \
-      "$delivery_evidence/kvs-rollback.json" || fail '初始发布自动回退失败'
-  else
-    aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
-      --if-match "$latest_etag" --key active-release --value "$previous_release" \
-      --output json > "$delivery_evidence/kvs-rollback.json" || fail 'Web release 自动回退失败'
+      "$rollback_json" 2> "$rollback_stderr"; then
+      rollback_command_status=error
+    fi
+  elif ! aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
+    --if-match "$latest_etag" --key active-release --value "$previous_release" \
+    --output json > "$rollback_json" 2> "$rollback_stderr"; then
+    rollback_command_status=error
   fi
-  rollback_etag=$(jq -er '.ETag | select(test("^[A-Za-z0-9_-]+$"))' \
-    "$delivery_evidence/kvs-rollback.json") || fail '自动回退没有返回新 ETag'
-  rollback_state=$(aws cloudfront-keyvaluestore describe-key-value-store \
-    --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" --output json) || fail '自动回退后无法读取 KVS'
-  printf '%s\n' "$rollback_state" | jq -e --arg etag "$rollback_etag" \
-    --arg arn "$AWS_CLOUDFRONT_KVS_ARN" \
-    '.ETag == $etag and .KvsARN == $arn and .Status == "READY"' >/dev/null || \
-    fail '自动回退后的 KVS ETag 或状态不一致'
-  rollback_keys=$(aws cloudfront-keyvaluestore list-keys \
-    --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" --output json) || fail '自动回退后无法读取 key'
-  if test "$previous_release" = none; then
-    test "$(printf '%s\n' "$rollback_keys" | \
-      jq '[.Items[]? | select(.Key == "active-release")] | length')" = 0 || \
-      fail '初始发布回退后 active-release 仍存在'
-  else
-    printf '%s\n' "$rollback_keys" | jq -e --arg release "$previous_release" '
-      ([.Items[]? | select(.Key == "active-release" and .Value == $release)] | length) == 1
-    ' >/dev/null || fail '自动回退后 active-release 不是原 release'
+  if test "$rollback_command_status" = success; then
+    if ! rollback_etag=$(jq -er '.ETag | select(test("^[A-Za-z0-9_-]+$"))' \
+      "$rollback_json"); then
+      rollback_command_status=invalid-response
+    fi
   fi
-  fail 'KVS 切换后的 API 或公网回读失败，已按 ETag 自动恢复原 active-release'
+
+  rollback_active="$delivery_evidence/kvs-active-after-rollback.json"
+  if ! read_active_release_authoritatively "$rollback_active"; then
+    manual_intervention rollback-reconciliation \
+      '回退命令完成后无法权威读取 active-release，拒绝再次写入' unknown
+  fi
+  if ! is_previous_release "$authoritative_active_release"; then
+    manual_intervention rollback-reconciliation \
+      '回退命令未恢复保存的旧状态，拒绝重试或覆盖当前状态' \
+      "$authoritative_active_release"
+  fi
+
+  rollback_state="$delivery_evidence/kvs-after-rollback.json"
+  if ! read_ready_kvs_etag "$rollback_state"; then
+    manual_intervention rollback-reconciliation \
+      'active-release 已恢复旧状态，但无法取得 READY KVS ETag' \
+      "$authoritative_active_release"
+  fi
+  if test "$rollback_command_status" = success; then
+    test "$authoritative_kvs_etag" = "$rollback_etag" || \
+      manual_intervention rollback-reconciliation \
+        '自动回退响应 ETag 与权威状态不一致' "$authoritative_active_release"
+  else
+    test "$authoritative_kvs_etag" != "$latest_etag" || \
+      manual_intervention rollback-reconciliation \
+        '回退响应不确定且 KVS ETag 未推进，不能证明迟到回退是否仍在途' \
+        "$authoritative_active_release"
+    rollback_etag=$authoritative_kvs_etag
+    rollback_command_status="${rollback_command_status}-reconciled-applied"
+  fi
+
+  {
+    printf 'ROLLBACK_COMMAND_STATUS=%s\n' "$rollback_command_status"
+    printf 'ROLLBACK_ETAG=%s\n' "$rollback_etag"
+    printf 'RESTORED_ACTIVE_RELEASE=%s\n' "$authoritative_active_release"
+  } > "$delivery_evidence/kvs-rollback-status.env"
+  chmod 0600 "$delivery_evidence/kvs-rollback-status.env"
+
+  rollback_headers="$delivery_evidence/public-rollback-headers.txt"
+  rollback_body="$delivery_evidence/public-rollback-body.txt"
+  rollback_public_ready=false
+  attempt=1
+  while test "$attempt" -le 30; do
+    if test "$previous_release" = none; then
+      rollback_status=$(curl --silent --show-error --proto '=https' --tlsv1.2 \
+        --dump-header "$rollback_headers" --output "$rollback_body" --write-out '%{http_code}' \
+        "https://${AWS_CLOUDFRONT_DOMAIN_NAME}/release-manifest.json?rollback-check=${release_id#sha256:}") || \
+        rollback_status=''
+      if test "$rollback_status" = 503 && \
+        grep -F -x 'release is not ready' "$rollback_body" >/dev/null 2>&1; then
+        rollback_public_ready=true
+        break
+      fi
+    elif curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+      --dump-header "$rollback_headers" --output "$rollback_body" \
+      "https://${AWS_CLOUDFRONT_DOMAIN_NAME}/release-manifest.json?rollback-check=${release_id#sha256:}" && \
+      jq -e --arg release "$previous_release" '.releaseId == $release' \
+        "$rollback_body" >/dev/null 2>&1 && \
+      verify_csp_header "$rollback_headers"; then
+      rollback_public_ready=true
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 10
+  done
+  test "$rollback_public_ready" = true || \
+    fail 'KVS 已回退但 CloudFront 公网读路径未在时限内恢复，需要立即人工处置'
+  fail 'KVS 切换后的 API 或公网回读失败，已按 ETag 回退并确认公网恢复原 active-release'
 fi
 
 {

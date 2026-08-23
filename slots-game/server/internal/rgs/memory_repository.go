@@ -562,6 +562,55 @@ func (r *MemoryRepository) ClaimRecoverableRounds(
 	return claims, nil
 }
 
+// RecoverySnapshot 为内存契约适配器提供与 PostgreSQL 相同的数据库全局有界下界语义。
+// 它只用于测试和一致性验证；生产指标仍由 PostgreSQL 存储时钟生成。
+func (r *MemoryRepository) RecoverySnapshot(ctx context.Context) (RecoverySnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return RecoverySnapshot{}, err
+	}
+	r.mu.RLock()
+	type namedSnapshotSession struct {
+		key   string
+		entry *memorySession
+	}
+	entries := make([]namedSnapshotSession, 0, len(r.sessions))
+	for key, entry := range r.sessions {
+		entries = append(entries, namedSnapshotSession{key: key, entry: entry})
+	}
+	r.mu.RUnlock()
+	sort.Slice(entries, func(i, j int) bool { return entries[i].key < entries[j].key })
+	for _, item := range entries {
+		item.entry.mu.Lock()
+	}
+	defer func() {
+		for index := len(entries) - 1; index >= 0; index-- {
+			entries[index].entry.mu.Unlock()
+		}
+	}()
+
+	now := time.Now().UTC()
+	snapshot := RecoverySnapshot{ObservedAt: now}
+	for _, item := range entries {
+		if err := ctx.Err(); err != nil {
+			return RecoverySnapshot{}, err
+		}
+		for _, stored := range item.entry.rounds {
+			record := cloneRound(stored)
+			normalizeLegacyRecoveryState(&record)
+			if !recoveryRecordScheduledForObservation(record) {
+				continue
+			}
+			if snapshot.Backlog < RecoverySnapshotBacklogLimit {
+				snapshot.Backlog++
+			}
+			if age := now.Sub(record.NextAttemptAt); age > snapshot.OldestDueAge {
+				snapshot.OldestDueAge = age
+			}
+		}
+	}
+	return snapshot, nil
+}
+
 func (r *MemoryRepository) ScheduleWalletRecovery(
 	ctx context.Context,
 	claim WalletRecoveryClaim,
@@ -721,11 +770,19 @@ func normalizeLegacyRecoveryState(record *RoundRecord) {
 }
 
 func recoveryRecordDue(record RoundRecord, session Session, now time.Time) bool {
-	return (record.Status == RoundPrepared || record.Status == RoundWalletPending) &&
-		record.WalletPhase.Valid() && !record.NextAttemptAt.After(now) &&
-		!record.WalletLeaseUntil.After(now) && session.Status == SessionActive &&
-		session.PendingRoundID == record.Key.RoundID &&
+	return recoveryRecordScheduled(record, session) && !record.NextAttemptAt.After(now) &&
+		!record.WalletLeaseUntil.After(now)
+}
+
+func recoveryRecordScheduled(record RoundRecord, session Session) bool {
+	return recoveryRecordScheduledForObservation(record) &&
+		session.Status == SessionActive && session.PendingRoundID == record.Key.RoundID &&
 		session.Revision == record.Request.StartRevision
+}
+
+func recoveryRecordScheduledForObservation(record RoundRecord) bool {
+	return (record.Status == RoundPrepared || record.Status == RoundWalletPending) &&
+		record.WalletPhase.Valid() && !record.NextAttemptAt.IsZero()
 }
 
 func (r *MemoryRepository) lookupSession(ctx context.Context, operatorID, sessionID string) (*memorySession, error) {

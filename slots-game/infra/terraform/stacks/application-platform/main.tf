@@ -143,6 +143,7 @@ module "rds" {
   multi_az                  = var.rds_multi_az
   backup_retention_days     = var.rds_backup_retention_days
   deletion_protection       = var.rds_deletion_protection
+  alarm_thresholds          = var.rds_alarm_thresholds
   log_retention_days        = var.log_retention_days
   tags                      = local.tags
 }

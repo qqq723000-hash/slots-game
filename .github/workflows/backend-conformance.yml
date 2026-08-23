@@ -119,7 +119,7 @@ jobs:
         with:
           name: postgres-conformance-${{ github.run_id }}-${{ github.run_attempt }}
           path: slots-game/.artifacts/postgres-conformance/*.jsonl
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload runtime operations smoke evidence
@@ -128,5 +128,5 @@ jobs:
         with:
           name: runtime-operations-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: slots-game/.artifacts/runtime-smoke/*
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30

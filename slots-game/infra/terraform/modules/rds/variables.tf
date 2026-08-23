@@ -78,6 +78,40 @@ variable "max_allocated_storage_gib" {
   }
 }
 
+variable "alarm_thresholds" {
+  description = "经容量测试批准的 RDS CloudWatch 告警阈值"
+  type = object({
+    cpu_utilization_percent  = number
+    database_connections     = number
+    freeable_memory_bytes    = number
+    free_storage_space_bytes = number
+    read_latency_seconds     = number
+    write_latency_seconds    = number
+    disk_queue_depth         = number
+  })
+
+  validation {
+    condition = (
+      var.alarm_thresholds.cpu_utilization_percent > 0 &&
+      var.alarm_thresholds.cpu_utilization_percent <= 100 &&
+      var.alarm_thresholds.database_connections >= 1 &&
+      var.alarm_thresholds.database_connections <= 1000000 &&
+      floor(var.alarm_thresholds.database_connections) == var.alarm_thresholds.database_connections &&
+      var.alarm_thresholds.freeable_memory_bytes >= 67108864 &&
+      floor(var.alarm_thresholds.freeable_memory_bytes) == var.alarm_thresholds.freeable_memory_bytes &&
+      var.alarm_thresholds.free_storage_space_bytes >= 1073741824 &&
+      floor(var.alarm_thresholds.free_storage_space_bytes) == var.alarm_thresholds.free_storage_space_bytes &&
+      var.alarm_thresholds.read_latency_seconds > 0 &&
+      var.alarm_thresholds.read_latency_seconds <= 60 &&
+      var.alarm_thresholds.write_latency_seconds > 0 &&
+      var.alarm_thresholds.write_latency_seconds <= 60 &&
+      var.alarm_thresholds.disk_queue_depth > 0 &&
+      var.alarm_thresholds.disk_queue_depth <= 1000000
+    )
+    error_message = "RDS 告警阈值必须使用有效百分比、正整数连接/字节预算，以及最多 60 秒的正延迟阈值。"
+  }
+}
+
 variable "multi_az" {
   description = "是否启用 Multi-AZ DB instance"
   type        = bool

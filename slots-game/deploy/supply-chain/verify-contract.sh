@@ -48,6 +48,7 @@ cluster_kubeconform_contract="$repository_root/deploy/cluster-production/verify-
 cluster_image_contract="$repository_root/deploy/cluster-production/verify-image-runtime-contract.sh"
 cluster_prometheus_rule_contract="$repository_root/deploy/cluster-production/verify-prometheus-rule-contract.sh"
 aws_deployment_guide="$repository_root/docs/aws-production-deployment.md"
+backend_release_gates="$repository_root/docs/backend-release-gates.md"
 
 fail() {
   printf '%s\n' "supply-chain security contract: $*" >&2
@@ -101,7 +102,8 @@ for required_file in \
   "$cluster_kubeconform_contract" \
   "$cluster_image_contract" \
   "$cluster_prometheus_rule_contract" \
-  "$aws_deployment_guide"
+  "$aws_deployment_guide" \
+  "$backend_release_gates"
 do
   require_file "$required_file"
 done
@@ -393,7 +395,8 @@ test -n "$aws_extract_line" && test -n "$aws_reject_line" && test -n "$aws_sync_
 
 # 获批 Web OCI 在扫描和上传前必须把精确静态字节装入真实 Chrome；源码目录的普通构建不能替代。
 require_fixed 'Smoke the exact approval-gated Web bytes in a real browser' "$release_workflow"
-require_fixed 'oci-archive:/bundle/release-image.oci.tar "docker-daemon:$local_ref"' "$release_workflow"
+require_fixed '"docker-archive:/output/release-image.docker.tar:$local_ref"' "$release_workflow"
+require_fixed 'docker load --input "$conversion_root/release-image.docker.tar"' "$release_workflow"
 require_fixed 'docker cp "$container_id:/usr/share/nginx/html/." "$static_root"' "$release_workflow"
 require_fixed "node web/scripts/verify-production-browser-bootstrap.mjs \\" "$release_workflow"
 require_fixed '--distribution-root "$static_root"' "$release_workflow"
@@ -486,11 +489,15 @@ extract_release_job() {
 conformance_job=$(extract_release_job verify-source-conformance)
 rgs_job=$(extract_release_job build-rgs)
 web_job=$(extract_release_job build-approved-web)
+artifact_binding_job=$(extract_release_job bind-release-artifact)
 publish_job=$(extract_release_job publish-sign)
-test -n "$conformance_job" && test -n "$rgs_job" && test -n "$web_job" && test -n "$publish_job" || fail 'all four release permission domains are required'
+test -n "$conformance_job" && test -n "$rgs_job" && test -n "$web_job" && \
+  test -n "$artifact_binding_job" && test -n "$publish_job" || \
+  fail 'all five release permission domains are required'
 conformance_job_code=$(printf '%s\n' "$conformance_job" | grep -Ev '^[[:space:]]*#' || true)
 rgs_job_code=$(printf '%s\n' "$rgs_job" | grep -Ev '^[[:space:]]*#' || true)
 web_job_code=$(printf '%s\n' "$web_job" | grep -Ev '^[[:space:]]*#' || true)
+artifact_binding_job_code=$(printf '%s\n' "$artifact_binding_job" | grep -Ev '^[[:space:]]*#' || true)
 publish_job_code=$(printf '%s\n' "$publish_job" | grep -Ev '^[[:space:]]*#' || true)
 
 extract_job_permissions() {
@@ -511,6 +518,7 @@ require_exact_job_permissions() {
 }
 
 readonly_permissions='      contents: read'
+artifact_binding_permissions='      actions: read'
 publish_permissions=$(printf '%s\n' \
   '      contents: read' \
   '      id-token: write' \
@@ -519,6 +527,7 @@ publish_permissions=$(printf '%s\n' \
 require_exact_job_permissions verify-source-conformance "$conformance_job" "$readonly_permissions"
 require_exact_job_permissions build-rgs "$rgs_job" "$readonly_permissions"
 require_exact_job_permissions build-approved-web "$web_job" "$readonly_permissions"
+require_exact_job_permissions bind-release-artifact "$artifact_binding_job" "$artifact_binding_permissions"
 require_exact_job_permissions publish-sign "$publish_job" "$publish_permissions"
 
 # A：源码/依赖/数据库/runtime 门禁在纯 contents:read job；此 job 绝不产出候选镜像。
@@ -634,8 +643,50 @@ do
 done
 printf '%s\n' "$web_job" | grep -F 'driver-opts: image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' >/dev/null || fail 'Web BuildKit runtime is not digest-pinned'
 printf '%s\n' "$web_job" | grep -F 'buildkitd-flags: --debug=false' >/dev/null || fail 'Web BuildKit insecure entitlement defaults must be replaced'
+for browser_conversion_control in \
+  '--network=none --read-only --cap-drop=ALL' \
+  '--user "$(id -u):$(id -g)"' \
+  '--volume "$SUPPLY_CHAIN_REPORT_DIR/bundle:/bundle:ro"' \
+  '--volume "$conversion_root:/output"' \
+  'docker-archive:/output/release-image.docker.tar:$local_ref' \
+  'docker load --input "$conversion_root/release-image.docker.tar"'
+do
+  printf '%s\n' "$web_job" | grep -F -- "$browser_conversion_control" >/dev/null || \
+    fail "Web browser smoke missing isolated OCI conversion control: $browser_conversion_control"
+done
+if printf '%s\n' "$web_job_code" | grep -F '/var/run/docker.sock' >/dev/null; then
+  fail 'Web approval job must not expose the host Docker socket to the conversion container'
+fi
 
-# D：最终 Environment 是唯一 OIDC/Registry 域；不 checkout、不执行任何源码/依赖/build/scan。
+# D：独立无源码 job 只读 Actions 元数据，并把 ID/digest 与当前 run、SHA 和唯一名称绑定。
+printf '%s\n' "$artifact_binding_job" | grep -F -x '  bind-release-artifact:' >/dev/null || \
+  fail 'missing bind-release-artifact job'
+artifact_id_selection='${{ inputs.artifact == '\''web-runtime'\'' && needs.build-approved-web.outputs.artifact_id || needs.build-rgs.outputs.artifact_id }}'
+test "$(grep -F -c "$artifact_id_selection" "$release_workflow" || true)" -eq 3 || \
+  fail 'builder artifact ID must be selected identically for metadata binding, download and offline verification'
+if printf '%s\n' "$artifact_binding_job_code" | \
+  grep -E 'actions/checkout@|^[[:space:]]+environment:|id-token:|attestations:|artifact-metadata:|\$\{\{ secrets\.' >/dev/null; then
+  fail 'artifact metadata binding job must not checkout or receive Environment/OIDC/secrets'
+fi
+for artifact_binding_control in \
+  'needs.verify-source-conformance.result == '\''success'\''' \
+  'needs.build-rgs.result == '\''success'\''' \
+  'needs.build-rgs.result == '\''skipped'\''' \
+  'needs.build-approved-web.result == '\''success'\''' \
+  'needs.build-approved-web.result == '\''skipped'\''' \
+  'EXPECTED_ARTIFACT_ID:' \
+  'EXPECTED_ARTIFACT_DIGEST:' \
+  'Authorization: Bearer $GH_TOKEN' \
+  '$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$EXPECTED_ARTIFACT_ID' \
+  '.id == $artifact_id and .name == $name and .expired == false and' \
+  '.digest == $digest and .workflow_run.id == $run_id and' \
+  '.workflow_run.head_sha == $source_sha'
+do
+  printf '%s\n' "$artifact_binding_job" | grep -F -- "$artifact_binding_control" >/dev/null || \
+    fail "artifact metadata binding missing $artifact_binding_control"
+done
+
+# E：最终 Environment 是唯一 OIDC/Registry 域；不 checkout、不执行任何源码/依赖/build/scan。
 printf '%s\n' "$publish_job" | grep -F -x '    environment: supply-chain-release' >/dev/null || fail 'publish job must use the final release Environment'
 for required_permission in '      contents: read' '      id-token: write' '      attestations: write' '      artifact-metadata: write'
 do
@@ -647,6 +698,7 @@ fi
 printf '%s\n' "$publish_job" | grep -F "uses: actions/download-artifact@$download_sha # v8.0.1" >/dev/null || fail 'publish job must use reviewed download-artifact'
 for required_control in \
   'needs.verify-source-conformance.result == '\''success'\''' \
+  'needs.bind-release-artifact.result == '\''success'\''' \
   'needs.build-rgs.result == '\''success'\''' \
   'needs.build-rgs.result == '\''skipped'\''' \
   'needs.build-approved-web.result == '\''success'\''' \
@@ -665,7 +717,7 @@ for required_control in \
   '"$SKOPEO_IMAGE" copy' \
   'oci-archive:/input/release-image.oci.tar' \
   'docker-archive:/out/release-image.docker.tar:$local_ref' \
-  'docker load --input "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar"' \
+  'docker load --input "$PUBLISH_WORK_DIR/release-image.docker.tar"' \
   'test "$SUPPLY_CHAIN_REGISTRY" = "$expected_registry"' \
   'test "$SUPPLY_CHAIN_IMAGE_REPOSITORY" = "$expected_registry/$expected_ecr_repository"' \
   'actual_account=$(aws sts get-caller-identity --query Account --output text)' \
@@ -709,6 +761,15 @@ printf '%s\n' "$publish_job" | grep -F 'SKOPEO_IMAGE: quay.io/skopeo/stable:v1.2
 printf '%s\n' "$publish_job" | grep -F -- '--read-only --network=none' >/dev/null || fail 'offline OCI conversion must be read-only and networkless'
 printf '%s\n' "$publish_job" | grep -F 'END { exit bad || NR != 6 }' >/dev/null || \
   fail 'checksum allowlist must retain invalid-line state through awk END'
+printf '%s\n' "$publish_job" | grep -F 'rm -rf "$PUBLISH_WORK_DIR" "$BUNDLE_DOWNLOAD_DIR"' >/dev/null || \
+  fail 'transient release bytes must be removed before audit evidence upload'
+if printf '%s\n' "$publish_job" | grep -F 'path: ${{ env.PUBLISH_WORK_DIR }}' >/dev/null; then
+  fail 'privileged audit artifact must not retain release image bytes'
+fi
+printf '%s\n' "$publish_job" | grep -F -x '          path: ${{ env.PUBLISH_EVIDENCE_DIR }}' >/dev/null || \
+  fail 'privileged publish audit upload must be limited to the evidence directory'
+test "$(grep -F -c 'if-no-files-found: warn' "$release_workflow" || true)" -eq 0 || \
+  fail 'release evidence uploads must fail closed when evidence is absent'
 
 id_token_count=$(grep -F -c '      id-token: write' "$release_workflow" || true)
 test "$id_token_count" -eq 1 || fail 'only publish-sign may request a GitHub OIDC token'
@@ -717,6 +778,18 @@ test "$release_environment_count" -eq 1 || fail 'only publish-sign may use the f
 web_environment_count=$(grep -F -c '    environment: supply-chain-web-approval' "$release_workflow" || true)
 test "$web_environment_count" -eq 1 || fail 'Web approval must have one isolated Environment'
 reject_fixed 'continue-on-error:' "$release_workflow"
+test "$(grep -F -c 'if-no-files-found: error' "$backend_workflow" || true)" -eq 2 || \
+  fail 'backend conformance must fail closed when either evidence artifact is absent'
+reject_fixed 'if-no-files-found: warn' "$backend_workflow"
+for capacity_boundary in \
+  '容量压测证据边界' \
+  '不等于生产容量认证' \
+  '三个已签名 OCI digest' \
+  '当前仓库没有压测平台的身份、不可变对象存储或受保护审批 API' \
+  '真实商业峰值容量与第三方钱包 SLA 仍属于上线阻断项'
+do
+  require_fixed "$capacity_boundary" "$backend_release_gates"
+done
 
 # 清洁源码扫描必须先于 conformance 依赖；fresh RGS job 必须 checkout→tree→build→scan→bundle。
 source_security_line=$(grep -n -F 'run: ./deploy/supply-chain/scan.sh source "$SUPPLY_CHAIN_REPORT_DIR/source"' "$release_workflow" | head -n 1 | cut -d: -f1)
@@ -734,7 +807,7 @@ conversion_line=$(grep -n -F '"$SKOPEO_IMAGE" copy' "$release_workflow" | tail -
 aws_identity_line=$(grep -n -F "uses: aws-actions/configure-aws-credentials@$configure_aws_sha" "$release_workflow" | cut -d: -f1)
 aws_account_line=$(grep -n -F 'actual_account=$(aws sts get-caller-identity --query Account --output text)' "$release_workflow" | cut -d: -f1)
 login_line=$(grep -n -F "uses: aws-actions/amazon-ecr-login@$ecr_login_sha" "$release_workflow" | cut -d: -f1)
-load_line=$(grep -n -F 'docker load --input "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar"' "$release_workflow" | cut -d: -f1)
+load_line=$(grep -n -F 'docker load --input "$PUBLISH_WORK_DIR/release-image.docker.tar"' "$release_workflow" | cut -d: -f1)
 attest_line=$(grep -n -F "uses: actions/attest@$attest_sha # v4.2.2" "$release_workflow" | head -n 1 | cut -d: -f1)
 sign_line=$(grep -n -F '"$COSIGN_IMAGE" sign --yes "$image_reference"' "$release_workflow" | cut -d: -f1)
 promote_line=$(grep -n -F 'docker push "$final_ref"' "$release_workflow" | cut -d: -f1)
@@ -764,7 +837,8 @@ require_fixed '`AWS_ACCOUNT_ID`' "$readme"
 require_fixed '`AWS_REGION`' "$readme"
 require_fixed 'GitHub OIDC' "$readme"
 require_fixed '不得保存长期 AWS access key' "$readme"
-for documented_job in '`verify-source-conformance`' '`build-rgs`' '`build-approved-web`' '`publish-sign`'
+for documented_job in '`verify-source-conformance`' '`build-rgs`' '`build-approved-web`' \
+  '`bind-release-artifact`' '`publish-sign`'
 do
   require_fixed "$documented_job" "$readme"
 done

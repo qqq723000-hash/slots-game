@@ -26,6 +26,15 @@ export type ResultDeliveryStage =
  */
 export type InitialSessionRecoveryMode = "operator-session";
 
+/**
+ * 浏览器运行时可用性只控制传输调度，不改变任何经济身份或服务端状态。
+ * hidden 页面暂停非关键轮询；offline 页面还暂停需要网络的重试。
+ */
+export interface GatewayRuntimeAvailability {
+  readonly online: boolean;
+  readonly visible: boolean;
+}
+
 export interface GatewayCallbacks {
   onStatus(status: GatewayStatus): void;
   onSession(message: SessionOpened): void;
@@ -50,6 +59,11 @@ export interface GameGateway {
   /** 仅供故障关闭恢复通知使用的构建期精确运营商来源。 */
   readonly operatorHostOrigin?: string;
   connect(): void;
+  /**
+   * 可选浏览器生命周期端口。测试替身无需实现；生产 RGS 用它避免后台/离线
+   * 消耗恢复预算，并在同一页恢复时继续既有 ledger。
+   */
+  setRuntimeAvailability?(availability: Readonly<GatewayRuntimeAvailability>): void;
   requestSpin(roundId: string, betMinor: MoneyMinor): boolean;
   /** 持久传输在结果展示完成后确认消费，不得改变已经提交的经济结果。 */
   acknowledgeSpinResult?(roundId: string, sequence: number): boolean;

@@ -14,9 +14,9 @@ import (
 const (
 	requestLatencyBucketCount = 11
 	walletMethodCount         = 3
-	walletOutcomeCount        = 9
+	walletOutcomeCount        = 10
 	walletRejectionCount      = 3
-	walletBreakerMethodCount  = 2
+	walletBreakerMethodCount  = 4
 	walletBreakerStateCount   = 3
 )
 
@@ -36,9 +36,9 @@ var requestLatencyBoundaries = [...]time.Duration{
 
 var (
 	walletMetricMethods    = [...]string{"apply", "lookup", "rollback"}
-	walletMetricOutcomes   = [...]string{"success", "pending", "rejected", "not_found", "not_sent", "conflict", "invalid", "unknown", "isolated"}
+	walletMetricOutcomes   = [...]string{"success", "pending", "rejected", "not_found", "not_sent", "conflict", "invalid", "response_auth_invalid", "unknown", "isolated"}
 	walletRejectionReasons = [...]string{"backend_bulkhead", "operator_bulkhead", "circuit"}
-	walletBreakerMethods   = [...]string{"apply", "lookup"}
+	walletBreakerMethods   = [...]string{"apply", "lookup", "operator_apply", "operator_lookup"}
 	walletBreakerStates    = [...]string{"closed", "open", "half_open"}
 )
 
@@ -85,6 +85,11 @@ type Metrics struct {
 	WalletIsolationRejections   [walletMethodCount][walletRejectionCount]atomic.Uint64
 	WalletBreakers              [walletBreakerMethodCount][walletBreakerStateCount]atomic.Int64
 	Reconciliations             atomic.Uint64
+	RecoveryLoopLastSuccessUnix atomic.Int64
+	RecoveryLoopFailures        atomic.Uint64
+	RecoverySnapshotFailures    atomic.Uint64
+	recoveryMetricsEnabled      atomic.Bool
+	recoverySnapshot            atomic.Pointer[recoveryMetricSnapshot]
 	RoundsManualReview          atomic.Uint64
 	RoundIntegrityQuarantines   atomic.Uint64
 	SessionIntegrityQuarantines atomic.Uint64
@@ -93,6 +98,12 @@ type Metrics struct {
 	OutboxDeferred              atomic.Uint64
 	OutboxLeaseLost             atomic.Uint64
 	databasePool                atomic.Pointer[sql.DB]
+}
+
+type recoveryMetricSnapshot struct {
+	backlog           int64
+	oldestDueAgeNanos int64
+	observedUnix      int64
 }
 
 func (m *Metrics) WritePrometheus(w io.Writer) error {
@@ -143,6 +154,11 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 	if err := m.writeWalletIsolationMetrics(w); err != nil {
 		return err
 	}
+	if m.recoveryMetricsEnabled.Load() {
+		if err := m.writeRecoveryMetrics(w); err != nil {
+			return err
+		}
+	}
 	if _, err := fmt.Fprintf(
 		w,
 		"# HELP rgs_http_active_requests Requests currently executing on the public RGS listener.\n"+
@@ -171,6 +187,43 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func (m *Metrics) writeRecoveryMetrics(w io.Writer) error {
+	snapshot := m.recoverySnapshot.Load()
+	var backlog, oldestDueAgeNanos, snapshotObservedUnix int64
+	if snapshot != nil {
+		backlog, oldestDueAgeNanos, snapshotObservedUnix =
+			snapshot.backlog, snapshot.oldestDueAgeNanos, snapshot.observedUnix
+	}
+	_, err := fmt.Fprintf(
+		w,
+		"# HELP rgs_recovery_backlog Capped database-global lower-bound of durably scheduled wallet recovery rows; 501 means at least 501 and is duplicated on every Worker target.\n"+
+			"# TYPE rgs_recovery_backlog gauge\n"+
+			"rgs_recovery_backlog %d\n"+
+			"# HELP rgs_recovery_oldest_due_age_seconds Database-clock age past the oldest durably scheduled wallet recovery row; zero when none is overdue.\n"+
+			"# TYPE rgs_recovery_oldest_due_age_seconds gauge\n"+
+			"rgs_recovery_oldest_due_age_seconds %.9f\n"+
+			"# HELP rgs_recovery_snapshot_last_success_timestamp_seconds Database Unix timestamp of the last successful durable recovery backlog snapshot.\n"+
+			"# TYPE rgs_recovery_snapshot_last_success_timestamp_seconds gauge\n"+
+			"rgs_recovery_snapshot_last_success_timestamp_seconds %d\n"+
+			"# HELP rgs_recovery_snapshot_failures_total Durable recovery backlog snapshot attempts that failed or returned an invalid value.\n"+
+			"# TYPE rgs_recovery_snapshot_failures_total counter\n"+
+			"rgs_recovery_snapshot_failures_total %d\n"+
+			"# HELP rgs_recovery_loop_last_success_timestamp_seconds Unix timestamp of the last successfully completed wallet recovery pass.\n"+
+			"# TYPE rgs_recovery_loop_last_success_timestamp_seconds gauge\n"+
+			"rgs_recovery_loop_last_success_timestamp_seconds %d\n"+
+			"# HELP rgs_recovery_loop_failures_total Wallet recovery passes that did not complete successfully.\n"+
+			"# TYPE rgs_recovery_loop_failures_total counter\n"+
+			"rgs_recovery_loop_failures_total %d\n",
+		backlog,
+		float64(oldestDueAgeNanos)/float64(time.Second),
+		snapshotObservedUnix,
+		m.RecoverySnapshotFailures.Load(),
+		m.RecoveryLoopLastSuccessUnix.Load(),
+		m.RecoveryLoopFailures.Load(),
+	)
+	return err
 }
 
 // NonceReplay 记录已经由签名验证链路确认的随机数重放，不携带任何请求派生标签。
@@ -434,6 +487,54 @@ func (m *Metrics) WalletCall() {
 func (m *Metrics) WalletUnknownOutcome() {
 	if m != nil {
 		m.WalletUnknownOutcomes.Add(1)
+	}
+}
+
+// ObserveRecoveryBacklog 接收存储适配器用权威存储时钟生成的全局有界下界快照。
+// 它没有运营商、会话、轮次或 Worker 标签；副本身份只来自受控 scrape 标签。
+func (m *Metrics) ObserveRecoveryBacklog(
+	backlog int64,
+	oldestDueAge time.Duration,
+	observedAt time.Time,
+) {
+	if m == nil || backlog < 0 || backlog > rgs.RecoverySnapshotBacklogLimit || oldestDueAge < 0 ||
+		(backlog == 0 && oldestDueAge != 0) || observedAt.IsZero() || observedAt.Unix() <= 0 {
+		return
+	}
+	m.recoveryMetricsEnabled.Store(true)
+	m.recoverySnapshot.Store(&recoveryMetricSnapshot{
+		backlog: backlog, oldestDueAgeNanos: int64(oldestDueAge),
+		observedUnix: observedAt.UTC().Unix(),
+	})
+}
+
+// EnableRecoveryMetrics 只由实际运行恢复循环的 worker/combined 角色调用，避免
+// API-only Pod 暴露看似健康、实为从未采集的零积压与零新鲜度。
+func (m *Metrics) EnableRecoveryMetrics() {
+	if m != nil {
+		m.recoveryMetricsEnabled.Store(true)
+	}
+}
+
+func (m *Metrics) RecoveryLoopSucceeded(completedAt time.Time) {
+	if m == nil || completedAt.IsZero() || completedAt.Unix() <= 0 {
+		return
+	}
+	m.recoveryMetricsEnabled.Store(true)
+	m.RecoveryLoopLastSuccessUnix.Store(completedAt.UTC().Unix())
+}
+
+func (m *Metrics) RecoveryLoopFailed() {
+	if m != nil {
+		m.recoveryMetricsEnabled.Store(true)
+		m.RecoveryLoopFailures.Add(1)
+	}
+}
+
+func (m *Metrics) RecoverySnapshotFailed() {
+	if m != nil {
+		m.recoveryMetricsEnabled.Store(true)
+		m.RecoverySnapshotFailures.Add(1)
 	}
 }
 

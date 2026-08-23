@@ -826,6 +826,58 @@ func (r *Repository) MarkManualReview(ctx context.Context, key rgs.RoundKey, rea
 	return quarantineCorruptRound(ctx, tx, key, reason, r.integrityObserver)
 }
 
+const recoverySnapshotSQL = `
+	WITH recovery_clock AS MATERIALIZED (
+		SELECT clock_timestamp() AS now
+	), bounded_recovery AS MATERIALIZED (
+		SELECT r.next_attempt_at
+		FROM rgs_rounds r
+		WHERE r.status IN ('PREPARED', 'WALLET_PENDING')
+		  AND r.wallet_phase IN ('APPLY', 'LOOKUP')
+		  AND r.next_attempt_at IS NOT NULL
+		ORDER BY r.next_attempt_at, r.operator_id, r.updated_at, r.session_id, r.round_id
+		LIMIT 501
+	)
+	SELECT count(*)::bigint,
+		COALESCE(
+			floor(GREATEST(
+				EXTRACT(EPOCH FROM (
+					COALESCE(MAX(recovery_clock.now), (SELECT now FROM recovery_clock)) -
+					MIN(bounded_recovery.next_attempt_at)
+				)),
+				0
+			) * 1000)::bigint,
+			0
+		),
+		COALESCE(MAX(recovery_clock.now), (SELECT now FROM recovery_clock))
+	FROM bounded_recovery
+	CROSS JOIN recovery_clock`
+
+// RecoverySnapshot 使用数据库时钟生成所有 Worker 共享的有界恢复视图。它按 0008
+// partial index 顺序最多读取 501 个持久调度候选；501 表示实际积压至少达到告警门槛，
+// 而不是精确总数。第一行仍是全局最早候选，因此逾期年龄不会因截断失真。会话
+// 绑定继续由领取事务强校验；异常失配行不能从积压观测中静默消失。
+func (r *Repository) RecoverySnapshot(ctx context.Context) (rgs.RecoverySnapshot, error) {
+	var backlog, oldestDueMillis int64
+	var observedAt time.Time
+	if err := r.db.QueryRowContext(ctx, recoverySnapshotSQL).Scan(
+		&backlog, &oldestDueMillis, &observedAt,
+	); err != nil {
+		return rgs.RecoverySnapshot{}, fmt.Errorf("postgres repository: inspect recovery backlog: %w", err)
+	}
+	maximumDurationMillis := int64((time.Duration(1<<63 - 1)) / time.Millisecond)
+	observedAt = observedAt.UTC()
+	if backlog < 0 || backlog > rgs.RecoverySnapshotBacklogLimit || oldestDueMillis < 0 ||
+		observedAt.IsZero() || observedAt.Unix() <= 0 ||
+		(backlog == 0 && oldestDueMillis != 0) || oldestDueMillis > maximumDurationMillis {
+		return rgs.RecoverySnapshot{}, errors.New("postgres repository: invalid recovery backlog snapshot")
+	}
+	return rgs.RecoverySnapshot{
+		Backlog: backlog, OldestDueAge: time.Duration(oldestDueMillis) * time.Millisecond,
+		ObservedAt: observedAt,
+	}, nil
+}
+
 func (r *Repository) ClaimRecoverableRounds(
 	ctx context.Context,
 	limit int,

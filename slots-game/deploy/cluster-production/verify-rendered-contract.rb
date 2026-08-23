@@ -47,10 +47,25 @@ autoscalers = resources.fetch("HorizontalPodAutoscaler", [])
 autoscaler_targets = autoscalers.map do |autoscaler|
   target = autoscaler.dig("spec", "scaleTargetRef", "name")
   abort "HPA 引用了不存在的 Deployment: #{target}" unless deployment_names.include?(target)
+  metric_contract = autoscaler.dig("spec", "metrics").map do |metric|
+    [metric.fetch("type"), metric.dig("resource", "name")]
+  end
+  abort "HPA 在未交付指标 adapter 时不得伪装 I/O 自定义指标" unless
+    metric_contract.sort_by { |type, name| "#{type}:#{name}" } ==
+      [["Resource", "cpu"], ["Resource", "memory"]]
   target
 end
 abort "每个 Deployment 必须恰好由一个独立 HPA 管理" unless
   autoscaler_targets.sort == deployment_names.sort
+rgs_autoscaler = autoscalers.find do |autoscaler|
+  autoscaler.dig("metadata", "labels", "app.kubernetes.io/component") == "rgs"
+end
+worker_autoscaler = autoscalers.find do |autoscaler|
+  autoscaler.dig("metadata", "labels", "app.kubernetes.io/component") == "rgs-worker"
+end
+abort "API/Worker HPA 缺少静态预热副本" unless
+  rgs_autoscaler&.dig("spec", "minReplicas").to_i >= 3 &&
+    worker_autoscaler&.dig("spec", "minReplicas").to_i >= 2
 
 pdbs = resources.fetch("PodDisruptionBudget", [])
 pdbs.each do |budget|
@@ -104,6 +119,13 @@ expected_alerts = %w[
   SlotsRGSWalletIsolationRejected
   SlotsRGSWalletCircuitOpen
   SlotsRGSWalletPendingSustained
+  SlotsRGSWalletResponseAuthenticationInvalid
+  SlotsRGSWalletLatencyHigh
+  SlotsRGSWalletRequestsStalled
+  SlotsRGSRecoveryBacklogHigh
+  SlotsRGSRecoveryOldestDue
+  SlotsRGSRecoveryLoopStale
+  SlotsRGSRecoverySnapshotStale
   SlotsRGSRoundManualReview
   SlotsRGSIntegrityQuarantine
   SlotsRGSOutboxDeferred
@@ -149,6 +171,17 @@ abort "认证重放告警必须使用五分钟 increase 并在首次事件时触
     'sum(increase(rgs_auth_replays_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0'
 abort "认证重放告警必须保持 warning 级别" unless
   auth_replay_rule.dig("labels", "severity") == "warning"
+{
+  "SlotsRGSRecoveryBacklogHigh" => ["rgs_recovery_backlog", ">= 501"],
+  "SlotsRGSRecoveryOldestDue" => ["rgs_recovery_oldest_due_age_seconds", "> 120"],
+}.each do |alert, (metric, threshold)|
+  expression = rules.find { |rule| rule.fetch("alert") == alert }.fetch("expr")
+  abort "#{alert} 没有只聚合同实例的新鲜恢复快照" unless
+    expression.include?(metric) &&
+      expression.include?("and on (instance)") &&
+      expression.scan("rgs_recovery_snapshot_last_success_timestamp_seconds").length == 2 &&
+      expression.include?("< 60") && expression.include?(threshold)
+end
 required_metrics = %w[
   rgs_ready
   rgs_http_server_failures_total
@@ -161,6 +194,12 @@ required_metrics = %w[
   rgs_wallet_isolation_rejected_total
   rgs_wallet_breakers
   rgs_wallet_request_duration_seconds_count
+  rgs_wallet_request_duration_seconds_bucket
+  rgs_wallet_inflight
+  rgs_recovery_backlog
+  rgs_recovery_oldest_due_age_seconds
+  rgs_recovery_loop_last_success_timestamp_seconds
+  rgs_recovery_snapshot_last_success_timestamp_seconds
   rgs_rounds_manual_review_total
   rgs_round_integrity_quarantines_total
   rgs_session_integrity_quarantines_total

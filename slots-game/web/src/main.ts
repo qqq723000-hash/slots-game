@@ -51,6 +51,56 @@ export function startApplication(launchPageUrl: string): void {
   let disposed = false;
   const assemblyController = new AbortController();
 
+  function runtimeAvailability(visible = document.visibilityState !== "hidden") {
+    return Object.freeze({
+      online: window.navigator.onLine !== false,
+      visible,
+    });
+  }
+
+  function syncRuntimeAvailability(): void {
+    configuredGateway?.setRuntimeAvailability?.(runtimeAvailability());
+  }
+
+  function handlePageHide(event: PageTransitionEvent): void {
+    if (event.persisted) {
+      // BFCache 会冻结本页；不销毁一次性会话，只暂停非关键轮询，pageshow 再续跑。
+      configuredGateway?.setRuntimeAvailability?.(runtimeAvailability(false));
+      return;
+    }
+    disposeApplication("Application page was unloaded");
+  }
+
+  function handlePageShow(): void {
+    syncRuntimeAvailability();
+  }
+
+  function disposeApplication(reason: string): void {
+    if (disposed) return;
+    disposed = true;
+    window.removeEventListener("online", syncRuntimeAvailability);
+    window.removeEventListener("offline", syncRuntimeAvailability);
+    window.removeEventListener("pageshow", handlePageShow);
+    window.removeEventListener("pagehide", handlePageHide);
+    document.removeEventListener("visibilitychange", syncRuntimeAvailability);
+    finishStartupPerformanceMonitor(applicationRoot);
+    assemblyController.abort(new Error(reason));
+    try {
+      app?.destroy();
+    } finally {
+      // AppController.destroy() 已关闭网关；幂等 close 兜住中途装配或拆卸异常。
+      configuredGateway?.close();
+      app = null;
+    }
+  }
+
+  window.addEventListener("online", syncRuntimeAvailability);
+  window.addEventListener("offline", syncRuntimeAvailability);
+  window.addEventListener("pageshow", handlePageShow);
+  window.addEventListener("pagehide", handlePageHide);
+  document.addEventListener("visibilitychange", syncRuntimeAvailability);
+  syncRuntimeAvailability();
+
   if (configuredGateway) {
     const launchGateway = configuredGateway;
     try {
@@ -131,11 +181,7 @@ export function startApplication(launchPageUrl: string): void {
 
   if (import.meta.hot) {
     import.meta.hot.dispose(() => {
-      disposed = true;
-      finishStartupPerformanceMonitor(root);
-      assemblyController.abort(new Error("Application module was disposed"));
-      app?.destroy();
-      if (!app) configuredGateway?.close();
+      disposeApplication("Application module was disposed");
     });
   }
 }

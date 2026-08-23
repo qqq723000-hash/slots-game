@@ -1,5 +1,14 @@
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
+data "aws_region" "current" {}
+
+locals {
+  alert_source_arns = {
+    backup     = "arn:${data.aws_partition.current.partition}:backup:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:backup-vault:${var.name_prefix}-vault"
+    cloudwatch = "arn:${data.aws_partition.current.partition}:cloudwatch:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:alarm:${var.name_prefix}-*"
+    rds        = "arn:${data.aws_partition.current.partition}:rds:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:db:${var.name_prefix}-postgresql"
+  }
+}
 
 resource "aws_sns_topic" "alerts" {
   name              = "${var.name_prefix}-alerts"
@@ -21,20 +30,74 @@ data "aws_iam_policy_document" "alerts" {
   }
 
   statement {
-    sid       = "AllowApprovedPublishers"
+    sid       = "AllowBackupPublish"
     effect    = "Allow"
     actions   = ["sns:Publish"]
     resources = [aws_sns_topic.alerts.arn]
 
     principals {
       type        = "Service"
-      identifiers = ["backup.amazonaws.com", "events.amazonaws.com", "rds.amazonaws.com"]
+      identifiers = ["backup.amazonaws.com"]
     }
 
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
       values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = [local.alert_source_arns.backup]
+    }
+  }
+
+  statement {
+    sid       = "AllowRDSEventPublish"
+    effect    = "Allow"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["events.rds.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = [local.alert_source_arns.rds]
+    }
+  }
+
+  statement {
+    sid       = "AllowCloudWatchAlarmPublish"
+    effect    = "Allow"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = [local.alert_source_arns.cloudwatch]
     }
   }
 

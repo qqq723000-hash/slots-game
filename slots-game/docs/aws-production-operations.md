@@ -127,7 +127,7 @@ code、nonce 原文、私钥、签名、DSN、请求/响应正文、原始 URL/q
 | P2 | 单区/副本丢失、DB pool 接近饱和、容量拒绝、认证随机数重放、日志/规则管道降级 | 30 分钟 | 恢复冗余和容量，核查调用方重试与凭据泄漏风险，避免演化为 P1 |
 | P3 | 成本、版本老化、备份趋势、容量预测、非紧急证书/Secret 到期 | 工作日 | 进入有负责人和截止期的维护队列 |
 
-Chart 内置的二十条集群规则必须在 AMP 或等价求值器中存在：
+Chart 内置的二十七条集群规则必须在 AMP 或等价求值器中存在：
 
 - `SlotsRGSTargetUnavailable`
 - `SlotsRGSNotReady`
@@ -143,6 +143,13 @@ Chart 内置的二十条集群规则必须在 AMP 或等价求值器中存在：
 - `SlotsRGSWalletIsolationRejected`
 - `SlotsRGSWalletCircuitOpen`
 - `SlotsRGSWalletPendingSustained`
+- `SlotsRGSWalletResponseAuthenticationInvalid`
+- `SlotsRGSWalletLatencyHigh`
+- `SlotsRGSWalletRequestsStalled`
+- `SlotsRGSRecoveryBacklogHigh`
+- `SlotsRGSRecoveryOldestDue`
+- `SlotsRGSRecoveryLoopStale`
+- `SlotsRGSRecoverySnapshotStale`
 - `SlotsRGSRoundManualReview`
 - `SlotsRGSIntegrityQuarantine`
 - `SlotsRGSOutboxDeferred`
@@ -150,9 +157,10 @@ Chart 内置的二十条集群规则必须在 AMP 或等价求值器中存在：
 - `SlotsRGSDatabasePoolSaturated`
 - `SlotsRGSDatabasePoolWaits`
 
-平台还必须补充 CloudFront、WAF、ALB、EKS、RDS、AMP rule evaluation、CloudWatch 日志管道、
-备份复制和证书/Secret 到期告警。任何告警都要有 owner、级别、runbook、最终接收端、去重键、静默
-到期时间和季度演练记录。
+Terraform 已为 RDS 创建 CPU、连接、可用内存、可用存储、读写延迟和磁盘队列七类容量告警；平台
+必须验证这些告警和恢复状态实际送达最终值班端，并补充 RDS deadlock/IOPS/吞吐/SwapUsage、
+CloudFront、WAF、ALB、EKS、AMP rule evaluation、CloudWatch 日志管道、备份复制和证书/Secret 到期
+告警。任何告警都要有 owner、级别、runbook、最终接收端、去重键、静默到期时间和季度演练记录。
 
 ## 7. 值班快速诊断
 
@@ -318,6 +326,9 @@ API 的 `RGS_DB_CRITICAL_RESERVE_CONNS` 默认是 5，且必须小于本 Pod 的
 共同限制突发穿透，但仍是每 Pod 边界：多 Pod、终止中 Pod 和其他数据库客户端必须继续计入发布峰值
 公式。`rgs_new_intent_capacity_rejected_total` 增长表示保护已生效，也表示当前放量超过已批准容量；
 禁止只提高 HPA 或连接池来消除告警，除非新的 RDS/钱包/入口总预算和压测证据同时获批。
+四环境 `rds_alarm_thresholds` 只提供显式初始阈值；必须以目标实例的 `max_connections`、gp3
+IOPS/吞吐、混合读写与恢复洪峰校准。任何一个示例值都不能替代生产压测、RDS failover 和 SNS
+最终接收演练。
 
 钱包并发也必须用滚动峰值计算。当前每个 RGS 进程的基线是后端 apply 24、lookup 8，以及每运营商
 apply 8；这是非阻塞的本机隔离，不是全局限额。容量评审至少计算：

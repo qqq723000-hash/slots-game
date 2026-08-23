@@ -62,12 +62,50 @@ reject_mutation missing-autoscaling-kms-grant modules/kms/main.tf \
   'kms:GrantIsForAWSResource' 'kms:GrantIsForOtherResource'
 reject_mutation unscoped-cloudwatch-kms modules/kms/main.tf \
   'kms:EncryptionContext:aws:logs:arn' 'kms:EncryptionContext:other'
+reject_mutation omit-encrypted-cloudwatch-alarm-kms-principal modules/kms/main.tf \
+  'principal  = "cloudwatch.amazonaws.com"' 'principal  = "events.amazonaws.com"'
+reject_mutation broaden-encrypted-cloudwatch-alarm-kms-source modules/kms/main.tf \
+  'source_arn = "arn:${data.aws_partition.current.partition}:cloudwatch:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:alarm:${var.name_prefix}-*"' 'source_arn = "*"'
+reject_mutation omit-alert-topic-sns-kms-principal modules/kms/main.tf \
+  'identifiers = ["sns.amazonaws.com"]' 'identifiers = ["events.amazonaws.com"]'
+reject_mutation remove-alert-topic-kms-encryption-context modules/kms/main.tf \
+  'variable = "kms:EncryptionContext:aws:sns:topicArn"' 'variable = "kms:EncryptionContext:other"'
 reject_mutation public-rds modules/rds/main.tf \
   'publicly_accessible    = false' 'publicly_accessible    = true'
 reject_mutation unencrypted-rds-logs modules/rds/main.tf \
   'kms_key_id        = var.log_kms_key_arn' 'kms_key_id        = null'
 reject_mutation mismatched-rds-parameter-family modules/rds/main.tf \
   'var.parameter_group_family == "postgres${split(".", var.engine_version)[0]}"' 'var.parameter_group_family != "postgres${split(".", var.engine_version)[0]}"'
+reject_mutation disable-rds-cpu-capacity-alarm modules/rds/main.tf \
+  'metric_name = "CPUUtilization"' 'metric_name = "CPUUtilizationDisabled"'
+reject_mutation disable-rds-high-capacity-alarm-set modules/rds/main.tf \
+  'for_each = local.capacity_high_alarm_metrics' 'for_each = {}'
+reject_mutation corrupt-rds-high-capacity-namespace modules/rds/main.tf \
+  'namespace           = "AWS/RDS"' 'namespace           = "AWS/RDS_DISABLED"'
+reject_mutation invert-rds-low-capacity-comparator modules/rds/main.tf \
+  'comparison_operator = "LessThanOrEqualToThreshold"' 'comparison_operator = "GreaterThanOrEqualToThreshold"'
+reject_mutation invert-rds-low-capacity-statistic modules/rds/main.tf \
+  'statistic   = "Minimum"' 'statistic   = "Maximum"'
+reject_mutation weaken-rds-capacity-alarm-debounce modules/rds/main.tf \
+  'datapoints_to_alarm = 2' 'datapoints_to_alarm = 1'
+reject_mutation remove-rds-capacity-recovery-notification modules/rds/main.tf \
+  'ok_actions          = [var.alert_topic_arn]' 'ok_actions          = []'
+reject_mutation bypass-rds-connection-threshold-validation modules/rds/variables.tf \
+  'var.alarm_thresholds.database_connections <= 1000000' 'true'
+reject_mutation omit-explicit-rds-connection-threshold environments/dev/terraform.tfvars.example \
+  'database_connections     = 100' 'removed_connections        = 100'
+reject_mutation omit-rds-alarm-threshold-wiring stacks/application-platform/main.tf \
+  'alarm_thresholds          = var.rds_alarm_thresholds' 'removed_alarm_thresholds  = var.rds_alarm_thresholds'
+reject_mutation omit-cloudwatch-alarm-sns-principal modules/observability/main.tf \
+  'identifiers = ["cloudwatch.amazonaws.com"]' 'identifiers = ["events.amazonaws.com"]'
+reject_mutation broaden-cloudwatch-alarm-sns-source modules/observability/main.tf \
+  'values   = [local.alert_source_arns.cloudwatch]' 'values   = ["*"]'
+reject_mutation broaden-cloudwatch-alarm-sns-source-binding modules/observability/main.tf \
+  'cloudwatch = "arn:${data.aws_partition.current.partition}:cloudwatch:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:alarm:${var.name_prefix}-*"' 'cloudwatch = "*"'
+reject_mutation use-wrong-rds-event-publisher modules/observability/main.tf \
+  'identifiers = ["events.rds.amazonaws.com"]' 'identifiers = ["rds.amazonaws.com"]'
+reject_mutation omit-alert-topic-policy-dependency modules/observability/outputs.tf \
+  'depends_on  = [aws_sns_topic_policy.alerts]' 'depends_on  = []'
 reject_mutation weak-valkey-tls modules/cache/main.tf \
   'transit_encryption_mode    = "required"' 'transit_encryption_mode    = "preferred"'
 reject_mutation authoritative-cache modules/cache/main.tf \

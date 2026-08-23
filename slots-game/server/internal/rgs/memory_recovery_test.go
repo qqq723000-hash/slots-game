@@ -3,6 +3,7 @@ package rgs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -59,6 +60,111 @@ func prepareMemoryRecoveryRoundWithProfile(
 		t.Fatalf("PrepareRound() = record:%+v prepared:%v error:%v", record, prepared, err)
 	}
 	return record
+}
+
+func TestMemoryRecoverySnapshotTracksScheduledLifecycleWithoutNegativeAge(t *testing.T) {
+	repository := NewMemoryRepository()
+	record := prepareMemoryRecoveryRound(
+		t, repository, "operator-a", "session-a", "round-a",
+	)
+
+	snapshot, err := repository.RecoverySnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Backlog != 1 || snapshot.OldestDueAge < 0 ||
+		snapshot.ObservedAt.IsZero() || snapshot.ObservedAt.Unix() <= 0 {
+		t.Fatalf("prepared snapshot=%+v", snapshot)
+	}
+
+	entry, err := repository.lookupSession(
+		context.Background(), record.Key.OperatorID, record.Key.SessionID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.mu.Lock()
+	future := entry.rounds[record.Key.RoundID]
+	future.NextAttemptAt = time.Now().UTC().Add(time.Minute)
+	entry.rounds[record.Key.RoundID] = future
+	entry.mu.Unlock()
+	snapshot, err = repository.RecoverySnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Backlog != 1 || snapshot.OldestDueAge != 0 {
+		t.Fatalf("future snapshot=%+v", snapshot)
+	}
+
+	// 持久调度行不能因会话绑定失配而从观测中消失；领取路径会另行完整校验并隔离。
+	entry.mu.Lock()
+	entry.session.Status = SessionClosed
+	entry.session.PendingRoundID = ""
+	entry.mu.Unlock()
+	snapshot, err = repository.RecoverySnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Backlog != 1 || snapshot.OldestDueAge != 0 {
+		t.Fatalf("session-mismatched scheduled row disappeared from snapshot: %+v", snapshot)
+	}
+
+	if _, changed, markErr := repository.MarkManualReview(
+		context.Background(), record.Key, "operator review required",
+	); markErr != nil || !changed {
+		t.Fatalf("MarkManualReview() = changed:%v error:%v", changed, markErr)
+	}
+	snapshot, err = repository.RecoverySnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Backlog != 0 || snapshot.OldestDueAge != 0 {
+		t.Fatalf("manual-review snapshot=%+v", snapshot)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := repository.RecoverySnapshot(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled snapshot error=%v", err)
+	}
+}
+
+func TestMemoryRecoverySnapshotCapsBacklogButKeepsGlobalOldestAge(t *testing.T) {
+	repository := NewMemoryRepository()
+	now := time.Now().UTC()
+	for index := int64(0); index < RecoverySnapshotBacklogLimit+1; index++ {
+		operatorID := fmt.Sprintf("operator-snapshot-%03d", index)
+		sessionID := fmt.Sprintf("session-snapshot-%03d", index)
+		roundID := fmt.Sprintf("round-snapshot-%03d", index)
+		nextAttemptAt := now.Add(-time.Minute)
+		if index == RecoverySnapshotBacklogLimit {
+			// 最老候选故意放在按 key 排序的最后一项，证明计数封顶不截断年龄计算。
+			nextAttemptAt = now.Add(-10 * time.Minute)
+		}
+		repository.sessions[sessionKey(operatorID, sessionID)] = &memorySession{
+			session: Session{
+				OperatorID: operatorID, SessionID: sessionID, Status: SessionActive,
+				PendingRoundID: roundID, Revision: 1,
+			},
+			rounds: map[string]RoundRecord{
+				roundID: {
+					Key:     RoundKey{OperatorID: operatorID, SessionID: sessionID, RoundID: roundID},
+					Request: SpinRequest{StartRevision: 1}, Status: RoundPrepared,
+					WalletPhase: WalletRecoveryApply, NextAttemptAt: nextAttemptAt,
+				},
+			},
+			walletTransactions: make(map[string]memoryWalletTransaction),
+			deliveries:         make(map[string]ResultDelivery),
+		}
+	}
+
+	snapshot, err := repository.RecoverySnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Backlog != RecoverySnapshotBacklogLimit || snapshot.OldestDueAge < 10*time.Minute {
+		t.Fatalf("bounded memory snapshot=%+v", snapshot)
+	}
 }
 
 func TestMemoryClaimWalletPersistsLookupBeforeReturningApply(t *testing.T) {

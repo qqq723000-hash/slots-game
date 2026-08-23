@@ -51,7 +51,7 @@ spec:
             severity: critical
           annotations:
             summary: RGS Worker 持续未就绪
-            description: 至少一个 Worker 的数据库、恢复依赖或审计 outbox 循环及 backlog 新鲜度检查持续失败。
+            description: 至少一个 Worker 的数据库、密钥或审计 outbox 循环及 backlog 新鲜度检查持续失败；钱包恢复循环由独立新鲜度告警覆盖。
         - alert: SlotsRGSServerErrorRateHigh
           expr: |
             (
@@ -144,6 +144,115 @@ spec:
           annotations:
             summary: 钱包待定结果持续出现
             description: 钱包持续返回待定结果；应核对恢复吞吐、Lookup 延迟和积压，禁止盲目重提经济指令。
+        - alert: SlotsRGSWalletResponseAuthenticationInvalid
+          expr: |
+            sum(increase(rgs_wallet_request_duration_seconds_count{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}",outcome="response_auth_invalid"}[5m])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: 钱包响应认证失败
+            description: 钱包响应签名或绑定认证失败；必须检查运营商密钥、路由绑定和响应完整性，禁止把未认证正文解释为资金结果。
+        - alert: SlotsRGSWalletLatencyHigh
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (le, method) (
+                rate(rgs_wallet_request_duration_seconds_bucket{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])
+              )
+            ) > 2
+            and on (method)
+            sum by (method) (
+              rate(rgs_wallet_request_duration_seconds_count{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])
+            ) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: 钱包调用 P99 时延持续过高
+            description: 固定方法维度的钱包调用 P99 持续超过两秒且存在有效流量；应检查外部钱包、网络、熔断和恢复 Lookup 容量。
+        - alert: SlotsRGSWalletRequestsStalled
+          expr: |
+            max by (method) (
+              max_over_time(rgs_wallet_inflight{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])
+            ) > 0
+            and on (method)
+            sum by (method) (
+              increase(rgs_wallet_request_duration_seconds_count{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])
+            ) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: 钱包调用持续占用但没有完成
+            description: 固定方法维度存在执行中钱包调用，但五分钟没有任何完成样本；应检查不响应的外部连接、硬截止与隔离槽位。
+        - alert: SlotsRGSRecoveryBacklogHigh
+          expr: |
+            max(
+              rgs_recovery_backlog{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}
+              and on (instance)
+              (
+                rgs_recovery_snapshot_last_success_timestamp_seconds{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"} > 0
+                and
+                time() - rgs_recovery_snapshot_last_success_timestamp_seconds{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"} < 60
+              )
+            ) >= 501
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: 钱包恢复积压持续过高
+            description: 新鲜数据库快照的持久调度行有界下界持续达到 501，表示实际积压至少为 501；按 Worker 取 max，禁止求和或使用陈旧样本。
+        - alert: SlotsRGSRecoveryOldestDue
+          expr: |
+            max(
+              rgs_recovery_oldest_due_age_seconds{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}
+              and on (instance)
+              (
+                rgs_recovery_snapshot_last_success_timestamp_seconds{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"} > 0
+                and
+                time() - rgs_recovery_snapshot_last_success_timestamp_seconds{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"} < 60
+              )
+            ) > 120
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: 最老钱包恢复任务持续逾期
+            description: 新鲜有界快照中的全局最早持久调度行已逾期超过 120 秒；应检查钱包 Lookup、数据库领取公平性、Worker 容量和熔断状态。
+        - alert: SlotsRGSRecoveryLoopStale
+          expr: |
+            max(
+              time() - rgs_recovery_loop_last_success_timestamp_seconds{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}
+            ) > 30
+            or
+            count(
+              up{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"} == 1
+              unless on (instance)
+              rgs_recovery_loop_last_success_timestamp_seconds{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}
+            ) > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: 钱包恢复循环停止前进
+            description: 可抓取 Worker 的恢复循环成功时间戳缺失或超过 30 秒未更新；不得仅凭进程存活继续放量。
+        - alert: SlotsRGSRecoverySnapshotStale
+          expr: |
+            max(
+              time() - rgs_recovery_snapshot_last_success_timestamp_seconds{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}
+            ) > 60
+            or
+            count(
+              up{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"} == 1
+              unless on (instance)
+              rgs_recovery_snapshot_last_success_timestamp_seconds{job="slots-rgs-worker",namespace="{{ .Release.Namespace }}"}
+            ) > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: 钱包恢复积压快照停止更新
+            description: 可抓取 Worker 的数据库恢复积压快照缺失或超过 60 秒未更新；当前 backlog/age 可能陈旧，不得据此判断恢复健康。
         - alert: SlotsRGSRoundManualReview
           expr: |
             sum(increase(rgs_rounds_manual_review_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])) > 0

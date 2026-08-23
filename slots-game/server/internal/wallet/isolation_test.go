@@ -1,12 +1,15 @@
 package wallet
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"slots-game/server/internal/platform"
 	"slots-game/server/internal/rgs"
 )
 
@@ -166,6 +169,61 @@ func TestIsolationResponseAuthenticationFailureOpensOnlyOperatorCircuit(t *testi
 		t.Fatalf("peer operator was blocked by response authentication failure: %+v", result)
 	}
 	assertBoundedIsolationObservations(t, recorder.snapshot())
+}
+
+func TestIsolationLegacyLookupClassifiesMissingOperationAsNotFound(t *testing.T) {
+	recorder := &isolationRecorder{}
+	registry, err := NewIsolationRegistry(testIsolationConfig(), recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := mustWrapIsolation(
+		t, registry, "https://wallet.example/a", "operator-a", &isolationStub{},
+	)
+	if _, found, err := port.Lookup(context.Background(), "operator-a", "operation-a"); err != nil || found {
+		t.Fatalf("legacy lookup = found:%t error:%v", found, err)
+	}
+	foundObservation := false
+	for _, observation := range recorder.snapshot() {
+		if observation.method == "lookup" && observation.outcome == "not_found" {
+			foundObservation = true
+		}
+	}
+	if !foundObservation {
+		t.Fatalf("missing lookup was not observed as not_found: %+v", recorder.snapshot())
+	}
+}
+
+func TestIsolationAndPlatformShareEveryFixedTelemetryEnum(t *testing.T) {
+	metrics := &platform.Metrics{}
+	registry, err := NewIsolationRegistry(testIsolationConfig(), metrics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := rgs.Resolution{
+		Status: rgs.ResolutionUnknown,
+		Cause:  errors.Join(errWalletResponseAuthentication, errors.New("key mismatch")),
+	}
+	port := mustWrapIsolation(
+		t, registry, "https://wallet.example/a", "operator-a",
+		&isolationStub{resolveResult: &invalid},
+	).(rgs.WalletResolutionPort)
+	if result := port.Resolve(context.Background(), rgs.OperationRef{}); result.Status != rgs.ResolutionUnknown {
+		t.Fatalf("authentication failure = %+v", result)
+	}
+
+	var output bytes.Buffer
+	if err := metrics.WritePrometheus(&output); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`rgs_wallet_request_duration_seconds_count{method="lookup",outcome="response_auth_invalid"} 1`,
+		`rgs_wallet_breakers{method="operator_lookup",state="open"} 1`,
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("cross-package telemetry contract dropped %q:\n%s", expected, output.String())
+		}
+	}
 }
 
 func TestCanonicalBackendKeyNormalizesDefaultPorts(t *testing.T) {

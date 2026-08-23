@@ -115,6 +115,35 @@ Secret 只同步一次并设置 `immutable=true`，任何值轮换都必须先�
 Environment 的 `AWS_EKS_NAMESPACE` 和 `AWS_HELM_RELEASE_NAME` 精确一致；它们会进入持久化
 `rotation_guard.target_identity`，使 HMAC 证据不能在其他 namespace 或 release 之间复用。
 
+## RDS 容量告警与阈值校准
+
+每个 RDS DB instance 都使用 `DBInstanceIdentifier` 维度创建七类容量告警：
+
+- `CPUUtilization`、`DatabaseConnections` 和 `DiskQueueDepth` 监测计算、连接与 I/O 排队压力；
+- `FreeableMemory`、`FreeStorageSpace` 监测可用内存和存储安全余量；
+- `ReadLatency`、`WriteLatency` 监测数据库端平均 I/O 延迟。
+
+这些指标来自 `AWS/RDS` namespace，维度与单位以
+[Amazon RDS CloudWatch 指标](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-metrics.html)和
+[DB instance 指标维度](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/metrics_dimensions.html)为准。
+告警均要求 3 个 60 秒窗口中的 2 个越界才触发，并把 ALARM 与 OK 状态发送到值班 SNS topic。
+SNS policy 只允许同账号且来源 ARN 精确匹配本应用资源的 `cloudwatch.amazonaws.com`、
+`events.rds.amazonaws.com` 和 `backup.amazonaws.com` 发布。加密 topic 使用的 observability KMS key
+也分别授权这三个 event source 的 `kms:GenerateDataKey*`/`kms:Decrypt`，并用同样的账号与来源 ARN
+绑定；`sns.amazonaws.com` 只能在 encryption context 精确等于本 topic ARN 时使用该 key。topic policy
+和 KMS policy 缺一不可，避免出现 CloudWatch/RDS/Backup 显示已发布但加密通知实际无法送达的假健康。
+
+`rds_alarm_thresholds` 是四个环境必须显式填写的非秘密容量合同。示例值只是保守初始保护值，不是
+目标实例的商用认证结果；正式环境的连接阈值还必须同时覆盖 API/Worker 最大副本、rolling surge、
+迁移器、终止中 Pod、监控/DBA 与故障重连余量，并低于目标实例实测 `max_connections`。CPU、内存、
+存储、延迟和队列阈值必须用目标实例类型、gp3 IOPS/吞吐配置、真实 SQL 与恢复/outbox 混合负载重新
+校准。告警不会自动提高连接池、扩数据库或触发故障转移；值班人员必须先判断查询、锁、写放大和依赖
+恢复洪峰，再执行经批准的容量变更。
+
+`treat_missing_data=notBreaching` 防止维护/切换期间无数据被误判成容量越界，但它不代表监控健康；
+CloudWatch alarm 状态、SNS 最终接收、RDS event subscription 和通知链路必须另设周期性演练与无数据
+检测。
+
 ## Valkey 容量告警与阈值校准
 
 三节点 Valkey replication group 对每个固定节点创建以下 CloudWatch 告警：

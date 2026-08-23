@@ -347,6 +347,9 @@ func (wallet *isolatedWallet) Lookup(
 	}()
 	receipt, found, err := wallet.next.Lookup(ctx, operatorID, operationID)
 	outcome, backendHealthy, operatorHealthy := classifyWalletOutcome(err)
+	if err == nil && !found {
+		outcome = "not_found"
+	}
 	operatorPermit.complete(operatorHealthy)
 	backendPermit.complete(backendHealthy)
 	wallet.observe(walletMethodLookup, outcome, time.Since(started))

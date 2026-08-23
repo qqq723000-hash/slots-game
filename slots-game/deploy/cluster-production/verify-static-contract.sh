@@ -107,6 +107,12 @@ grep -F '钱包待定结果持续出现必须触发告警' "$script_directory/pr
   fail '钱包持续待定告警缺少行为测试'
 grep -F '新增人工审查轮次必须触发告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
   fail '人工审查告警缺少行为测试'
+grep -F 'Worker 可抓取但缺少恢复快照时间戳必须告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '恢复快照新鲜度告警缺少指标消失行为测试'
+grep -F 'Worker 恢复快照时间戳新鲜时不得告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '恢复快照新鲜度告警缺少正常行为测试'
+grep -F '陈旧高值不得覆盖另一 Worker 的新鲜低值' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '恢复积压与年龄告警缺少陈旧副本隔离行为测试'
 grep -F 'go run ./scripts/third-party-notices --check' "$script_directory/Dockerfile.services" >/dev/null ||
   fail '集群生产构建没有校验 Go 第三方许可声明'
 backend_notice_copy='COPY --from=build --chown=nonroot:nonroot /src/server/THIRD_PARTY_NOTICES.txt /THIRD_PARTY_NOTICES.txt'
@@ -346,12 +352,19 @@ require_rendered 'alert: SlotsRGSIntegrityQuarantine' "$rendered_root/prometheus
 require_rendered 'alert: SlotsRGSAuthReplay' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSHPAUnableToScale' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSNewIntentCapacityRejected' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSWalletResponseAuthenticationInvalid' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSWalletLatencyHigh' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSWalletRequestsStalled' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSRecoveryBacklogHigh' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSRecoveryOldestDue' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSRecoveryLoopStale' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSRecoverySnapshotStale' "$rendered_root/prometheusrule.yaml"
 require_rendered 'sum(increase(rgs_new_intent_capacity_rejected_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
 require_rendered 'sum(increase(rgs_auth_replays_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
 require_rendered 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'horizontalpodautoscaler=~"slots-slots-cluster-production-rgs|slots-slots-cluster-production-rgs-worker"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'count(max by (horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_condition' "$rendered_root/prometheusrule.yaml"
-test "$(grep -F -c '} == 1' "$rendered_root/prometheusrule.yaml" || true)" -eq 2 ||
+test "$(grep -F 'kube_horizontalpodautoscaler_status_condition' "$rendered_root/prometheusrule.yaml" | grep -F -c '} == 1' || true)" -eq 2 ||
   fail 'HPA 告警没有分别拒绝 ScalingActive true=0 和指标缺失'
 require_rendered 'or absent(kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'or absent(rgs_ready{job="slots-rgs",namespace="slots-production"})' "$rendered_root/prometheusrule.yaml"
@@ -394,6 +407,12 @@ for metric in \
   rgs_wallet_isolation_rejected_total \
   rgs_wallet_breakers \
   rgs_wallet_request_duration_seconds_count \
+  rgs_wallet_request_duration_seconds_bucket \
+  rgs_wallet_inflight \
+  rgs_recovery_backlog \
+  rgs_recovery_oldest_due_age_seconds \
+  rgs_recovery_loop_last_success_timestamp_seconds \
+  rgs_recovery_snapshot_last_success_timestamp_seconds \
   rgs_rounds_manual_review_total \
   rgs_round_integrity_quarantines_total \
   rgs_session_integrity_quarantines_total \

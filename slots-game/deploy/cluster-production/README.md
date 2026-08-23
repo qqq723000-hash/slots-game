@@ -123,7 +123,7 @@ RGS 使用结构化 JSON 写 stdout/stderr；Web 由容器入口输出访问与�
 `rgs_access_logs_{emitted,dropped}_total` 观测，任何下游采集器都不得再次概率丢弃 WARN/ERROR 或
 经济与安全事件。
 
-Chart 内置二十条 `PrometheusRule`，覆盖 API/Worker 指标目标消失或下线、两类角色未就绪、5xx 比例、进程并发容量拒绝、新经济意图数据库保留容量拒绝、HPA 无法计算扩缩容、共享准入故障、认证随机数重放、钱包未知结果/隔离拒绝/持续熔断/持续待定、轮次人工审查、完整性隔离、审计 Outbox 延迟/租约冲突和数据库池饱和/等待。认证随机数重放对外仍统一返回通用 401；内部只增加无标签的 `rgs_auth_replays_total`，并输出固定 `security_event=nonce_replay` 的 WARN 日志，不记录随机数、运营商、密钥、玩家、会话或请求标识。HPA 规则依赖平台固定交付的 metrics-server 与 kube-state-metrics；任一 API/Worker `ScalingActive` 丢失都会告警。规则通过两个 operations Service 分别固定 `slots-rgs` 与 `slots-rgs-worker` job；`monitoring.ruleLabels` 必须匹配公司 Prometheus 的规则选择器。阈值是仓库评审过的最低门禁，平台可以在上层增加更严格规则，但不得删除、静默改写或让该 `PrometheusRule` 未被任何 Prometheus 实例加载。上线证据必须包含规则发现状态、一次受控告警演练及 Alertmanager 最终路由，不得只证明 `/metrics` 可抓取。
+Chart 内置二十七条 `PrometheusRule`，覆盖 API/Worker 指标目标消失或下线、两类角色未就绪、5xx 比例、进程并发容量拒绝、新经济意图数据库保留容量拒绝、HPA 无法计算扩缩容、共享准入故障、认证随机数重放、钱包未知结果/隔离拒绝/持续熔断/持续待定/响应认证失败/P99 高延迟/执行停滞、钱包恢复积压/最老到期年龄/循环与快照新鲜度、轮次人工审查、完整性隔离、审计 Outbox 延迟/租约冲突和数据库池饱和/等待。认证随机数重放对外仍统一返回通用 401；内部只增加无标签的 `rgs_auth_replays_total`，并输出固定 `security_event=nonce_replay` 的 WARN 日志，不记录随机数、运营商、密钥、玩家、会话或请求标识。恢复 backlog/age 是每个 Worker 错峰读取的同一数据库全局有界快照：查询按 partial index 最多读取 501 个持久调度行，`501` 是“至少 501”的饱和下界而非精确总数，最老逾期年龄仍对应全局最早持久调度行；会话失配也保留在 backlog 中交由领取完整性校验/隔离，不能被观测静默过滤。PromQL 只允许对同实例时间戳小于六十秒的新鲜样本取 `max`，不得按 Pod 求和或让陈旧高值制造假告警。循环新鲜度与快照新鲜度分开告警，避免数据库观测失败被误报为资金恢复 pass 失败，也避免陈旧 backlog 假绿。HPA 规则依赖平台固定交付的 metrics-server 与 kube-state-metrics；任一 API/Worker `ScalingActive` 丢失都会告警。规则通过两个 operations Service 分别固定 `slots-rgs` 与 `slots-rgs-worker` job；`monitoring.ruleLabels` 必须匹配公司 Prometheus 的规则选择器。阈值是仓库评审过的最低门禁，平台可以在上层增加更严格规则，但不得删除、静默改写或让该 `PrometheusRule` 未被任何 Prometheus 实例加载。上线证据必须包含规则发现状态、一次受控告警演练及 Alertmanager 最终路由，不得只证明 `/metrics` 可抓取。
 
 数据库连接上限至少按下面的发布峰值公式审核：
 
@@ -148,11 +148,13 @@ API 默认还配置 `rgs.runtime.databaseCriticalReserveConnections: 5`。每个
 `SlotsRGSNewIntentCapacityRejected` 时，只有在 RDS 总连接、CPU、内存和写入余量允许后才能扩 API；
 否则应在入口背压或降低业务放量。
 
-仓库内 HPA 只按 CPU/内存扩缩，不代表钱包、数据库连接或审计吞吐可以无限增长。若公司平台接入
-Prometheus Adapter 或其他已验证的自定义指标源，可以在平台覆盖中增加 API inflight/时延以及
-Worker pending/outbox backlog 指标；没有适配器、查询与故障回退动态证据时不得把这些指标伪装成
-Chart 已交付能力。压测后应同步调整 Pod 资源、每 Pod 并发、数据库池、钱包限额、Valkey 共享准入
-与入口粗粒度容量保护；
+仓库内 HPA 只按 CPU/内存扩缩，不代表钱包、数据库连接或审计吞吐可以无限增长。当前仓库没有交付
+Prometheus Adapter、External Metrics API 映射或其失效回退演练，因此渲染契约会拒绝把 I/O 指标
+伪装成 HPA 已交付能力，并固定 API 至少三个、Worker 至少两个暖副本。钱包 P99/停滞、恢复 backlog/
+最老到期年龄、数据库保留容量拒绝和 pool wait 告警用于人工/平台容量响应，不会直接驱动 HPA。
+若公司平台以后接入经过验证的自定义指标源，可以在同一次受保护平台变更中增加 API inflight/时延
+以及 Worker pending/outbox backlog 指标，并同步交付查询、权限、指标缺失回退和扩缩容演练证据。
+压测后应同步调整 Pod 资源、每 Pod 并发、数据库池、钱包限额、Valkey 共享准入与入口粗粒度容量保护；
 任何一项不能扩容时，应降低相应 HPA 的 `maxReplicas`。
 
 ## 维护静默契约
@@ -219,7 +221,7 @@ make verify-cluster-image-contract
 
 第一个目标先运行红绿负向契约，再用 Kubernetes 1.30 schema 对普通安装、普通升级、HMAC-only 静默、数据库双组件静默和退出维护五份渲染执行 kubeconform strict 校验；kubeconform 二进制、归档 SHA-256 和 JSON schema 仓库 commit 都在 required CI 中固定。仓库没有复制 Prometheus Operator CRD schema，因此 kubeconform 只显式跳过 `ServiceMonitor` 与 `PrometheusRule`，不会使用会掩盖其他未知类型的 `--ignore-missing-schemas`；渲染契约仍解析监控选择器、固定 job、Bearer Secret、operations Service 和完整告警集合。上线前还必须在安装了目标版本 Prometheus Operator CRD 的集群执行 `kubectl apply --dry-run=server`。测试同时覆盖长 release/override 命名与引用一致性、install=`up`/upgrade=`verify`、HMAC-only 与数据库维护模式、维护恢复、Secret 隔离、linux/amd64、应用配置上限、终止预算、路径穿越、可变镜像、宽松 CIDR、PDB、mTLS、日志提供方和 Web 版本隔离等失败闭合变体。
 
-第二个目标使用与本机集成验收一致的固定摘要 Prometheus 3.13.1 `promtool`，解析 Helm 实际渲染出的二十条 PromQL；required 部署 CI 与受保护标签发布都会执行，避免 CRD 结构合法但规则语法静默失效。静态契约还会分别删除认证重放规则、弱化其 `increase(...[5m]) > 0` 表达式、删除 HPA `ScalingActive` 规则并确认校验失败，再执行完整正向渲染，形成可重复的红绿证据。
+第二个目标使用与本机集成验收一致的固定摘要 Prometheus 3.13.1 `promtool`，解析 Helm 实际渲染出的二十七条 PromQL；required 部署 CI 与受保护标签发布都会执行，避免 CRD 结构合法但规则语法静默失效。静态契约还会分别删除认证重放规则、弱化其 `increase(...[5m]) > 0` 表达式、删除 HPA `ScalingActive` 规则并确认校验失败，再执行完整正向渲染，形成可重复的红绿证据。
 
 第三个目标需要 Docker daemon，会真实构建受保护发布使用的 `rgs-runtime` 与 `rgs-migrator`，核对 `linux/amd64`、非 root 用户和精确入口，并执行 `/secret-env` 缺 Secret 拒绝、`0440` Secret 文件正向加载及 `/service-probe` 的 200/503 行为。受保护标签工作流会在签名候选构建前重新执行该动态契约；普通供应链 CI 扫描的也是这两个集群目标，而不是缺少 helper 的通用镜像。
 

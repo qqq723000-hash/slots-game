@@ -41,6 +41,30 @@ case "$service/$operation" in
         UserId: "fixture"
       }'
     ;;
+  eks/describe-cluster)
+    status=ACTIVE
+    private_access=true
+    public_access=false
+    cluster_arn="arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/${AWS_EKS_CLUSTER_NAME}"
+    case "${MOCK_HMAC_AWS_MODE:-}" in
+      inactive-cluster) status=UPDATING ;;
+      public-cluster-endpoint) public_access=true ;;
+      wrong-cluster-arn)
+        cluster_arn="arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}:cluster/other-cluster"
+        ;;
+    esac
+    jq -n --arg arn "$cluster_arn" --arg status "$status" \
+      --argjson private_access "$private_access" --argjson public_access "$public_access" '{
+        cluster: {
+          arn: $arn,
+          status: $status,
+          resourcesVpcConfig: {
+            endpointPrivateAccess: $private_access,
+            endpointPublicAccess: $public_access
+          }
+        }
+      }'
+    ;;
   eks/update-kubeconfig)
     kubeconfig=$(argument --kubeconfig "$@")
     printf '%s\n' 'fixture' > "$kubeconfig"

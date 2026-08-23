@@ -310,11 +310,51 @@ jobs:
         if: always()
         run: rm -f "$TF_BACKEND_FILE" "$TFVARS_FILE" "${TFVARS_FILE}.fingerprinted"
 
+  bind-terraform-plan:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'
+    needs:
+      - static-contract
+      - terraform-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # 无 checkout、Environment、OIDC 或云权限，仅将不可变 artifact ID 与 Actions 服务端摘要及来源绑定。
+    permissions:
+      actions: read
+    env:
+      PLAN_ARTIFACT_ID: ${{ needs.terraform-plan.outputs.artifact_id }}
+      PLAN_ARTIFACT_DIGEST: ${{ needs.terraform-plan.outputs.artifact_digest }}
+    steps:
+      - name: 失败闭合校验 Terraform plan artifact 元数据
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$PLAN_ARTIFACT_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s\n' "$PLAN_ARTIFACT_DIGEST" | grep -Eq '^[0-9a-f]{64}$'
+          metadata="$RUNNER_TEMP/terraform-plan-artifact-${PLAN_ARTIFACT_ID}.json"
+          curl --fail --location --show-error --silent --proto '=https' --tlsv1.2 \
+            --retry 4 --retry-all-errors \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$PLAN_ARTIFACT_ID" \
+            --output "$metadata"
+          jq -e --argjson artifact_id "$PLAN_ARTIFACT_ID" \
+            --arg digest "sha256:$PLAN_ARTIFACT_DIGEST" \
+            --arg name "terraform-plan-${{ inputs.target_environment }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --argjson run_id "$GITHUB_RUN_ID" --arg source_sha "$GITHUB_SHA" '
+            .id == $artifact_id and .name == $name and .expired == false and
+            .digest == $digest and .workflow_run.id == $run_id and
+            .workflow_run.head_sha == $source_sha
+          ' "$metadata" >/dev/null
+          rm -f "$metadata"
+
   terraform-apply:
     if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'
     needs:
       - static-contract
       - terraform-plan
+      - bind-terraform-plan
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment:

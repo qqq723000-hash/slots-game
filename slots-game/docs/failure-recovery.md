@@ -174,6 +174,19 @@ Worker 每波最多领取 `MaxParallel` 条，在 `BatchSize` 总预算内并行
 - `rgs_wallet_request_duration_seconds`、`rgs_wallet_inflight`、
   `rgs_wallet_isolation_rejected_total` 与 `rgs_wallet_breakers` 只使用固定 method/outcome/reason/state
   枚举，分别观察外呼时延、执行中请求、非阻塞舱壁拒绝和 apply/lookup 熔断状态。
+- `rgs_recovery_backlog` 与 `rgs_recovery_oldest_due_age_seconds` 来自每个 Worker 对同一数据库全局状态的
+  有界快照。首次快照在 `[0, 15s)` 内使用进程随机抖动错峰，后续保持十五秒固定周期；恢复 pass 本身
+  仍在 Worker 启动时立即执行。查询按恢复 partial index 顺序最多保留 501 个持久调度行，因此 backlog
+  是封顶下界：`501` 表示实际积压至少为 501，而不是精确总数；最早 `next_attempt_at` 仍是全局最早
+  持久调度行，并使用数据库时钟计算逾期年龄。会话绑定由领取事务完整校验；失配调度行不会被观测
+  静默过滤。`rgs_recovery_snapshot_last_success_timestamp_seconds` 使用
+  同一次读取返回的数据库时钟；快照使用一秒硬截止，失败保留上一份值并递增
+  `rgs_recovery_snapshot_failures_total`，但不得改变已经完成的资金恢复 pass 结果。多副本告警只能对
+  同 `instance` 时间戳小于六十秒的新鲜样本取 `max`，不能求和，也不能让陈旧高值覆盖新鲜低值。
+- `rgs_recovery_loop_last_success_timestamp_seconds` 在每次恢复 pass 成功完成后独立前进；pass 失败递增
+  `rgs_recovery_loop_failures_total`。这把“恢复执行停止”和“观测查询停止”分成两个可操作故障域；正常
+  关闭的 `context.Canceled` 不计失败。API-only 角色不输出任何 `rgs_recovery_*` 指标，避免伪造健康
+  零值。
 - `rgs_round_integrity_quarantines_total` 在 PostgreSQL 提交一轮次的首次持久完整性隔离标记
   时递增。它也覆盖 `COMMITTED`/`ROLLED_BACK` 状态必须保留的腐败经济终态轮次；重复读取同一
   腐败行不递增它。
@@ -183,7 +196,11 @@ Worker 每波最多领取 `MaxParallel` 条，在 `BatchSize` 总预算内并行
   成，租约丢失计数被隔离的过期完成。一个持久 `integrity_quarantined_at` 标记防止重复读取一
   个腐败轮次发出重复完整性事件或人工审核迁移。
 
-这些计数器是运维遥测，不是结算账本：进程可能在数据库提交后、递增内存前终止。经济对账必须继
+`MANUAL_REVIEW` 当前没有自动退出或“已处理”状态，因此 `rgs_rounds_manual_review_total` 只表示首次
+持久转换事件，不伪造 outstanding gauge。若商业审核流程需要当前待办数，必须先交付独立、可审计的
+case acknowledgement/resolution 状态机，再统计未关闭 case。
+
+这些计数器和 gauge 是运维遥测，不是结算账本：进程可能在数据库提交后、递增内存前终止。经济对账必须继
 续使用 PostgreSQL 轮次、钱包账本记录与发件箱证据。
 
 ## 7. 运维对账

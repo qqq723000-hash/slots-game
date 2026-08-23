@@ -54,10 +54,12 @@ for file in "$infrastructure_workflow" "$application_workflow" "$hmac_workflow" 
   "$workflow_directory/test-latest-terraform-delivery.sh" \
   "$workflow_directory/test-live-application-secrets.sh" \
   "$workflow_directory/test-live-definition-identity.sh" \
+  "$workflow_directory/test-web-release-switch-faults.sh" \
   "$workflow_directory/fixtures/mock-kubectl.sh" \
   "$workflow_directory/fixtures/mock-live-kubectl.sh" \
   "$workflow_directory/fixtures/mock-live-aws.sh" \
   "$workflow_directory/fixtures/mock-definition-kubectl.sh" \
+  "$workflow_directory/fixtures/mock-web-release-command.sh" \
   "$workflow_directory/fixtures/live-delivery.json" \
   "$workflow_directory/fixtures/live-values.yaml" \
   "$workflow_directory/fixtures/definition-rendered.yaml" \
@@ -76,6 +78,17 @@ require_fixed 'slots-game/hmac-finalize-attestation/v1' "$workflow_readme"
 require_fixed 'Phase A：同一镜像、定义、values、delivery、evidence' "$workflow_readme"
 require_fixed 'Phase B：--no-hooks --atomic' "$workflow_readme"
 require_fixed '三条 workflow 的 `pull_request` 触发器禁止配置 `paths`' "$workflow_readme"
+require_fixed '非滚动 PostgreSQL 迁移边界' "$workflow_readme"
+require_fixed '普通应用升级中的 Migrator hook 固定执行 `verify`' "$workflow_readme"
+require_fixed '尚未交付一个能同时证明 PostgreSQL 旧 writer 活动事务归零' "$workflow_readme"
+require_fixed '仍是明确的外部上线阻断' "$workflow_readme"
+require_fixed '应用部署与 HMAC 停机在接触 Kubernetes 前都会实时回读 EKS' "$workflow_readme"
+require_fixed '`endpointPrivateAccess=true`、`endpointPublicAccess=false`' "$workflow_readme"
+require_fixed '不构成 EKS、S3 与 CloudFront 之间的' "$workflow_readme"
+require_fixed '禁止宣称“全栈原子发布”' "$workflow_readme"
+require_fixed 'KVS 写命令返回非零不能直接退出' "$workflow_readme"
+require_fixed '`get-key` 进行第一次权威回读' "$workflow_readme"
+require_fixed '`kvs-manual-intervention.env`' "$workflow_readme"
 
 for context_binding in \
   "$infrastructure_workflow|    name: AWS infrastructure static contract" \
@@ -153,7 +166,26 @@ infrastructure_static=$(awk '
 ' "$infrastructure_workflow")
 application_static=$(awk '
   /^  static-contract:/ { capture = 1 }
+  /^  bind-deployment-source:/ { capture = 0 }
+  capture { print }
+' "$application_workflow")
+application_source_binding=$(awk '
+  /^  bind-deployment-source:/ { capture = 1 }
   /^  verify-release:/ { capture = 0 }
+  capture { print }
+' "$application_workflow")
+application_verify=$(awk '
+  /^  verify-release:/ { capture = 1 }
+  /^  bind-deployment-artifacts:/ { capture = 0 }
+  capture { print }
+' "$application_workflow")
+application_artifact_binding=$(awk '
+  /^  bind-deployment-artifacts:/ { capture = 1 }
+  /^  deploy:/ { capture = 0 }
+  capture { print }
+' "$application_workflow")
+application_deploy=$(awk '
+  /^  deploy:/ { capture = 1 }
   capture { print }
 ' "$application_workflow")
 hmac_static=$(awk '
@@ -171,6 +203,11 @@ infrastructure_apply=$(awk '
 ' "$infrastructure_workflow")
 infrastructure_plan=$(awk '
   /^  terraform-plan:/ { capture = 1 }
+  /^  bind-terraform-plan:/ { capture = 0 }
+  capture { print }
+' "$infrastructure_workflow")
+infrastructure_artifact_binding=$(awk '
+  /^  bind-terraform-plan:/ { capture = 1 }
   /^  terraform-apply:/ { capture = 0 }
   capture { print }
 ' "$infrastructure_workflow")
@@ -180,6 +217,73 @@ for static_job in "$infrastructure_static" "$application_static" "$hmac_static";
     fail 'PR 静态 job 禁止 Environment、OIDC 和 secret'
   fi
 done
+test -n "$application_artifact_binding" || fail '应用部署缺少独立 artifact 元数据绑定 job'
+binding_permissions=$(printf '%s\n' "$application_artifact_binding" | awk '
+  $0 == "    permissions:" { capture = 1; next }
+  capture && /^    [^ ]/ { exit }
+  capture && $0 !~ /^[[:space:]]*(#|$)/ { print }
+')
+test "$binding_permissions" = '      actions: read' || \
+  fail 'artifact 元数据绑定 job 只能读取 Actions 元数据'
+if printf '%s\n' "$application_artifact_binding" | \
+  grep -E 'actions/checkout@|^[[:space:]]+environment:|id-token:|\$\{\{ secrets\.' >/dev/null; then
+  fail 'artifact 元数据绑定 job 禁止 checkout、Environment、OIDC 与 secret'
+fi
+test -n "$application_source_binding" || fail 'ECR 验证前缺少独立源码 artifact 元数据绑定 job'
+source_binding_permissions=$(printf '%s\n' "$application_source_binding" | awk '
+  $0 == "    permissions:" { capture = 1; next }
+  capture && /^    [^ ]/ { exit }
+  capture && $0 !~ /^[[:space:]]*(#|$)/ { print }
+')
+test "$source_binding_permissions" = '      actions: read' || \
+  fail '部署源码 artifact 元数据绑定 job 只能读取 Actions 元数据'
+if printf '%s\n' "$application_source_binding" | \
+  grep -E 'actions/checkout@|^[[:space:]]+environment:|id-token:|\$\{\{ secrets\.' >/dev/null; then
+  fail '部署源码 artifact 元数据绑定 job 禁止 checkout、Environment、OIDC 与 secret'
+fi
+for source_binding_control in \
+  'SOURCE_ARTIFACT_ID: ${{ needs.static-contract.outputs.source_artifact_id }}' \
+  'SOURCE_ARTIFACT_DIGEST: ${{ needs.static-contract.outputs.source_artifact_digest }}' \
+  'Authorization: Bearer $GH_TOKEN' \
+  '$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID' \
+  '.id == $artifact_id and .name == $name and .expired == false and' \
+  '.digest == $digest and .workflow_run.id == $run_id and' \
+  '.workflow_run.head_sha == $source_sha'
+do
+  printf '%s\n' "$application_source_binding" | grep -F -- "$source_binding_control" >/dev/null || \
+    fail "部署源码 artifact 元数据绑定缺少：$source_binding_control"
+done
+printf '%s\n' "$application_verify" | grep -F -x '      - bind-deployment-source' >/dev/null || \
+  fail 'ECR OIDC 验证必须等待部署源码 artifact 元数据绑定成功'
+test -n "$infrastructure_artifact_binding" || fail 'Terraform apply 缺少独立 plan artifact 元数据绑定 job'
+infrastructure_binding_permissions=$(printf '%s\n' "$infrastructure_artifact_binding" | awk '
+  $0 == "    permissions:" { capture = 1; next }
+  capture && /^    [^ ]/ { exit }
+  capture && $0 !~ /^[[:space:]]*(#|$)/ { print }
+')
+test "$infrastructure_binding_permissions" = '      actions: read' || \
+  fail 'Terraform plan artifact 元数据绑定 job 只能读取 Actions 元数据'
+if printf '%s\n' "$infrastructure_artifact_binding" | \
+  grep -E 'actions/checkout@|^[[:space:]]+environment:|id-token:|\$\{\{ secrets\.' >/dev/null; then
+  fail 'Terraform plan artifact 元数据绑定 job 禁止 checkout、Environment、OIDC 与 secret'
+fi
+printf '%s\n' "$infrastructure_artifact_binding" | \
+  grep -F -x "    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'" >/dev/null || \
+  fail 'Terraform plan artifact 元数据绑定只能用于 apply'
+for plan_binding_control in \
+  'PLAN_ARTIFACT_ID: ${{ needs.terraform-plan.outputs.artifact_id }}' \
+  'PLAN_ARTIFACT_DIGEST: ${{ needs.terraform-plan.outputs.artifact_digest }}' \
+  'Authorization: Bearer $GH_TOKEN' \
+  '$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$PLAN_ARTIFACT_ID' \
+  '.id == $artifact_id and .name == $name and .expired == false and' \
+  '.digest == $digest and .workflow_run.id == $run_id and' \
+  '.workflow_run.head_sha == $source_sha'
+do
+  printf '%s\n' "$infrastructure_artifact_binding" | grep -F -- "$plan_binding_control" >/dev/null || \
+    fail "Terraform plan artifact 元数据绑定缺少：$plan_binding_control"
+done
+printf '%s\n' "$infrastructure_apply" | grep -F -x '      - bind-terraform-plan' >/dev/null || \
+  fail 'Terraform apply 必须等待 plan artifact 元数据绑定成功'
 
 printf '%s\n' "$infrastructure_plan" | \
   grep -F -x "    if: github.event_name == 'workflow_dispatch'" >/dev/null || \
@@ -204,6 +308,16 @@ require_fixed 'AWS_HMAC_QUIESCE_CANCELLATION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_C
   "$hmac_workflow"
 require_fixed 'AWS_HMAC_QUIESCE_COMPLETION_PREFIX: ${{ vars.AWS_HMAC_QUIESCE_COMPLETION_PREFIX }}' \
   "$hmac_workflow"
+hmac_manager="$workflow_directory/manage-hmac-quiesce-evidence.sh"
+for hmac_cluster_control in \
+  'eks describe-cluster --name "$AWS_EKS_CLUSTER_NAME" --region "$AWS_REGION"' \
+  '.cluster.arn == $cluster_arn and' \
+  '.cluster.status == "ACTIVE" and' \
+  '.cluster.resourcesVpcConfig.endpointPrivateAccess == true and' \
+  '.cluster.resourcesVpcConfig.endpointPublicAccess == false'
+do
+  require_fixed "$hmac_cluster_control" "$hmac_manager"
+done
 for workflow in "$infrastructure_workflow" "$application_workflow" "$hmac_workflow"; do
   require_fixed "group: \${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}" "$workflow"
   require_fixed 'cancel-in-progress: false' "$workflow"
@@ -425,6 +539,28 @@ do
 done
 require_fixed 'artifact-ids: ${{ needs.static-contract.outputs.source_artifact_id }}' "$application_workflow"
 require_fixed 'artifact-ids: ${{ needs.static-contract.outputs.source_artifact_id }},${{ needs.verify-release.outputs.evidence_artifact_id }}' "$application_workflow"
+for artifact_binding_control in \
+  'SOURCE_ARTIFACT_DIGEST: ${{ needs.static-contract.outputs.source_artifact_digest }}' \
+  'EVIDENCE_ARTIFACT_DIGEST: ${{ needs.verify-release.outputs.evidence_artifact_digest }}' \
+  'Authorization: Bearer $GH_TOKEN' \
+  '$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id' \
+  '.id == $artifact_id and .name == $name and .expired == false and' \
+  '.digest == $digest and .workflow_run.id == $run_id and' \
+  '.workflow_run.head_sha == $source_sha' \
+  'verify_artifact "$SOURCE_ARTIFACT_ID" "$SOURCE_ARTIFACT_DIGEST"' \
+  'verify_artifact "$EVIDENCE_ARTIFACT_ID" "$EVIDENCE_ARTIFACT_DIGEST"'
+do
+  require_fixed "$artifact_binding_control" "$application_workflow"
+done
+printf '%s\n' "$application_deploy" | grep -F -x '      - bind-deployment-artifacts' >/dev/null || \
+  fail '私网部署必须依赖 artifact 元数据绑定成功'
+require_fixed 'install -d -m 0700 "/tmp/slots-aws-deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/downloads"' \
+  "$application_workflow"
+test "$(grep -F -c 'if-no-files-found: warn' "$application_workflow" || true)" -eq 0 || \
+  fail '应用部署审计证据缺失时不得只给 warning'
+require_fixed 'umask 077' "$workflow_directory/verify-ecr-release.sh"
+require_fixed 'umask 077' "$workflow_directory/manage-hmac-quiesce-evidence.sh"
+require_fixed 'umask 077' "$workflow_directory/publish-web-release.sh"
 require_fixed '"RGS_IMAGE=$registry/$AWS_ECR_RGS_RUNTIME_REPOSITORY@$INPUT_RGS_DIGEST"' "$application_workflow"
 require_fixed '"MIGRATOR_IMAGE=$registry/$AWS_ECR_RGS_MIGRATOR_REPOSITORY@$INPUT_MIGRATOR_DIGEST"' "$application_workflow"
 require_fixed '"WEB_IMAGE=$registry/$AWS_ECR_WEB_REPOSITORY@$INPUT_WEB_DIGEST"' "$application_workflow"
@@ -526,6 +662,12 @@ require_fixed 'expected_cluster_arn="arn:aws:eks:${AWS_REGION}:${AWS_ACCOUNT_ID}
   "$application_workflow"
 require_fixed 'test "$current_cluster" = "$expected_cluster_arn" || {' "$application_workflow"
 require_fixed 'test "$(kubectl get --raw=/readyz)" = ok || {' "$application_workflow"
+require_fixed '.resourcesVpcConfig.endpointPrivateAccess == true' "$application_workflow"
+require_fixed '.resourcesVpcConfig.endpointPublicAccess == false' "$application_workflow"
+require_fixed 'endpointPrivateAccess: .resourcesVpcConfig.endpointPrivateAccess' "$application_workflow"
+require_fixed 'endpointPublicAccess: .resourcesVpcConfig.endpointPublicAccess' "$application_workflow"
+require_fixed 'rm -f "$cluster_raw"' "$application_workflow"
+require_fixed '          umask 077' "$application_workflow"
 if grep -F -- '--alias ' "$application_workflow" >/dev/null; then
   fail 'update-kubeconfig 不得用别名掩盖精确 EKS ARN 身份'
 fi
@@ -766,11 +908,45 @@ require_fixed 'aws cloudfront describe-function' "$web_publisher"
 require_fixed '.FunctionSummary.FunctionMetadata.Stage == "LIVE"' "$web_publisher"
 require_fixed '.FunctionSummary.FunctionConfig.KeyValueStoreAssociations.Quantity == 1' "$web_publisher"
 require_fixed 'aws cloudfront-keyvaluestore describe-key-value-store' "$web_publisher"
-require_fixed 'aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN"' "$web_publisher"
+require_fixed 'if aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN"' "$web_publisher"
 require_fixed '--if-match "$kvs_etag_before" --key active-release --value "$release_id"' "$web_publisher"
+test "$(grep -F -c -- '--if-match "$kvs_etag_before" --key active-release --value "$release_id"' \
+  "$web_publisher" || true)" -eq 2 || \
+  fail 'Web KVS 必须同时保留首次 promotion 与首次发布 CAS target retry'
 require_fixed 'aws cloudfront-keyvaluestore get-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN"' "$web_publisher"
+require_fixed 'read_active_release_authoritatively() {' "$web_publisher"
+require_fixed 'if ! read_active_release_authoritatively "$active_json"; then' "$web_publisher"
+require_fixed '--if-match "$kvs_etag_before" --key active-release --value "$previous_release"' "$web_publisher"
+require_fixed 'test "$authoritative_kvs_etag" != "$kvs_etag_before"' "$web_publisher"
+require_fixed 'test "$fence_release_first" = "$fence_release_confirm"' "$web_publisher"
+require_fixed 'test "$fence_etag_first" = "$fence_etag_confirm"' "$web_publisher"
+require_fixed 'CAS fence 已推进原 ETag 且 active-release 保持旧状态' "$web_publisher"
+require_fixed 'CAS fence 在时限内未推进原 ETag，迟到写入风险仍未消除' "$web_publisher"
+require_fixed 'manual_intervention promotion-reconciliation' "$web_publisher"
+test "$(grep -F -c 'manual_intervention promotion-reconciliation' "$web_publisher" || true)" -eq 4 || \
+  fail 'Web KVS promotion reconciliation 必须覆盖读取失败、第三状态、READY/ETag 不一致四个分支'
+require_fixed 'kvs-manual-intervention.env' "$web_publisher"
+require_fixed 'freeze-and-authoritatively-reconcile' "$web_publisher"
+require_fixed 'promotion_command_status="${promotion_command_status}-reconciled-applied"' "$web_publisher"
 require_fixed 'test "$latest_etag" = "$kvs_etag_after"' "$web_publisher"
+require_fixed 'if ! read_active_release_authoritatively "$pre_rollback_active"; then' "$web_publisher"
+require_fixed 'if ! read_active_release_authoritatively "$rollback_active"; then' "$web_publisher"
+require_fixed 'rollback_command_status="${rollback_command_status}-reconciled-applied"' "$web_publisher"
+require_fixed 'test "$authoritative_kvs_etag" != "$latest_etag"' "$web_publisher"
+require_fixed 'rollback_public_ready=false' "$web_publisher"
+require_fixed 'test "$rollback_status" = 503' "$web_publisher"
+require_fixed "grep -F -x 'release is not ready'" "$web_publisher"
+require_fixed 'jq -e --arg release "$previous_release" '\''.releaseId == $release'\''' "$web_publisher"
+require_fixed 'test "$rollback_public_ready" = true' "$web_publisher"
 require_fixed 'aws cloudfront get-distribution --id "$AWS_CLOUDFRONT_DISTRIBUTION_ID"' "$web_publisher"
+web_switch_faults="$workflow_directory/test-web-release-switch-faults.sh"
+require_fixed 'run_scenario applied-then-error "$previous_release" success' "$web_switch_faults"
+require_fixed 'run_scenario delayed-apply-after-read "$previous_release" success' "$web_switch_faults"
+require_fixed 'run_scenario not-applied-error "$previous_release" failure' "$web_switch_faults"
+require_fixed 'run_scenario lookup-error "$previous_release" failure' "$web_switch_faults"
+require_fixed 'run_scenario applied-then-error-first-release none failure' "$web_switch_faults"
+require_fixed 'public-rollback-503' "$web_switch_faults"
+require_fixed 'ACTION=freeze-and-authoritatively-reconcile' "$web_switch_faults"
 if grep -E 'update-distribution|update-response-headers-policy|aws[[:space:]]+lambda' "$web_publisher" >/dev/null; then
   fail 'Web 应用发布不得越过 KVS 接口修改 distribution、CSP policy 或 Lambda'
 fi

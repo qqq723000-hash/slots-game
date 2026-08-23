@@ -17,8 +17,10 @@
   不改变截止时间的分布式抖动，降低大规模客户端同步重试波峰；
 - 新增 HTTP、PostgreSQL、Valkey 三类显式高并发入口；每次报告使用唯一临时文件、固定 schema、批准
   阈值和功能不变量校验后才原子发布到 ignored `.artifacts`，本机结果不替代 AWS/第三方/24h soak；
-- 增加 Valkey 引擎 CPU、容量、连接、复制延迟、流量管理和 EVAL 延迟 CloudWatch 告警，以及数据库
-  双组件维护静默状态；真实 AWS apply、Multi-AZ failover 和外部钱包认证仍是上线门禁；
+- 增加 Valkey 引擎 CPU、容量、连接、复制延迟、流量管理和 EVAL 延迟，以及 RDS CPU、连接、内存、
+  存储、读写延迟和磁盘队列 CloudWatch 告警；为加密 SNS 告警 topic 增加按来源 ARN 收窄的
+  CloudWatch/RDS/Backup topic 与 KMS 发布权限；增加数据库双组件维护静默状态；真实 AWS apply、
+  Multi-AZ failover、SNS 最终接收和外部钱包认证仍是上线门禁；
 - 将正式交付主线改为 AWS，并增加四环境应用 IaC：VPC/EKS、RDS Multi-AZ、ElastiCache Valkey、
   不可变 ECR、Secrets Manager 元数据、私有 S3/OAC/CloudFront、AMP/CloudWatch、备份和归档基线；
   账号工厂、远端 state/部署身份、DNS/证书/WAF 与组织级安全仍由企业落地区提供；
@@ -26,6 +28,10 @@
   plan、版本化 delivery 与失败关闭门禁；这些能力仍须在真实目标账号完成 plan/apply 和验收；
 - 将同一 RGS 制品拆成可独立扩缩的 API/Worker 运行角色，交付独立 HPA/PDB/Secret/NetworkPolicy，
   并保持 PostgreSQL 对会话、轮次、钱包结果和 `operationId` 幂等的唯一权威；
+- 补齐固定枚举的钱包 method/outcome 延迟、inflight 与熔断观测，增加数据库全局恢复 backlog、最老
+  逾期年龄、执行循环/快照独立新鲜度和人工审查告警；backlog 使用 501 封顶下界、首次错峰采样及
+  同实例新鲜度过滤，避免事故期无界扫描和陈旧副本假告警；API/Worker HPA 在未交付指标 adapter 前
+  仍只使用 CPU/内存，并以三/两个暖副本和容量告警失败闭合；
 - 增加 API + Valkey 的已验证身份共享准入：只拦截新启动/Spin 意图，使用 TLS、A/B ACL 与 HMAC
   键摘要，故障时失败闭合且不把缓存提升为资金权威；
 - 增加 Valkey A/B 密码轮换和 HMAC 静默维护状态机；HMAC entry/exit 后由应用

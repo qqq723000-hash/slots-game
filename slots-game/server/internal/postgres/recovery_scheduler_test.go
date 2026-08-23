@@ -34,6 +34,76 @@ func TestRecoverableRoundClaimUsesDueIndexFairRankingAndSkipLocked(t *testing.T)
 	}
 }
 
+func TestRecoverySnapshotUsesDatabaseClockAndBoundedScheduledRecoveryIndex(t *testing.T) {
+	if rgs.RecoverySnapshotBacklogLimit != 501 {
+		t.Fatalf("recovery snapshot limit=%d, SQL contract requires 501", rgs.RecoverySnapshotBacklogLimit)
+	}
+	for _, required := range []string{
+		"bounded_recovery AS MATERIALIZED",
+		"count(*)",
+		"MIN(bounded_recovery.next_attempt_at)",
+		"r.status IN ('PREPARED', 'WALLET_PENDING')",
+		"r.wallet_phase IN ('APPLY', 'LOOKUP')",
+		"r.next_attempt_at IS NOT NULL",
+		"ORDER BY r.next_attempt_at, r.operator_id, r.updated_at, r.session_id, r.round_id",
+		"LIMIT 501",
+		"clock_timestamp()",
+		"COALESCE(MAX(recovery_clock.now)",
+	} {
+		if !strings.Contains(recoverySnapshotSQL, required) {
+			t.Fatalf("recovery snapshot SQL is missing %q", required)
+		}
+	}
+	if strings.Contains(recoverySnapshotSQL, "JOIN rgs_sessions") {
+		t.Fatal("bounded recovery snapshot unexpectedly performs an unbounded per-row session join")
+	}
+
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	repository, err := NewRepository(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := sqlmock.NewRows([]string{"backlog", "oldest_due_age_millis", "observed_at"}).
+		AddRow(int64(7), int64(3250), time.Unix(1_700_000_000, 0).UTC())
+	mock.ExpectQuery(regexp.QuoteMeta(recoverySnapshotSQL)).WillReturnRows(rows)
+	snapshot, err := repository.RecoverySnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Backlog != 7 || snapshot.OldestDueAge != 3250*time.Millisecond ||
+		!snapshot.ObservedAt.Equal(time.Unix(1_700_000_000, 0).UTC()) {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRecoverySnapshotRejectsCountBeyondBoundedContract(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	repository, err := NewRepository(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := sqlmock.NewRows([]string{"backlog", "oldest_due_age_millis", "observed_at"}).
+		AddRow(rgs.RecoverySnapshotBacklogLimit+1, int64(1), time.Unix(1_700_000_000, 0).UTC())
+	mock.ExpectQuery(regexp.QuoteMeta(recoverySnapshotSQL)).WillReturnRows(rows)
+	if _, err := repository.RecoverySnapshot(context.Background()); err == nil {
+		t.Fatal("out-of-contract recovery snapshot count was accepted")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPostgresRecoveryFairnessPersistsAcrossClaimWaves(t *testing.T) {
 	databaseURLs := requirePostgresTestURLs(t)
 	database, err := sql.Open("pgx", databaseURLs.runtime)
@@ -66,6 +136,14 @@ func TestPostgresRecoveryFairnessPersistsAcrossClaimWaves(t *testing.T) {
 			roundID := fmt.Sprintf("round-fair-%02d-%d", operatorIndex, sessionIndex)
 			preparePostgresRecoveryFixture(t, ctx, repository, profile, operatorID, sessionID, roundID)
 		}
+	}
+	snapshot, err := repository.RecoverySnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Backlog != operatorCount*2 || snapshot.OldestDueAge < 0 ||
+		snapshot.ObservedAt.IsZero() || snapshot.ObservedAt.Unix() <= 0 {
+		t.Fatalf("recovery snapshot before claims = %+v", snapshot)
 	}
 
 	first, err := repository.ClaimRecoverableRounds(ctx, 4, time.Minute)

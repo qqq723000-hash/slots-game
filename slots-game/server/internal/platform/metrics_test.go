@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"slots-game/server/internal/outbox"
+	"slots-game/server/internal/rgs"
 )
 
 type metricsReadinessCheck struct {
@@ -149,8 +150,10 @@ func TestWalletIsolationTelemetryUsesOnlyBoundedLabels(t *testing.T) {
 	metrics.WalletBreakerStateChanged("apply", "", "closed")
 	metrics.WalletBreakerStateChanged("apply", "closed", "open")
 	metrics.WalletBreakerStateChanged("lookup", "", "closed")
+	metrics.WalletBreakerStateChanged("operator_lookup", "", "closed")
 	metrics.WalletInFlight("lookup", 1)
 	metrics.ObserveWalletRequest("lookup", "pending", 7*time.Millisecond)
+	metrics.ObserveWalletRequest("lookup", "response_auth_invalid", 8*time.Millisecond)
 	metrics.WalletIsolationRejected("apply", "backend_bulkhead")
 	metrics.ObserveWalletRequest("apply", "isolated", time.Millisecond)
 
@@ -171,8 +174,10 @@ func TestWalletIsolationTelemetryUsesOnlyBoundedLabels(t *testing.T) {
 		`rgs_wallet_breakers{method="apply",state="closed"} 0`,
 		`rgs_wallet_breakers{method="apply",state="open"} 1`,
 		`rgs_wallet_breakers{method="lookup",state="closed"} 1`,
+		`rgs_wallet_breakers{method="operator_lookup",state="closed"} 1`,
 		`rgs_wallet_request_duration_seconds_bucket{method="lookup",outcome="pending",le="0.010"} 1`,
 		`rgs_wallet_request_duration_seconds_count{method="lookup",outcome="pending"} 1`,
+		`rgs_wallet_request_duration_seconds_count{method="lookup",outcome="response_auth_invalid"} 1`,
 		`rgs_wallet_request_duration_seconds_count{method="apply",outcome="isolated"} 1`,
 	} {
 		if !strings.Contains(text, metric) {
@@ -185,6 +190,51 @@ func TestWalletIsolationTelemetryUsesOnlyBoundedLabels(t *testing.T) {
 		}
 	}
 	assertNoHighCardinalityMetricLabels(t, text)
+}
+
+func TestRecoveryTelemetryUsesOnlyGlobalUnlabelledSnapshots(t *testing.T) {
+	metrics := &Metrics{}
+	metrics.ObserveRecoveryBacklog(7, 3250*time.Millisecond, time.Unix(1_699_999_990, 0))
+	metrics.RecoveryLoopSucceeded(time.Unix(1_700_000_000, 0))
+	metrics.RecoveryLoopFailed()
+	metrics.RecoverySnapshotFailed()
+
+	// 非法快照和零时间不能覆盖最后一份可信观测。
+	metrics.ObserveRecoveryBacklog(-1, -time.Second, time.Time{})
+	metrics.ObserveRecoveryBacklog(
+		rgs.RecoverySnapshotBacklogLimit+1, time.Second, time.Unix(1_700_000_100, 0),
+	)
+	metrics.RecoveryLoopSucceeded(time.Time{})
+
+	var output bytes.Buffer
+	if err := metrics.WritePrometheus(&output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, metric := range []string{
+		"Capped database-global lower-bound of durably scheduled wallet recovery rows; 501 means at least 501",
+		"rgs_recovery_backlog 7",
+		"rgs_recovery_oldest_due_age_seconds 3.250000000",
+		"rgs_recovery_snapshot_last_success_timestamp_seconds 1699999990",
+		"rgs_recovery_snapshot_failures_total 1",
+		"rgs_recovery_loop_last_success_timestamp_seconds 1700000000",
+		"rgs_recovery_loop_failures_total 1",
+	} {
+		if !strings.Contains(text, metric) {
+			t.Fatalf("metrics output does not contain %q:\n%s", metric, text)
+		}
+	}
+	assertNoHighCardinalityMetricLabels(t, text)
+}
+
+func TestAPIOnlyMetricsDoNotExposeSyntheticRecoveryZeros(t *testing.T) {
+	var output bytes.Buffer
+	if err := (&Metrics{}).WritePrometheus(&output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "rgs_recovery_") {
+		t.Fatalf("API-only metrics exposed synthetic recovery state:\n%s", output.String())
+	}
 }
 
 func TestMetricsExposeAttachedDatabasePoolGauges(t *testing.T) {

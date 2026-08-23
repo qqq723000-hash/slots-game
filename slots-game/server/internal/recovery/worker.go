@@ -21,7 +21,9 @@ type Resolver interface {
 }
 
 type Config struct {
-	Interval time.Duration
+	Interval            time.Duration
+	ObservationInterval time.Duration
+	ObservationTimeout  time.Duration
 	// StaleAfter 只为旧配置源代码兼容保留；到期时间现在完全由持久 next_attempt_at 决定。
 	StaleAfter     time.Duration
 	AttemptTimeout time.Duration
@@ -32,14 +34,24 @@ type Config struct {
 	MaxParallel    int
 	// FullJitter 仅用于确定性测试。生产默认在 [0, upperBound] 内均匀取值。
 	FullJitter func(time.Duration) time.Duration
+	// InitialObservationJitter 只错开首次数据库 backlog 快照；恢复 pass 仍会立即执行，
+	// 后续快照保持 ObservationInterval 固定周期。测试可注入返回零的函数。
+	InitialObservationJitter func(time.Duration) time.Duration
+	// Now 仅用于确定性测试恢复循环新鲜度。生产默认使用进程 UTC 时钟；积压年龄
+	// 始终由存储适配器使用权威存储时钟计算。
+	Now func() time.Time
 }
 
 type Worker struct {
-	config     Config
-	repository rgs.RecoveryRepository
-	resolver   Resolver
-	logger     *slog.Logger
-	metrics    *platform.Metrics
+	config                  Config
+	repository              rgs.RecoveryRepository
+	resolver                Resolver
+	logger                  *slog.Logger
+	metrics                 *platform.Metrics
+	observationMu           sync.Mutex
+	nextObservationAt       time.Time
+	initialObservationDelay time.Duration
+	observationInitialized  bool
 }
 
 func New(
@@ -57,6 +69,12 @@ func New(
 	}
 	if config.StaleAfter == 0 {
 		config.StaleAfter = time.Second
+	}
+	if config.ObservationInterval == 0 {
+		config.ObservationInterval = 15 * time.Second
+	}
+	if config.ObservationTimeout == 0 {
+		config.ObservationTimeout = time.Second
 	}
 	if config.AttemptTimeout == 0 {
 		config.AttemptTimeout = 5 * time.Second
@@ -84,7 +102,26 @@ func New(
 			return time.Duration(rand.Int64N(int64(upperBound) + 1))
 		}
 	}
+	if config.InitialObservationJitter == nil {
+		config.InitialObservationJitter = func(window time.Duration) time.Duration {
+			if window <= 0 {
+				return 0
+			}
+			return time.Duration(rand.Int64N(int64(window)))
+		}
+	}
+	if config.Now == nil {
+		config.Now = time.Now
+	}
+	initialObservationDelay := -time.Nanosecond
+	if config.ObservationInterval >= time.Second && config.ObservationInterval <= time.Hour {
+		initialObservationDelay = config.InitialObservationJitter(config.ObservationInterval)
+	}
 	if config.Interval < 100*time.Millisecond || config.StaleAfter < 0 ||
+		config.ObservationInterval < time.Second || config.ObservationInterval > time.Hour ||
+		config.ObservationTimeout < 100*time.Millisecond ||
+		config.ObservationTimeout > config.ObservationInterval ||
+		initialObservationDelay < 0 || initialObservationDelay >= config.ObservationInterval ||
 		config.AttemptTimeout < 100*time.Millisecond ||
 		config.LeaseDuration < config.AttemptTimeout || config.LeaseDuration > 24*time.Hour ||
 		config.InitialBackoff <= 0 || config.MaximumBackoff < config.InitialBackoff ||
@@ -93,9 +130,12 @@ func New(
 		config.MaxParallel < 1 || config.MaxParallel > rgs.MaxWalletRecoveryClaimBatch {
 		return nil, errors.New("recovery: invalid worker configuration")
 	}
+	if metrics != nil {
+		metrics.EnableRecoveryMetrics()
+	}
 	return &Worker{
 		config: config, repository: repository, resolver: resolver,
-		logger: logger, metrics: metrics,
+		logger: logger, metrics: metrics, initialObservationDelay: initialObservationDelay,
 	}, nil
 }
 
@@ -114,7 +154,8 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-func (w *Worker) RunOnce(ctx context.Context) error {
+func (w *Worker) RunOnce(ctx context.Context) (runErr error) {
+	defer func() { runErr = w.finishObservedPass(ctx, runErr) }()
 	var failures []error
 	for remaining := w.config.BatchSize; remaining > 0; {
 		if err := ctx.Err(); err != nil {
@@ -134,6 +175,77 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 		failures = append(failures, w.processClaims(ctx, claims)...)
 	}
 	return errors.Join(failures...)
+}
+
+func (w *Worker) finishObservedPass(ctx context.Context, passErr error) error {
+	if w.metrics == nil {
+		return passErr
+	}
+	if passErr != nil {
+		if !errors.Is(passErr, context.Canceled) {
+			w.metrics.RecoveryLoopFailed()
+		}
+		return passErr
+	}
+	if err := ctx.Err(); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			w.metrics.RecoveryLoopFailed()
+		}
+		return err
+	}
+	completedAt := w.config.Now().UTC()
+	if completedAt.IsZero() || completedAt.Unix() <= 0 {
+		w.metrics.RecoveryLoopFailed()
+		return errors.New("recovery: observation clock returned an invalid time")
+	}
+	w.metrics.RecoveryLoopSucceeded(completedAt)
+	if w.claimBacklogObservation(completedAt) {
+		observationCtx, cancel := context.WithTimeout(ctx, w.config.ObservationTimeout)
+		snapshot, err := w.repository.RecoverySnapshot(observationCtx)
+		cancel()
+		if err != nil {
+			if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+				return ctx.Err()
+			}
+			w.metrics.RecoverySnapshotFailed()
+			w.logObservationFailure(err)
+			return nil
+		}
+		if snapshot.Backlog < 0 || snapshot.Backlog > rgs.RecoverySnapshotBacklogLimit ||
+			snapshot.OldestDueAge < 0 ||
+			(snapshot.Backlog == 0 && snapshot.OldestDueAge != 0) ||
+			snapshot.ObservedAt.IsZero() || snapshot.ObservedAt.Unix() <= 0 {
+			err := errors.New("recovery: repository returned an invalid backlog snapshot")
+			w.metrics.RecoverySnapshotFailed()
+			w.logObservationFailure(err)
+			return nil
+		}
+		w.metrics.ObserveRecoveryBacklog(
+			snapshot.Backlog, snapshot.OldestDueAge, snapshot.ObservedAt,
+		)
+	}
+	return nil
+}
+
+func (w *Worker) claimBacklogObservation(now time.Time) bool {
+	w.observationMu.Lock()
+	defer w.observationMu.Unlock()
+	if !w.observationInitialized {
+		w.nextObservationAt = now.Add(w.initialObservationDelay)
+		w.observationInitialized = true
+	}
+	if !w.nextObservationAt.IsZero() && now.Before(w.nextObservationAt) {
+		return false
+	}
+	w.nextObservationAt = now.Add(w.config.ObservationInterval)
+	return true
+}
+
+func (w *Worker) logObservationFailure(err error) {
+	if w.logger != nil {
+		// 只记录固定操作名与适配器错误；禁止附加运营商、会话、轮次或钱包标识。
+		w.logger.Error("recovery backlog observation failed", "error", err)
+	}
 }
 
 func (w *Worker) processClaims(

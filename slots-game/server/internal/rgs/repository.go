@@ -44,4 +44,18 @@ type RecoveryRepository interface {
 		WalletRecoveryDisposition,
 		time.Duration,
 	) (bool, error)
+	// RecoverySnapshot 返回数据库全局持久调度恢复积压的有界下界，而不是当前 Worker
+	// 本地领取数。Backlog 达到 RecoverySnapshotBacklogLimit 表示实际值至少达到该值；
+	// OldestDueAge 仍使用存储时钟计算全局最早 next_attempt_at 的逾期时间。
+	RecoverySnapshot(context.Context) (RecoverySnapshot, error)
+}
+
+// RecoverySnapshotBacklogLimit 是饱和告警门槛：返回 501 只证明实际积压至少
+// 达到 501，同时避免观测查询在事故积压上做无界精确计数。
+const RecoverySnapshotBacklogLimit int64 = 501
+
+type RecoverySnapshot struct {
+	Backlog      int64
+	OldestDueAge time.Duration
+	ObservedAt   time.Time
 }
