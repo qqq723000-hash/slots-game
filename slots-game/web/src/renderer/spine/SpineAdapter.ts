@@ -83,9 +83,6 @@ export function enforcePrimalRegionBlendModes(
 ): number {
   let additive = 0;
   for (const slot of primalBlendSlots(view)) {
-    const attachment = slot.getAttachment() as null | {
-      region?: null | { name?: string };
-    };
     const blendMode = isPrimalAdditiveSlot(slot, options)
       ? BLEND_MODES.ADD
       : slot.data.blendMode;

@@ -17,23 +17,46 @@ var (
 	ErrSessionExpired  = errors.New("rgs: session expired")
 	// ErrSessionIntegrity 与 ErrManualReview 分离，避免协调器在隔离损坏会话
 	// 时重写仍有经济副作用待决的轮次；HTTP 适配器仍将二者统一暴露为 MANUAL_REVIEW。
-	ErrSessionIntegrity       = errors.New("rgs: session integrity validation failed")
-	ErrRoundNotFound          = errors.New("rgs: round not found")
-	ErrIdempotencyConflict    = errors.New("rgs: idempotency conflict")
-	ErrRevisionConflict       = errors.New("rgs: session revision conflict")
-	ErrRoundPending           = errors.New("rgs: another round is pending")
-	ErrResultDeliveryPending  = errors.New("rgs: committed result delivery is pending")
-	ErrResultDeliveryNotFound = errors.New("rgs: result delivery not found")
-	ErrResultDeliveryMismatch = errors.New("rgs: result delivery receipt mismatch")
-	ErrRoundRejected          = errors.New("rgs: round rejected")
-	ErrManualReview           = errors.New("rgs: round requires manual review")
-	ErrWalletPending          = errors.New("rgs: wallet result is pending")
-	ErrWalletRejected         = errors.New("rgs: wallet rejected round")
-	ErrWalletReceiptInvalid   = errors.New("rgs: wallet receipt is invalid")
+	ErrSessionIntegrity             = errors.New("rgs: session integrity validation failed")
+	ErrRoundNotFound                = errors.New("rgs: round not found")
+	ErrIdempotencyConflict          = errors.New("rgs: idempotency conflict")
+	ErrRevisionConflict             = errors.New("rgs: session revision conflict")
+	ErrRoundPending                 = errors.New("rgs: another round is pending")
+	ErrResultDeliveryPending        = errors.New("rgs: committed result delivery is pending")
+	ErrResultDeliveryNotFound       = errors.New("rgs: result delivery not found")
+	ErrResultDeliveryMismatch       = errors.New("rgs: result delivery receipt mismatch")
+	ErrRoundRejected                = errors.New("rgs: round rejected")
+	ErrManualReview                 = errors.New("rgs: round requires manual review")
+	ErrWalletPending                = errors.New("rgs: wallet result is pending")
+	ErrWalletRejected               = errors.New("rgs: wallet rejected round")
+	ErrWalletReceiptInvalid         = errors.New("rgs: wallet receipt is invalid")
+	ErrEconomicRateLimited          = errors.New("rgs: economic intent rate limited")
+	ErrEconomicAdmissionUnavailable = errors.New("rgs: economic intent admission unavailable")
 	// ErrStaleWalletClaim 表示调用方持有的 wallet_lease_until 已被续租、调度或终态转换取代。
 	// 收到此错误后只能读取最新轮次，禁止使用旧钱包结果继续写入。
 	ErrStaleWalletClaim = errors.New("rgs: stale wallet claim")
 )
+
+// EconomicAdmissionError 将新经济意图准入的 429/503 语义带到 HTTP 边界，
+// 不包含运营商、钱包、会话或轮次身份。
+type EconomicAdmissionError struct {
+	Cause      error
+	RetryAfter time.Duration
+}
+
+func (err *EconomicAdmissionError) Error() string {
+	if errors.Is(err.Cause, ErrEconomicRateLimited) {
+		return ErrEconomicRateLimited.Error()
+	}
+	return ErrEconomicAdmissionUnavailable.Error()
+}
+
+func (err *EconomicAdmissionError) Unwrap() error {
+	if errors.Is(err.Cause, ErrEconomicRateLimited) {
+		return ErrEconomicRateLimited
+	}
+	return ErrEconomicAdmissionUnavailable
+}
 
 const (
 	MaxClientSequence uint64 = 9_007_199_254_740_991

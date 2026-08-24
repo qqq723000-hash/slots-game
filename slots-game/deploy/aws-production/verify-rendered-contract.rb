@@ -46,7 +46,7 @@ expected_annotations = {
   "alb.ingress.kubernetes.io/backend-protocol" => "HTTP",
   "alb.ingress.kubernetes.io/ssl-redirect" => "443",
   "alb.ingress.kubernetes.io/healthcheck-path" => "/healthz",
-  "alb.ingress.kubernetes.io/healthcheck-port" => "traffic-port",
+  "alb.ingress.kubernetes.io/healthcheck-port" => "8081",
   "alb.ingress.kubernetes.io/success-codes" => "200",
   "alb.ingress.kubernetes.io/manage-backend-security-group-rules" => "true"
 }
@@ -72,18 +72,53 @@ abort "ALB 必须显式绑定安全组" unless
   annotations.fetch("alb.ingress.kubernetes.io/security-groups", "").match?(/\Asg-[0-9a-f]+\z/)
 
 load_balancer_attributes = annotations.fetch("alb.ingress.kubernetes.io/load-balancer-attributes", "").split(",")
-%w[
-  deletion_protection.enabled=true
-  routing.http.drop_invalid_header_fields.enabled=true
-  access_logs.s3.enabled=true
-].each do |attribute|
-  abort "ALB 安全或审计属性缺失: #{attribute}" unless load_balancer_attributes.include?(attribute)
+attribute_pairs = load_balancer_attributes.map do |attribute|
+  key, value = attribute.split("=", 2)
+  abort "ALB 属性格式不合法" if key.nil? || key.empty? || value.nil? || value.empty?
+  [key, value]
 end
+attribute_keys = attribute_pairs.map(&:first)
+abort "ALB 属性键不得重复" unless attribute_keys.uniq.length == attribute_keys.length
+expected_attribute_values = {
+  "deletion_protection.enabled" => "true",
+  "waf.fail_open.enabled" => "false",
+  "routing.http.drop_invalid_header_fields.enabled" => "true",
+  "routing.http.desync_mitigation_mode" => "strictest",
+  "routing.http2.enabled" => "true",
+  "idle_timeout.timeout_seconds" => "30",
+  "client_keep_alive.seconds" => "300",
+  "access_logs.s3.enabled" => "true",
+}
+allowed_attribute_keys = expected_attribute_values.keys + %w[access_logs.s3.bucket access_logs.s3.prefix]
+abort "ALB 属性键集合不精确" unless attribute_keys.sort == allowed_attribute_keys.sort
+attribute_map = attribute_pairs.to_h
+abort "ALB 安全、容量或审计属性漂移" unless
+  expected_attribute_values.all? { |key, value| attribute_map[key] == value }
+abort "ALB 访问日志 bucket 不合法" unless
+  attribute_map.fetch("access_logs.s3.bucket", "").match?(/\A[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\z/)
+abort "ALB 访问日志 prefix 不合法" unless
+  attribute_map.fetch("access_logs.s3.prefix", "").match?(%r{\A[a-z0-9][a-z0-9/_-]{1,127}\z})
 
 service_names = resources.fetch("Service", []).map { |service| service.dig("metadata", "name") }
 backend_name = ingress.dig("spec", "rules", 0, "http", "paths", 0, "backend", "service", "name")
 abort "API Ingress 引用了不存在的 Service" unless service_names.include?(backend_name)
 abort "operations Service 被错误暴露到公网" if backend_name.include?("operations")
+
+rgs = deployments.find do |deployment|
+  deployment.dig("metadata", "labels", "app.kubernetes.io/component") == "rgs"
+end
+rgs_environment = rgs.dig("spec", "template", "spec", "containers", 0, "env").to_h do |item|
+  [item.fetch("name"), item["value"]]
+end
+abort "RGS 请求体上限没有与 ALB WAF 8 KiB 检查窗口对齐" unless
+  rgs_environment["RGS_MAX_REQUEST_BYTES"] == "8192"
+abort "RGS 没有固定匿名加密容量与预认证高水位" unless
+  rgs_environment["RGS_MAX_CRYPTO_IN_FLIGHT"] == "64" &&
+    rgs_environment["RGS_PREAUTH_RATE_PER_SECOND"] == "5000" &&
+    rgs_environment["RGS_PREAUTH_RATE_BURST"] == "10000"
+abort "RGS 不得按未认证 method/path 授予恢复预留" if
+  rgs_environment.key?("RGS_RECOVERY_IN_FLIGHT_RESERVE") ||
+    rgs_environment.key?("RGS_CRYPTO_RECOVERY_RESERVE")
 
 network_policies = resources.fetch("NetworkPolicy", [])
 rgs_ingress = network_policies.find do |policy|
@@ -94,6 +129,9 @@ api_rule = rgs_ingress.dig("spec", "ingress").find do |rule|
   rule.fetch("ports", []).any? { |port| port["port"] == 8080 }
 end
 abort "RGS 公网端口缺少入口来源限制" unless api_rule
+abort "受控 ALB 来源必须只访问业务 8080 与私有健康检查 8081" unless
+  api_rule.fetch("ports").map { |port| [port["port"], port["protocol"]] }.sort ==
+    [[8080, "TCP"], [8081, "TCP"]]
 api_sources = api_rule.fetch("from")
 expected_ingress_cidrs = %w[10.0.10.0/24 10.0.11.0/24 10.0.12.0/24]
 actual_ingress_cidrs = api_sources.map { |source| source.dig("ipBlock", "cidr") }

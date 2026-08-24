@@ -17,7 +17,7 @@ func TestDevelopmentConfigHasSafeBoundedDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfigFrom returned error: %v", err)
 	}
-	if config.MaxRequestBytes != 64<<10 || config.LaunchTTL.String() != "2m0s" ||
+	if config.MaxRequestBytes != 8<<10 || config.LaunchTTL.String() != "2m0s" ||
 		config.RequestTimeout.String() != "15s" ||
 		config.DatabaseStatementTimeout.String() != "10s" ||
 		config.DatabaseLockTimeout.String() != "2s" ||
@@ -25,14 +25,59 @@ func TestDevelopmentConfigHasSafeBoundedDefaults(t *testing.T) {
 		config.DatabaseCriticalReserveConns != 5 ||
 		config.WalletTimeout.String() != "4s" || config.WalletFastPathTimeout.String() != "1s" ||
 		config.MaxInFlightRequests != 256 ||
+		config.MaxCryptoInFlight != 64 ||
 		config.MaxConnectionsPerListener != 1_024 ||
+		config.PreAuthRatePerSecond != 5_000 || config.PreAuthRateBurst != 10_000 ||
 		config.SuccessAccessLogSamplePerMillion != 1_000_000 ||
+		config.EconomicOperatorRatePerSecond != 20 || config.EconomicOperatorRateBurst != 40 ||
+		config.EconomicBackendRatePerSecond != 100 || config.EconomicBackendRateBurst != 200 ||
 		config.OperationsHTTPAddress != "127.0.0.1:8081" ||
 		config.RuntimeRole != RuntimeRoleCombined {
 		t.Fatalf("unexpected defaults: %+v", config)
 	}
 	if config.OutboxEndpointURL != "" {
 		t.Fatalf("development default unexpectedly enables external delivery: %q", config.OutboxEndpointURL)
+	}
+}
+
+func TestConfigBoundsGlobalPreAuthenticationRate(t *testing.T) {
+	for name, values := range map[string]map[string]string{
+		"zero rate":       {"RGS_PREAUTH_RATE_PER_SECOND": "0"},
+		"NaN rate":        {"RGS_PREAUTH_RATE_PER_SECOND": "NaN"},
+		"positive Inf":    {"RGS_PREAUTH_RATE_PER_SECOND": "+Inf"},
+		"negative Inf":    {"RGS_PREAUTH_RATE_PER_SECOND": "-Inf"},
+		"negative burst":  {"RGS_PREAUTH_RATE_BURST": "-1"},
+		"unbounded rate":  {"RGS_PREAUTH_RATE_PER_SECOND": "1000001"},
+		"unbounded burst": {"RGS_PREAUTH_RATE_BURST": "2000001"},
+		"malformed":       {"RGS_PREAUTH_RATE_PER_SECOND": "many"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := LoadConfigFrom(lookup(values)); err == nil {
+				t.Fatal("unsafe pre-authentication rate unexpectedly accepted")
+			}
+		})
+	}
+	config, err := LoadConfigFrom(lookup(map[string]string{
+		"RGS_PREAUTH_RATE_PER_SECOND": "12500.5",
+		"RGS_PREAUTH_RATE_BURST":      "25000",
+	}))
+	if err != nil {
+		t.Fatalf("valid pre-authentication rate rejected: %v", err)
+	}
+	if config.PreAuthRatePerSecond != 12_500.5 || config.PreAuthRateBurst != 25_000 {
+		t.Fatalf("pre-authentication rate config = %+v", config)
+	}
+}
+
+func TestConfigRejectsNonFiniteProcessRate(t *testing.T) {
+	for _, value := range []string{"NaN", "+Inf", "-Inf"} {
+		if _, err := LoadConfigFrom(lookup(map[string]string{"RGS_RATE_PER_SECOND": value})); err == nil {
+			t.Fatalf("non-finite process rate %q was accepted", value)
+		}
+	}
+	config, err := LoadConfigFrom(lookup(map[string]string{"RGS_RATE_PER_SECOND": "20.12345"}))
+	if err != nil || config.RatePerSecond != 20.12345 {
+		t.Fatalf("finite process rate must not be restricted to millitokens: config=%+v err=%v", config, err)
 	}
 }
 
@@ -130,6 +175,11 @@ func TestProductionConfigFailsClosed(t *testing.T) {
 		"RGS_OUTBOX_ENDPOINT_URL":                 "https://audit.example/rgs/v1/events",
 		"RGS_OUTBOX_HMAC_KEY_ID":                  "audit-2026-01",
 		"RGS_OUTBOX_HMAC_KEY_FILE":                "/run/secrets/outbox-hmac.key",
+		"RGS_SHARED_ADMISSION_URL":                "rediss://valkey.example:6379",
+		"RGS_SHARED_ADMISSION_USERNAME":           "rgs-api",
+		"RGS_SHARED_ADMISSION_PASSWORD_FILE":      "/run/secrets/valkey-password",
+		"RGS_SHARED_ADMISSION_HMAC_KEY_FILE":      "/run/secrets/admission-hmac.key",
+		"RGS_SHARED_ADMISSION_ROOT_CA_FILE":       "/run/config/valkey-root.pem",
 	}
 	config, err := LoadConfigFrom(lookup(values))
 	if err != nil {
@@ -180,6 +230,13 @@ func TestProductionConfigFailsClosed(t *testing.T) {
 	}
 	workerValues["RGS_RUNTIME_ROLE"] = "worker"
 	delete(workerValues, "RGS_LAUNCH_HMAC_KEY_FILE")
+	for _, name := range []string{
+		"RGS_SHARED_ADMISSION_URL", "RGS_SHARED_ADMISSION_USERNAME",
+		"RGS_SHARED_ADMISSION_PASSWORD_FILE", "RGS_SHARED_ADMISSION_HMAC_KEY_FILE",
+		"RGS_SHARED_ADMISSION_ROOT_CA_FILE",
+	} {
+		delete(workerValues, name)
+	}
 	workerConfig, err := LoadConfigFrom(lookup(workerValues))
 	if err != nil {
 		t.Fatalf("valid production worker config rejected: %v", err)
@@ -218,23 +275,29 @@ func TestProductionConfigFailsClosed(t *testing.T) {
 
 func TestSharedAdmissionConfigFailsClosed(t *testing.T) {
 	valid := map[string]string{
-		"RGS_SHARED_ADMISSION_URL":             "rediss://valkey.example:6379",
-		"RGS_SHARED_ADMISSION_USERNAME":        "rgs-api",
-		"RGS_SHARED_ADMISSION_PASSWORD_FILE":   "/run/secrets/valkey-password",
-		"RGS_SHARED_ADMISSION_HMAC_KEY_FILE":   "/run/secrets/admission-hmac.key",
-		"RGS_SHARED_ADMISSION_ROOT_CA_FILE":    "/run/config/valkey-root.pem",
-		"RGS_SHARED_ADMISSION_TIMEOUT":         "75ms",
-		"RGS_SHARED_ADMISSION_RATE_PER_SECOND": "125.5",
-		"RGS_SHARED_ADMISSION_RATE_BURST":      "300",
-		"RGS_RATE_PER_SECOND":                  "50",
-		"RGS_RATE_BURST":                       "100",
+		"RGS_SHARED_ADMISSION_URL":              "rediss://valkey.example:6379",
+		"RGS_SHARED_ADMISSION_USERNAME":         "rgs-api",
+		"RGS_SHARED_ADMISSION_PASSWORD_FILE":    "/run/secrets/valkey-password",
+		"RGS_SHARED_ADMISSION_HMAC_KEY_FILE":    "/run/secrets/admission-hmac.key",
+		"RGS_SHARED_ADMISSION_ROOT_CA_FILE":     "/run/config/valkey-root.pem",
+		"RGS_SHARED_ADMISSION_TIMEOUT":          "75ms",
+		"RGS_SHARED_ADMISSION_RATE_PER_SECOND":  "125.5",
+		"RGS_SHARED_ADMISSION_RATE_BURST":       "300",
+		"RGS_ECONOMIC_OPERATOR_RATE_PER_SECOND": "25.5",
+		"RGS_ECONOMIC_OPERATOR_RATE_BURST":      "60",
+		"RGS_ECONOMIC_BACKEND_RATE_PER_SECOND":  "125.5",
+		"RGS_ECONOMIC_BACKEND_RATE_BURST":       "300",
+		"RGS_RATE_PER_SECOND":                   "50",
+		"RGS_RATE_BURST":                        "100",
 	}
 	config, err := LoadConfigFrom(lookup(valid))
 	if err != nil {
 		t.Fatalf("valid shared admission config rejected: %v", err)
 	}
 	if config.SharedAdmissionTimeout.String() != "75ms" || config.SharedAdmissionRatePerSecond != 125.5 ||
-		config.SharedAdmissionRateBurst != 300 || config.RatePerSecond != 50 || config.RateBurst != 100 {
+		config.SharedAdmissionRateBurst != 300 || config.RatePerSecond != 50 || config.RateBurst != 100 ||
+		config.EconomicOperatorRatePerSecond != 25.5 || config.EconomicOperatorRateBurst != 60 ||
+		config.EconomicBackendRatePerSecond != 125.5 || config.EconomicBackendRateBurst != 300 {
 		t.Fatalf("shared admission timeout = %s", config.SharedAdmissionTimeout)
 	}
 	boundary := make(map[string]string, len(valid))
@@ -256,10 +319,24 @@ func TestSharedAdmissionConfigFailsClosed(t *testing.T) {
 		"embedded credential": func(values map[string]string) {
 			values["RGS_SHARED_ADMISSION_URL"] = "rediss://user:secret@valkey.example:6379"
 		},
-		"relative password": func(values map[string]string) { values["RGS_SHARED_ADMISSION_PASSWORD_FILE"] = "password" },
-		"missing root CA":   func(values map[string]string) { delete(values, "RGS_SHARED_ADMISSION_ROOT_CA_FILE") },
-		"excess timeout":    func(values map[string]string) { values["RGS_SHARED_ADMISSION_TIMEOUT"] = "501ms" },
-		"zero rate":         func(values map[string]string) { values["RGS_SHARED_ADMISSION_RATE_PER_SECOND"] = "0" },
+		"relative password":                 func(values map[string]string) { values["RGS_SHARED_ADMISSION_PASSWORD_FILE"] = "password" },
+		"missing root CA":                   func(values map[string]string) { delete(values, "RGS_SHARED_ADMISSION_ROOT_CA_FILE") },
+		"excess timeout":                    func(values map[string]string) { values["RGS_SHARED_ADMISSION_TIMEOUT"] = "501ms" },
+		"zero rate":                         func(values map[string]string) { values["RGS_SHARED_ADMISSION_RATE_PER_SECOND"] = "0" },
+		"non-finite shared rate":            func(values map[string]string) { values["RGS_SHARED_ADMISSION_RATE_PER_SECOND"] = "NaN" },
+		"fractional shared millitoken rate": func(values map[string]string) { values["RGS_SHARED_ADMISSION_RATE_PER_SECOND"] = "125.5001" },
+		"zero operator economic rate":       func(values map[string]string) { values["RGS_ECONOMIC_OPERATOR_RATE_PER_SECOND"] = "0" },
+		"non-finite backend economic rate":  func(values map[string]string) { values["RGS_ECONOMIC_BACKEND_RATE_PER_SECOND"] = "+Inf" },
+		"fractional operator millitoken rate": func(values map[string]string) {
+			values["RGS_ECONOMIC_OPERATOR_RATE_PER_SECOND"] = "25.5005"
+		},
+		"fractional backend millitoken rate": func(values map[string]string) {
+			values["RGS_ECONOMIC_BACKEND_RATE_PER_SECOND"] = "125.5001"
+		},
+		"unbounded operator economic ttl": func(values map[string]string) {
+			values["RGS_ECONOMIC_OPERATOR_RATE_PER_SECOND"] = "0.001"
+			values["RGS_ECONOMIC_OPERATOR_RATE_BURST"] = "100"
+		},
 		"unbounded key ttl": func(values map[string]string) {
 			values["RGS_SHARED_ADMISSION_RATE_PER_SECOND"] = "0.001"
 			values["RGS_SHARED_ADMISSION_RATE_BURST"] = "100"
@@ -305,6 +382,11 @@ func TestProductionDatabaseURLRequiresVerifyFull(t *testing.T) {
 		"RGS_OUTBOX_ENDPOINT_URL":                 "https://audit.example/rgs/v1/events",
 		"RGS_OUTBOX_HMAC_KEY_ID":                  "audit-2026-01",
 		"RGS_OUTBOX_HMAC_KEY_FILE":                "/run/secrets/outbox-hmac.key",
+		"RGS_SHARED_ADMISSION_URL":                "rediss://valkey.example:6379",
+		"RGS_SHARED_ADMISSION_USERNAME":           "rgs-api",
+		"RGS_SHARED_ADMISSION_PASSWORD_FILE":      "/run/secrets/valkey-password",
+		"RGS_SHARED_ADMISSION_HMAC_KEY_FILE":      "/run/secrets/admission-hmac.key",
+		"RGS_SHARED_ADMISSION_ROOT_CA_FILE":       "/run/config/valkey-root.pem",
 	}
 	tests := []struct {
 		name     string
@@ -372,6 +454,11 @@ func TestProductionOperationsListenerMustRemainSeparate(t *testing.T) {
 		"RGS_OUTBOX_ENDPOINT_URL":                 "https://audit.example/rgs/v1/events",
 		"RGS_OUTBOX_HMAC_KEY_ID":                  "audit-2026-01",
 		"RGS_OUTBOX_HMAC_KEY_FILE":                "/run/secrets/outbox-hmac.key",
+		"RGS_SHARED_ADMISSION_URL":                "rediss://valkey.example:6379",
+		"RGS_SHARED_ADMISSION_USERNAME":           "rgs-api",
+		"RGS_SHARED_ADMISSION_PASSWORD_FILE":      "/run/secrets/valkey-password",
+		"RGS_SHARED_ADMISSION_HMAC_KEY_FILE":      "/run/secrets/admission-hmac.key",
+		"RGS_SHARED_ADMISSION_ROOT_CA_FILE":       "/run/config/valkey-root.pem",
 	}
 	for name, operationsAddress := range map[string]string{
 		"same":                       ":8080",
@@ -436,10 +523,12 @@ func TestNonLoopbackOperationsListenerRequiresBearerInEveryEnvironment(t *testin
 
 func TestConfigRejectsUnsafeOriginsAndCredentialTTLs(t *testing.T) {
 	for name, values := range map[string]map[string]string{
-		"wildcard":       {"RGS_ALLOWED_ORIGINS": "*"},
-		"long launch":    {"RGS_LAUNCH_TTL": "6m"},
-		"tiny body":      {"RGS_MAX_REQUEST_BYTES": "12"},
-		"partial outbox": {"RGS_OUTBOX_HMAC_KEY_ID": "key-1"},
+		"wildcard":                     {"RGS_ALLOWED_ORIGINS": "*"},
+		"long launch":                  {"RGS_LAUNCH_TTL": "6m"},
+		"tiny body":                    {"RGS_MAX_REQUEST_BYTES": "12"},
+		"body below public contract":   {"RGS_MAX_REQUEST_BYTES": "4096"},
+		"body exceeds edge inspection": {"RGS_MAX_REQUEST_BYTES": "8193"},
+		"partial outbox":               {"RGS_OUTBOX_HMAC_KEY_ID": "key-1"},
 		"plain staging sink": {
 			"RGS_ENVIRONMENT": "staging", "RGS_OUTBOX_ENDPOINT_URL": "http://audit.example/events",
 			"RGS_OUTBOX_HMAC_KEY_ID": "key-1", "RGS_OUTBOX_HMAC_KEY_FILE": "/run/key",
@@ -460,6 +549,27 @@ func TestConfigRejectsUnboundedRuntimeTimeouts(t *testing.T) {
 	for name, values := range map[string]map[string]string{
 		"read header exceeds read timeout": {
 			"RGS_READ_HEADER_TIMEOUT": "16s",
+		},
+		"read header exceeds hard cap": {
+			"RGS_READ_HEADER_TIMEOUT": "11s",
+		},
+		"read exceeds hard cap": {
+			"RGS_READ_TIMEOUT":    "31s",
+			"RGS_REQUEST_TIMEOUT": "40s",
+			"RGS_WRITE_TIMEOUT":   "50s",
+		},
+		"request exceeds hard cap": {
+			"RGS_REQUEST_TIMEOUT": "61s",
+			"RGS_WRITE_TIMEOUT":   "70s",
+		},
+		"write exceeds hard cap": {
+			"RGS_WRITE_TIMEOUT": "91s",
+		},
+		"idle exceeds hard cap": {
+			"RGS_IDLE_TIMEOUT": "6m",
+		},
+		"shutdown exceeds hard cap": {
+			"RGS_SHUTDOWN_TIMEOUT": "6m",
 		},
 		"read exceeds request timeout": {
 			"RGS_READ_TIMEOUT": "16s",
@@ -597,6 +707,46 @@ func TestConfigBoundsPublicInFlightRequests(t *testing.T) {
 	}
 	if config.MaxInFlightRequests != 64 {
 		t.Fatalf("MaxInFlightRequests = %d, want 64", config.MaxInFlightRequests)
+	}
+}
+
+func TestConfigRejectsSpoofableRecoveryReserveAndBoundsAnonymousCryptoCapacity(t *testing.T) {
+	for name, values := range map[string]map[string]string{
+		"legacy public path reserve": {
+			"RGS_RECOVERY_IN_FLIGHT_RESERVE": "16",
+		},
+		"legacy crypto path reserve": {
+			"RGS_CRYPTO_RECOVERY_RESERVE": "8",
+		},
+		"zero crypto slots": {
+			"RGS_MAX_CRYPTO_IN_FLIGHT": "0",
+		},
+		"negative crypto slots": {
+			"RGS_MAX_CRYPTO_IN_FLIGHT": "-1",
+		},
+		"unbounded crypto slots": {
+			"RGS_MAX_CRYPTO_IN_FLIGHT": "1025",
+		},
+		"malformed crypto slots": {
+			"RGS_MAX_CRYPTO_IN_FLIGHT": "many",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := LoadConfigFrom(lookup(values)); err == nil {
+				t.Fatal("unsafe anonymous crypto/recovery capacity unexpectedly accepted")
+			}
+		})
+	}
+
+	config, err := LoadConfigFrom(lookup(map[string]string{
+		"RGS_MAX_IN_FLIGHT_REQUESTS": "96",
+		"RGS_MAX_CRYPTO_IN_FLIGHT":   "1",
+	}))
+	if err != nil {
+		t.Fatalf("valid anonymous capacity rejected: %v", err)
+	}
+	if config.MaxInFlightRequests != 96 || config.MaxCryptoInFlight != 1 {
+		t.Fatalf("capacity config = %+v", config)
 	}
 }
 

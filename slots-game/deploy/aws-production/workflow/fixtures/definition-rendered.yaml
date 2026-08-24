@@ -13,6 +13,11 @@ spec:
         slots-game.io/definition-game-id: iron-colossus
         slots-game.io/definition-version: definition-v1
         slots-game.io/definition-sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -29,3 +34,8 @@ spec:
         slots-game.io/definition-game-id: iron-colossus
         slots-game.io/definition-version: definition-v1
         slots-game.io/definition-sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault

@@ -55,6 +55,19 @@ function responseWithRetryAfter(data: unknown, status: number, retryAfter: strin
   });
 }
 
+function edgeRateLimitedResponse(
+  retryAfter = "30",
+  marker = "RATE_LIMITED",
+): Response {
+  return new Response(null, {
+    status: 429,
+    headers: {
+      "Retry-After": retryAfter,
+      "X-RGS-Edge-Error": marker,
+    },
+  });
+}
+
 function requestId(init?: RequestInit): string {
   const value = new Headers(init?.headers).get("X-Request-Id");
   if (!value) throw new Error("request omitted X-Request-Id");
@@ -506,6 +519,62 @@ describe("RgsGateway", () => {
     await waitForSession(observed.log);
     expect(fetchImplementation).toHaveBeenCalledOnce();
     expect(observed.log.statuses).toEqual(["recovering", "connecting", "online"]);
+  });
+
+  it("releases a parked launch on close without a late exchange", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (_url, init) => (
+      response(exchangeEnvelope(requestId(init)))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+
+    gateway.setRuntimeAvailability({ online: false, visible: true });
+    gateway.connect();
+    gateway.close();
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    gateway.connect();
+    await Promise.resolve();
+
+    expect(fetchImplementation).not.toHaveBeenCalled();
+    expect(observed.log.statuses).toEqual(["recovering", "offline"]);
+  });
+
+  it.each([
+    {
+      name: "network uncertainty",
+      result: (id: string) => {
+        void id;
+        throw new TypeError("connection reset");
+      },
+    },
+    {
+      name: "HTTP rejection",
+      result: (id: string) => response(errorEnvelope(id, "SESSION_UNAVAILABLE"), 503),
+    },
+    {
+      name: "malformed protocol response",
+      result: (id: string) => response({
+        ...exchangeEnvelope(id),
+        unexpected: true,
+      }),
+    },
+  ])("never replays a launch code after $name reaches the exchange boundary", async ({ result }) => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (_url, init) => result(requestId(init)));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+
+    gateway.connect();
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+    gateway.connect();
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(2));
+
+    expect(fetchImplementation).toHaveBeenCalledOnce();
+    expect(observed.log.errors[1]).toMatchObject({
+      name: "RgsGatewayConfigurationError",
+      message: "RGS launch code has already been consumed; obtain a fresh operator relaunch",
+    });
   });
 
   it("submits one BASE round with the exchanged binding/revision and decodes COMMITTED", async () => {
@@ -966,6 +1035,53 @@ describe("RgsGateway", () => {
     expect(observed.log.errors).toHaveLength(2);
     expect(fetchImplementation.mock.calls.filter(([url]) => String(url).endsWith("/spins"))).toHaveLength(1);
     expect(fetchImplementation.mock.calls.filter(([url]) => String(url).endsWith("/rounds/status"))).toHaveLength(0);
+  });
+
+  it("does not let a valid long admission Retry-After extend the acknowledgement deadline", async () => {
+    vi.useFakeTimers();
+    let acknowledgementAttempts = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        return response(successEnvelope(requestId(init), committedResult()));
+      }
+      acknowledgementAttempts += 1;
+      return responseWithRetryAfter(
+        errorEnvelope(requestId(init), "TEMPORARY_UNAVAILABLE"),
+        503,
+        "1000",
+      );
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      acknowledgementRetryBaseDelayMs: 100,
+      acknowledgementRetryMaxDelayMs: 400,
+      acknowledgementMaxAttempts: 3,
+      acknowledgementRetryWindowMs: 5_000,
+    }, false));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(gateway.acknowledgeSpinResult("round-a", 1)).toBe(true);
+    await vi.runAllTicks();
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
+    expect(acknowledgementAttempts).toBe(1);
+    expect(gateway.hasPendingSpin).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000_000);
+    expect(acknowledgementAttempts).toBe(1);
   });
 
   it("rejects unsafe Retry-After values and hands acknowledgement recovery to the operator at the hard cap", async () => {
@@ -1897,6 +2013,84 @@ describe("RgsGateway", () => {
     expect(statusCalls).toBe(1);
   });
 
+  it("honors the 1000-second admission ceiling across suspension without consuming a poll attempt", async () => {
+    vi.useFakeTimers();
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (target.endsWith("/spins")) {
+        return responseWithRetryAfter(
+          errorEnvelope(requestId(init), "RATE_LIMITED"),
+          429,
+          "1000",
+        );
+      }
+      statusCalls += 1;
+      return response(statusEnvelope(requestId(init), "COMMITTED", committedResult()));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      pollDelayMs: 100,
+      maxPollAttempts: 1,
+    }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.runAllTicks();
+
+    await vi.advanceTimersByTimeAsync(400_000);
+    gateway.setRuntimeAvailability({ online: true, visible: false });
+    await vi.advanceTimersByTimeAsync(599_999);
+    gateway.setRuntimeAvailability({ online: true, visible: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(statusCalls).toBe(0);
+    expect(gateway.hasPendingSpin).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+    expect(statusCalls).toBe(1);
+  });
+
+  it.each(["1001", "01000"]) (
+    "rejects unsafe JSON Retry-After %s instead of treating it as a server delay floor",
+    async (retryAfter) => {
+      vi.useFakeTimers();
+      let statusCalls = 0;
+      const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+        if (String(url).endsWith("/sessions/exchange")) {
+          return response(exchangeEnvelope(requestId(init)));
+        }
+        if (String(url).endsWith("/spins")) {
+          return responseWithRetryAfter(
+            errorEnvelope(requestId(init), "ROUND_PENDING"),
+            202,
+            retryAfter,
+          );
+        }
+        statusCalls += 1;
+        return response(statusEnvelope(requestId(init), "COMMITTED", committedResult()));
+      });
+      const gateway = new RgsGateway(config(fetchImplementation, { pollDelayMs: 100 }));
+      const observed = callbacks();
+      gateway.setCallbacks(observed.callbacks);
+      gateway.connect();
+      await vi.runAllTicks();
+      await waitForSession(observed.log);
+
+      expect(gateway.requestSpin("round-a", "100")).toBe(true);
+      await vi.advanceTimersByTimeAsync(99);
+      expect(statusCalls).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+      expect(statusCalls).toBe(1);
+    },
+  );
+
   it("ignores an invalid status Retry-After without shortening exponential polling", async () => {
     vi.useFakeTimers();
     let statusCalls = 0;
@@ -2058,6 +2252,102 @@ describe("RgsGateway", () => {
     expect(spinRequests).toHaveLength(2);
     expect(spinRequests[1]?.body).toEqual(spinRequests[0]?.body);
     await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+  });
+
+  it("honors a bodyless edge rate limit before strict JSON decoding", async () => {
+    vi.useFakeTimers();
+    const spinRequests: SeenRequest[] = [];
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/spins")) {
+        spinRequests.push(request);
+        return spinRequests.length === 1
+          ? edgeRateLimitedResponse()
+          : response(successEnvelope(requestId(init), committedResult()));
+      }
+      statusCalls += 1;
+      return response(errorEnvelope(requestId(init), "ROUND_NOT_FOUND"), 404);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      pollDelayMs: 100,
+      maxPollAttempts: 3,
+    }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(spinRequests).toHaveLength(1);
+    expect(statusCalls).toBe(0);
+    expect(observed.log.errors[0]).toMatchObject({
+      code: "RATE_LIMITED",
+      retryable: true,
+      requestId: "request-2",
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(statusCalls).toBe(1);
+    expect(spinRequests).toHaveLength(2);
+    expect(spinRequests[1]?.body).toEqual(spinRequests[0]?.body);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+  });
+
+  it.each([
+    {
+      name: "missing marker",
+      reply: () => new Response(null, { status: 429, headers: { "Retry-After": "30" } }),
+      message: "RGS response Content-Type must be application/json",
+    },
+    {
+      name: "foreign marker",
+      reply: () => edgeRateLimitedResponse("30", "UNTRUSTED"),
+      message: "RGS response Content-Type must be application/json",
+    },
+    {
+      name: "unsafe Retry-After",
+      reply: () => edgeRateLimitedResponse("0"),
+      message: "RGS edge rate limit response has an unsafe Retry-After",
+    },
+    {
+      name: "Retry-After above the admission ceiling",
+      reply: () => edgeRateLimitedResponse("1001"),
+      message: "RGS edge rate limit response has an unsafe Retry-After",
+    },
+  ])("fails closed on a bodyless edge 429 with $name", async ({ reply, message }) => {
+    vi.useFakeTimers();
+    let spinCalls = 0;
+    let statusCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (String(url).endsWith("/spins")) {
+        spinCalls += 1;
+        return reply();
+      }
+      statusCalls += 1;
+      return response(errorEnvelope(requestId(init), "ROUND_NOT_FOUND"), 404);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+    expect(observed.log.errors[0]).toMatchObject({ name: "RgsProtocolError", message });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(spinCalls).toBe(1);
+    expect(statusCalls).toBe(0);
+    expect(gateway.hasPendingSpin).toBe(true);
   });
 
   it("does not resubmit an unclassified service failure after status 404", async () => {
@@ -2359,6 +2649,112 @@ describe("RgsGateway", () => {
     expect(requests.filter(({ url }) => url.endsWith("/sessions/exchange"))).toHaveLength(1);
   });
 
+  it.each([
+    {
+      name: "balance",
+      refreshOverrides: { balanceMinor: "999" },
+    },
+    {
+      name: "feature state",
+      refreshOverrides: {
+        feature: {
+          rageCollected: 0,
+          rageLevel: 2,
+          winMinor: "0",
+          betMinor: "0",
+          awarded: 0,
+          remaining: 0,
+          mode: "NONE",
+        },
+      },
+    },
+  ])("fails closed when refresh changes $name without advancing revision", async ({
+    refreshOverrides,
+  }) => {
+    const requests: SeenRequest[] = [];
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      requests.push(request);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/sessions/refresh")) {
+        return response(exchangeEnvelope(requestId(init), refreshOverrides, TOKEN_TWO));
+      }
+      return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
+    expect(observed.log.sessions).toHaveLength(1);
+    expect(observed.log.results).toEqual([]);
+    expect(observed.log.errors.at(-1)).toMatchObject({
+      name: "RgsProtocolError",
+      message: "refreshed RGS session changed economic state without advancing revision",
+    });
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(gateway.hasPendingSpin).toBe(true);
+    expect(requests.filter(({ url }) => url.endsWith("/spins"))).toHaveLength(1);
+  });
+
+  it("compares equal refresh feature states independently of JSON key order", async () => {
+    const requests: SeenRequest[] = [];
+    let spinCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      requests.push(request);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (request.url.endsWith("/sessions/refresh")) {
+        return response(exchangeEnvelope(requestId(init), {
+          feature: {
+            rageCollected: 0,
+            rageLevel: 1,
+            winMinor: "0",
+            betMinor: "0",
+            awarded: 0,
+            remaining: 0,
+            mode: "NONE",
+          },
+        }, TOKEN_TWO));
+      }
+      spinCalls += 1;
+      if (spinCalls === 1) return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
+      return response(successEnvelope(requestId(init), committedResult()));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(observed.log.sessions).toHaveLength(2);
+    expect(observed.log.errors).toEqual([]);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    expect(requests.filter(({ url }) => url.endsWith("/spins"))).toHaveLength(2);
+    expect(requests.filter(({ url }) => url.endsWith("/spins"))[1]?.headers.get("Authorization"))
+      .toBe(`Bearer ${TOKEN_TWO}`);
+    gateway.close();
+  });
+
   it("isolates terminal status/error observers so operator recovery always runs", async () => {
     const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
       if (String(url).endsWith("/sessions/exchange")) {
@@ -2547,6 +2943,121 @@ describe("RgsGateway", () => {
     gateway.close();
   });
 
+  it("keeps the committed projection when an earlier proactive refresh returns the start snapshot", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const hintedToken = schedulingToken(100, 132);
+    const requests: SeenRequest[] = [];
+    let resolveSpin: ((value: Response) => void) | undefined;
+    let resolveRefresh: ((value: Response) => void) | undefined;
+    let spinRequestId = "";
+    let refreshRequestId = "";
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const request = seenRequest(url, init);
+      requests.push(request);
+      if (request.url.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init), {}, hintedToken));
+      }
+      if (request.url.endsWith("/spins")) {
+        spinRequestId = requestId(init);
+        return new Promise<Response>((resolve) => { resolveSpin = resolve; });
+      }
+      if (request.url.endsWith("/sessions/refresh")) {
+        refreshRequestId = requestId(init);
+        return new Promise<Response>((resolve) => { resolveRefresh = resolve; });
+      }
+      return response(acknowledgementEnvelopeFromRequest(init));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      requestTimeoutMs: 10_000,
+    }, false));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(spinRequestId).not.toBe(""));
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => expect(refreshRequestId).not.toBe(""));
+
+    resolveSpin?.(response(successEnvelope(spinRequestId, committedResult())));
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+    resolveRefresh?.(response(exchangeEnvelope(refreshRequestId, {
+      expiresAt: "2030-02-01T00:00:00Z",
+    }, TOKEN_TWO)));
+    await vi.waitFor(() => expect(observed.log.sessions).toHaveLength(2));
+
+    expect(observed.log.sessions.at(-1)).toMatchObject({
+      balanceMinor: "900",
+      featureState: { mode: "BASE", freeSpinsRemaining: 0 },
+    });
+    expect(observed.log.errors).toEqual([]);
+    expect(operatorRecovery).not.toHaveBeenCalled();
+    expect(gateway.acknowledgeSpinResult("round-a", 1)).toBe(true);
+    await vi.waitFor(() => expect(gateway.hasPendingSpin).toBe(false));
+    const acknowledgement = requests.find(({ url }) => url.endsWith("/results/acknowledgements"));
+    expect(acknowledgement?.headers.get("Authorization")).toBe(`Bearer ${TOKEN_TWO}`);
+  });
+
+  it("fails closed when the overlapping start snapshot changes an economic projection", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const hintedToken = schedulingToken(100, 132);
+    let resolveSpin: ((value: Response) => void) | undefined;
+    let resolveRefresh: ((value: Response) => void) | undefined;
+    let spinRequestId = "";
+    let refreshRequestId = "";
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init), {}, hintedToken));
+      }
+      if (target.endsWith("/spins")) {
+        spinRequestId = requestId(init);
+        return new Promise<Response>((resolve) => { resolveSpin = resolve; });
+      }
+      refreshRequestId = requestId(init);
+      return new Promise<Response>((resolve) => { resolveRefresh = resolve; });
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, {
+      requestTimeoutMs: 10_000,
+    }));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({
+      ...observed.callbacks,
+      onOperatorSessionRequired: operatorRecovery,
+    });
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(spinRequestId).not.toBe(""));
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.waitFor(() => expect(refreshRequestId).not.toBe(""));
+    resolveSpin?.(response(successEnvelope(spinRequestId, committedResult())));
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+    resolveRefresh?.(response(exchangeEnvelope(refreshRequestId, {
+      balanceMinor: "999",
+      expiresAt: "2030-02-01T00:00:00Z",
+    }, TOKEN_TWO)));
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
+    expect(observed.log.sessions).toHaveLength(1);
+    expect(observed.log.errors.at(-1)).toMatchObject({
+      name: "RgsProtocolError",
+      message: "refreshed RGS session is outside the pending round revision/sequence window",
+    });
+    expect(gateway.hasPendingSpin).toBe(true);
+  });
+
   it("preserves the proactive refresh target across a brief offline interval", async () => {
     vi.useFakeTimers();
     let now = 100_000;
@@ -2610,6 +3121,46 @@ describe("RgsGateway", () => {
     expect(requests.filter(({ url }) => url.endsWith("/sessions/refresh"))).toHaveLength(2);
     expect(observed.log.sessions).toHaveLength(2);
     expect(observed.log.statuses.at(-1)).toBe("online");
+    expect(observed.log.errors).toHaveLength(1);
+    gateway.close();
+  });
+
+  it("uses admission Retry-After as a proactive refresh lower bound without extending token expiry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const hintedToken = schedulingToken(100, 300);
+    let refreshCalls = 0;
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init), {}, hintedToken));
+      }
+      refreshCalls += 1;
+      return refreshCalls === 1
+        ? responseWithRetryAfter(
+          errorEnvelope(requestId(init), "TEMPORARY_UNAVAILABLE"),
+          503,
+          "30",
+        )
+        : response(exchangeEnvelope(requestId(init), {}, TOKEN_TWO));
+    });
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await vi.runAllTicks();
+    await waitForSession(observed.log);
+
+    const refreshTargetMs = 260_000;
+    await vi.advanceTimersByTimeAsync(refreshTargetMs - Date.now() - 1);
+    expect(refreshCalls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refreshCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(refreshCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refreshCalls).toBe(2);
+
+    expect(observed.log.sessions).toHaveLength(2);
     expect(observed.log.errors).toHaveLength(1);
     gateway.close();
   });
@@ -3206,6 +3757,38 @@ describe("RgsGateway", () => {
     expect(gateway.acknowledgeSpinResult("round-a", 1)).toBe(true);
     await vi.waitFor(() => expect(gateway.hasPendingSpin).toBe(false));
     expect(storage.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a bodyless edge rate limit during pending-result GET discovery", async () => {
+    const requestedUrls: string[] = [];
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      const target = String(url);
+      requestedUrls.push(target);
+      if (target.endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init), {
+          revision: "1",
+          sequence: "1",
+          balanceMinor: "900",
+        }));
+      }
+      if (target.endsWith("/results/pending")) return edgeRateLimitedResponse();
+      throw new Error(`unexpected request: ${target}`);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+
+    gateway.connect();
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(requestedUrls.filter((url) => url.endsWith("/results/pending"))).toHaveLength(1);
+    expect(observed.log.errors[0]).toMatchObject({
+      code: "RATE_LIMITED",
+      retryable: true,
+      requestId: "request-2",
+    });
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.sessions).toEqual([]);
   });
 
   it("fails closed on malformed or session-inconsistent pending-result discovery", async () => {

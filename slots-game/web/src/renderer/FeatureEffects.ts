@@ -58,7 +58,6 @@ import {
   PRIMAL_WHEEL_POPUP_TIMELINE_MS,
   PRIMAL_WHEEL_SEGMENTS,
   PRIMAL_WHEEL_TIMELINE_MS,
-  WHEEL_CHARACTER_TIMING_MS,
   createPrimalWheelSpinPlan,
   primalWheelIdleState,
   primalWheelQuickStopElapsed,
@@ -4440,44 +4439,6 @@ export class FeatureEffects {
         this.completeVisual(operation, reducedMotion, "cancelled");
       }
       if (!outroOwnsScene) cleanupScene();
-    }
-  }
-
-  private async presentPulse(event: FeatureEvent, color: number, reducedMotion: boolean): Promise<void> {
-    const scene = new Container();
-    const pulse = new Graphics();
-    pulse.lineStyle(7, color, 0.86).drawCircle(0, 0, 86);
-    pulse.lineStyle(2, 0xffe6ad, 0.62).drawCircle(0, 0, 121);
-    pulse.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 - 8);
-    const banner = createBanner(featureEffectLabel(event, this.moneyFormatter), color);
-    banner.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 - 8);
-    const extraSpin = event.type === "free_spin.awarded"
-      ? new Sprite(authoredTexture(PRIMAL_ASSETS.features.vaultExtraSpin))
-      : null;
-    if (extraSpin) {
-      extraSpin.anchor.set(0.5);
-      extraSpin.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 - 40);
-      extraSpin.width = 260;
-      extraSpin.height = 322;
-      extraSpin.alpha = 0;
-      scene.addChild(extraSpin);
-    }
-    scene.addChild(pulse, banner);
-    this.view.addChild(scene);
-
-    try {
-      await this.animate(featureEffectDuration("pulse", reducedMotion), (progress) => {
-        pulse.scale.set(0.3 + outCubic(progress) * 2.8);
-        pulse.alpha = (1 - progress) * 0.86;
-        if (extraSpin) {
-          extraSpin.alpha = smooth(phase(progress, 0.05, 0.24)) * (1 - phase(progress, 0.78, 1));
-          extraSpin.scale.set(0.78 + outCubic(phase(progress, 0.05, 0.36)) * 0.22);
-        }
-        banner.alpha = smooth(phase(progress, 0.08, 0.28)) * (1 - phase(progress, 0.82, 1));
-        banner.scale.set(0.84 + outCubic(phase(progress, 0.08, 0.35)) * 0.16);
-      });
-    } finally {
-      this.release(scene);
     }
   }
 

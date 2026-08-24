@@ -34,15 +34,21 @@ make migrate-postgres
 make verify-postgres-schema
 ```
 
-`up` 只接受空账本或九个内嵌迁移的严格有序前缀。迁移 SQL、账本写入、授权收敛和最终验证
+`up` 只接受空账本或十个内嵌迁移的严格有序前缀。迁移 SQL、账本写入、授权收敛和最终验证
 都在同一个事务级 advisory lock 内完成。`verify` 和运行时就绪检查要求账本与内嵌清单完全
 一致；校验和漂移、版本缺口、重复版本和未知未来版本都会失败关闭。
 
 规范清单格式为 `version<TAB>checksum<LF>`，其冻结 SHA-256 为：
 
 ```text
-856304eb1796eb81f54f6d41e12c6bbe071f17b69e665f381dfc55d410b7ae6e
+fab6e6497d8fbc3bbeba8f77282841448e97bb6434dadb47c4b7b9b7ee40f1a5
 ```
+
+`0010_wallet_recovery_registry_invariant` 的当前嵌入校验和为
+`5fc3fe96f71a66bd252713751e36139000eb6e503f981fb520df7e5f3412ce17`。迁移事务提交前、
+migrator `verify` 以及运行时 `SchemaCheck`/readiness 都会从 PostgreSQL 目录动态回读并核对
+精确函数与两条已启用触发器；函数或触发器被禁用、删除或替换时失败关闭，不能只凭迁移账本判定
+模式就绪。
 
 退出码保持稳定：`0` 表示成功，`1` 表示内部错误，`2` 表示命令或配置错误，`3` 表示数据库、
 锁或超时错误，`4` 表示模式或迁移错误，`5` 表示角色或权限策略错误。迁移器故意不提供
@@ -61,7 +67,14 @@ down、force、baseline 或跳过校验和的命令。
    变更单中保存渲染 diff 和观测证据；不能把“入口已关”或“API 为零”冒充 Worker 已排空；
 4. 若候选清单包含 `0008_wallet_recovery_scheduler` 或 `0009_postgres_hot_path`，保持双组件静默。
    两项迁移会改变钱包恢复状态约束和热表索引，不允许与旧 writer 混跑，也不能假定
-   `CREATE INDEX` 在大表上无锁；
+   `CREATE INDEX` 在大表上无锁。`0010_wallet_recovery_registry_invariant` 会以
+   `SHARE ROW EXCLUSIVE` 锁回填恢复运营商游标并安装永久 INSERT/状态进入触发器，也必须评估目标
+   表规模、锁等待和维护窗口；触发器只覆盖滚动 writer 的恢复注册不漏项，不能放宽其他 schema/定义
+   兼容门禁，除非先提供等价数据库级不变量，后续迁移不得删除它。回填谓词与
+   `rgs_rounds_wallet_recovery_due` 的 partial predicate 一致；本机 PostgreSQL 17 的 50,000 条终态、
+   25 条在途样本使用 Index Only Scan。`PREPARE` CTE 保留一次有界主键冲突探测，只用于目录漂移后、
+   readiness 摘流前的短窗口保险，不能替代永久触发器或模式门禁；正式变更仍必须保存目标 RDS 的
+   真实执行计划与锁等待证据；
 5. 只向 `migrator` 镜像注入迁移 DSN，在已确认排空后依次执行 `up` 和 `verify`。记录迁移耗时、
    锁等待和目标索引执行计划；任一项超出批准窗口就保持双组件静默并前向修复；
 6. 使用候选 runtime 摘要、但仍保持两个静默值为 `true` 完成 Helm `verify` 和工作负载清单替换；
@@ -78,8 +91,8 @@ down、force、baseline 或跳过校验和的命令。
 若迁移失败，两个静默值都保持为 `true`；数据库迁移不提供自动 down，不能为了恢复流量而重新
 启动无法验证新账本的旧 writer。
 
-`/healthz` 只表示进程存活。模式或授权漂移会让启动和 `/readyz` 失败，但不会向客户端返回
-DSN、SQL 或角色策略细节。
+私有 operations 监听器的 `/healthz` 只表示进程存活；公共业务监听器不提供该路径。模式或授权
+漂移会让启动和 `/readyz` 失败，但不会向客户端返回 DSN、SQL 或角色策略细节。
 
 ## 回滚
 

@@ -150,6 +150,9 @@ func MigrateAndReconcile(
 	if err := validateSchemaLedger(manifest, actual, false); err != nil {
 		return MigrationReport{}, err
 	}
+	if err := verifyWalletRecoveryRegistryInvariant(ctx, tx); err != nil {
+		return MigrationReport{}, err
+	}
 	if err := verifyRuntimePrivileges(ctx, tx, runtimeRole, false); err != nil {
 		return MigrationReport{}, err
 	}
@@ -186,6 +189,9 @@ func VerifyMigratedSchema(
 		return MigrationReport{}, err
 	}
 	if err := validateSchemaLedger(manifest, actual, false); err != nil {
+		return MigrationReport{}, err
+	}
+	if err := verifyWalletRecoveryRegistryInvariant(ctx, db); err != nil {
 		return MigrationReport{}, err
 	}
 	if err := verifyRuntimePrivileges(ctx, db, runtimeRole, false); err != nil {

@@ -18,3 +18,8 @@ output "amp_writer_role_arn" {
   description = "Prometheus Agent Pod Identity role ARN"
   value       = aws_iam_role.amp_writer.arn
 }
+
+output "cloudwatch_agent_role_arn" {
+  description = "amazon-cloudwatch-observability cloudwatch-agent 专用 Pod Identity role ARN"
+  value       = aws_iam_role.cloudwatch_agent.arn
+}

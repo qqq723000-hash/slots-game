@@ -131,7 +131,44 @@ case "$command_name" in
           --arg origin "${AWS_WEB_BUCKET}.s3.${AWS_REGION}.amazonaws.com" \
           --arg policy "$AWS_CLOUDFRONT_RESPONSE_HEADERS_POLICY_ID" \
           --arg router "arn:aws:cloudfront::${AWS_ACCOUNT_ID}:function/${AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME}" \
-          '{ETag:"distribution-etag",DistributionConfig:{Enabled:true,DefaultRootObject:"index.html",Origins:{Quantity:1,Items:[{Id:"private-web-s3",DomainName:$origin,OriginPath:"",OriginAccessControlId:"oac-fixture"}]},DefaultCacheBehavior:{TargetOriginId:"private-web-s3",ResponseHeadersPolicyId:$policy,FunctionAssociations:{Items:[{EventType:"viewer-request",FunctionARN:$router}]}},CacheBehaviors:{Items:[{PathPattern:"releases/*",TargetOriginId:"private-web-s3",ResponseHeadersPolicyId:$policy}]}}}'
+          --arg response "arn:aws:cloudfront::${AWS_ACCOUNT_ID}:function/${AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME%-release-request}-release-response" \
+          --arg scenario "$MOCK_WEB_SCENARIO" '
+            def empty_associations: {Quantity: 0};
+            def methods: {Quantity: 3, Items: ["GET", "HEAD", "OPTIONS"],
+              CachedMethods: {Quantity: 2, Items: ["GET", "HEAD"]}};
+            def ordered: {
+              PathPattern: "releases/*", TargetOriginId: "private-web-s3",
+              ViewerProtocolPolicy: "redirect-to-https", AllowedMethods: methods, Compress: true,
+              CachePolicyId: "cache-policy-fixture", ResponseHeadersPolicyId: $policy,
+              FunctionAssociations: empty_associations, LambdaFunctionAssociations: empty_associations
+            };
+            {ETag:"distribution-etag",DistributionConfig:{
+              Enabled:true,DefaultRootObject:"index.html",
+              Origins:{Quantity:1,Items:[{Id:"private-web-s3",DomainName:$origin,OriginPath:"",OriginAccessControlId:"oac-fixture"}]},
+              DefaultCacheBehavior:{
+                TargetOriginId:"private-web-s3", ViewerProtocolPolicy:"redirect-to-https",
+                AllowedMethods: methods, Compress:true, CachePolicyId:"cache-policy-fixture",
+                ResponseHeadersPolicyId:$policy,
+                FunctionAssociations:{
+                  Quantity:(if $scenario == "cloudfront-extra-function-association" then 3 else 2 end),
+                  Items: ([
+                    {EventType:"viewer-request",FunctionARN:$router},
+                    {EventType:"viewer-response",FunctionARN:$response}
+                  ] + (if $scenario == "cloudfront-extra-function-association" then
+                    [{EventType:"origin-request",FunctionARN:"arn:aws:cloudfront::123456789012:function/foreign"}]
+                    else [] end))
+                },
+                LambdaFunctionAssociations:(if $scenario == "cloudfront-lambda-association" then
+                  {Quantity:1,Items:[{EventType:"viewer-request",LambdaFunctionARN:"arn:aws:lambda:us-east-1:123456789012:function:foreign:1"}]}
+                  else empty_associations end)
+              },
+              CacheBehaviors:{
+                Quantity:(if $scenario == "cloudfront-extra-cache-behavior" then 2 else 1 end),
+                Items:([ordered] + (if $scenario == "cloudfront-extra-cache-behavior" then
+                  [ordered + {PathPattern:"admin/*"}] else [] end))
+              }
+            }}
+          '
         ;;
       cloudfront/get-distribution)
         jq -n --arg domain "$AWS_CLOUDFRONT_DOMAIN_NAME" \

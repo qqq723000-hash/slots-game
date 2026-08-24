@@ -32,9 +32,11 @@ var runtimeInsertColumns = map[string][]string{
 		"operator_id", "transaction_id", "session_id", "round_id", "kind", "status", "currency",
 		"amount_minor", "request_fingerprint", "created_at", "updated_at",
 	},
-	"rgs_outbox":                    {"operator_id", "aggregate_type", "aggregate_id", "event_type", "payload"},
-	"rgs_operator_nonces":           {"operator_id", "key_id", "nonce_hash", "expires_at", "created_at"},
-	"rgs_launch_codes":              {"code_hash", "operator_id", "claims_json", "expires_at", "created_at"},
+	"rgs_outbox":          {"operator_id", "aggregate_type", "aggregate_id", "event_type", "payload"},
+	"rgs_operator_nonces": {"operator_id", "key_id", "nonce_hash", "expires_at", "created_at"},
+	"rgs_launch_codes":    {"code_hash", "operator_id", "claims_json", "expires_at", "created_at"},
+	// 0010 的永久触发器按 invoker 权限注册 operator；应用不直接写本表，但 runtime
+	// 若缺少本列权限，旧新 API 的 PREPARE 都会随触发器失败并回滚。
 	"rgs_wallet_recovery_operators": {"operator_id"},
 }
 

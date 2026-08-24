@@ -92,10 +92,12 @@ done
 printf '%s\n' '验收阶段：HTTPS 入口与服务探针。'
 curl --fail --silent --show-error --cacert "$ca_file" \
   --resolve slots.localhost:8443:127.0.0.1 https://slots.localhost:8443/healthz >/dev/null
-curl --fail --silent --show-error --cacert "$ca_file" \
-  --resolve rgs.localhost:8443:127.0.0.1 https://rgs.localhost:8443/healthz >/dev/null
+public_rgs_health_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --cacert "$ca_file" --resolve rgs.localhost:8443:127.0.0.1 \
+  https://rgs.localhost:8443/healthz)"
+test "$public_rgs_health_status" = 404
 for ingress_host in slots.localhost rgs.localhost; do
-  curl --fail --silent --show-error --dump-header - --output /dev/null --cacert "$ca_file" \
+  curl --silent --show-error --dump-header - --output /dev/null --cacert "$ca_file" \
     --resolve "$ingress_host:8443:127.0.0.1" "https://$ingress_host:8443/healthz" \
     | tr -d '\r' | grep -Eiq '^strict-transport-security: max-age=31536000$' || {
       printf '%s\n' "$ingress_host 未返回统一 HSTS。" >&2
@@ -153,6 +155,10 @@ invalid_form_status="$(curl --silent --show-error --output /dev/null --write-out
   https://slots.localhost:8443/launch)"
 test "$invalid_form_status" = 401
 
+compose exec -T \
+  -e PROBE_URL=http://127.0.0.1:8081/healthz \
+  -e PROBE_BEARER_FILE= \
+  rgs-server /service-probe
 compose exec -T rgs-server /service-probe
 compose exec -T \
   -e PROBE_URL=http://127.0.0.1:8081/metrics \
@@ -261,7 +267,8 @@ require_prometheus_vector 'local_operator_alert_store_writable{job="local-operat
 printf '%s\n' '验收阶段：脱敏日志持久化。'
 # 造成一条无敏感数据的 RGS 请求日志，然后确认 Vector HTTPS sink 已投递。
 curl --silent --show-error --cacert "$ca_file" --resolve rgs.localhost:8443:127.0.0.1 \
-  https://rgs.localhost:8443/healthz >/dev/null
+  --header 'Content-Type: application/json' --data '{}' \
+  https://rgs.localhost:8443/operator/v1/launches >/dev/null
 sink_ready=0
 attempt=0
 while [ "$attempt" -lt 12 ]; do

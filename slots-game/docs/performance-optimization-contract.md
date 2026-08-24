@@ -13,7 +13,7 @@
 | 审计与统计异步化 | 已采用 | 业务事务内写 PostgreSQL Outbox，独立 Worker 投递；Kafka/MSK 只能作为可选下游 |
 | 数学对象全部 `sync.Pool` | 拒绝盲目池化 | 以基准和 profile 为准，当前用不可变配置复用、固定数组和连续分配将代表路径降至 22 allocs/op |
 | 关闭 TLS 的轻量 Compose | 拒绝 | 日常使用包级测试与前端开发服务器；完整 Compose 保留真实 TLS、密钥和恢复语义 |
-| INFO 日志采样 | 采用并收紧 | 成功访问日志默认 1%；4xx/5xx、资金审计与安全事件全量保留，采样结果有无标签指标 |
+| INFO 日志采样 | 采用并收紧 | 成功、4xx/5xx 与重复安全 WARN 都有固定写入预算；资金审计和安全事件无标签计数全量保留，所有丢弃都有固定指标 |
 | API/Worker HPA | 采用 | 两类角色分别保留 3/2 个暖副本、独立资源 HPA/PDB/连接预算；自定义指标依赖真实适配器 |
 | 自动生成素材审批 | 仅自动证据 | CI 可生成哈希差异，但不能代替独立批准；发布仍绑定不可变审批元数据及有效期 |
 | 统一缩短 Helm timeout | 拒绝固定缩短 | API、Worker、Web 和基础设施分阶段交付，`atomic/wait` 超时按真实启动和回滚上界设置 |
@@ -26,7 +26,7 @@
 1. PostgreSQL 仍是会话、局、钱包命令、结果投递游标和 Outbox 的唯一权威状态。
 2. Redis/Valkey 不得决定一局是否已经扣款、是否可以重算或是否已经提交。
 3. 一局结果必须在首次钱包调用前持久化；超时后只能查询或恢复同一 operation ID，不能重跑 RNG。
-4. 经济审计、安全事件和钱包状态不得采样或丢弃。
+4. 经济审计、钱包状态和安全事件权威计数不得采样或丢弃；为抵抗日志管道背压，重复物理安全日志可以按固定预算降载，但必须留下无标签丢弃计数。
 5. 已批准的数学定义不可原地修改；新定义必须使用新版本和新摘要，既有会话继续绑定旧版本。
 
 共享准入保持每次调用一次 Lua RTT。v2 桶把令牌与写入时 TTL 基准压成一个 `cmsgpack` 字符串，经过
@@ -38,10 +38,12 @@
 避免极低速率与巨大 burst 产生近乎永久的键。Valkey 故障、脚本状态损坏或协议响应异常始终
 fail-closed，且 Valkey 仍不保存资金、轮次、钱包终态或幂等权威。
 
-### 共享准入本地负载证据（2026-08-23）
+### 共享准入算法历史对照（2026-08-23）
 
 以下是同一台 arm64 开发机上 Docker Desktop 29.6.1、Valkey 8.1.9 一主一副本、Go 1.26.6 的一次
-可复现观测；每格 200,000 次请求，共 2,400,000 次，单条 multiplexed 连接，持久化关闭。该环境是
+可复现观测；每格 200,000 次请求，共 2,400,000 次，单条 multiplexed 连接，持久化关闭。这是
+令牌桶 v1/v2 写放大的历史算法对照，不再代表当前生产传输配置；当前客户端禁用自动管线并
+使用有界同步连接，见下一节。该环境是
 loopback 明文连接，没有 ACL/TLS、ElastiCache、跨可用区网络或真实节点故障，因此只是实现级对照，
 不是生产容量认证。
 
@@ -64,6 +66,33 @@ loopback 明文连接，没有 ACL/TLS、ElastiCache、跨可用区网络或真�
 用上表设置正式 SLO。负载实现位于
 `server/internal/sharedadmission/load_test.go`，门禁封装为 `server/scripts/valkey-high-concurrency.sh`，统一
 opt-in 入口为 `make profile-valkey-high-concurrency`；
+
+### 有界同步传输复验（2026-08-24）
+
+当前生产执行器禁用 valkey-go 自动管线，应用层四许可闸门限制进入依赖池的命令，
+另有一条依赖构造时保留但不承载业务自动管线的基础 socket；所以每 API Pod 同时最多四条
+业务命令、五条 TCP 连接。同一开发机和一次性 Valkey 8.1.9 主/副本上，官方门禁每场景/
+版本 50,000 次，合计 600,000 次，持久化关闭。下表是当前 optimized v2 结果：
+
+| 场景 | 并发 | ops/s | p99 | 状态写/请求 | 单副本流字节/请求 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| steady / 4,096 keys | 16 | 5,921 | 4,185 µs | 1 | 95.71 |
+| step | 1 → 64 | 4,218 | 14,290 µs | 1 | 91.00 |
+| hot key | 64 | 7,648 | 13,384 µs | 1 | 94.00 |
+| many identity | 64 | 7,615 | 12,798 µs | 1 | 128.92 |
+| deny storm | 64 | 9,439 | 10,020 µs | 0.0029 | 0.272 |
+| SCRIPT FLUSH + NOSCRIPT | 64 | 7,824 | 11,359 µs | 1 | 106.71 |
+
+六个场景均为零应用错误、零意外服务端错误、零拒绝连接、零新建连接，`INFO clients`
+始终精确为 5，在线副本为 1。NOSCRIPT 场景的 63 个并发 miss 只有 1 次完整 Lua body；
+拒绝风暴 50,000 次只有 145 次状态写。与历史自动管线数据相比，这个硬边界牺牲了本机吞吐；
+它换来的是 context 超时、在途命令和连接数可证明有界，不允许用历史数字声称当前传输吞吐。
+
+另一项真实 TCP 故障回归让 peer 完成 RESP 握手后不再回复，同时发起 1,100 个经济 EVAL；
+所有调用在 250ms deadline 加 250ms 余量内返回，peer 最多看到四条在途业务命令/五条 TCP
+连接，故障 socket 关闭后新 PING 恢复，等待者 goroutine 回落到基线容差内。这个测试专门阻断
+valkey-go v1.0.67 自动管线 ring/ctx 与同步池超时计数竞态的回归。
+
 直接调用测试而不提供阈值时会明确输出 `report-only`，Make 入口则强制要求阈值，并将稳定 JSON 原子
 写入 ignored `.artifacts/high-concurrency/valkey-report.json`。正式环境必须通过
 `RGS_SHARED_ADMISSION_LOAD_THRESHOLDS_JSON` 为六个场景同时提供 `min_ops_per_second` 与
@@ -71,10 +100,10 @@ opt-in 入口为 `make profile-valkey-high-concurrency`；
 
 ```bash
 RGS_SHARED_ADMISSION_LOAD_ADDR=127.0.0.1:16379 \
-RGS_SHARED_ADMISSION_LOAD_REQUESTS=200000 \
+RGS_SHARED_ADMISSION_LOAD_REQUESTS=50000 \
 RGS_SHARED_ADMISSION_LOAD_ALLOW_DESTRUCTIVE=YES \
 RGS_SHARED_ADMISSION_LOAD_EXPECTED_RUN_ID='<disposable INFO server run_id>' \
-RGS_SHARED_ADMISSION_LOAD_THRESHOLDS_JSON='{"steady":{"min_ops_per_second":30000,"max_p99_us":2000},"step":{"min_ops_per_second":10000,"max_p99_us":5000},"hot_key":{"min_ops_per_second":50000,"max_p99_us":5000},"many_identity":{"min_ops_per_second":50000,"max_p99_us":5000},"deny_storm":{"min_ops_per_second":50000,"max_p99_us":5000},"failover_noscript":{"min_ops_per_second":50000,"max_p99_us":5000}}' \
+RGS_SHARED_ADMISSION_LOAD_THRESHOLDS_JSON='{"steady":{"min_ops_per_second":5000,"max_p99_us":10000},"step":{"min_ops_per_second":3500,"max_p99_us":25000},"hot_key":{"min_ops_per_second":5000,"max_p99_us":25000},"many_identity":{"min_ops_per_second":5000,"max_p99_us":25000},"deny_storm":{"min_ops_per_second":5500,"max_p99_us":25000},"failover_noscript":{"min_ops_per_second":5000,"max_p99_us":25000}}' \
 make profile-valkey-high-concurrency
 ```
 
@@ -149,8 +178,9 @@ HTTP 报告默认写入 ignored `.artifacts/high-concurrency/http-report.json`�
 - 只从 Redis 返回资金结果而不重新验证 PostgreSQL 中的持久化结果和绑定；
 - 在 key/value 中保存访问令牌、签名私钥、完整玩家资料或未脱敏经济响应。
 
-写请求的共享限流器不可用时，新的启动会话和 Spin 必须失败关闭并返回可重试的过载响应；只读健康检查、
-已提交结果恢复和运维诊断应保留独立容量。Pod 内限流继续作为第二层资源保护，WAF 只负责边缘
+写请求的共享限流器不可用时，新的启动会话和 Spin 必须失败关闭并返回可重试的过载响应；已提交结果恢复
+应保留独立容量。只读健康检查和运维诊断只存在于受限 operations 监听器，公网监听器不得暴露 `/healthz`
+形成匿名旁路。Pod 内限流继续作为第二层资源保护，WAF 只负责边缘
 攻击和近似速率控制，不能冒充身份级业务配额。
 
 ## PostgreSQL 写入压力与扩展边界
@@ -328,23 +358,28 @@ go test ./internal/game -run '^$' -bench '^BenchmarkEngineSpinRepresentative$' -
 日志分为三类，保留策略不得混用：
 
 - 经济/审计日志：完整、不可采样、带稳定事件 ID，通过 Outbox 或批准的审计链投递；
-- 安全日志：认证失败、nonce 重放、完整性隔离、密钥和配置变更，完整保留并告警；
+- 安全日志：认证失败、nonce 重放、完整性隔离、密钥和配置变更；权威计数完整保留并告警，重复物理记录使用独立固定预算；
 - 运行遥测：INFO/DEBUG 可以按稳定 trace ID 采样、批量压缩和设置容量预算。
 
-WARN/ERROR 永不采样。禁止把“生产只记录 WARN/ERROR”应用到资金和安全事件。Vector/OTel 的采样、
+经济审计与独立安全事件计数永不采样。通用 HTTP 访问日志和可重复安全 WARN 必须有相互独立、固定、
+低基数的写入预算，防止认证/容量攻击反向耗尽日志 I/O；完整 HTTP、认证和容量计数仍不得采样。Vector/OTel 的采样、
 丢弃、缓冲溢出和远端写入失败都必须暴露指标；达到磁盘或队列水位时先降级普通运行遥测。
 
 RGS 公网访问日志已按这一边界实现：`RGS_SUCCESS_ACCESS_LOG_SAMPLE_PER_MILLION` 控制成功请求的
 确定性采样，通用集群 Chart 默认 `10000`（1%），本机集成验收显式使用 `1000000`（100%）。
-同一路由和安全 request ID 在所有副本上得到同一采样决定；4xx 始终写 WARN，5xx 始终写 ERROR。
-`rgs_access_logs_emitted_total` 与 `rgs_access_logs_dropped_total` 只记录无标签总量，不能加入玩家、
+同一路由和安全 request ID 在所有副本上得到同一成功采样决定；成功候选还必须经过单一固定键的
+100/s、burst 200 进程预算，所以攻击者重复一个命中采样的 request ID 也不能无限写日志。4xx/5xx
+分别使用固定的 20/s、burst 100 进程预算，4xx 洪峰不能压掉 5xx 预算。所有访问日志写入另有 4 槽
+非阻塞 bulkhead，因此 stdout/collector 阻塞也不能无限占用请求协程。`rgs_access_logs_emitted_total` 与
+`rgs_access_logs_dropped_total` 只记录无标签总量，不能加入玩家、
 会话、轮次或 request ID 标签。该机制只影响普通 HTTP 访问记录，不影响 PostgreSQL Outbox、经济审计、
 认证失败和完整性隔离指标。
 
-nonce 重放作为独立安全事件永不采样。内部只输出固定 `security_event=nonce_replay` 的 WARN
-记录和无标签 `rgs_auth_replays_total` 计数器，禁止记录 nonce、运营商、密钥、玩家、会话或请求
-标识。`SlotsRGSAuthReplay` 使用 `increase(rgs_auth_replays_total[5m]) > 0`，五分钟内任一增量
-都必须进入安全告警路由。
+nonce 重放的无标签 `rgs_auth_replays_total` 权威计数永不采样。重复的固定
+`security_event=nonce_replay` WARN 使用独立 10/s、burst 20 和 2 槽非阻塞写入 bulkhead；被抑制的
+物理记录累加 `rgs_security_logs_dropped_total`，但不减少 replay 计数。日志禁止记录 nonce、运营商、
+密钥、玩家、会话或请求标识。`SlotsRGSAuthReplay` 使用
+`increase(rgs_auth_replays_total[5m]) > 0`，五分钟内任一增量都必须进入安全告警路由。
 
 AWS 正式路径不部署本机 Vector。容器 stdout/stderr 由公司节点级 OTel/CloudWatch 管道采集；管道仍
 必须对自身积压、丢弃、重试和归档失败告警。禁止再在 Vector 或下游对已经受控的 WARN/ERROR、资金

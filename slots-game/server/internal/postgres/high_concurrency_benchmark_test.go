@@ -488,6 +488,20 @@ func prepareRoundLegacyForLoad(
 	walletProfile rgs.Profile,
 	prepare rgs.PrepareOutcome,
 ) (rgs.RoundRecord, bool, error) {
+	return prepareRoundLegacyForLoadWithCommitHook(
+		ctx, repository, request, fingerprint, walletProfile, prepare, nil,
+	)
+}
+
+func prepareRoundLegacyForLoadWithCommitHook(
+	ctx context.Context,
+	repository *Repository,
+	request rgs.SpinRequest,
+	fingerprint string,
+	walletProfile rgs.Profile,
+	prepare rgs.PrepareOutcome,
+	beforeCommit func() error,
+) (rgs.RoundRecord, bool, error) {
 	if err := rgs.ValidateSpinRequest(request); err != nil || prepare == nil ||
 		fingerprint != rgs.FingerprintFor(request) || !rgs.SupportedSettlementProfile(walletProfile) {
 		return rgs.RoundRecord{}, false, rgs.ErrInvalidRequest
@@ -535,7 +549,12 @@ func prepareRoundLegacyForLoad(
 	if resultDeliveryPending {
 		return rgs.RoundRecord{}, false, rgs.ErrResultDeliveryPending
 	}
-	if err := validateBinding(session, request); err != nil {
+	var now time.Time
+	if err := tx.QueryRowContext(ctx, walletLeaseClockSQL).Scan(&now); err != nil {
+		return rgs.RoundRecord{}, false, err
+	}
+	now = now.UTC()
+	if err := validateBinding(session, request, now); err != nil {
 		return rgs.RoundRecord{}, false, err
 	}
 	if session.PendingRoundID != "" {
@@ -560,11 +579,6 @@ func prepareRoundLegacyForLoad(
 	if err != nil {
 		return rgs.RoundRecord{}, false, err
 	}
-	var now time.Time
-	if err := tx.QueryRowContext(ctx, walletLeaseClockSQL).Scan(&now); err != nil {
-		return rgs.RoundRecord{}, false, err
-	}
-	now = now.UTC()
 	walletCommand := rgs.WalletRound{
 		OperationID: result.ServerTransactionID, Fingerprint: fingerprint,
 		OperatorID: request.OperatorID, PlayerID: session.PlayerID,
@@ -623,6 +637,11 @@ func prepareRoundLegacyForLoad(
 		"definitionVersion": request.DefinitionVersion,
 	}); err != nil {
 		return rgs.RoundRecord{}, false, err
+	}
+	if beforeCommit != nil {
+		if err := beforeCommit(); err != nil {
+			return rgs.RoundRecord{}, false, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return rgs.RoundRecord{}, false, err

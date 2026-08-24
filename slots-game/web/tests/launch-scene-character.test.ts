@@ -88,7 +88,7 @@ function createHarness(): LaunchSceneHarness {
       timeScale: 1,
       hasAnimation: vi.fn(() => true),
       setAnimation: vi.fn((track: number, animation: string) => makeEntry(track, animation)),
-      addAnimation: vi.fn((track: number, animation: string) => {
+      addAnimation: vi.fn((_track: number, animation: string) => {
         const entry = {
           animation: { name: animation },
           animationEnd: CHARACTER_DURATION_SECONDS[animation] ?? 1,

@@ -62,6 +62,102 @@ variable "waf_web_acl_arn" {
   }
 }
 
+variable "waf_evidence_kms_key_arn" {
+  description = "CloudFront WAF Block 晋级证据对象必须使用的企业批准 KMS key ARN"
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:(aws|aws-us-gov):kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]{36}$", var.waf_evidence_kms_key_arn))
+    error_message = "CloudFront WAF evidence KMS key 必须是精确 key ARN，禁止 alias、空值或占位符。"
+  }
+}
+
+variable "waf_rate_limit_per_minute" {
+  description = "企业平台 CloudFront WAF 的每来源 IP 一分钟静态请求限额"
+  type        = number
+
+  validation {
+    condition = (
+      var.waf_rate_limit_per_minute >= 100 &&
+      var.waf_rate_limit_per_minute <= 1000000 &&
+      floor(var.waf_rate_limit_per_minute) == var.waf_rate_limit_per_minute
+    )
+    error_message = "CloudFront WAF 一分钟限额必须是 100 到 1000000 的整数。"
+  }
+}
+
+variable "waf_rate_rule_rollout" {
+  description = "企业 CloudFront WAF 按来源 IP rate rule 的 Count→Block 校准状态"
+  type = object({
+    action             = string
+    evidence_reference = string
+  })
+
+  validation {
+    condition = (
+      (var.waf_rate_rule_rollout.action == "count" &&
+      var.waf_rate_rule_rollout.evidence_reference == "observation-pending") ||
+      (var.waf_rate_rule_rollout.action == "block" &&
+      can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[^?#]+\\?versionId=[A-Za-z0-9._~+/=-]{1,1024}#[0-9a-f]{64}$", var.waf_rate_rule_rollout.evidence_reference)))
+    )
+    error_message = "CloudFront rate rule 在 count 阶段必须声明 observation-pending；切到 block 必须绑定 s3://...?versionId=...#sha256 校准证据。"
+  }
+}
+
+variable "waf_log_group_name" {
+  description = "企业平台 CloudFront WAF 的 us-east-1 CloudWatch Log Group 名"
+  type        = string
+
+  validation {
+    condition = (
+      can(regex("^aws-waf-logs-[a-z0-9][a-z0-9_-]{2,120}$", var.waf_log_group_name)) &&
+      !strcontains(var.waf_log_group_name, "replace")
+    )
+    error_message = "CloudFront WAF 日志组必须使用 aws-waf-logs- 前缀且不能是占位值。"
+  }
+}
+
+variable "waf_managed_rule_rollout" {
+  description = "企业 CloudFront WAF managed rules 的 Count→Block 状态与观测证据"
+  type = object({
+    action             = string
+    evidence_reference = string
+  })
+
+  validation {
+    condition = (
+      (var.waf_managed_rule_rollout.action == "count" &&
+      var.waf_managed_rule_rollout.evidence_reference == "observation-pending") ||
+      (var.waf_managed_rule_rollout.action == "block" &&
+      can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[^?#]+\\?versionId=[A-Za-z0-9._~+/=-]{1,1024}#[0-9a-f]{64}$", var.waf_managed_rule_rollout.evidence_reference)))
+    )
+    error_message = "CloudFront managed rules 在 count 阶段必须声明 observation-pending；切到 block 必须绑定 s3://...?versionId=...#sha256 证据。"
+  }
+}
+
+variable "waf_managed_rule_versions" {
+  description = "企业 CloudFront WAF 三个 AWS Managed Rule Group 的精确版本交接"
+  type        = map(string)
+
+  validation {
+    condition = (
+      length(setsubtract(
+        toset(keys(var.waf_managed_rule_versions)),
+        toset(["amazon-ip-reputation", "common", "known-bad-inputs"])
+      )) == 0 &&
+      length(setsubtract(
+        toset(["amazon-ip-reputation", "common", "known-bad-inputs"]),
+        toset(keys(var.waf_managed_rule_versions))
+      )) == 0 &&
+      alltrue([
+        for version in values(var.waf_managed_rule_versions) :
+        can(regex("^Version_[0-9]+\\.[0-9]+$", version))
+      ])
+    )
+    error_message = "CloudFront managed rule versions 必须精确包含三个规则键并使用 Version_x.y。"
+  }
+}
+
 variable "content_security_policy" {
   description = "从已验证 Web OCI digest 提取并经审批的精确 CSP"
   type        = string

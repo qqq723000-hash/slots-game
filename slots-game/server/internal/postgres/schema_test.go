@@ -29,9 +29,10 @@ func TestExpectedSchemaManifestIsFrozen(t *testing.T) {
 		{Version: "0007_result_delivery_cursor", Checksum: "2dffbfb97d2cf2c8e1bfd9c93348c1e63237e29e417340d31e0200b3e7316586"},
 		{Version: "0008_wallet_recovery_scheduler", Checksum: "73c7c28413a4c7313b5f451f95750e2a6be986fca21717e48763c9f9f4062420"},
 		{Version: "0009_postgres_hot_path", Checksum: "fe05563382fa6f558ecfb8944658740f718551032274a81521711b2d25e8314c"},
+		{Version: "0010_wallet_recovery_registry_invariant", Checksum: "5fc3fe96f71a66bd252713751e36139000eb6e503f981fb520df7e5f3412ce17"},
 	}
 	if manifest.Version != want[len(want)-1].Version ||
-		manifest.SHA256 != "856304eb1796eb81f54f6d41e12c6bbe071f17b69e665f381dfc55d410b7ae6e" ||
+		manifest.SHA256 != "fab6e6497d8fbc3bbeba8f77282841448e97bb6434dadb47c4b7b9b7ee40f1a5" ||
 		!reflect.DeepEqual(manifest.Migrations, want) {
 		t.Fatalf("manifest = %+v, want version/checksum freeze %+v", manifest, want)
 	}
@@ -89,11 +90,75 @@ func TestSchemaCheckRequiresExactLedger(t *testing.T) {
 		rows.AddRow(item.Version, item.Checksum)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta(schemaLedgerSQL)).WillReturnRows(rows)
+	mock.ExpectQuery(regexp.QuoteMeta(walletRecoveryRegistryInvariantSQL)).
+		WithArgs(
+			walletRecoveryRegistryFunctionSource,
+			walletRecoveryRegistryInsertTriggerDefinition,
+			walletRecoveryRegistryUpdateTriggerDefinition,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"policy_ok"}).AddRow(true))
 	if err := check.Check(context.Background()); err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWalletRecoveryRegistryInvariantFailsClosed(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		rows      *sqlmock.Rows
+		queryErr  error
+		wantError error
+	}{
+		{
+			name: "catalog mismatch", rows: sqlmock.NewRows([]string{"policy_ok"}).AddRow(false),
+			wantError: ErrSchemaState,
+		},
+		{
+			name: "catalog query failure", queryErr: driver.ErrBadConn,
+			wantError: ErrSchemaState,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			expectation := mock.ExpectQuery(regexp.QuoteMeta(walletRecoveryRegistryInvariantSQL)).
+				WithArgs(
+					walletRecoveryRegistryFunctionSource,
+					walletRecoveryRegistryInsertTriggerDefinition,
+					walletRecoveryRegistryUpdateTriggerDefinition,
+				)
+			if test.queryErr != nil {
+				expectation.WillReturnError(test.queryErr)
+			} else {
+				expectation.WillReturnRows(test.rows)
+			}
+			if err := verifyWalletRecoveryRegistryInvariant(context.Background(), database); !errors.Is(err, test.wantError) {
+				t.Fatalf("verifyWalletRecoveryRegistryInvariant() error = %v, want %v", err, test.wantError)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestWalletRecoveryRegistryInvariantRejectsReplicaModeBypass(t *testing.T) {
+	for _, required := range []string{
+		"trigger.tgenabled='O'",
+		"trigger.tgnargs=0",
+		"current_setting('session_replication_role')='origin'",
+		"NOT pg_catalog.has_parameter_privilege(",
+		"'rgs_runtime', 'session_replication_role', 'SET'",
+	} {
+		if !strings.Contains(walletRecoveryRegistryInvariantSQL, required) {
+			t.Fatalf("wallet recovery registry invariant is missing %q", required)
+		}
 	}
 }
 

@@ -83,6 +83,21 @@ const rgsEnvironment = document.services?.["rgs-server"]?.environment ?? {};
 if (rgsEnvironment.RGS_WALLET_ROOT_CA_FILE !== "/run/local-production/local-production-root-ca.pem") {
   throw new Error("RGS 钱包客户端必须显式加载本机生产根 CA");
 }
+if (rgsEnvironment.PROBE_URL !== "http://127.0.0.1:8081/readyz"
+    || rgsEnvironment.PROBE_BEARER_FILE !== "/run/local-production/operations.token") {
+  throw new Error("RGS Compose 健康门必须使用带 Bearer 的私有 operations readiness");
+}
+const rgsService = document.services?.["rgs-server"] ?? {};
+const ingressNetworks = new Set(Object.keys(document.services?.ingress?.networks ?? {}));
+const rgsNetworks = new Set(Object.keys(rgsService.networks ?? {}));
+const prometheusNetworks = new Set(Object.keys(document.services?.prometheus?.networks ?? {}));
+if (document.networks?.operations?.internal !== true || !rgsNetworks.has("operations")
+    || !prometheusNetworks.has("operations") || ingressNetworks.has("operations")) {
+  throw new Error("私有 operations 网络只能连接 RGS 与明确的运维消费者，入口不得加入");
+}
+if ((rgsService.ports ?? []).length !== 0) {
+  throw new Error("RGS 公共或 operations 监听器不得直接发布到宿主机");
+}
 NODE
 
 if grep -Eq '^[[:space:]]*provenance:' "$compose_file"; then
@@ -200,6 +215,19 @@ done
 
 test "$(grep -Fc 'add_header Strict-Transport-Security "max-age=31536000" always;' "$script_dir/ingress-nginx.conf")" = 1 || {
   printf '%s\n' 'HTTPS 入口必须统一且仅声明一次 HSTS。' >&2
+  exit 1
+}
+test "$(grep -Fc '    location = /healthz {' "$script_dir/ingress-nginx.conf")" = 1 \
+  && test "$(grep -Fc '      return 404;' "$script_dir/ingress-nginx.conf")" = 1 || {
+  printf '%s\n' 'RGS 公网入口必须精确拦截 /healthz。' >&2
+  exit 1
+}
+grep -F 'PROBE_URL=http://127.0.0.1:8081/healthz' "$verify_file" >/dev/null || {
+  printf '%s\n' '本机动态验收必须探测私有 operations liveness。' >&2
+  exit 1
+}
+grep -F 'test "$public_rgs_health_status" = 404' "$verify_file" >/dev/null || {
+  printf '%s\n' '本机动态验收必须拒绝公网 RGS /healthz。' >&2
   exit 1
 }
 

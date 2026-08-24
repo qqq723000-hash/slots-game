@@ -101,11 +101,11 @@ docker run --detach --rm --name "$container_name" --network host \
   -e RGS_OPERATIONS_BEARER_TOKEN_FILE=/run/rgs-smoke/operations.token \
   "$runtime_image" >/dev/null
 
-public_health_status='000'
+operations_health_status='000'
 for _attempt in $(seq 1 30); do
-  public_health_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-    http://127.0.0.1:18080/healthz || true)"
-  if [ "$public_health_status" = 200 ]; then
+  operations_health_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    http://127.0.0.1:18081/healthz || true)"
+  if [ "$operations_health_status" = 200 ]; then
     break
   fi
   if [ "$(docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null || true)" != true ]; then
@@ -116,8 +116,8 @@ for _attempt in $(seq 1 30); do
   fi
   sleep 1
 done
-test "$public_health_status" = 200 || {
-  printf '%s\n' "runtime smoke: public /healthz returned $public_health_status" >&2
+test "$operations_health_status" = 200 || {
+  printf '%s\n' "runtime smoke: private operations /healthz returned $operations_health_status" >&2
   exit 1
 }
 
@@ -141,8 +141,8 @@ expect_status() {
   }
 }
 
-# 公网只保留 liveness；8081 独立验证无 token/错 token 失败闭合，正确 token 才可读。
-expect_status 200 http://127.0.0.1:18080/healthz
+# 公网只发布业务路由；8081 health 无需 Bearer，ready/metrics 必须失败闭合。
+expect_status 404 http://127.0.0.1:18080/healthz
 expect_status 404 http://127.0.0.1:18080/readyz
 expect_status 404 http://127.0.0.1:18080/metrics
 expect_status 200 http://127.0.0.1:18081/healthz
@@ -178,7 +178,7 @@ result = {
     "runtimeImageId": sys.argv[2],
     "migratorImageId": sys.argv[3],
     "probes": {
-        "publicHealthz": 200,
+        "publicHealthz": 404,
         "publicReadyz": 404,
         "publicMetrics": 404,
         "operationsHealthz": 200,
@@ -192,4 +192,4 @@ result = {
 path.write_text(json.dumps(result, separators=(",", ":")) + "\n", encoding="utf-8")
 PYEOF
 
-printf '%s\n' 'runtime smoke: migrator, runtime, public and authenticated operations probes ok'
+printf '%s\n' 'runtime smoke: migrator, runtime, private operations probes and public management-path denial ok'

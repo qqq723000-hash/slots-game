@@ -7,6 +7,7 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
+    "assets:provenance-check": "node scripts/verify-asset-provenance.mjs",
     "assets:generate-streaming-packages": "node scripts/generate-streaming-package-manifests.mjs",
     "assets:check-streaming-packages": "node scripts/generate-streaming-package-manifests.mjs --check",
     "dev": "vite",
@@ -20,8 +21,8 @@
     "licenses:check": "node scripts/generate-third-party-notices.mjs --check",
     "licenses:check-artifacts": "node scripts/generate-third-party-notices.mjs --check-artifacts",
     "licenses:test": "node scripts/test-third-party-notices.mjs",
-    "prebuild": "npm run licenses:check",
-    "pretest": "npm run licenses:test && npm run licenses:check",
+    "prebuild": "npm run licenses:check && npm run assets:provenance-check",
+    "pretest": "npm run licenses:test && npm run licenses:check && npm run assets:provenance-check",
     "test": "vitest",
     "typecheck": "tsc --noEmit"
   },
@@ -32,7 +33,6 @@
     "pixi.js": "6.5.2"
   },
   "devDependencies": {
-    "ajv": "8.20.0",
     "es-module-lexer": "2.3.1",
     "typescript": "5.6.3",
     "vite": "8.1.5",

@@ -13,6 +13,21 @@ output "endpoint_url" {
   value       = "rediss://${aws_elasticache_replication_group.this.primary_endpoint_address}:${aws_elasticache_replication_group.this.port}"
 }
 
+output "replication_group_id" {
+  description = "受保护 live gate 回读实际状态使用的 Valkey replication group ID"
+  value       = aws_elasticache_replication_group.this.id
+}
+
+output "parameter_group_name" {
+  description = "必须实际绑定且 in-sync 的 noeviction parameter group"
+  value       = aws_elasticache_parameter_group.noeviction.name
+}
+
+output "maxmemory_policy" {
+  description = "共享准入内存耗尽时的唯一允许失败策略"
+  value       = "noeviction"
+}
+
 output "user_name" {
   description = "新工作负载连接 Valkey 时使用的活动 ACL 用户名"
   value       = local.active_user_name
@@ -62,11 +77,14 @@ output "rotation_contract" {
     hmac_maintenance_evidence_maximum_ttl_seconds = 3600
     hmac_maintenance_persistent_lock_name         = "slots-hmac-maintenance-lock"
     hmac_maintenance_target_identity              = local.target_identity
-    acl_schema_version                            = "v2"
-    acl_schema_transition                         = "maintenance-quiesced"
-    acl_schema_migration_requires_quiesced        = true
-    acl_schema_rolling_compatible                 = false
-    acl_schema_dual_permissions_allowed           = false
+    # 与 v1/v2 keyspace schema 分开版本化。旧 v2 runtime 只需要该权限集的严格子集；
+    # infrastructure 必须先完成 A/B additive ACL，再交付此 profile 供应用门禁消费。
+    acl_command_profile                    = "v2-economic"
+    acl_schema_version                     = "v2"
+    acl_schema_transition                  = "maintenance-quiesced"
+    acl_schema_migration_requires_quiesced = true
+    acl_schema_rolling_compatible          = false
+    acl_schema_dual_permissions_allowed    = false
     acl_schema_migration_order = [
       "stop-new-intents",
       "drain-old-api-pods",

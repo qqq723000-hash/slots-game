@@ -51,6 +51,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ format('slots-supply-chain-release-{0}-{1}', inputs.image_repository, inputs.image_tag) }}
+  cancel-in-progress: false
+
 jobs:
   verify-source-conformance:
     runs-on: ubuntu-latest
@@ -888,6 +892,32 @@ jobs:
               )
             )
           ' <<<"$scanning_json" >/dev/null
+
+      - name: Fail closed unless the immutable final release tag is absent
+        run: |
+          set -euo pipefail
+          case "$SUPPLY_CHAIN_ARTIFACT" in
+            rgs-runtime) repository_name=$AWS_ECR_RGS_RUNTIME_REPOSITORY ;;
+            rgs-migrator) repository_name=$AWS_ECR_RGS_MIGRATOR_REPOSITORY ;;
+            web-runtime) repository_name=$AWS_ECR_WEB_REPOSITORY ;;
+            *) exit 2 ;;
+          esac
+          final_tag_probe="$RUNNER_TEMP/final-tag-preflight.json"
+          final_tag_error="$RUNNER_TEMP/final-tag-preflight.stderr"
+          if aws ecr describe-images --repository-name "$repository_name" --image-ids "imageTag=$SUPPLY_CHAIN_IMAGE_TAG" --output json >"$final_tag_probe" 2>"$final_tag_error"; then
+            jq -e --arg tag "$SUPPLY_CHAIN_IMAGE_TAG" '
+              .imageDetails | type == "array" and length == 1 and
+              (.[0].imageTags | type == "array" and index($tag) != null) and
+              (.[0].imageDigest | test("^sha256:[0-9a-f]{64}$"))
+            ' "$final_tag_probe" >/dev/null
+            echo 'final release tag already exists; refusing candidate publication' >&2
+            exit 1
+          fi
+          if ! grep -F 'ImageNotFoundException' "$final_tag_error" >/dev/null; then
+            echo 'unable to prove that the final release tag is absent' >&2
+            exit 1
+          fi
+          rm -f "$final_tag_probe" "$final_tag_error"
 
       - name: Log in to the approved ECR registry with temporary credentials
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7

@@ -9,6 +9,33 @@ spec:
     requiresPrivateVpcRunner: true
     reason: EKS API 只开放私网端点，集群内发布条件必须由 VPC 内受保护执行器验证
   requiredAddons:
+    - id: vpc-cni-network-policy
+      versionOutput: application_handoff.vpc_cni_network_policy.addon_version
+      source: eks-managed-addon
+      expectedStatus: ACTIVE
+      configurationValues:
+        enableNetworkPolicy: "true"
+      namespace: kube-system
+      serviceAccount: aws-node
+      podIdentityRoleOutput: application_handoff.vpc_cni_network_policy.pod_identity.role_arn
+      enforcementBoundary: 所有应用 NetworkPolicy 依赖此 add-on 实际启用；发布前只读门禁必须回读状态、配置与 Pod Identity
+    - id: amazon-cloudwatch-observability
+      versionOutput: application_handoff.cloudwatch_observability.addon_version
+      source: eks-managed-addon
+      expectedStatus: ACTIVE
+      configurationOutput: application_handoff.cloudwatch_observability.configuration_values
+      namespace: amazon-cloudwatch
+      requiredDaemonSets:
+        - cloudwatch-agent
+        - fluent-bit
+      fluentBitServiceAccount: fluent-bit
+      fluentBitContainerName: fluent-bit
+      serviceAccount: cloudwatch-agent
+      podIdentityRoleOutput: application_handoff.cloudwatch_observability.pod_identity.role_arn
+      requiredConfiguration:
+        containerLogs.enabled: true
+        agent.config.logs.metrics_collected.kubernetes.enhanced_container_insights: true
+      enforcementBoundary: 集中容器日志与增强 Container Insights 分别依赖 fluent-bit 与 cloudwatch-agent 在每节点实际就绪
     - id: aws-load-balancer-controller
       versionOutput: application_handoff.addon_versions.aws-load-balancer-controller
       namespace: kube-system

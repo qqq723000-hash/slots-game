@@ -30,26 +30,33 @@ var (
 const (
 	responseSigningLookupTimeout   = time.Second
 	maximumRequestJSONNestingDepth = 32
+	// 这些上限基于公开 schema 的最大字段长度核算。最大合法业务值的紧凑 JSON
+	// 小于 1.1 KiB；即使键和值全部使用合法的 \uXXXX 转义也小于 6.2 KiB。
+	// 8 KiB 与 ALB/WAF 的完整正文检查窗口对齐；兑换请求结构更小，单独限制为 4 KiB。
+	maxPublicRequestBytes          = 8 << 10
+	maxSessionExchangeRequestBytes = 4 << 10
+	maxClientRecoveryRequestBytes  = maxPublicRequestBytes
 )
 
 type Handler struct {
-	operatorRequests     OperatorRequestVerifier
-	accessTokens         AccessTokenVerifier
-	responseSigningKeys  ResponseSigningKeyResolver
-	launches             LaunchService
-	spins                SpinCoordinator
-	rounds               RoundStatusReader
-	deliveries           ResultDeliveryService
-	admission            Admission
-	clientAdmission      Admission
-	launchAdmission      Admission
-	spinAdmission        Admission
-	newIntentCapacity    NewIntentCapacity
-	securityEvents       SecurityEventObserver
-	maxRequestBytes      int64
-	responseSignatureTTL time.Duration
-	now                  func() time.Time
-	newRequestID         func() string
+	operatorRequests      OperatorRequestVerifier
+	accessTokens          AccessTokenVerifier
+	responseSigningKeys   ResponseSigningKeyResolver
+	launches              LaunchService
+	spins                 SpinCoordinator
+	rounds                RoundStatusReader
+	deliveries            ResultDeliveryService
+	admission             Admission
+	clientAdmission       Admission
+	launchAdmission       Admission
+	spinAdmission         Admission
+	cryptographicCapacity CryptographicCapacity
+	newIntentCapacity     NewIntentCapacity
+	securityEvents        SecurityEventObserver
+	maxRequestBytes       int64
+	responseSignatureTTL  time.Duration
+	now                   func() time.Time
+	newRequestID          func() string
 }
 
 func NewHandler(config Config) (*Handler, error) {
@@ -57,8 +64,8 @@ func NewHandler(config Config) (*Handler, error) {
 		config.Spins == nil || config.Rounds == nil {
 		return nil, errors.New("rgsapi: all handler dependencies are required")
 	}
-	if config.MaxRequestBytes < 0 || config.MaxRequestBytes > operator.MaximumSignedRequestBody {
-		return nil, fmt.Errorf("rgsapi: max request bytes must be in [0,%d]", operator.MaximumSignedRequestBody)
+	if config.MaxRequestBytes < 0 || config.MaxRequestBytes > maxPublicRequestBytes {
+		return nil, fmt.Errorf("rgsapi: max request bytes must be in [0,%d]", maxPublicRequestBytes)
 	}
 	if config.MaxRequestBytes == 0 {
 		config.MaxRequestBytes = DefaultMaxRequestBytes
@@ -83,23 +90,24 @@ func NewHandler(config Config) (*Handler, error) {
 		return nil, errors.New("rgsapi: spin coordinator must support result delivery")
 	}
 	return &Handler{
-		operatorRequests:     config.OperatorRequests,
-		accessTokens:         config.AccessTokens,
-		responseSigningKeys:  config.ResponseSigningKeys,
-		launches:             config.Launches,
-		spins:                config.Spins,
-		rounds:               config.Rounds,
-		deliveries:           deliveries,
-		admission:            config.Admission,
-		clientAdmission:      config.ClientAdmission,
-		launchAdmission:      config.LaunchAdmission,
-		spinAdmission:        config.SpinAdmission,
-		newIntentCapacity:    config.NewIntentCapacity,
-		securityEvents:       config.SecurityEvents,
-		maxRequestBytes:      config.MaxRequestBytes,
-		responseSignatureTTL: config.ResponseSignatureTTL,
-		now:                  config.Now,
-		newRequestID:         config.NewRequestID,
+		operatorRequests:      config.OperatorRequests,
+		accessTokens:          config.AccessTokens,
+		responseSigningKeys:   config.ResponseSigningKeys,
+		launches:              config.Launches,
+		spins:                 config.Spins,
+		rounds:                config.Rounds,
+		deliveries:            deliveries,
+		admission:             config.Admission,
+		clientAdmission:       config.ClientAdmission,
+		launchAdmission:       config.LaunchAdmission,
+		spinAdmission:         config.SpinAdmission,
+		cryptographicCapacity: config.CryptographicCapacity,
+		newIntentCapacity:     config.NewIntentCapacity,
+		securityEvents:        config.SecurityEvents,
+		maxRequestBytes:       config.MaxRequestBytes,
+		responseSignatureTTL:  config.ResponseSignatureTTL,
+		now:                   config.Now,
+		newRequestID:          config.NewRequestID,
 	}, nil
 }
 
@@ -113,6 +121,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	defer func() {
 		if recover() != nil {
+			closeUnreadRequestBody(request)
 			if buffered != nil {
 				buffered.Reset()
 			}
@@ -128,6 +137,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if request.URL.RawQuery != "" || request.URL.ForceQuery || request.URL.RawPath != "" {
+		closeUnreadRequestBody(request)
 		h.writeError(responseWriter, requestID, http.StatusBadRequest, "INVALID_REQUEST", "query strings and encoded paths are not supported")
 		return
 	}
@@ -149,18 +159,22 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	case ClientResultAckPath:
 		h.requirePOST(responseWriter, request, requestID, h.handleClientResultAcknowledgement)
 	default:
+		closeUnreadRequestBody(request)
 		h.writeError(responseWriter, requestID, http.StatusNotFound, "NOT_FOUND", "route not found")
 	}
 }
 
 func (h *Handler) requireGET(writer http.ResponseWriter, request *http.Request, requestID string, endpoint endpointFunc) {
 	if request.Method != http.MethodGet {
+		closeUnreadRequestBody(request)
 		writer.Header().Set("Allow", http.MethodGet)
 		h.writeError(writer, requestID, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
-	if request.ContentLength > 0 || len(request.Header.Values("Content-Type")) != 0 ||
-		len(request.Header.Values("Content-Encoding")) != 0 {
+	if request.ContentLength != 0 || len(request.TransferEncoding) != 0 ||
+		(request.Body != nil && request.Body != http.NoBody) ||
+		len(request.Header.Values("Content-Type")) != 0 || len(request.Header.Values("Content-Encoding")) != 0 {
+		closeUnreadRequestBody(request)
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "GET request must not include a body")
 		return
 	}
@@ -171,15 +185,18 @@ type endpointFunc func(http.ResponseWriter, *http.Request, string)
 
 func (h *Handler) requirePOST(writer http.ResponseWriter, request *http.Request, requestID string, endpoint endpointFunc) {
 	if request.Method != http.MethodPost {
+		closeUnreadRequestBody(request)
 		writer.Header().Set("Allow", http.MethodPost)
 		h.writeError(writer, requestID, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
 	if !singleExactHeader(request.Header, "Content-Type", operator.SignedContentType) {
+		closeUnreadRequestBody(request)
 		h.writeError(writer, requestID, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "content type must be application/json")
 		return
 	}
 	if values := request.Header.Values("Content-Encoding"); len(values) != 0 {
+		closeUnreadRequestBody(request)
 		h.writeError(writer, requestID, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTENT_ENCODING", "content encoding is not supported")
 		return
 	}
@@ -191,9 +208,8 @@ func (h *Handler) handleOperatorLaunch(writer http.ResponseWriter, request *http
 	if !ok {
 		return
 	}
-	verified, err := h.operatorRequests.Authenticate(request.Context(), request, body)
-	if err != nil {
-		h.writeMappedError(writer, requestID, err)
+	verified, ok := h.authenticateOperator(writer, request, requestID, body)
+	if !ok {
 		return
 	}
 	requestID = verified.RequestID
@@ -267,6 +283,16 @@ func (h *Handler) handleClientSessionExchange(writer http.ResponseWriter, reques
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "authorization is not accepted on launch exchange")
 		return
 	}
+	releaseCapacity, ok := h.acquireNewIntentCapacity(request.Context(), writer, requestID)
+	if !ok {
+		return
+	}
+	defer releaseCapacity()
+	releaseCrypto, ok := h.acquireCryptographicCapacity(request.Context(), writer, requestID)
+	if !ok {
+		return
+	}
+	defer releaseCrypto()
 	result, err := h.launches.ExchangeSession(request.Context(), ExchangeCommand{
 		LaunchCode: payload.LaunchCode, OperatorID: payload.OperatorID,
 		SessionID: payload.SessionID, RequestID: requestID,
@@ -314,6 +340,13 @@ func (h *Handler) handleClientSessionRefresh(writer http.ResponseWriter, request
 	if !ok {
 		return
 	}
+	// RefreshSession 签发新的 Ed25519 access token；它和随后对 adapter 返回令牌的
+	// 二次校验必须共享同一个许可，避免签发在 bulkhead 外与受限验签并行。
+	releaseCrypto, ok := h.acquireCryptographicCapacity(request.Context(), writer, requestID)
+	if !ok {
+		return
+	}
+	defer releaseCrypto()
 	result, err := h.launches.RefreshSession(request.Context(), RefreshCommand{
 		Claims: claims, RequestID: requestID,
 	})
@@ -500,9 +533,8 @@ func (h *Handler) handleOperatorRoundStatus(writer http.ResponseWriter, request 
 	if !ok {
 		return
 	}
-	verified, err := h.operatorRequests.Authenticate(request.Context(), request, body)
-	if err != nil {
-		h.writeMappedError(writer, requestID, err)
+	verified, ok := h.authenticateOperator(writer, request, requestID, body)
+	if !ok {
 		return
 	}
 	requestID = verified.RequestID
@@ -579,7 +611,14 @@ func (h *Handler) authenticateClientClaims(writer http.ResponseWriter, request *
 		h.writeError(writer, requestID, http.StatusUnauthorized, "UNAUTHORIZED", "access token is required")
 		return operator.AccessTokenClaims{}, false
 	}
-	claims, err := h.accessTokens.Verify(request.Context(), token, operatorID)
+	release, ok := h.acquireCryptographicCapacity(request.Context(), writer, requestID)
+	if !ok {
+		return operator.AccessTokenClaims{}, false
+	}
+	claims, err := func() (operator.AccessTokenClaims, error) {
+		defer release()
+		return h.accessTokens.Verify(request.Context(), token, operatorID)
+	}()
 	if err != nil {
 		h.writeMappedError(writer, requestID, err)
 		return operator.AccessTokenClaims{}, false
@@ -592,6 +631,46 @@ func (h *Handler) authenticateClientClaims(writer http.ResponseWriter, request *
 		return operator.AccessTokenClaims{}, false
 	}
 	return claims, true
+}
+
+func (h *Handler) authenticateOperator(
+	writer http.ResponseWriter,
+	request *http.Request,
+	requestID string,
+	body []byte,
+) (operator.VerifiedRequest, bool) {
+	release, ok := h.acquireCryptographicCapacity(request.Context(), writer, requestID)
+	if !ok {
+		return operator.VerifiedRequest{}, false
+	}
+	verified, err := func() (operator.VerifiedRequest, error) {
+		defer release()
+		return h.operatorRequests.Authenticate(request.Context(), request, body)
+	}()
+	if err != nil {
+		h.writeMappedError(writer, requestID, err)
+		return operator.VerifiedRequest{}, false
+	}
+	return verified, true
+}
+
+func (h *Handler) acquireCryptographicCapacity(
+	ctx context.Context,
+	writer http.ResponseWriter,
+	requestID string,
+) (func(), bool) {
+	if h.cryptographicCapacity == nil {
+		return func() {}, true
+	}
+	release, result := h.cryptographicCapacity.TryAcquire(ctx)
+	if result.Decision != AdmissionAllowed || release == nil {
+		if result.Decision == AdmissionAllowed {
+			result.Decision = AdmissionCapacityUnavailable
+		}
+		h.writeAdmissionResult(writer, requestID, result)
+		return nil, false
+	}
+	return release, true
 }
 
 func (h *Handler) writeAdmissionResult(writer http.ResponseWriter, requestID string, result AdmissionResult) bool {
@@ -647,7 +726,9 @@ func launchAdmissionKey(operatorID string) string { return "launch-operator:" + 
 func spinAdmissionKey(operatorID string) string { return "spin-operator:" + operatorID }
 
 func (h *Handler) readBody(writer http.ResponseWriter, request *http.Request, requestID string) ([]byte, bool) {
-	if request.ContentLength > h.maxRequestBytes {
+	limit := h.requestBodyLimit(request)
+	if request.ContentLength > limit {
+		closeUnreadRequestBody(request)
 		h.writeError(writer, requestID, http.StatusRequestEntityTooLarge, "BODY_TOO_LARGE", "request body is too large")
 		return nil, false
 	}
@@ -655,9 +736,10 @@ func (h *Handler) readBody(writer http.ResponseWriter, request *http.Request, re
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_JSON", "request body is invalid")
 		return nil, false
 	}
-	limited := io.LimitReader(request.Body, h.maxRequestBytes+1)
+	limited := http.MaxBytesReader(writer, request.Body, limit)
 	body, err := io.ReadAll(limited)
 	if err != nil {
+		closeUnreadRequestBody(request)
 		var maxBytesError *http.MaxBytesError
 		if errors.As(err, &maxBytesError) {
 			h.writeError(writer, requestID, http.StatusRequestEntityTooLarge, "BODY_TOO_LARGE", "request body is too large")
@@ -666,7 +748,8 @@ func (h *Handler) readBody(writer http.ResponseWriter, request *http.Request, re
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "request body could not be read")
 		return nil, false
 	}
-	if int64(len(body)) > h.maxRequestBytes {
+	if int64(len(body)) > limit {
+		closeUnreadRequestBody(request)
 		h.writeError(writer, requestID, http.StatusRequestEntityTooLarge, "BODY_TOO_LARGE", "request body is too large")
 		return nil, false
 	}
@@ -675,6 +758,27 @@ func (h *Handler) readBody(writer http.ResponseWriter, request *http.Request, re
 		return nil, false
 	}
 	return body, true
+}
+
+func closeUnreadRequestBody(request *http.Request) {
+	if request != nil && request.Body != nil && request.Body != http.NoBody {
+		// net/http 在 HTTP/1 下可能为复用连接而排空未读正文。拒绝路径不应替攻击者
+		// 继续读取最多数百 KiB；标记关闭让响应后直接释放连接。HTTP/2 不依赖该标记
+		// 回收连接，但流级正文仍受 MaxBytesReader、读取截止时间和并发 gate 限制。
+		request.Close = true
+	}
+}
+
+func (h *Handler) requestBodyLimit(request *http.Request) int64 {
+	limit := h.maxRequestBytes
+	if limit > maxPublicRequestBytes {
+		limit = maxPublicRequestBytes
+	}
+	if request != nil && request.URL != nil && request.URL.Path == ClientSessionExchangePath &&
+		limit > maxSessionExchangeRequestBytes {
+		limit = maxSessionExchangeRequestBytes
+	}
+	return limit
 }
 
 func (h *Handler) requestID(request *http.Request) string {
@@ -709,7 +813,15 @@ func (h *Handler) writeError(writer http.ResponseWriter, requestID string, statu
 }
 
 func (h *Handler) writeMappedError(writer http.ResponseWriter, requestID string, err error) {
-	if errors.Is(err, rgs.ErrWalletUnavailable) {
+	var economicAdmissionError *rgs.EconomicAdmissionError
+	if errors.As(err, &economicAdmissionError) {
+		retryAfter := economicAdmissionError.RetryAfter
+		if retryAfter <= 0 {
+			retryAfter = time.Second
+		}
+		seconds := int64((retryAfter + time.Second - 1) / time.Second)
+		writer.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	} else if errors.Is(err, rgs.ErrWalletUnavailable) {
 		writer.Header().Set("Retry-After", "1")
 	}
 	status, code, message := mapError(err)
@@ -740,6 +852,10 @@ func (h *Handler) writeJSON(writer http.ResponseWriter, requestID string, status
 
 func mapError(err error) (int, string, string) {
 	switch {
+	case errors.Is(err, rgs.ErrEconomicRateLimited):
+		return http.StatusTooManyRequests, "RATE_LIMITED", "economic intent rate limit exceeded"
+	case errors.Is(err, rgs.ErrEconomicAdmissionUnavailable):
+		return http.StatusServiceUnavailable, "ADMISSION_UNAVAILABLE", "economic intent admission is unavailable"
 	case errors.Is(err, rgs.ErrWalletUnavailable):
 		return http.StatusServiceUnavailable, "WALLET_UNAVAILABLE", "wallet is temporarily unavailable"
 	case errors.Is(err, operator.ErrNonceStore), errors.Is(err, ErrUnavailable):
@@ -1006,6 +1122,14 @@ func (h *Handler) flushSignedOperatorResponse(writer http.ResponseWriter, reques
 	}
 	ctx, cancel := context.WithTimeout(ctx, responseSigningLookupTimeout)
 	defer cancel()
+	if h.cryptographicCapacity != nil {
+		release, result := h.cryptographicCapacity.TryAcquire(ctx)
+		if result.Decision != AdmissionAllowed || release == nil {
+			h.writeUnsignedSigningFailure(writer, buffered.Header().Get(operator.HeaderRequestID))
+			return
+		}
+		defer release()
+	}
 	key, err := h.responseSigningKeys.ResolveResponseSigningKey(ctx, operatorID)
 	if err != nil || key.OperatorID != operatorID {
 		h.writeUnsignedSigningFailure(writer, buffered.Header().Get(operator.HeaderRequestID))
@@ -1043,6 +1167,7 @@ func (h *Handler) writeUnsignedSigningFailure(writer http.ResponseWriter, reques
 	writer.Header().Set(operator.HeaderRequestID, requestID)
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("X-Content-Type-Options", "nosniff")
+	writer.Header().Set("Retry-After", "1")
 	writer.WriteHeader(http.StatusServiceUnavailable)
 	_, _ = writer.Write(append(encoded, '\n'))
 }

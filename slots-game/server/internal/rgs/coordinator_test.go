@@ -80,6 +80,261 @@ func TestConcurrentIdenticalRoundEvaluatesAndAppliesWalletOnce(t *testing.T) {
 	}
 }
 
+type countingEconomicIntentAdmission struct {
+	calls atomic.Int64
+	err   error
+}
+
+func (admission *countingEconomicIntentAdmission) AdmitNewEconomicIntent(
+	_ context.Context,
+	operatorID string,
+	costUnits int,
+) error {
+	if operatorID != "operator-a" || costUnits != 1 {
+		return ErrEconomicAdmissionUnavailable
+	}
+	admission.calls.Add(1)
+	return admission.err
+}
+
+func TestEconomicAdmissionRunsOnceOnlyForFirstDurableRoundIntent(t *testing.T) {
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	wallet := newTestWallet(10_000)
+	wallet.applyDelay = 20 * time.Millisecond
+	economic := &countingEconomicIntentAdmission{}
+	coordinator := newTestCoordinatorWithEconomic(t, repository, wallet, spinner, economic)
+	request := baseRequest("round-economic-once", 100, 0)
+
+	const callers = 50
+	start := make(chan struct{})
+	var group sync.WaitGroup
+	var failures atomic.Int64
+	for range callers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			if _, err := coordinator.Spin(context.Background(), request); err != nil {
+				failures.Add(1)
+			}
+		}()
+	}
+	close(start)
+	group.Wait()
+	if failures.Load() != 0 || economic.calls.Load() != 1 || wallet.economicApplyCount() != 1 {
+		t.Fatalf("failures/economic/wallet = %d/%d/%d", failures.Load(), economic.calls.Load(), wallet.economicApplyCount())
+	}
+	if _, err := coordinator.Spin(context.Background(), request); err != nil {
+		t.Fatalf("committed replay failed: %v", err)
+	}
+	if economic.calls.Load() != 1 {
+		t.Fatalf("committed replay consumed economic budget: %d", economic.calls.Load())
+	}
+}
+
+func TestPreparedRecoveryAndReplayNeverConsumeEconomicBudgetAgain(t *testing.T) {
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	wallet := newTestWallet(10_000)
+	wallet.applyError = ErrWalletUnavailable
+	economic := &countingEconomicIntentAdmission{}
+	coordinator := newTestCoordinatorWithEconomic(t, repository, wallet, spinner, economic)
+	request := baseRequest("round-economic-recovery", 100, 0)
+
+	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("first Spin error = %v", err)
+	}
+	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("prepared replay error = %v", err)
+	}
+	if _, err := coordinator.Reconcile(context.Background(), request.Key()); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("reconcile error = %v", err)
+	}
+	if economic.calls.Load() != 1 {
+		t.Fatalf("prepared/recovery consumed economic budget %d times", economic.calls.Load())
+	}
+}
+
+func TestEconomicAdmissionRejectsBeforeRNGPersistenceAndWallet(t *testing.T) {
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	wallet := newTestWallet(10_000)
+	economic := &countingEconomicIntentAdmission{err: &EconomicAdmissionError{
+		Cause: ErrEconomicRateLimited, RetryAfter: 2 * time.Second,
+	}}
+	coordinator := newTestCoordinatorWithEconomic(t, repository, wallet, spinner, economic)
+	request := baseRequest("round-economic-rejected", 100, 0)
+
+	_, err := coordinator.Spin(context.Background(), request)
+	if !errors.Is(err, ErrEconomicRateLimited) {
+		t.Fatalf("Spin error = %v", err)
+	}
+	if economic.calls.Load() != 1 || spinner.calls.Load() != 1 || wallet.applyCalls.Load() != 0 {
+		t.Fatalf("rejected economic admission reached persistence/wallet side effects: admission=%d rng=%d wallet=%d",
+			economic.calls.Load(), spinner.calls.Load(), wallet.applyCalls.Load())
+	}
+	if _, err := repository.GetRound(context.Background(), request.Key()); !errors.Is(err, ErrRoundNotFound) {
+		t.Fatalf("rejected economic intent persisted a round: %v", err)
+	}
+}
+
+func TestNonBillablePreparationFailuresDoNotConsumeEconomicBudget(t *testing.T) {
+	t.Run("feature bet mismatch", func(t *testing.T) {
+		repository := NewMemoryRepository()
+		session := baseSession()
+		session.Feature = game.FeatureState{
+			Mode: game.FeatureOverdrive, Remaining: 2, Awarded: 8, BetMinor: 500,
+			RageLevel: game.DefaultRageLevel,
+		}
+		createTestSession(t, repository, session)
+		spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+			return payableOutcome(game.EmptyFeatureState()), nil
+		}}
+		wallet := newTestWallet(10_000)
+		economic := &countingEconomicIntentAdmission{}
+		coordinator := newTestCoordinatorWithEconomic(t, repository, wallet, spinner, economic)
+		request := baseRequest("round-feature-bet-mismatch", 100, 0)
+		request.RoundKind = RoundKindFreeSpin
+
+		if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("Spin error = %v, want ErrInvalidRequest", err)
+		}
+		if economic.calls.Load() != 0 || spinner.calls.Load() != 0 || wallet.applyCalls.Load() != 0 {
+			t.Fatalf("feature mismatch consumed work: economic=%d rng=%d wallet=%d",
+				economic.calls.Load(), spinner.calls.Load(), wallet.applyCalls.Load())
+		}
+	})
+
+	t.Run("definition resolution failure", func(t *testing.T) {
+		repository := NewMemoryRepository()
+		createTestSession(t, repository, baseSession())
+		wallet := newTestWallet(10_000)
+		economic := &countingEconomicIntentAdmission{}
+		coordinator, err := NewCoordinator(CoordinatorConfig{
+			WalletLease:             time.Second,
+			PendingWait:             time.Second,
+			PollInterval:            time.Millisecond,
+			EconomicIntentAdmission: economic,
+		}, repository, wallet, DefinitionResolverFunc(
+			func(context.Context, string, string, string) (game.Spinner, error) {
+				return nil, errors.New("definition unavailable")
+			},
+		))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := baseRequest("round-definition-unavailable", 100, 0)
+		if _, err := coordinator.Spin(context.Background(), request); err == nil ||
+			!strings.Contains(err.Error(), "definition unavailable") {
+			t.Fatalf("Spin error = %v", err)
+		}
+		if economic.calls.Load() != 0 || wallet.applyCalls.Load() != 0 {
+			t.Fatalf("definition failure consumed work: economic=%d wallet=%d",
+				economic.calls.Load(), wallet.applyCalls.Load())
+		}
+	})
+}
+
+func TestTerminalAndConflictingRoundReplaysDoNotConsumeEconomicBudget(t *testing.T) {
+	t.Run("wallet rejected replay", func(t *testing.T) {
+		repository := NewMemoryRepository()
+		createTestSession(t, repository, baseSession())
+		spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+			return payableOutcome(game.EmptyFeatureState()), nil
+		}}
+		wallet := newTestWallet(0)
+		economic := &countingEconomicIntentAdmission{}
+		coordinator := newTestCoordinatorWithEconomic(t, repository, wallet, spinner, economic)
+		request := baseRequest("round-economic-final-rejection", 100, 0)
+
+		if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletRejected) {
+			t.Fatalf("first Spin error = %v", err)
+		}
+		if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrRoundRejected) {
+			t.Fatalf("replayed Spin error = %v", err)
+		}
+		if economic.calls.Load() != 1 || spinner.calls.Load() != 1 || wallet.applyCalls.Load() != 1 {
+			t.Fatalf("rejected replay work = economic:%d rng:%d wallet:%d",
+				economic.calls.Load(), spinner.calls.Load(), wallet.applyCalls.Load())
+		}
+	})
+
+	t.Run("idempotency conflict", func(t *testing.T) {
+		repository := NewMemoryRepository()
+		createTestSession(t, repository, baseSession())
+		spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+			return payableOutcome(game.EmptyFeatureState()), nil
+		}}
+		wallet := newTestWallet(10_000)
+		economic := &countingEconomicIntentAdmission{}
+		coordinator := newTestCoordinatorWithEconomic(t, repository, wallet, spinner, economic)
+		request := baseRequest("round-economic-conflict", 100, 0)
+		if _, err := coordinator.Spin(context.Background(), request); err != nil {
+			t.Fatalf("first Spin error = %v", err)
+		}
+		request.BetMinor = 200
+		if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrIdempotencyConflict) {
+			t.Fatalf("conflicting Spin error = %v", err)
+		}
+		if economic.calls.Load() != 1 || spinner.calls.Load() != 1 || wallet.applyCalls.Load() != 1 {
+			t.Fatalf("conflicting replay work = economic:%d rng:%d wallet:%d",
+				economic.calls.Load(), spinner.calls.Load(), wallet.applyCalls.Load())
+		}
+	})
+}
+
+func TestInvalidRevisionAndPendingRoundDoNotConsumeEconomicBudget(t *testing.T) {
+	t.Run("revision conflict", func(t *testing.T) {
+		repository := NewMemoryRepository()
+		createTestSession(t, repository, baseSession())
+		spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+			return payableOutcome(game.EmptyFeatureState()), nil
+		}}
+		wallet := newTestWallet(10_000)
+		economic := &countingEconomicIntentAdmission{}
+		coordinator := newTestCoordinatorWithEconomic(t, repository, wallet, spinner, economic)
+		if _, err := coordinator.Spin(context.Background(), baseRequest("round-stale-revision", 100, 1)); !errors.Is(err, ErrRevisionConflict) {
+			t.Fatalf("Spin error = %v", err)
+		}
+		if economic.calls.Load() != 0 || spinner.calls.Load() != 0 || wallet.applyCalls.Load() != 0 {
+			t.Fatalf("stale revision consumed work: economic=%d rng=%d wallet=%d",
+				economic.calls.Load(), spinner.calls.Load(), wallet.applyCalls.Load())
+		}
+	})
+
+	t.Run("existing pending round", func(t *testing.T) {
+		repository := NewMemoryRepository()
+		createTestSession(t, repository, baseSession())
+		spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+			return payableOutcome(game.EmptyFeatureState()), nil
+		}}
+		wallet := newTestWallet(10_000)
+		wallet.applyError = ErrWalletUnavailable
+		economic := &countingEconomicIntentAdmission{}
+		coordinator := newTestCoordinatorWithEconomic(t, repository, wallet, spinner, economic)
+		if _, err := coordinator.Spin(context.Background(), baseRequest("round-wallet-pending", 100, 0)); !errors.Is(err, ErrWalletPending) {
+			t.Fatalf("first Spin error = %v", err)
+		}
+		if _, err := coordinator.Spin(context.Background(), baseRequest("round-overtake-budget", 100, 0)); !errors.Is(err, ErrRoundPending) {
+			t.Fatalf("overtaking Spin error = %v", err)
+		}
+		if economic.calls.Load() != 1 || spinner.calls.Load() != 1 || wallet.applyCalls.Load() != 1 {
+			t.Fatalf("pending replay work = economic:%d rng:%d wallet:%d",
+				economic.calls.Load(), spinner.calls.Load(), wallet.applyCalls.Load())
+		}
+	})
+}
+
 func TestCloneSpinResultIsolatesAuthoritativePreMultiplierAmount(t *testing.T) {
 	source := SpinResult{Wins: []game.Win{{
 		PathAwards: []game.PathAward{{
@@ -378,16 +633,18 @@ func TestWalletAdmissionRejectsBeforeRNGAndRoundPersistence(t *testing.T) {
 	}}
 	wallet := newTestWallet(10_000)
 	wallet.admitError = ErrWalletUnavailable
-	coordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
+	economic := &countingEconomicIntentAdmission{}
+	coordinator := newTestCoordinatorWithEconomic(t, repository, wallet, spinner, economic)
 	request := baseRequest("round-admission-rejected", 100, 0)
 
 	_, err := coordinator.Spin(context.Background(), request)
 	if !errors.Is(err, ErrWalletUnavailable) {
 		t.Fatalf("Spin() error = %v, want ErrWalletUnavailable", err)
 	}
-	if spinner.calls.Load() != 0 || wallet.applyCalls.Load() != 0 || wallet.admitCalls.Load() != 1 {
-		t.Fatalf("rejected admission reached side effects: engine=%d apply=%d admit=%d",
-			spinner.calls.Load(), wallet.applyCalls.Load(), wallet.admitCalls.Load())
+	if spinner.calls.Load() != 0 || wallet.applyCalls.Load() != 0 || wallet.admitCalls.Load() != 1 ||
+		economic.calls.Load() != 0 {
+		t.Fatalf("rejected admission reached side effects: engine=%d apply=%d admit=%d economic=%d",
+			spinner.calls.Load(), wallet.applyCalls.Load(), wallet.admitCalls.Load(), economic.calls.Load())
 	}
 	if _, err := repository.GetRound(context.Background(), request.Key()); !errors.Is(err, ErrRoundNotFound) {
 		t.Fatalf("GetRound() error = %v, want ErrRoundNotFound", err)
@@ -500,6 +757,69 @@ func TestWalletRetryLimitBlocksBeforeAnotherEconomicAttempt(t *testing.T) {
 	}
 	if wallet.applyCalls.Load() != 1 {
 		t.Fatalf("wallet attempts = %d, want 1", wallet.applyCalls.Load())
+	}
+}
+
+func TestWalletLookupRetryLimitBlocksBeforeAnotherExternalQuery(t *testing.T) {
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	wallet := newTestWallet(10_000)
+	// APPLY 的传输结果未知且后续查询持续不可用，模拟一个会把每个合法意图
+	// 放大为永久付费查询的第三方钱包故障。
+	wallet.applyError = errors.New("wallet apply outcome is unknown")
+	wallet.lookupAllowed.Store(false)
+	registry := DefinitionResolverFunc(func(context.Context, string, string, string) (game.Spinner, error) {
+		return spinner, nil
+	})
+	observer := &testRoundObserver{}
+	coordinator, err := NewCoordinator(CoordinatorConfig{
+		WalletLease: 2 * time.Millisecond, PendingWait: time.Millisecond,
+		PollInterval: time.Millisecond, MaxWalletAttempts: 1,
+	}, repository, wallet, registry, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := baseRequest("round-lookup-retry-limit", 100, 0)
+	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("first Spin error = %v, want ErrWalletPending", err)
+	}
+
+	// 配置值 1 允许第一次权威查询。它仍为 UNKNOWN 时会持久调度下一次查询。
+	if _, err := coordinator.Reconcile(context.Background(), request.Key()); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("last allowed lookup error = %v, want ErrWalletPending", err)
+	}
+	if wallet.lookupCalls.Load() != 1 {
+		t.Fatalf("lookup calls before limit = %d, want 1", wallet.lookupCalls.Load())
+	}
+
+	// 下一次领取先持久增加 lookup_attempts，再在同一 fenced claim 下隔离；
+	// 绝不能发出第二个外部查询。
+	if _, err := coordinator.Reconcile(context.Background(), request.Key()); !errors.Is(err, ErrManualReview) {
+		t.Fatalf("lookup limit error = %v, want ErrManualReview", err)
+	}
+	if wallet.lookupCalls.Load() != 1 || wallet.applyCalls.Load() != 1 {
+		t.Fatalf("limit reached external calls = apply:%d lookup:%d, want 1/1",
+			wallet.applyCalls.Load(), wallet.lookupCalls.Load())
+	}
+	record, err := repository.GetRound(context.Background(), request.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != RoundManualReview || record.WalletLookupAttempts != 2 ||
+		record.FailureReason != "wallet lookup attempt limit exceeded" ||
+		observer.manualReview.Load() != 1 {
+		t.Fatalf("lookup limit quarantine = record:%+v observations:%d",
+			record, observer.manualReview.Load())
+	}
+	session, err := repository.GetSession(context.Background(), request.OperatorID, request.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Status != SessionBlocked || session.PendingRoundID != request.RoundID {
+		t.Fatalf("lookup limit session = %+v", session)
 	}
 }
 
@@ -1070,6 +1390,32 @@ func newTestCoordinator(
 	coordinator, err := NewCoordinator(CoordinatorConfig{
 		WalletLease: time.Second, PendingWait: pendingWait, PollInterval: time.Millisecond,
 	}, repository, wallet, registry, observers...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return coordinator
+}
+
+func newTestCoordinatorWithEconomic(
+	t *testing.T,
+	repository Repository,
+	wallet WalletPort,
+	spinner game.Spinner,
+	economic EconomicIntentAdmitter,
+) *Coordinator {
+	t.Helper()
+	registry := DefinitionResolverFunc(func(_ context.Context, gameID, version, hash string) (game.Spinner, error) {
+		if gameID != "game-a" || version != "math-v1" || hash != strings.Repeat("a", 64) {
+			return nil, errors.New("unknown definition")
+		}
+		return spinner, nil
+	})
+	coordinator, err := NewCoordinator(CoordinatorConfig{
+		WalletLease:             time.Second,
+		PendingWait:             time.Second,
+		PollInterval:            time.Millisecond,
+		EconomicIntentAdmission: economic,
+	}, repository, wallet, registry)
 	if err != nil {
 		t.Fatal(err)
 	}

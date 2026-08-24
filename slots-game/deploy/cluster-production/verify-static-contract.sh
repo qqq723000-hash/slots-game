@@ -65,6 +65,13 @@ for file in \
 done
 test -x "$script_directory/verify-image-runtime-contract.sh" || fail '集群镜像动态契约不可执行'
 test -x "$script_directory/verify-prometheus-rule-contract.sh" || fail '集群告警动态契约不可执行'
+for forbidden_recovery_reserve in \
+  RGS_RECOVERY_IN_FLIGHT_RESERVE RGS_CRYPTO_RECOVERY_RESERVE \
+  recoveryInFlightReserve cryptoRecoveryReserve; do
+  if grep -R -F "$forbidden_recovery_reserve" "$chart_directory" "$repository_root/deploy/env.example" >/dev/null; then
+    fail "Chart/env 禁止按未认证 method/path 配置恢复预留: $forbidden_recovery_reserve"
+  fi
+done
 grep -F -x 'verify-cluster-image-contract:' "$makefile" >/dev/null ||
   fail 'Makefile 缺少集群镜像动态契约入口'
 grep -F 'run: make verify-cluster-image-contract' "$release_workflow" >/dev/null ||
@@ -292,6 +299,21 @@ if ruby "$script_directory/verify-rendered-contract.rb" "$replay_expression_red_
   fail '未使用 increase 的认证重放告警红灯变体被错误接受'
 fi
 
+security_log_alert_red_root="$rendered_directory/security-log-alert-red"
+cp -R "$rendered_root" "$security_log_alert_red_root"
+ruby -ryaml -e '
+  path = ARGV.fetch(0)
+  document = YAML.load_file(path)
+  rules = document.fetch("spec").fetch("groups").flat_map { |group| group.fetch("rules") }
+  alert = rules.find { |rule| rule["alert"] == "SlotsRGSSecurityLogDropsSustained" }
+  alert["expr"] = %q{sum(rgs_security_logs_dropped_total{job=~"slots-rgs|slots-rgs-worker",namespace="slots-production"}) > 0}
+  alert.delete("for")
+  File.write(path, YAML.dump(document))
+' "$security_log_alert_red_root/prometheusrule.yaml"
+if ruby "$script_directory/verify-rendered-contract.rb" "$security_log_alert_red_root" up >/dev/null 2>&1; then
+  fail '安全日志丢弃告警缺少持续窗口的红灯变体被错误接受'
+fi
+
 hpa_alert_red_root="$rendered_directory/hpa-alert-red"
 cp -R "$rendered_root" "$hpa_alert_red_root"
 ruby -ryaml -e '
@@ -350,6 +372,7 @@ require_rendered 'alert: SlotsRGSTargetUnavailable' "$rendered_root/prometheusru
 require_rendered 'alert: SlotsRGSWorkerTargetUnavailable' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSIntegrityQuarantine' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSAuthReplay' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSSecurityLogDropsSustained' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSHPAUnableToScale' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSNewIntentCapacityRejected' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSWalletResponseAuthenticationInvalid' "$rendered_root/prometheusrule.yaml"
@@ -361,6 +384,7 @@ require_rendered 'alert: SlotsRGSRecoveryLoopStale' "$rendered_root/prometheusru
 require_rendered 'alert: SlotsRGSRecoverySnapshotStale' "$rendered_root/prometheusrule.yaml"
 require_rendered 'sum(increase(rgs_new_intent_capacity_rejected_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
 require_rendered 'sum(increase(rgs_auth_replays_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
+require_rendered 'sum(increase(rgs_security_logs_dropped_total{job=~"slots-rgs|slots-rgs-worker",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
 require_rendered 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'horizontalpodautoscaler=~"slots-slots-cluster-production-rgs|slots-slots-cluster-production-rgs-worker"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'count(max by (horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_condition' "$rendered_root/prometheusrule.yaml"
@@ -402,7 +426,9 @@ for metric in \
   rgs_http_requests_total \
   rgs_capacity_rejected_total \
   rgs_new_intent_capacity_rejected_total \
+  rgs_cryptographic_capacity_rejected_total \
   rgs_auth_replays_total \
+  rgs_security_logs_dropped_total \
   rgs_wallet_unknown_outcomes_total \
   rgs_wallet_isolation_rejected_total \
   rgs_wallet_breakers \
@@ -423,6 +449,8 @@ for metric in \
   rgs_db_pool_wait_count_total; do
   grep -F "$metric" "$metrics_source" >/dev/null || fail "告警引用了后端未交付的指标: $metric"
 done
+grep -F '{"rgs_security_logs_dropped_total",' "$metrics_source" >/dev/null ||
+  fail '安全日志丢弃指标必须由后端以无业务标签 counter 交付'
 grep -F 'rgs_ready' "$repository_root/server/internal/platform/metrics_http.go" >/dev/null ||
   fail '告警引用了后端未交付的 rgs_ready 指标'
 
@@ -468,6 +496,8 @@ for override in \
   'externalSecrets.workerRuntimeAssets.name=slots-rgs-api-runtime-assets-v1' \
   'externalSecrets.migratorDatabase.name=slots-rgs-runtime-database-v1' \
   'ingress.tlsRedirectAnnotationKey=' \
+  'ingress.apiHealthCheckPath=/readyz' \
+  'ingress.apiHealthCheckPort=8080' \
   'fullnameOverride=Bad_Name' \
   'rgs.replicaCount=2' \
   'rgs.pdb.minAvailable=3' \
@@ -480,9 +510,21 @@ for override in \
   'rgs.runtime.databaseMaxOpenConnections=2,rgs.runtime.databaseMaxIdleConnections=3' \
   'rgs.runtime.databaseMaxOpenConnections=20,rgs.runtime.databaseCriticalReserveConnections=20' \
   'rgs.runtime.databaseMaxOpenConnections=201' \
+  'rgs.runtime.maxRequestBytes=8193' \
   'rgs.runtime.maxInFlightRequests=4097' \
+  'rgs.runtime.recoveryInFlightReserve=1' \
+  'rgs.runtime.maxCryptoInFlight=1025' \
+  'rgs.runtime.cryptoRecoveryReserve=1' \
   'rgs.runtime.maxConnectionsPerListener=16385' \
+  'rgs.sharedAdmission.ratePerSecond=125.5001' \
+  'rgs.sharedAdmission.economic.operatorRatePerSecond=0' \
+  'rgs.sharedAdmission.economic.operatorRatePerSecond=25.5001' \
+  'rgs.sharedAdmission.economic.operatorRateBurst=1000001' \
+  'rgs.sharedAdmission.economic.backendRatePerSecond=100001' \
+  'rgs.sharedAdmission.economic.backendRateBurst=0' \
   'worker.runtime.databaseMaxOpenConnections=2,worker.runtime.databaseMaxIdleConnections=3' \
+  'worker.runtime.maxCryptoInFlight=1025' \
+  'worker.runtime.cryptoRecoveryReserve=1' \
   'worker.runtime.maxConnectionsPerListener=16385' \
   'rgs.shutdownTimeoutSeconds=60,rgs.terminationGracePeriodSeconds=64' \
   'worker.shutdownTimeoutSeconds=60,worker.terminationGracePeriodSeconds=64' \

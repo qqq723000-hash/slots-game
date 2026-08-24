@@ -69,6 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           test -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+          ruby -c deploy/aws-production/verify-waf-rollout-evidence.rb
           deploy/aws-production/workflow/verify-contract.sh
           deploy/aws-production/workflow/test-negative-contract.sh
           make -C infra/terraform verify
@@ -517,6 +518,11 @@ jobs:
             terraform show -json "$TF_PLAN_DIR/terraform.tfplan" |
               ruby "$GITHUB_WORKSPACE/slots-game/infra/terraform/scripts/verify-valkey-rotation-plan.rb" -
           fi
+          source_sha=$(sed -n 's/^SOURCE_SHA=//p' "$TF_PLAN_DIR/plan-metadata.env")
+          test "$source_sha" = "$GITHUB_SHA"
+          terraform show -json "$TF_PLAN_DIR/terraform.tfplan" |
+            ruby "$GITHUB_WORKSPACE/slots-game/deploy/aws-production/verify-waf-rollout-evidence.rb" \
+              --terraform-plan aws "$AWS_REGION" "$source_sha"
           terraform apply -input=false -auto-approve -lock-timeout=10m "$TF_PLAN_DIR/terraform.tfplan"
 
       - name: 发布精确版本的 Terraform 应用交接对象
@@ -541,6 +547,22 @@ jobs:
             .valkey_rotation_mode as $rotation_mode |
             (.valkey_secret_name | capture("-v(?<version>[1-9][0-9]*)$").version | tonumber) as $secret_version |
             .environment == $target and .aws_account_id == $account and .aws_region == $region and
+            (.alb_security_group_id | test("^sg-[0-9a-f]+$")) and
+            .alb_egress_target_ports == [8080, 8081] and
+            (.alb_access_log_bucket_name | test("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")) and
+            (.alb_access_log_prefix | test("^[a-z0-9][a-z0-9/_-]{1,127}$")) and
+            $handoff.alb_access_logs == {
+              "bucket": .alb_access_log_bucket_name, "prefix": .alb_access_log_prefix
+            } and
+            .api_alb_tls_policy == "ELBSecurityPolicy-TLS13-1-2-2021-06" and
+            .application_handoff.api_alb_tls_policy == .api_alb_tls_policy and
+            (.regional_acm_certificate_arn | startswith("arn:aws:acm:\($region):\($account):certificate/")) and
+            (.public_subnet_ids | type == "array" and length == 3 and (unique | length) == 3) and
+            all(.public_subnet_ids[]; test("^subnet-[0-9a-f]+$")) and
+            (.public_subnet_cidrs | type == "array" and length == 3 and (unique | length) == 3) and
+            all(.public_subnet_cidrs[]; test("^[0-9.]+/[0-9]+$")) and
+            (.vpc_id | test("^vpc-[0-9a-f]+$")) and
+            (.vpc_cidr | test("^[0-9.]+/[0-9]+$")) and
             .application_namespace == $namespace and .helm_release_name == $release and
             (.cluster_arn | startswith("arn:aws:eks:\($region):\($account):cluster/")) and
             (.cluster_name | type == "string" and length > 0) and
@@ -548,6 +570,26 @@ jobs:
             all(.ecr_repository_urls[]; startswith("\($registry)/")) and
             (.web_bucket_name | type == "string" and length > 0) and
             (.web_kms_key_arn | startswith("arn:aws:kms:\($region):\($account):key/")) and
+            (.cloudfront_distribution_id | test("^[A-Z0-9]+$")) and
+            (.cloudfront_distribution_domain_name | test("^[a-z0-9-]+\\.cloudfront\\.net$")) and
+            (.cloudfront_alias_domain_name | test("^[a-z0-9][a-z0-9.-]+\\.[a-z]{2,}$")) and
+            (.cloudfront_acm_certificate_arn |
+              startswith("arn:aws:acm:us-east-1:\($account):certificate/")) and
+            (.cloudfront_origin_access_control_id | test("^[A-Z0-9]+$")) and
+            (.cloudfront_cache_policy_id | test("^[0-9a-f-]{36}$")) and
+            (.cloudfront_response_headers_policy_id | test("^[0-9a-f-]{36}$")) and
+            (.cloudfront_log_bucket_domain_name |
+              test("^[a-z0-9][a-z0-9.-]+\\.s3\\.amazonaws\\.com$")) and
+            .cloudfront_log_prefix == "cloudfront/" and
+            (.cloudfront_release_request_function_name | endswith("-release-request")) and
+            .cloudfront_release_request_function_arn ==
+              ("arn:aws:cloudfront::" + $account + ":function/" +
+                .cloudfront_release_request_function_name) and
+            ((.cloudfront_release_request_function_name |
+              sub("-release-request$"; "-release-response")) as $response_function |
+              .cloudfront_release_response_function_name == $response_function and
+              .cloudfront_release_response_function_arn ==
+                ("arn:aws:cloudfront::" + $account + ":function/" + $response_function)) and
             (.cluster_autoscaler_role_arn | startswith("arn:aws:iam::\($account):role/")) and
             (.secret_sync_role_arn | startswith("arn:aws:iam::\($account):role/")) and
             (.amp_writer_role_arn | startswith("arn:aws:iam::\($account):role/")) and
@@ -583,6 +625,7 @@ jobs:
             $rotation.hmac_maintenance_attestation_schema == "slots-game/hmac-quiesce-attestation/v1" and
             $rotation.hmac_maintenance_evidence_maximum_ttl_seconds == 3600 and
             $rotation.hmac_maintenance_persistent_lock_name == "slots-hmac-maintenance-lock" and
+            $rotation.acl_command_profile == "v2-economic" and
             $rotation.acl_schema_version == "v2" and
             $rotation.acl_schema_transition == "maintenance-quiesced" and
             $rotation.acl_schema_migration_requires_quiesced == true and
@@ -602,6 +645,7 @@ jobs:
             $handoff.contract_version == "1.0.0" and
             $handoff.foundation_apply_is_application_ready == false and
             $handoff.application_namespace == $namespace and $handoff.helm_release_name == $release and
+            $handoff.alb_egress_target_ports == [8080, 8081] and
             $handoff.application_release_allowed == .application_release_allowed and
             $handoff.maintenance_in_progress == .maintenance_in_progress and
             $handoff.cluster_autoscaler_inline_policy_name == .cluster_autoscaler_inline_policy_name and
@@ -622,6 +666,44 @@ jobs:
               startswith("v\($handoff.kubernetes_version).")) and
             ($handoff.metrics_server_addon_version |
               test("^v[0-9]+\\.[0-9]+\\.[0-9]+-eksbuild\\.[0-9]+$")) and
+            ($handoff.vpc_cni_network_policy | keys | sort) ==
+              ["addon_name", "addon_version", "configuration_values", "expected_status", "pod_identity"] and
+            $handoff.vpc_cni_network_policy.addon_name == "vpc-cni" and
+            ($handoff.vpc_cni_network_policy.addon_version |
+              test("^v[0-9]+\\.[0-9]+\\.[0-9]+-eksbuild\\.[0-9]+$")) and
+            $handoff.vpc_cni_network_policy.expected_status == "ACTIVE" and
+            $handoff.vpc_cni_network_policy.configuration_values == {"enableNetworkPolicy": "true"} and
+            $handoff.vpc_cni_network_policy.pod_identity.namespace == "kube-system" and
+            $handoff.vpc_cni_network_policy.pod_identity.service_account == "aws-node" and
+            ($handoff.vpc_cni_network_policy.pod_identity.role_arn |
+              startswith("arn:aws:iam::\($account):role/")) and
+            ($handoff.cloudwatch_observability.addon_version |
+              test("^v[0-9]+\\.[0-9]+\\.[0-9]+-eksbuild\\.[0-9]+$")) and
+            $handoff.cloudwatch_observability.configuration_values.containerLogs.enabled == true and
+            $handoff.cloudwatch_observability == {
+              "addon_name": "amazon-cloudwatch-observability",
+              "addon_version": $handoff.cloudwatch_observability.addon_version,
+              "expected_status": "ACTIVE",
+              "configuration_values": {
+                "agent": {"config": {"logs": {"metrics_collected": {"kubernetes": {
+                  "enhanced_container_insights": true
+                }}}}},
+                "containerLogs": {"enabled": true}
+              },
+              "pod_identity": {
+                "namespace": "amazon-cloudwatch",
+                "service_account": "cloudwatch-agent",
+                "role_arn": $handoff.cloudwatch_observability.pod_identity.role_arn
+              },
+              "workloads": [
+                {"namespace": "amazon-cloudwatch", "kind": "DaemonSet", "name": "cloudwatch-agent",
+                  "minimum_pods": 1, "service_account": "cloudwatch-agent", "container_name": "cloudwatch-agent"},
+                {"namespace": "amazon-cloudwatch", "kind": "DaemonSet", "name": "fluent-bit",
+                  "minimum_pods": 1, "service_account": "fluent-bit", "container_name": "fluent-bit"}
+              ]
+            } and
+            ($handoff.cloudwatch_observability.pod_identity.role_arn |
+              startswith("arn:aws:iam::\($account):role/")) and
             $handoff.required_deployments == {
               "aws_load_balancer_controller": "kube-system/aws-load-balancer-controller",
               "cluster_autoscaler": "kube-system/cluster-autoscaler",
@@ -642,7 +724,7 @@ jobs:
             --key "$AWS_TERRAFORM_DELIVERY_KEY" --body "$delivery_file" \
             --content-type application/json --cache-control no-store \
             --server-side-encryption aws:kms --ssekms-key-id "$AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN" \
-            --metadata "schema-version=1,content-sha256=${delivery_sha256},source-sha=${GITHUB_SHA},target-environment=${TARGET_ENVIRONMENT},aws-account-id=${AWS_ACCOUNT_ID},aws-region=${AWS_REGION},workflow-run-id=${GITHUB_RUN_ID},workflow-run-attempt=${GITHUB_RUN_ATTEMPT},plan-sha256=${plan_sha256}" \
+            --metadata "schema-version=1,content-sha256=${delivery_sha256},source-sha=${source_sha},target-environment=${TARGET_ENVIRONMENT},aws-account-id=${AWS_ACCOUNT_ID},aws-region=${AWS_REGION},workflow-run-id=${GITHUB_RUN_ID},workflow-run-attempt=${GITHUB_RUN_ATTEMPT},plan-sha256=${plan_sha256}" \
             --output json > "$put_result"
           version_id=$(jq -er '.VersionId | select(test("^[A-Za-z0-9._~+/=-]{1,1024}$"))' "$put_result")
           aws s3api head-object --bucket "$AWS_TERRAFORM_DELIVERY_BUCKET" \
@@ -650,7 +732,7 @@ jobs:
             --output json > "$head_result"
           # shellcheck disable=SC2016
           jq -e --arg version "$version_id" --arg kms "$AWS_TERRAFORM_DELIVERY_KMS_KEY_ARN" \
-            --arg source "$GITHUB_SHA" --arg target "$TARGET_ENVIRONMENT" \
+            --arg source "$source_sha" --arg target "$TARGET_ENVIRONMENT" \
             --arg account "$AWS_ACCOUNT_ID" --arg region "$AWS_REGION" --arg plan "$plan_sha256" \
             --arg content_sha "$delivery_sha256" '
             .VersionId == $version and .ContentLength > 0 and

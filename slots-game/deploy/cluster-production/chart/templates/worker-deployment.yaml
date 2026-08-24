@@ -166,6 +166,8 @@ spec:
               value: {{ .Values.worker.runtime.databaseMaxOpenConnections | quote }}
             - name: RGS_DB_MAX_IDLE_CONNS
               value: {{ .Values.worker.runtime.databaseMaxIdleConnections | quote }}
+            - name: RGS_MAX_CRYPTO_IN_FLIGHT
+              value: {{ .Values.worker.runtime.maxCryptoInFlight | quote }}
             - name: RGS_MAX_CONNECTIONS_PER_LISTENER
               value: {{ .Values.worker.runtime.maxConnectionsPerListener | quote }}
             - name: RGS_WALLET_TIMEOUT

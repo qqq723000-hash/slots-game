@@ -2,6 +2,7 @@
 # 在 VPC 内受保护执行器上验证集群 add-on；本脚本不会安装或修改任何资源。
 set -eu
 
+script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 delivery_json=${1:-}
 application_namespace=${2:-slots-production}
 kubectl_binary=${KUBECTL_BIN:-kubectl}
@@ -33,6 +34,30 @@ ruby -rjson -ruri -e '
   abort "应用发布状态在 delivery 与 handoff 之间不一致" unless
     handoff.fetch("application_release_allowed") == value.fetch("application_release_allowed") &&
     handoff.fetch("maintenance_in_progress") == value.fetch("maintenance_in_progress")
+  abort "ALB SG target egress 端口合同不完整" unless
+    value.fetch("alb_egress_target_ports") == [8080, 8081] &&
+      handoff.fetch("alb_egress_target_ports") == [8080, 8081]
+  abort "ALB SG 或公网子网 delivery 不合法" unless
+    value.fetch("alb_security_group_id").match?(/\Asg-[0-9a-f]+\z/) &&
+      value.fetch("public_subnet_ids").is_a?(Array) &&
+      value.fetch("public_subnet_ids").length == 3 &&
+      value.fetch("public_subnet_ids").uniq.length == 3 &&
+      value.fetch("public_subnet_ids").all? { |subnet| subnet.match?(/\Asubnet-[0-9a-f]+\z/) } &&
+      value.fetch("public_subnet_cidrs").is_a?(Array) &&
+      value.fetch("public_subnet_cidrs").length == 3 &&
+      value.fetch("public_subnet_cidrs").uniq.length == 3 &&
+      value.fetch("public_subnet_cidrs").all? { |cidr| cidr.match?(/\A(?:[0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}\z/) }
+  abort "ALB regional ACM 或 TLS policy delivery 不合法" unless
+    value.fetch("regional_acm_certificate_arn").match?(%r{\Aarn:(aws|aws-us-gov):acm:#{Regexp.escape(value.fetch("aws_region"))}:#{value.fetch("aws_account_id")}:certificate/[0-9a-f-]{36}\z}) &&
+      value.fetch("api_alb_tls_policy") == "ELBSecurityPolicy-TLS13-1-2-2021-06" &&
+      handoff.fetch("api_alb_tls_policy") == value.fetch("api_alb_tls_policy")
+  abort "ALB access log bucket/prefix delivery 未精确绑定 handoff" unless
+    value.fetch("alb_access_log_bucket_name").match?(/\A[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\z/) &&
+      value.fetch("alb_access_log_prefix").match?(%r{\A[a-z0-9][a-z0-9/_-]{1,127}\z}) &&
+      handoff.fetch("alb_access_logs") == {
+        "bucket" => value.fetch("alb_access_log_bucket_name"),
+        "prefix" => value.fetch("alb_access_log_prefix"),
+      }
 
   expected = %w[
     aws-load-balancer-controller
@@ -55,6 +80,53 @@ ruby -rjson -ruri -e '
   metrics_server_version = handoff.fetch("metrics_server_addon_version")
   abort "metrics-server 没有使用精确 EKS add-on 版本" unless
     metrics_server_version.match?(/\Av[0-9]+\.[0-9]+\.[0-9]+-eksbuild\.[0-9]+\z/)
+  vpc_cni = handoff.fetch("vpc_cni_network_policy")
+  abort "vpc-cni NetworkPolicy delivery 键集合不精确" unless
+    vpc_cni.keys.sort == %w[addon_name addon_version configuration_values expected_status pod_identity]
+  abort "vpc-cni NetworkPolicy add-on 版本、状态或配置合同不合法" unless
+    vpc_cni.fetch("addon_name") == "vpc-cni" &&
+      vpc_cni.fetch("addon_version").match?(/\Av[0-9]+\.[0-9]+\.[0-9]+-eksbuild\.[0-9]+\z/) &&
+      vpc_cni.fetch("expected_status") == "ACTIVE" &&
+      vpc_cni.fetch("configuration_values") == {"enableNetworkPolicy" => "true"}
+  vpc_cni_identity = vpc_cni.fetch("pod_identity")
+  abort "vpc-cni aws-node Pod Identity delivery 不合法" unless
+    vpc_cni_identity.keys.sort == %w[namespace role_arn service_account] &&
+      vpc_cni_identity.fetch("namespace") == "kube-system" &&
+      vpc_cni_identity.fetch("service_account") == "aws-node" &&
+      vpc_cni_identity.fetch("role_arn").match?(%r{\Aarn:(aws|aws-us-gov):iam::#{value.fetch("aws_account_id")}:role/.+\z})
+  cloudwatch = handoff.fetch("cloudwatch_observability")
+  abort "CloudWatch Observability delivery 键集合不精确" unless
+    cloudwatch.keys.sort == %w[addon_name addon_version configuration_values expected_status pod_identity workloads]
+  expected_cloudwatch_configuration = {
+    "agent" => {"config" => {"logs" => {"metrics_collected" => {
+      "kubernetes" => {"enhanced_container_insights" => true},
+    }}}},
+    "containerLogs" => {"enabled" => true},
+  }
+  abort "CloudWatch Observability add-on 版本、状态或配置合同不合法" unless
+    cloudwatch.fetch("addon_name") == "amazon-cloudwatch-observability" &&
+      cloudwatch.fetch("addon_version").match?(/\Av[0-9]+\.[0-9]+\.[0-9]+-eksbuild\.[0-9]+\z/) &&
+      cloudwatch.fetch("expected_status") == "ACTIVE" &&
+      cloudwatch.fetch("configuration_values") == expected_cloudwatch_configuration
+  cloudwatch_identity = cloudwatch.fetch("pod_identity")
+  abort "CloudWatch Agent Pod Identity delivery 不合法" unless
+    cloudwatch_identity.keys.sort == %w[namespace role_arn service_account] &&
+      cloudwatch_identity.fetch("namespace") == "amazon-cloudwatch" &&
+      cloudwatch_identity.fetch("service_account") == "cloudwatch-agent" &&
+      cloudwatch_identity.fetch("role_arn").match?(%r{\Aarn:(aws|aws-us-gov):iam::#{value.fetch("aws_account_id")}:role/.+\z})
+  abort "CloudWatch Observability workload delivery 不合法" unless
+    cloudwatch.fetch("workloads") == [
+      {
+        "namespace" => "amazon-cloudwatch", "kind" => "DaemonSet",
+        "name" => "cloudwatch-agent", "minimum_pods" => 1,
+        "service_account" => "cloudwatch-agent", "container_name" => "cloudwatch-agent",
+      },
+      {
+        "namespace" => "amazon-cloudwatch", "kind" => "DaemonSet",
+        "name" => "fluent-bit", "minimum_pods" => 1,
+        "service_account" => "fluent-bit", "container_name" => "fluent-bit",
+      },
+    ]
   expected_deployments = {
     "aws_load_balancer_controller" => "kube-system/aws-load-balancer-controller",
     "cluster_autoscaler" => "kube-system/cluster-autoscaler",
@@ -75,7 +147,134 @@ ruby -rjson -ruri -e '
     value.fetch("helm_release_name") == handoff.fetch("helm_release_name") &&
     value.fetch("helm_release_name").match?(/\A[a-z0-9]([-a-z0-9]{0,51}[a-z0-9])?\z/)
 
+  edge = value.fetch("api_edge_security_contract")
+  abort "API 边缘安全合同在 delivery 与 handoff 之间不一致" unless
+    edge == handoff.fetch("api_edge_security")
+  expected_waf_arn = value.fetch("api_waf_web_acl_arn")
+  abort "API 区域 WAF ARN 不合法或与合同不一致" unless
+    expected_waf_arn.match?(%r{\Aarn:(aws|aws-us-gov):wafv2:#{Regexp.escape(value.fetch("aws_region"))}:#{value.fetch("aws_account_id")}:regional/webacl/[A-Za-z0-9_-]+/[0-9a-f-]+\z}) &&
+    edge.fetch("web_acl_arn") == expected_waf_arn
+  abort "API 公网入口权威模型错误" unless
+    edge.fetch("contract_version") == "1.0.0" &&
+      edge.fetch("authoritative_public_entry") == "internet-facing-alb" &&
+      edge.fetch("web_acl_scope") == "REGIONAL" &&
+      edge.fetch("default_action") == "ALLOW" &&
+      edge.fetch("shield_standard_automatic") == true &&
+      edge.fetch("cloudfront_is_api_proxy") == false &&
+      edge.fetch("origin_bypass_model") == "not-applicable-alb-is-authoritative-origin"
+  abort "API WAF 资源名与 CloudWatch metric dimension 合同未显式分离" unless
+    edge.fetch("web_acl_name").is_a?(String) && !edge.fetch("web_acl_name").empty? &&
+      edge.fetch("web_acl_metric_name").is_a?(String) && !edge.fetch("web_acl_metric_name").empty?
+  valid_rollout = lambda do |rollout|
+    (rollout == {"action" => "count", "evidence_reference" => "observation-pending"}) ||
+      (rollout.fetch("action") == "block" &&
+        rollout.fetch("evidence_reference").match?(%r{\As3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[^?#]+\?versionId=[A-Za-z0-9._~+/=-]{1,1024}#[0-9a-f]{64}\z}))
+  end
+  abort "API body 边缘限制没有失败闭合" unless
+    edge.fetch("body_inspection_limit_bytes") == 8192 &&
+      edge.fetch("application_body_limit_bytes") == 8192 &&
+      edge.fetch("oversized_body_action") == "BLOCK_AT_WAF_AND_APPLICATION" &&
+      edge.fetch("required_size_rule_names").sort == %w[body-size-limit header-size-limit]
+  abort "API 公网 health path 没有在 WAF 失败闭合或 ALB 探针端口错误" unless
+    edge.fetch("public_health_path") == "/healthz" &&
+      edge.fetch("public_health_path_action") == "BLOCK_AT_WAF" &&
+      edge.fetch("alb_target_health_port") == 8081 &&
+      edge.fetch("required_path_rule_names").sort == %w[
+        public-healthz-block public-protocol-surface-block
+      ] &&
+      edge.fetch("allowed_public_path_prefixes") == ["/client/", "/operator/"] &&
+      edge.fetch("allowed_public_methods") == %w[GET OPTIONS POST]
+  abort "API aggregate header 规则阶段或最大合法请求头证据不合法" unless
+    valid_rollout.call(edge.fetch("header_size_rule_rollout"))
+  abort "API WAF 日志合同没有要求 query string 全量脱敏" unless
+    edge.fetch("query_string_redacted") == true &&
+      edge.fetch("sampled_requests_enabled") == false
+  abort "API WAF managed/rate 规则合同不完整" unless
+    edge.fetch("required_managed_rule_groups").sort == %w[
+      AWSManagedRulesAmazonIpReputationList
+      AWSManagedRulesCommonRuleSet
+      AWSManagedRulesKnownBadInputsRuleSet
+      AWSManagedRulesSQLiRuleSet
+    ].sort &&
+      edge.fetch("required_rate_rule_names").sort == %w[
+        launch-rate-limit public-api-rate-limit spin-rate-limit
+      ] &&
+      edge.fetch("low_rate_rule_method") == "POST" &&
+      edge.fetch("public_rate_rule_methods") == %w[GET OPTIONS POST] &&
+      edge.fetch("rate_limit_response") == {
+        "status_code" => 429,
+        "retry_after_seconds" => 30,
+        "access_control_allow_origin" => "*",
+        "access_control_expose_header" => "Retry-After, X-RGS-Edge-Error",
+        "edge_error_header" => "X-RGS-Edge-Error",
+        "edge_error_value" => "RATE_LIMITED",
+      }
+  api_managed_versions = edge.fetch("managed_rule_versions")
+  abort "API managed rule 精确版本或 evidence KMS key 合同不完整" unless
+    api_managed_versions.keys.sort == %w[amazon-ip-reputation common known-bad-inputs sqli] &&
+      api_managed_versions.values.all? { |version| version.match?(/\AVersion_[0-9]+\.[0-9]+\z/) } &&
+      edge.fetch("evidence_kms_key_arn").match?(%r{\Aarn:(aws|aws-us-gov):kms:#{Regexp.escape(value.fetch("aws_region"))}:#{value.fetch("aws_account_id")}:key/[0-9a-f-]{36}\z})
+  rate_rollouts = edge.fetch("rate_rule_rollouts")
+  abort "API rate rules Count→Block 状态或校准证据不完整" unless
+    rate_rollouts.keys.sort == edge.fetch("required_rate_rule_names").sort &&
+      rate_rollouts.values.all? { |rollout| valid_rollout.call(rollout) }
+  api_rollout = edge.fetch("managed_rule_rollout")
+  abort "API managed rules Count→Block 状态或证据引用不合法" unless
+    valid_rollout.call(api_rollout)
+
+  web_edge = value.fetch("cloudfront_edge_security_contract")
+  abort "CloudFront 边缘安全合同在 delivery 与 handoff 之间不一致" unless
+    web_edge == handoff.fetch("cloudfront_edge_security")
+  global_waf_arn = value.fetch("cloudfront_waf_web_acl_arn")
+  abort "CloudFront global WAF ARN 不合法或与合同不一致" unless
+    global_waf_arn.match?(%r{\Aarn:(aws|aws-us-gov):wafv2:us-east-1:#{value.fetch("aws_account_id")}:global/webacl/[A-Za-z0-9_-]+/[0-9a-f-]+\z}) &&
+      web_edge.fetch("web_acl_arn") == global_waf_arn
+  abort "CloudFront 静态 Web 权威入口或私有源站模型错误" unless
+    web_edge.fetch("contract_version") == "1.0.0" &&
+      web_edge.fetch("authoritative_public_entry") == "cloudfront" &&
+      web_edge.fetch("origin_type") == "private-s3-oac" &&
+      web_edge.fetch("origin_public_access_blocked") == true &&
+      web_edge.fetch("api_proxy") == false &&
+      web_edge.fetch("web_acl_scope") == "CLOUDFRONT" &&
+      web_edge.fetch("waf_ownership") == "enterprise-platform" &&
+      web_edge.fetch("waf_home_region") == "us-east-1" &&
+      web_edge.fetch("shield_standard_automatic") == true &&
+      web_edge.fetch("route53_alias_ownership") == "enterprise-platform"
+  abort "CloudFront WAF managed/rate/logging 合同不完整" unless
+    web_edge.fetch("required_managed_rule_groups").sort == %w[
+      AWSManagedRulesAmazonIpReputationList
+      AWSManagedRulesCommonRuleSet
+      AWSManagedRulesKnownBadInputsRuleSet
+    ].sort &&
+      web_edge.fetch("required_rate_rule_names") == ["web-rate-limit"] &&
+      web_edge.fetch("rate_limit_per_minute").is_a?(Integer) &&
+      web_edge.fetch("rate_limit_per_minute") >= 100 &&
+      web_edge.fetch("waf_log_filter") == "BLOCK_AND_COUNT_ONLY" &&
+      web_edge.fetch("query_string_redacted") == true &&
+      web_edge.fetch("sampled_requests_enabled") == false &&
+      web_edge.fetch("web_acl_metric_name").match?(/\A[A-Za-z0-9_-]{1,128}\z/) &&
+      web_edge.fetch("rule_metric_names").keys.sort == %w[
+        amazon-ip-reputation common known-bad-inputs web-rate-limit
+      ] && web_edge.fetch("rule_metric_names").values.uniq.length == 4 &&
+      web_edge.fetch("rule_metric_names").values.all? { |name| name.match?(/\A[A-Za-z0-9_-]{1,128}\z/) }
+  web_managed_versions = web_edge.fetch("managed_rule_versions")
+  abort "CloudFront managed rule 精确版本或 evidence KMS key 合同不完整" unless
+    web_managed_versions.keys.sort == %w[amazon-ip-reputation common known-bad-inputs] &&
+      web_managed_versions.values.all? { |version| version.match?(/\AVersion_[0-9]+\.[0-9]+\z/) } &&
+      web_edge.fetch("evidence_kms_key_arn") == edge.fetch("evidence_kms_key_arn")
+  web_rollout = web_edge.fetch("managed_rule_rollout")
+  abort "CloudFront managed rules Count→Block 状态或证据引用不合法" unless
+    valid_rollout.call(web_rollout)
+  abort "CloudFront rate rule Count→Block 状态或校准证据不合法" unless
+    valid_rollout.call(web_edge.fetch("rate_rule_rollout"))
+
   %w[
+    alb_egress_target_ports
+    alb_security_group_id
+    api_alb_tls_policy
+    alert_topic_arn
+    api_edge_security_contract
+    api_waf_web_acl_arn
     amp_remote_write_endpoint
     amp_writer_role_arn
     application_release_allowed
@@ -84,19 +283,43 @@ ruby -rjson -ruri -e '
     cluster_autoscaler_role_arn
     cluster_autoscaler_inline_policy_name
     cluster_name
+    cloudfront_acm_certificate_arn
+    cloudfront_alias_domain_name
+    cloudfront_cache_policy_id
+    cloudfront_distribution_domain_name
+    cloudfront_distribution_id
+    cloudfront_edge_security_contract
+    cloudfront_log_bucket_domain_name
+    cloudfront_log_prefix
+    cloudfront_origin_access_control_id
+    cloudfront_release_request_function_arn
+    cloudfront_release_request_function_name
+    cloudfront_release_response_function_arn
+    cloudfront_release_response_function_name
+    cloudfront_response_headers_policy_id
+    cloudfront_waf_web_acl_arn
     environment
     maintenance_in_progress
+    public_subnet_ids
+    public_subnet_cidrs
+    regional_acm_certificate_arn
     secret_sync_role_arn
     valkey_endpoint_url
     valkey_active_slot
+    valkey_maxmemory_policy
+    valkey_parameter_group_name
     valkey_password_versions
     valkey_primary_endpoint
+    valkey_replication_group_id
     valkey_rotation_contract
     valkey_rotation_mode
     valkey_secret_arn
     valkey_secret_name
     valkey_user_name
     valkey_user_names
+    vpc_cidr
+    vpc_id
+    web_bucket_name
     workload_client_security_group_id
   ].each do |key|
     abort "delivery 缺少 #{key}" if value.fetch(key).to_s.empty?
@@ -120,6 +343,10 @@ ruby -rjson -ruri -e '
   valkey_url = URI.parse(value.fetch("valkey_endpoint_url"))
   abort "Valkey URL 必须是无凭据 rediss origin" unless valkey_url.scheme == "rediss" && valkey_url.host &&
     valkey_url.userinfo.nil? && valkey_url.query.nil? && valkey_url.fragment.nil?
+  abort "Valkey noeviction delivery 不合法" unless
+    value.fetch("valkey_maxmemory_policy") == "noeviction" &&
+      value.fetch("valkey_parameter_group_name").match?(/\A[a-z0-9][a-z0-9-]{0,254}\z/) &&
+      value.fetch("valkey_replication_group_id").match?(/\A[a-z0-9][a-z0-9-]{0,39}\z/)
 
   active_slot = value.fetch("valkey_active_slot")
   user_names = value.fetch("valkey_user_names")
@@ -149,6 +376,7 @@ ruby -rjson -ruri -e '
     rotation.fetch("hmac_maintenance_attestation_schema") == "slots-game/hmac-quiesce-attestation/v1" &&
     rotation.fetch("hmac_maintenance_evidence_maximum_ttl_seconds") == 3600 &&
     rotation.fetch("hmac_maintenance_persistent_lock_name") == "slots-hmac-maintenance-lock" &&
+    rotation.fetch("acl_command_profile") == "v2-economic" &&
     rotation.fetch("acl_schema_version") == "v2" &&
     rotation.fetch("acl_schema_transition") == "maintenance-quiesced" &&
     rotation.fetch("acl_schema_migration_requires_quiesced") == true &&
@@ -216,6 +444,25 @@ check_deployment() {
     workload = JSON.parse(STDIN.read)
     expected = ARGV.fetch(0)
     chart_version = ARGV.fetch(1).tr("+", "_")
+    integer = lambda do |name, value|
+      abort "Deployment #{name} 不是整数" unless value.is_a?(Integer)
+      value
+    end
+    desired = integer.call("spec.replicas", workload.dig("spec", "replicas"))
+    generation = integer.call("metadata.generation", workload.dig("metadata", "generation"))
+    abort "Deployment 正在删除" unless workload.dig("metadata", "deletionTimestamp").nil?
+    status = workload.fetch("status")
+    observed = integer.call("status.observedGeneration", status["observedGeneration"])
+    replicas = integer.call("status.replicas", status["replicas"])
+    updated = integer.call("status.updatedReplicas", status["updatedReplicas"])
+    ready = integer.call("status.readyReplicas", status["readyReplicas"])
+    available = integer.call("status.availableReplicas", status["availableReplicas"])
+    unavailable = integer.call("status.unavailableReplicas", status.fetch("unavailableReplicas", 0))
+    abort "Deployment 期望副本数必须至少为 1" unless desired >= 1
+    abort "Deployment controller 尚未观测最新 generation" unless observed == generation
+    abort "Deployment total/updated/ready/available 副本尚未全部收敛" unless
+      replicas == desired && updated == desired && ready == desired && available == desired
+    abort "Deployment 仍有不可用副本" unless unavailable == 0
     actual = workload.dig("spec", "template", "spec", "serviceAccountName")
     abort "Deployment 没有绑定约定 ServiceAccount" unless actual == expected
     chart = workload.dig("metadata", "labels", "helm.sh/chart").to_s
@@ -233,8 +480,642 @@ check_deployment monitoring kube-prometheus-stack-operator kube-prometheus-stack
   "$(json_value application_handoff addon_versions kube-prometheus-stack)"
 
 aws_region=$(json_value aws_region)
+valkey_replication_group_id=$(json_value valkey_replication_group_id)
+valkey_parameter_group_name=$(json_value valkey_parameter_group_name)
+
+"$aws_binary" elasticache describe-replication-groups \
+  --replication-group-id "$valkey_replication_group_id" \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read).fetch("ReplicationGroups")
+    expected = ARGV.fetch(0)
+    abort "Valkey replication group 回读数量不唯一" unless value.length == 1
+    group = value.fetch(0)
+    abort "Valkey replication group 尚未稳定或存在 pending 变更" unless
+      group.fetch("ReplicationGroupId") == expected &&
+        group.fetch("Status") == "available" &&
+        group.fetch("PendingModifiedValues") == {} &&
+        group.fetch("MemberClusters").is_a?(Array) &&
+        group.fetch("MemberClusters").length == 3 &&
+        group.fetch("MemberClusters").uniq.length == 3
+  ' "$valkey_replication_group_id" || fail 'Valkey replication group 尚未收敛，禁止应用发布'
+
+"$aws_binary" elasticache describe-cache-clusters \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    clusters = JSON.parse(STDIN.read).fetch("CacheClusters").select { |cluster|
+      cluster["ReplicationGroupId"] == ARGV.fetch(0)
+    }
+    expected_group = ARGV.fetch(1)
+    abort "Valkey replication group 节点数量不完整" unless clusters.length == 3
+    clusters.each do |cluster|
+      parameter = cluster.fetch("CacheParameterGroup")
+      abort "Valkey 节点 parameter group 尚未实际 in-sync" unless
+        cluster.fetch("Engine") == "valkey" &&
+          cluster.fetch("CacheClusterStatus") == "available" &&
+          cluster.fetch("PendingModifiedValues") == {} &&
+          parameter.fetch("CacheParameterGroupName") == expected_group &&
+          parameter.fetch("ParameterApplyStatus") == "in-sync" &&
+          parameter.fetch("CacheNodeIdsToReboot") == []
+    end
+  ' "$valkey_replication_group_id" "$valkey_parameter_group_name" || \
+  fail 'Valkey noeviction parameter group 尚未在全部节点生效'
+
+"$aws_binary" elasticache describe-cache-parameters \
+  --cache-parameter-group-name "$valkey_parameter_group_name" \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    parameters = JSON.parse(STDIN.read).fetch("Parameters").select { |parameter|
+      parameter["ParameterName"] == "maxmemory-policy"
+    }
+    abort "Valkey maxmemory-policy 回读不唯一或不是 noeviction" unless
+      parameters.length == 1 &&
+        parameters.fetch(0).fetch("ParameterValue") == ARGV.fetch(0) &&
+        parameters.fetch(0).fetch("Source") == "user"
+  ' "$(json_value valkey_maxmemory_policy)" || fail 'Valkey maxmemory-policy 实际值未失败关闭'
+
+ruby "$script_directory/verify-waf-rollout-evidence.rb" "$delivery_json" "$aws_binary" "$aws_region" ||
+  fail 'WAF Count→Block 的 versioned S3 证据对象、SHA-256、规则绑定或审批 schema 不满足'
+waf_arn=$(json_value api_waf_web_acl_arn)
+waf_name=$(json_value api_edge_security_contract web_acl_name)
+waf_id=${waf_arn##*/}
+
+"$aws_binary" wafv2 get-web-acl \
+  --name "$waf_name" \
+  --scope REGIONAL \
+  --id "$waf_id" \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read).fetch("WebACL")
+    delivery = JSON.parse(File.binread(ARGV.fetch(0)))
+    contract = delivery.fetch("api_edge_security_contract")
+    abort "WAF 名称或 ARN 与 delivery 不一致" unless
+      value.fetch("Name") == contract.fetch("web_acl_name") &&
+        value.fetch("ARN") == contract.fetch("web_acl_arn")
+    abort "WAF 默认动作不是显式 ALLOW" unless value.fetch("DefaultAction").keys == ["Allow"]
+
+    rules = value.fetch("Rules").to_h { |rule| [rule.fetch("Name"), rule] }
+    web_acl_visibility = value.fetch("VisibilityConfig")
+    abort "区域 API WAF WebACL 或规则启用了可能泄漏请求内容的 sampled requests" unless
+      web_acl_visibility.keys.sort == %w[CloudWatchMetricsEnabled MetricName SampledRequestsEnabled] &&
+        web_acl_visibility.fetch("CloudWatchMetricsEnabled") == true &&
+        web_acl_visibility.fetch("MetricName") == contract.fetch("web_acl_metric_name") &&
+        web_acl_visibility.fetch("SampledRequestsEnabled") == false
+    expected_managed = {
+      "amazon-ip-reputation" => "AWSManagedRulesAmazonIpReputationList",
+      "common" => "AWSManagedRulesCommonRuleSet",
+      "known-bad-inputs" => "AWSManagedRulesKnownBadInputsRuleSet",
+      "sqli" => "AWSManagedRulesSQLiRuleSet",
+    }
+    expected_managed.each do |rule_name, group_name|
+      rule = rules.fetch(rule_name)
+      managed = rule.dig("Statement", "ManagedRuleGroupStatement") || abort("#{rule_name} 不是 managed rule group")
+      expected_override = contract.fetch("managed_rule_rollout").fetch("action") == "count" ? "Count" : "None"
+      abort "#{rule_name} managed group 或 Count→Block 阶段漂移" unless
+        rule.fetch("Statement").keys == ["ManagedRuleGroupStatement"] &&
+          managed.keys.sort == %w[Name VendorName Version] &&
+        managed.fetch("VendorName") == "AWS" && managed.fetch("Name") == group_name &&
+          managed.fetch("Version") == contract.fetch("managed_rule_versions").fetch(rule_name) &&
+          rule.fetch("OverrideAction").keys == [expected_override]
+    end
+
+    health_rule = rules.fetch("public-healthz-block")
+    health_match = health_rule.dig("Statement", "ByteMatchStatement") ||
+      abort("public-healthz-block 不是精确 URI path rule")
+    search_matches = lambda do |actual, plain, encoded|
+      actual == plain || actual == encoded
+    end
+    abort "public /healthz 未在 WAF 精确隐藏" unless
+      health_rule.fetch("Action").keys == ["Block"] &&
+        health_rule.dig("Action", "Block", "CustomResponse", "ResponseCode") == 404 &&
+        health_match.fetch("PositionalConstraint") == "EXACTLY" &&
+        health_match.dig("FieldToMatch", "UriPath") == {} &&
+        search_matches.call(health_match.fetch("SearchString"), "/healthz", "L2hlYWx0aHo=")
+
+    surface_rule = rules.fetch("public-protocol-surface-block")
+    surface_statements = surface_rule.dig(
+      "Statement", "NotStatement", "Statement", "AndStatement", "Statements"
+    ) || abort("public-protocol-surface-block 不是 NOT(path-prefix AND method) rule")
+    groups = surface_statements.map { |statement| statement.dig("OrStatement", "Statements") }
+    abort "public protocol surface 必须恰好包含 path 与 method 两组" unless
+      groups.length == 2 && groups.none?(&:nil?)
+    path_group = groups.find do |group|
+      group.all? { |statement| statement.dig("ByteMatchStatement", "FieldToMatch", "UriPath") == {} }
+    end
+    method_group = groups.find do |group|
+      group.all? { |statement| statement.dig("ByteMatchStatement", "FieldToMatch", "Method") == {} }
+    end
+    abort "public protocol surface 缺少 URI 或 method 组" unless path_group && method_group
+    paths = path_group.map do |statement|
+      match = statement.fetch("ByteMatchStatement")
+      abort "public protocol path allowlist 必须用原始 STARTS_WITH" unless
+        match.fetch("PositionalConstraint") == "STARTS_WITH" &&
+          match.fetch("TextTransformations") == [{"Priority" => 0, "Type" => "NONE"}]
+      match.fetch("SearchString")
+    end
+    methods = method_group.map do |statement|
+      match = statement.fetch("ByteMatchStatement")
+      abort "public protocol method allowlist 必须用原始 EXACTLY" unless
+        match.fetch("PositionalConstraint") == "EXACTLY" &&
+          match.fetch("TextTransformations") == [{"Priority" => 0, "Type" => "NONE"}]
+      match.fetch("SearchString")
+    end
+    expected_paths = contract.fetch("allowed_public_path_prefixes")
+    expected_methods = contract.fetch("allowed_public_methods")
+    abort "public protocol path/method allowlist 漂移" unless
+      paths.length == expected_paths.length && expected_paths.all? { |plain|
+        paths.include?(plain) || paths.include?([plain].pack("m0"))
+      } && methods.length == expected_methods.length && expected_methods.all? { |plain|
+        methods.include?(plain) || methods.include?([plain].pack("m0"))
+      }
+    abort "public protocol 非法面未固定 Block 404" unless
+      surface_rule.fetch("Action").keys == ["Block"] &&
+        surface_rule.dig("Action", "Block", "CustomResponse", "ResponseCode") == 404
+
+    {"body-size-limit" => "Body", "header-size-limit" => "Headers"}.each do |rule_name, component|
+      rule = rules.fetch(rule_name)
+      size = rule.dig("Statement", "SizeConstraintStatement") || abort("#{rule_name} 不是 size rule")
+      field = size.fetch("FieldToMatch").fetch(component)
+      abort "#{rule_name} 没有固定 8 KiB 检查窗口与 oversize MATCH" unless
+        size.fetch("ComparisonOperator") == "GT" && size.fetch("Size") == 8192 &&
+          field.fetch("OversizeHandling") == "MATCH" &&
+          size.fetch("TextTransformations") == [{"Priority" => 0, "Type" => "NONE"}]
+    end
+    header_match = rules.fetch("header-size-limit").dig(
+      "Statement", "SizeConstraintStatement", "FieldToMatch", "Headers"
+    )
+    abort "header-size-limit 未检查全部 aggregate headers" unless
+      header_match.keys.sort == %w[MatchPattern MatchScope OversizeHandling] &&
+        header_match.fetch("MatchScope") == "ALL" &&
+        header_match.fetch("MatchPattern") == {"All" => {}} &&
+        header_match.fetch("OversizeHandling") == "MATCH"
+    abort "body-size-limit 必须直接 Block" unless
+      rules.fetch("body-size-limit").fetch("Action").keys == ["Block"] &&
+        rules.fetch("body-size-limit").dig("Action", "Block", "CustomResponse", "ResponseCode") == 413
+    expected_header_action = contract.fetch("header_size_rule_rollout").fetch("action")
+    abort "header-size-limit Count→Block 阶段漂移" unless
+      rules.fetch("header-size-limit").fetch("Action").keys ==
+        [expected_header_action == "count" ? "Count" : "Block"]
+    if expected_header_action == "block"
+      abort "header-size-limit Block 阶段没有固定 431" unless
+        rules.fetch("header-size-limit").dig("Action", "Block", "CustomResponse", "ResponseCode") == 431
+    end
+
+    rate_contract = contract.fetch("rate_limits")
+    {
+      "public-api-rate-limit" => rate_contract.fetch("public_requests_per_minute"),
+      "launch-rate-limit" => rate_contract.fetch("launch_requests_per_minute"),
+      "spin-rate-limit" => rate_contract.fetch("spin_requests_per_minute"),
+    }.each do |rule_name, limit|
+      rule = rules.fetch(rule_name)
+      rate = rule.dig("Statement", "RateBasedStatement") || abort("#{rule_name} 不是 rate rule")
+      expected_action = contract.fetch("rate_rule_rollouts").fetch(rule_name).fetch("action")
+      action = rule.fetch("Action")
+      abort "#{rule_name} Count→Block 阶段漂移" unless
+        action.keys == [expected_action == "count" ? "Count" : "Block"]
+      if expected_action == "block"
+        custom = action.dig("Block", "CustomResponse") || abort("#{rule_name} 没有自定义拒绝")
+        response = contract.fetch("rate_limit_response")
+        headers = custom.fetch("ResponseHeaders", []).to_h { |header| [header.fetch("Name"), header.fetch("Value")] }
+        expected_headers = {
+          "Retry-After" => response.fetch("retry_after_seconds").to_s,
+          "Access-Control-Allow-Origin" => response.fetch("access_control_allow_origin"),
+          "Access-Control-Expose-Headers" => response.fetch("access_control_expose_header"),
+          response.fetch("edge_error_header") => response.fetch("edge_error_value"),
+        }
+        abort "#{rule_name} Block 阶段没有固定 429 或浏览器可读 Retry-After" unless
+          custom.fetch("ResponseCode") == response.fetch("status_code") &&
+            headers == expected_headers && custom.fetch("ResponseHeaders").length == expected_headers.length
+      end
+      abort "#{rule_name} 限额或聚合窗口漂移" unless
+        rate.fetch("AggregateKeyType") == "IP" && rate.fetch("EvaluationWindowSec") == 60 &&
+          rate.fetch("Limit") == limit && rate.key?("ScopeDownStatement")
+    end
+
+    {
+      "launch-rate-limit" => ["/operator/v1/launches", "L29wZXJhdG9yL3YxL2xhdW5jaGVz"],
+      "spin-rate-limit" => ["/client/v1/spins", "L2NsaWVudC92MS9zcGlucw=="],
+    }.each do |rule_name, (path, encoded_path)|
+      statements = rules.fetch(rule_name).dig(
+        "Statement", "RateBasedStatement", "ScopeDownStatement", "AndStatement", "Statements"
+      ) || abort("#{rule_name} 低阈值 scope 不是 path AND POST")
+      abort "#{rule_name} 低阈值 scope 必须精确包含 path 与 method" unless statements.length == 2
+      path_match = statements.map { |statement| statement.fetch("ByteMatchStatement") }.find { |match|
+        match.dig("FieldToMatch", "UriPath") == {}
+      }
+      method_match = statements.map { |statement| statement.fetch("ByteMatchStatement") }.find { |match|
+        match.dig("FieldToMatch", "Method") == {}
+      }
+      abort "#{rule_name} 低阈值规则错误覆盖状态、恢复或非 POST 请求" unless
+        path_match && method_match &&
+          path_match.fetch("PositionalConstraint") == "EXACTLY" &&
+          path_match.fetch("TextTransformations") == [{"Priority" => 0, "Type" => "NONE"}] &&
+          search_matches.call(path_match.fetch("SearchString"), path, encoded_path) &&
+          method_match.fetch("PositionalConstraint") == "EXACTLY" &&
+          method_match.fetch("TextTransformations") == [{"Priority" => 0, "Type" => "NONE"}] &&
+          search_matches.call(method_match.fetch("SearchString"), contract.fetch("low_rate_rule_method"), "UE9TVA==")
+    end
+    public_scope = rules.fetch("public-api-rate-limit").dig(
+      "Statement", "RateBasedStatement", "ScopeDownStatement", "AndStatement", "Statements"
+    ) || abort("公网高阈值规则不是 path-prefix AND method allowlist")
+    abort "公网高阈值规则必须恰好包含 path 与 method 两组" unless public_scope.length == 2
+    public_path_group = public_scope.map { |statement| statement.dig("OrStatement", "Statements") }.find do |group|
+      group&.all? { |statement| statement.dig("ByteMatchStatement", "FieldToMatch", "UriPath") == {} }
+    end
+    public_method_group = public_scope.map { |statement| statement.dig("OrStatement", "Statements") }.find do |group|
+      group&.all? { |statement| statement.dig("ByteMatchStatement", "FieldToMatch", "Method") == {} }
+    end
+    abort "公网高阈值规则缺少 URI 或 GET/OPTIONS/POST method 组" unless public_path_group && public_method_group
+    public_paths = public_path_group.map do |statement|
+      match = statement.fetch("ByteMatchStatement")
+      abort "公网高阈值规则必须使用 URI 前缀" unless
+        match.fetch("PositionalConstraint") == "STARTS_WITH" && match.dig("FieldToMatch", "UriPath") == {} &&
+          match.fetch("TextTransformations") == [{"Priority" => 0, "Type" => "NONE"}]
+      match.fetch("SearchString")
+    end
+    allowed_public_paths = [["/client/", "L2NsaWVudC8="], ["/operator/", "L29wZXJhdG9yLw=="]]
+    abort "公网高阈值规则没有同时覆盖 client/operator" unless
+      allowed_public_paths.all? { |plain, encoded| public_paths.include?(plain) || public_paths.include?(encoded) } &&
+        public_paths.length == 2
+    public_methods = public_method_group.map do |statement|
+      match = statement.fetch("ByteMatchStatement")
+      abort "公网高阈值 method 必须原始 EXACTLY" unless
+        match.fetch("PositionalConstraint") == "EXACTLY" && match.dig("FieldToMatch", "Method") == {} &&
+          match.fetch("TextTransformations") == [{"Priority" => 0, "Type" => "NONE"}]
+      match.fetch("SearchString")
+    end
+    allowed_public_methods = contract.fetch("public_rate_rule_methods")
+    abort "公网高阈值规则必须精确覆盖 GET/OPTIONS/POST，避免预检洪泛旁路" unless
+      allowed_public_methods.all? { |method|
+        public_methods.include?(method) || public_methods.include?([method].pack("m0"))
+      } && public_methods.length == allowed_public_methods.length
+
+    expected_rules = expected_managed.keys + contract.fetch("required_path_rule_names") +
+      contract.fetch("required_size_rule_names") +
+      contract.fetch("required_rate_rule_names")
+    expected_priorities = {
+      "public-healthz-block" => 1,
+      "public-protocol-surface-block" => 5,
+      "amazon-ip-reputation" => 10,
+      "common" => 20,
+      "known-bad-inputs" => 30,
+      "sqli" => 40,
+      "body-size-limit" => 50,
+      "header-size-limit" => 60,
+      "launch-rate-limit" => 100,
+      "spin-rate-limit" => 110,
+      "public-api-rate-limit" => 120,
+    }
+    abort "WAF 规则集合缺失、重复或夹带未审批规则" unless
+      rules.keys.sort == expected_rules.sort && rules.length == value.fetch("Rules").length
+    abort "WAF 规则 priority 漂移或可能插入提前终止规则" unless
+      expected_priorities == rules.transform_values { |rule| rule.fetch("Priority") }
+    metric_suffixes = {
+      "public-healthz-block" => "public_healthz_block",
+      "public-protocol-surface-block" => "protocol_surface_block",
+      "amazon-ip-reputation" => "amazon_ip_reputation",
+      "common" => "common",
+      "known-bad-inputs" => "known_bad_inputs",
+      "sqli" => "sqli",
+      "body-size-limit" => "body_size",
+      "header-size-limit" => "header_size",
+      "launch-rate-limit" => "launch_rate",
+      "spin-rate-limit" => "spin_rate",
+      "public-api-rate-limit" => "public_api_rate",
+    }
+    expected_metrics = metric_suffixes.transform_values { |suffix| "#{contract.fetch("web_acl_metric_name")}_#{suffix}" }
+    abort "WAF 规则 visibility metric、采样或 CloudWatch 指标开关漂移" unless
+      rules.all? { |name, rule|
+        visibility = rule.fetch("VisibilityConfig")
+        visibility.keys.sort == %w[CloudWatchMetricsEnabled MetricName SampledRequestsEnabled] &&
+          visibility.fetch("CloudWatchMetricsEnabled") == true &&
+          visibility.fetch("MetricName") == expected_metrics.fetch(name) &&
+          visibility.fetch("SampledRequestsEnabled") == false
+      }
+  ' "$delivery_json" || fail '区域 API WAF 实际规则与 Terraform delivery 不一致'
+
+"$aws_binary" wafv2 get-logging-configuration \
+  --resource-arn "$waf_arn" \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read).fetch("LoggingConfiguration")
+    delivery = JSON.parse(File.binread(ARGV.fetch(0)))
+    contract = delivery.fetch("api_edge_security_contract")
+    abort "WAF 日志没有绑定当前 Web ACL" unless value.fetch("ResourceArn") == contract.fetch("web_acl_arn")
+    destinations = value.fetch("LogDestinationConfigs")
+    abort "WAF 日志必须唯一写入合同 Log Group" unless
+      destinations.length == 1 && destinations.fetch(0).end_with?(":log-group:#{contract.fetch("log_group_name")}")
+    redacted_fields = value.fetch("RedactedFields")
+    redacted = redacted_fields.map { |field| field.dig("SingleHeader", "Name") }.compact.sort
+    expected = %w[authorization cookie idempotency-key signature signature-input x-nonce x-rgs-signature].sort
+    query_redactions = redacted_fields.count { |field| field.key?("QueryString") }
+    abort "WAF 日志敏感头/query 脱敏集合漂移" unless
+      redacted == expected && query_redactions == 1 && redacted_fields.length == expected.length + 1
+    logging_filter = value.fetch("LoggingFilter")
+    filters = logging_filter.fetch("Filters")
+    filter = filters.fetch(0) if filters.length == 1
+    conditions = filter&.fetch("Conditions", []) || []
+    actions = conditions.map { |condition| condition.dig("ActionCondition", "Action") }.compact.sort
+    abort "WAF 日志成本过滤必须仅保留 BLOCK/COUNT" unless
+      logging_filter.keys.sort == %w[DefaultBehavior Filters] &&
+        logging_filter.fetch("DefaultBehavior") == "DROP" && filters.length == 1 &&
+        filter.keys.sort == %w[Behavior Conditions Requirement] &&
+        filter.fetch("Behavior") == "KEEP" && filter.fetch("Requirement") == "MEETS_ANY" &&
+        conditions.length == 2 && conditions.all? { |condition|
+          condition.keys == ["ActionCondition"] && condition.fetch("ActionCondition").keys == ["Action"]
+        } && actions == %w[BLOCK COUNT]
+  ' "$delivery_json" || fail '区域 API WAF 日志、脱敏或成本过滤不满足'
+
+cloudfront_waf_arn=$(json_value cloudfront_waf_web_acl_arn)
+cloudfront_waf_name=$(json_value cloudfront_edge_security_contract web_acl_arn)
+cloudfront_waf_name=${cloudfront_waf_name%/*}
+cloudfront_waf_name=${cloudfront_waf_name##*/}
+cloudfront_waf_id=${cloudfront_waf_arn##*/}
+"$aws_binary" wafv2 get-web-acl \
+  --name "$cloudfront_waf_name" \
+  --scope CLOUDFRONT \
+  --id "$cloudfront_waf_id" \
+  --region us-east-1 \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read).fetch("WebACL")
+    contract = JSON.parse(File.binread(ARGV.fetch(0))).fetch("cloudfront_edge_security_contract")
+    abort "CloudFront WAF 名称或 ARN 与 delivery 不一致" unless
+      value.fetch("Name") == contract.fetch("web_acl_arn").split("/")[-2] &&
+        value.fetch("ARN") == contract.fetch("web_acl_arn")
+    abort "CloudFront WAF 默认动作不是显式 ALLOW" unless value.fetch("DefaultAction").keys == ["Allow"]
+    rules = value.fetch("Rules")
+    web_acl_visibility = value.fetch("VisibilityConfig")
+    abort "CloudFront WAF WebACL 或规则启用了可能泄漏请求内容的 sampled requests" unless
+      web_acl_visibility.keys.sort == %w[CloudWatchMetricsEnabled MetricName SampledRequestsEnabled] &&
+        web_acl_visibility.fetch("CloudWatchMetricsEnabled") == true &&
+        web_acl_visibility.fetch("MetricName") == contract.fetch("web_acl_metric_name") &&
+        web_acl_visibility.fetch("SampledRequestsEnabled") == false &&
+        rules.all? { |rule|
+          visibility = rule.fetch("VisibilityConfig")
+          visibility.keys.sort == %w[CloudWatchMetricsEnabled MetricName SampledRequestsEnabled] &&
+            visibility.fetch("CloudWatchMetricsEnabled") == true &&
+            visibility.fetch("MetricName") == contract.fetch("rule_metric_names").fetch(rule.fetch("Name")) &&
+            visibility.fetch("SampledRequestsEnabled") == false
+        }
+    managed_rules = rules.select { |rule| rule.dig("Statement", "ManagedRuleGroupStatement") }
+    managed = managed_rules.map { |rule| rule.dig("Statement", "ManagedRuleGroupStatement", "Name") }.sort
+    abort "CloudFront WAF managed rule groups 漂移" unless
+      managed == contract.fetch("required_managed_rule_groups").sort
+    expected_override = contract.fetch("managed_rule_rollout").fetch("action") == "count" ? "Count" : "None"
+    abort "CloudFront managed rules Count→Block 阶段漂移" unless
+      managed_rules.all? { |rule| rule.fetch("OverrideAction").keys == [expected_override] }
+    expected_versions = contract.fetch("managed_rule_versions")
+    abort "CloudFront managed rule group 版本未固定或漂移" unless
+      managed_rules.all? { |rule|
+        statement = rule.fetch("Statement")
+        managed_statement = statement.fetch("ManagedRuleGroupStatement")
+        statement.keys == ["ManagedRuleGroupStatement"] &&
+          managed_statement.keys.sort == %w[Name VendorName Version] &&
+          managed_statement.fetch("VendorName") == "AWS" &&
+          expected_versions.fetch(rule.fetch("Name")) == managed_statement.fetch("Version")
+      }
+    rate_rule = rules.find { |rule| rule.fetch("Name") == "web-rate-limit" }
+    rate = rate_rule&.dig("Statement", "RateBasedStatement")
+    expected_rate_action = contract.fetch("rate_rule_rollout").fetch("action")
+    abort "CloudFront WAF 静态请求限速缺失或漂移" unless
+      rate && rate.fetch("AggregateKeyType") == "IP" && rate.fetch("EvaluationWindowSec") == 60 &&
+        rate.fetch("Limit") == contract.fetch("rate_limit_per_minute") &&
+        rate.keys.sort == %w[AggregateKeyType EvaluationWindowSec Limit] &&
+        rate_rule.fetch("Action").keys == [expected_rate_action == "count" ? "Count" : "Block"]
+    abort "CloudFront WAF 规则集合夹带未审批规则" unless rules.length == managed.length + 1
+  ' "$delivery_json" || fail 'CloudFront global WAF 实际规则与企业交接合同不一致'
+
+"$aws_binary" wafv2 get-logging-configuration \
+  --resource-arn "$cloudfront_waf_arn" \
+  --region us-east-1 \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read).fetch("LoggingConfiguration")
+    contract = JSON.parse(File.binread(ARGV.fetch(0))).fetch("cloudfront_edge_security_contract")
+    abort "CloudFront WAF 日志没有绑定当前 Web ACL" unless value.fetch("ResourceArn") == contract.fetch("web_acl_arn")
+    destinations = value.fetch("LogDestinationConfigs")
+    abort "CloudFront WAF 日志必须唯一写入合同 Log Group" unless
+      destinations.length == 1 && destinations.fetch(0).end_with?(":log-group:#{contract.fetch("waf_log_group_name")}")
+    redacted_fields = value.fetch("RedactedFields")
+    redacted = redacted_fields.map { |field| field.dig("SingleHeader", "Name") }.compact.sort
+    query_redactions = redacted_fields.count { |field| field.key?("QueryString") }
+    abort "CloudFront WAF 日志必须脱敏 Authorization/Cookie/query" unless
+      redacted == %w[authorization cookie] && query_redactions == 1 && redacted_fields.length == 3
+    logging_filter = value.fetch("LoggingFilter")
+    filters = logging_filter.fetch("Filters")
+    filter = filters.fetch(0) if filters.length == 1
+    conditions = filter&.fetch("Conditions", []) || []
+    actions = conditions.map { |condition| condition.dig("ActionCondition", "Action") }.compact.sort
+    abort "CloudFront WAF 日志成本过滤必须仅保留 BLOCK/COUNT" unless
+      logging_filter.keys.sort == %w[DefaultBehavior Filters] &&
+        logging_filter.fetch("DefaultBehavior") == "DROP" && filters.length == 1 &&
+        filter.keys.sort == %w[Behavior Conditions Requirement] &&
+        filter.fetch("Behavior") == "KEEP" && filter.fetch("Requirement") == "MEETS_ANY" &&
+        conditions.length == 2 && conditions.all? { |condition|
+          condition.keys == ["ActionCondition"] && condition.fetch("ActionCondition").keys == ["Action"]
+        } && actions == %w[BLOCK COUNT]
+  ' "$delivery_json" || fail 'CloudFront global WAF 日志、脱敏或成本过滤不满足'
+
+cloudfront_distribution_id=$(json_value cloudfront_distribution_id)
+"$aws_binary" cloudfront get-distribution \
+  --id "$cloudfront_distribution_id" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read).fetch("Distribution")
+    delivery = JSON.parse(File.binread(ARGV.fetch(0)))
+    config = value.fetch("DistributionConfig")
+    abort "CloudFront distribution 尚未完成部署" unless value.fetch("Status") == "Deployed"
+    abort "CloudFront distribution 身份或 WAF 绑定漂移" unless
+      value.fetch("Id") == delivery.fetch("cloudfront_distribution_id") &&
+        value.fetch("DomainName") == delivery.fetch("cloudfront_distribution_domain_name") &&
+        config.fetch("Enabled") == true &&
+        config.fetch("WebACLId") == delivery.fetch("cloudfront_waf_web_acl_arn")
+    aliases = config.fetch("Aliases")
+    abort "CloudFront alias 或默认根漂移" unless
+      aliases.fetch("Quantity") == 1 && aliases.fetch("Items") == [delivery.fetch("cloudfront_alias_domain_name")] &&
+        config.fetch("DefaultRootObject") == "index.html"
+    origins = config.fetch("Origins").fetch("Items")
+    abort "CloudFront 必须只有私有 S3 OAC 源站" unless
+      config.dig("Origins", "Quantity") == 1 && origins.length == 1 &&
+        origins.fetch(0).fetch("Id") == "private-web-s3" &&
+        origins.fetch(0).fetch("OriginPath", "") == "" &&
+        origins.fetch(0).fetch("OriginAccessControlId") == delivery.fetch("cloudfront_origin_access_control_id") &&
+        origins.fetch(0).fetch("DomainName") ==
+          "#{delivery.fetch("web_bucket_name")}.s3.#{delivery.fetch("aws_region")}.amazonaws.com"
+    empty_associations = lambda do |associations|
+      associations.fetch("Quantity") == 0 && [nil, []].include?(associations["Items"])
+    end
+    exact_methods = lambda do |behavior|
+      allowed = behavior.fetch("AllowedMethods")
+      cached = allowed.fetch("CachedMethods")
+      allowed.fetch("Quantity") == 3 && allowed.fetch("Items").sort == %w[GET HEAD OPTIONS] &&
+        cached.fetch("Quantity") == 2 && cached.fetch("Items").sort == %w[GET HEAD]
+    end
+    default_behavior = config.fetch("DefaultCacheBehavior")
+    expected_functions = {
+      "viewer-request" => delivery.fetch("cloudfront_release_request_function_arn"),
+      "viewer-response" => delivery.fetch("cloudfront_release_response_function_arn"),
+    }
+    default_functions = default_behavior.fetch("FunctionAssociations")
+    function_items = default_functions.fetch("Items")
+    function_map = function_items.to_h { |association| [association.fetch("EventType"), association.fetch("FunctionARN")] }
+    abort "CloudFront default behavior 的方法、策略或函数关联漂移" unless
+      default_behavior.fetch("TargetOriginId") == "private-web-s3" &&
+        default_behavior.fetch("ViewerProtocolPolicy") == "redirect-to-https" &&
+        exact_methods.call(default_behavior) && default_behavior.fetch("Compress") == true &&
+        default_behavior.fetch("CachePolicyId") == delivery.fetch("cloudfront_cache_policy_id") &&
+        default_behavior.fetch("ResponseHeadersPolicyId") == delivery.fetch("cloudfront_response_headers_policy_id") &&
+        default_functions.fetch("Quantity") == 2 && function_items.length == 2 &&
+        function_items.all? { |association| association.keys.sort == %w[EventType FunctionARN] } &&
+        function_map == expected_functions &&
+        empty_associations.call(default_behavior.fetch("LambdaFunctionAssociations"))
+    cache_behaviors = config.fetch("CacheBehaviors")
+    ordered_items = cache_behaviors.fetch("Items")
+    ordered = ordered_items.fetch(0) if ordered_items.length == 1
+    abort "CloudFront ordered behavior 必须精确只有 releases/* 且不得执行函数或 Lambda" unless
+      cache_behaviors.fetch("Quantity") == 1 && ordered_items.length == 1 &&
+        ordered.fetch("PathPattern") == "releases/*" && ordered.fetch("TargetOriginId") == "private-web-s3" &&
+        ordered.fetch("ViewerProtocolPolicy") == "redirect-to-https" && exact_methods.call(ordered) &&
+        ordered.fetch("Compress") == true &&
+        ordered.fetch("CachePolicyId") == delivery.fetch("cloudfront_cache_policy_id") &&
+        ordered.fetch("ResponseHeadersPolicyId") == delivery.fetch("cloudfront_response_headers_policy_id") &&
+        empty_associations.call(ordered.fetch("FunctionAssociations")) &&
+        empty_associations.call(ordered.fetch("LambdaFunctionAssociations"))
+    logging = config.fetch("Logging")
+    abort "CloudFront access logging 身份或 cookie 边界漂移" unless
+      logging.fetch("Enabled") == true && logging.fetch("IncludeCookies") == false &&
+        logging.fetch("Bucket") == delivery.fetch("cloudfront_log_bucket_domain_name") &&
+        logging.fetch("Prefix") == delivery.fetch("cloudfront_log_prefix")
+    certificate = config.fetch("ViewerCertificate")
+    abort "CloudFront viewer certificate 或 TLS policy 漂移" unless
+      certificate.fetch("ACMCertificateArn") == delivery.fetch("cloudfront_acm_certificate_arn") &&
+        certificate.fetch("MinimumProtocolVersion") == "TLSv1.2_2021" &&
+        certificate.fetch("SSLSupportMethod") == "sni-only"
+  ' "$delivery_json" || fail 'CloudFront distribution、global WAF 或私有 S3 OAC 绑定不满足'
+
+# delivery 中的私有源站声明不能代替真实 S3 执行面。四项 Public Access
+# Block 必须同时开启；否则攻击者可以绕过 CloudFront/WAF 直读源站并制造成本。
+web_bucket_name=$(json_value web_bucket_name)
+aws_account_id=$(json_value aws_account_id)
+"$aws_binary" s3api get-public-access-block \
+  --bucket "$web_bucket_name" \
+  --expected-bucket-owner "$aws_account_id" \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read)
+    abort "S3 Public Access Block 回读结构不精确" unless
+      value.keys == ["PublicAccessBlockConfiguration"]
+    configuration = value.fetch("PublicAccessBlockConfiguration")
+    expected = %w[BlockPublicAcls IgnorePublicAcls BlockPublicPolicy RestrictPublicBuckets]
+    abort "CloudFront 私有 S3 源站没有完整开启 Public Access Block" unless
+      configuration.keys.sort == expected.sort &&
+        expected.all? { |key| configuration.fetch(key) == true }
+  ' || fail 'CloudFront 私有 S3 源站 Public Access Block 未实际失败关闭'
+
+# Public Access Block 不会阻止策略向某个具体外部 AWS principal 授权；继续
+# 精确回读 bucket policy，确保唯一读取 Allow 仍绑定当前 CloudFront distribution。
+"$aws_binary" s3api get-bucket-policy \
+  --bucket "$web_bucket_name" \
+  --expected-bucket-owner "$aws_account_id" \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    response = JSON.parse(STDIN.read)
+    abort "S3 bucket policy 回读结构不精确" unless
+      response.keys == ["Policy"] && response.fetch("Policy").is_a?(String) &&
+        response.fetch("Policy").bytesize.between?(1, 20_480)
+    policy = JSON.parse(response.fetch("Policy"))
+    abort "S3 bucket policy 顶层结构不精确" unless
+      policy.keys.sort == %w[Statement Version] && policy.fetch("Version") == "2012-10-17"
+    statements = policy.fetch("Statement")
+    abort "S3 bucket policy 必须精确包含两条语句" unless
+      statements.is_a?(Array) && statements.length == 2 &&
+        statements.all? { |statement| statement.is_a?(Hash) }
+    by_sid = statements.to_h { |statement| [statement.fetch("Sid", nil), statement] }
+    abort "S3 bucket policy Sid 集合缺失或重复" unless
+      by_sid.keys.sort == %w[AllowCloudFrontOacRead DenyInsecureTransport] &&
+        by_sid.length == statements.length
+
+    delivery = JSON.parse(File.binread(ARGV.fetch(0)))
+    partition = delivery.fetch("cloudfront_waf_web_acl_arn").split(":").fetch(1)
+    bucket_arn = "arn:#{partition}:s3:::#{delivery.fetch("web_bucket_name")}"
+    distribution_arn = "arn:#{partition}:cloudfront::#{delivery.fetch("aws_account_id")}:distribution/#{delivery.fetch("cloudfront_distribution_id")}"
+    one = lambda { |value| value.is_a?(Array) && value.length == 1 ? value.fetch(0) : value }
+
+    allow = by_sid.fetch("AllowCloudFrontOacRead")
+    abort "S3 OAC Allow 语句漂移" unless
+      allow.keys.sort == %w[Action Condition Effect Principal Resource Sid] &&
+        allow.fetch("Effect") == "Allow" && one.call(allow.fetch("Action")) == "s3:GetObject" &&
+        one.call(allow.fetch("Resource")) == "#{bucket_arn}/*" &&
+        allow.fetch("Principal") == {"Service" => "cloudfront.amazonaws.com"} &&
+        allow.fetch("Condition") == {"StringEquals" => {"AWS:SourceArn" => distribution_arn}}
+
+    deny = by_sid.fetch("DenyInsecureTransport")
+    principal = deny.fetch("Principal")
+    resources = deny.fetch("Resource")
+    resources = [resources] unless resources.is_a?(Array)
+    abort "S3 TLS Deny 语句漂移" unless
+      deny.keys.sort == %w[Action Condition Effect Principal Resource Sid] &&
+        deny.fetch("Effect") == "Deny" && one.call(deny.fetch("Action")) == "s3:*" &&
+        resources.sort == [bucket_arn, "#{bucket_arn}/*"].sort &&
+        ["*", {"AWS" => "*"}].include?(principal) &&
+        deny.fetch("Condition") == {"Bool" => {"aws:SecureTransport" => "false"}}
+  ' "$delivery_json" || fail 'CloudFront 私有 S3 源站 bucket policy 未精确绑定 OAC 或 TLS 拒绝'
+
+alarm_names=$(ruby -rjson -e '
+  value = JSON.parse(File.binread(ARGV.fetch(0))).fetch("api_edge_security_contract").fetch("alarm_names")
+  abort "WAF 告警名称数量不等于 2" unless value.length == 2
+  STDOUT.write(value.join("\n"))
+' "$delivery_json") || fail '无法读取 WAF 告警名称合同'
+alarm_allowed=$(printf '%s\n' "$alarm_names" | sed -n '1p')
+alarm_blocked=$(printf '%s\n' "$alarm_names" | sed -n '2p')
+"$aws_binary" cloudwatch describe-alarms \
+  --alarm-names "$alarm_allowed" "$alarm_blocked" \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read)
+    delivery = JSON.parse(File.binread(ARGV.fetch(0)))
+    contract = delivery.fetch("api_edge_security_contract")
+    topic = delivery.fetch("alert_topic_arn")
+    alarms = value.fetch("MetricAlarms").to_h { |alarm| [alarm.fetch("AlarmName"), alarm] }
+    abort "WAF 告警集合缺失或重复" unless alarms.keys.sort == contract.fetch("alarm_names").sort
+    thresholds = contract.fetch("alarm_thresholds")
+    expected_thresholds = {
+      contract.fetch("alarm_names").find { |name| name.end_with?("allowed-request-cost") } => thresholds.fetch("allowed_requests_per_minute"),
+      contract.fetch("alarm_names").find { |name| name.end_with?("blocked-requests") } => thresholds.fetch("blocked_requests_per_minute"),
+    }
+    expected_metrics = {
+      contract.fetch("alarm_names").find { |name| name.end_with?("allowed-request-cost") } => "AllowedRequests",
+      contract.fetch("alarm_names").find { |name| name.end_with?("blocked-requests") } => "BlockedRequests",
+    }
+    alarms.each do |name, alarm|
+      dimensions = alarm.fetch("Dimensions").to_h { |dimension| [dimension.fetch("Name"), dimension.fetch("Value")] }
+      abort "#{name} WAF 告警动作、窗口或维度漂移" unless
+        alarm.fetch("ActionsEnabled") == true && alarm.fetch("AlarmActions") == [topic] &&
+          alarm.fetch("OKActions") == [topic] && alarm.fetch("Namespace") == "AWS/WAFV2" &&
+          alarm.fetch("MetricName") == expected_metrics.fetch(name) && alarm.fetch("Statistic") == "Sum" &&
+          alarm.fetch("ComparisonOperator") == "GreaterThanOrEqualToThreshold" &&
+          alarm.fetch("Period") == 60 && alarm.fetch("EvaluationPeriods") == 1 &&
+          alarm.fetch("DatapointsToAlarm") == 1 && alarm.fetch("TreatMissingData") == "notBreaching" &&
+          alarm.fetch("Threshold") == expected_thresholds.fetch(name) &&
+          dimensions == {"Region" => delivery.fetch("aws_region"), "Rule" => "ALL", "WebACL" => contract.fetch("web_acl_metric_name")}
+    end
+  ' "$delivery_json" || fail '区域 API WAF CloudWatch 告警不满足'
+
 autoscaler_image_tag=$(json_value application_handoff cluster_autoscaler_image_tag)
 metrics_server_addon_version=$(json_value application_handoff metrics_server_addon_version)
+vpc_cni_addon_version=$(json_value application_handoff vpc_cni_network_policy addon_version)
+vpc_cni_role_arn=$(json_value application_handoff vpc_cni_network_policy pod_identity role_arn)
+cloudwatch_addon_version=$(json_value application_handoff cloudwatch_observability addon_version)
+cloudwatch_agent_role_arn=$(json_value application_handoff cloudwatch_observability pod_identity role_arn)
 
 "$aws_binary" eks describe-addon \
   --cluster-name "$cluster_name" \
@@ -247,7 +1128,85 @@ metrics_server_addon_version=$(json_value application_handoff metrics_server_add
     abort "metrics-server EKS add-on 名称不匹配" unless addon.fetch("addonName") == "metrics-server"
     abort "metrics-server EKS add-on 版本不匹配" unless addon.fetch("addonVersion") == expected_version
     abort "metrics-server EKS add-on 未达到 ACTIVE" unless addon.fetch("status") == "ACTIVE"
-  ' "$metrics_server_addon_version" || fail 'metrics-server EKS add-on 版本或状态不满足'
+' "$metrics_server_addon_version" || fail 'metrics-server EKS add-on 版本或状态不满足'
+
+"$aws_binary" eks describe-addon \
+  --cluster-name "$cluster_name" \
+  --addon-name vpc-cni \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    addon = JSON.parse(STDIN.read).fetch("addon")
+    expected_version = ARGV.fetch(0)
+    abort "vpc-cni EKS add-on 名称不匹配" unless addon.fetch("addonName") == "vpc-cni"
+    abort "vpc-cni EKS add-on 版本不匹配" unless addon.fetch("addonVersion") == expected_version
+    abort "vpc-cni EKS add-on 未达到 ACTIVE" unless addon.fetch("status") == "ACTIVE"
+    configuration = addon.fetch("configurationValues")
+    abort "vpc-cni configurationValues 不是 JSON 字符串" unless configuration.is_a?(String)
+    abort "vpc-cni 未实际启用 NetworkPolicy" unless
+      JSON.parse(configuration) == {"enableNetworkPolicy" => "true"}
+  ' "$vpc_cni_addon_version" || fail 'vpc-cni NetworkPolicy add-on 版本、状态或配置不满足'
+
+"$aws_binary" eks describe-addon \
+  --cluster-name "$cluster_name" \
+  --addon-name amazon-cloudwatch-observability \
+  --region "$aws_region" \
+  --no-cli-pager \
+  --output json | ruby -rjson -e '
+    addon = JSON.parse(STDIN.read).fetch("addon")
+    expected_version = ARGV.fetch(0)
+    expected_configuration = {
+      "agent" => {"config" => {"logs" => {"metrics_collected" => {
+        "kubernetes" => {"enhanced_container_insights" => true},
+      }}}},
+      "containerLogs" => {"enabled" => true},
+    }
+    abort "CloudWatch Observability EKS add-on 名称不匹配" unless
+      addon.fetch("addonName") == "amazon-cloudwatch-observability"
+    abort "CloudWatch Observability EKS add-on 版本不匹配" unless
+      addon.fetch("addonVersion") == expected_version
+    abort "CloudWatch Observability EKS add-on 未达到 ACTIVE" unless addon.fetch("status") == "ACTIVE"
+    configuration = addon.fetch("configurationValues")
+    abort "CloudWatch Observability configurationValues 不是 JSON 字符串" unless configuration.is_a?(String)
+    abort "CloudWatch Observability 实际日志或增强指标配置漂移" unless
+      JSON.parse(configuration) == expected_configuration
+  ' "$cloudwatch_addon_version" || fail 'CloudWatch Observability add-on 版本、状态或配置不满足'
+
+check_cloudwatch_daemonset() {
+  daemonset_name=$1
+  expected_service_account=$2
+  expected_container=$3
+  if test -n "$expected_service_account"; then
+    "$kubectl_binary" -n amazon-cloudwatch get "serviceaccount/$expected_service_account" >/dev/null || \
+      fail "amazon-cloudwatch/$expected_service_account ServiceAccount 缺失"
+  fi
+  "$kubectl_binary" -n amazon-cloudwatch rollout status "daemonset/$daemonset_name" \
+    --timeout="$rollout_timeout" >/dev/null || fail "$daemonset_name DaemonSet 未就绪"
+  "$kubectl_binary" -n amazon-cloudwatch get "daemonset/$daemonset_name" -o json | ruby -rjson -e '
+    workload = JSON.parse(STDIN.read)
+    name, expected_service_account, expected_container = ARGV
+    if !expected_service_account.empty?
+      abort "#{name} DaemonSet 未绑定专用 ServiceAccount" unless
+        workload.dig("spec", "template", "spec", "serviceAccountName") == expected_service_account
+    end
+    if !expected_container.empty?
+      containers = Array(workload.dig("spec", "template", "spec", "containers"))
+      abort "#{name} 容器缺失" unless containers.any? { |container| container["name"] == expected_container }
+    end
+    desired = workload.dig("status", "desiredNumberScheduled").to_i
+    abort "#{name} DaemonSet 没有可调度 Pod" unless desired >= 1
+    abort "#{name} DaemonSet 未在全部节点完全就绪" unless
+      workload.dig("status", "currentNumberScheduled").to_i == desired &&
+        workload.dig("status", "updatedNumberScheduled").to_i == desired &&
+        workload.dig("status", "numberReady").to_i == desired &&
+        workload.dig("status", "numberAvailable").to_i == desired &&
+        workload.dig("status", "numberUnavailable").to_i == 0
+  ' "$daemonset_name" "$expected_service_account" "$expected_container" || \
+    fail "$daemonset_name DaemonSet 运行身份或状态不满足"
+}
+
+check_cloudwatch_daemonset cloudwatch-agent cloudwatch-agent cloudwatch-agent
+check_cloudwatch_daemonset fluent-bit fluent-bit fluent-bit
 
 "$kubectl_binary" -n kube-system get serviceaccount/metrics-server >/dev/null || \
   fail 'kube-system/metrics-server ServiceAccount 缺失'
@@ -338,7 +1297,6 @@ check_pod_identity() {
       --namespace "$namespace" \
       --service-account "$service_account" \
       --region "$aws_region" \
-      --no-paginate \
       --no-cli-pager \
       --output json | ruby -rjson -e '
         value = JSON.parse(STDIN.read)
@@ -371,6 +1329,8 @@ check_pod_identity() {
 
 check_pod_identity kube-system cluster-autoscaler "$(json_value cluster_autoscaler_role_arn)"
 check_pod_identity kube-system aws-load-balancer-controller ""
+check_pod_identity kube-system aws-node "$vpc_cni_role_arn"
+check_pod_identity amazon-cloudwatch cloudwatch-agent "$cloudwatch_agent_role_arn"
 check_pod_identity external-secrets external-secrets "$(json_value secret_sync_role_arn)"
 check_pod_identity monitoring prometheus-agent "$(json_value amp_writer_role_arn)"
 

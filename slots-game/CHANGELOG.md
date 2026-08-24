@@ -5,16 +5,33 @@
 
 ## 未发布
 
+- 增加应用 API Regional WAF 基线、托管规则组、超限请求拒绝、分层速率规则、脱敏日志和告警契约；
+  CloudFront 仍只承载静态 Web，不被描述为 API 源站隐藏层；Shield Standard 自动基础防护、真实
+  WAF 关联/日志/告警与可选 Shield Advanced 响应仍须在目标 AWS 账号留存验收证据；
+- 收紧公共 HTTP 请求头/请求体与编码边界，未认证入口与验签使用统一硬上限；认证后
+  status/result/ACK 不占数据库新意图许可，钱包 lookup 使用独立恢复容量；新增畸形、超大、无效
+  令牌和高基数身份滥用 profile、告警与安全演练手册，本机结果不替代 AWS DDoS 模拟或容量验收；
+- 增加机器可读素材权属分类与逐文件外部哈希审批门禁，拒绝把哈希完整性当成授权链证明；移除
+  源 `public/` 中的内部说明并增加防回归校验；最终白名单原已排除内部文档，权属证据未验证的素材
+  在授权或自主替换前仍失败关闭；
 - 将第三方钱包升级为版本化 v2 结算契约：持久化钱包会话、命令摘要、能力与账本路由绑定，严格区分
   `SUCCEEDED/REJECTED_FINAL/PENDING/NOT_FOUND/CONFLICT/UNKNOWN/NOT_SENT`，并由签名响应绑定完整经济身份；
 - 新增 PostgreSQL `0008/0009`：按数据库时钟持久化 APPLY/LOOKUP 恢复阶段、租约围栏、公平跳锁领取、
   钱包账本外呼前预检及热路径索引；该变更不支持新旧 writer 混跑，必须静默 API/Worker 后迁移；
+- 增加 PostgreSQL `0010` 恢复注册不变量迁移：在同一锁定事务内回填恢复运营商游标并安装永久
+  INSERT/状态进入触发器，覆盖滚动期间的旧 writer；迁移提交前、migrator `verify` 与运行时
+  `SchemaCheck`/readiness 动态核对精确函数和已启用触发器，禁用、删除或替换即失败关闭。`PREPARE`
+  CTE 只保留 readiness 摘流前的有界冲突探测保险；Worker 领取不再执行全表运营商补种。该不变量
+  只证明恢复注册不漏项，不能被描述为任意 schema/应用版本均可安全混跑；
+- 会话过期判定统一使用同一加锁查询返回的数据库时钟；钱包 APPLY 与 LOOKUP 各自受持久尝试上限
+  约束，达到上限后在下一次外呼前进入人工审核，避免慢钱包把恢复流量放大为无界付费查询；
 - 为慢钱包增加 backend/operator 舱壁、独立熔断、有界一秒快路径与 Worker 恢复；为 API 新意图增加
   PostgreSQL critical reserve，status/result/ACK/refresh 不占新意图许可；
 - 将 Valkey 共享准入升级为 v2 单字符串桶：允许请求一次写、拒绝请求零写、NOSCRIPT 单飞恢复，
   launch/spin 按已验证 operator 分桶；ACL v1→v2 只允许在有 API 零副本证据的 HMAC 维护 plan 中迁移；
-- 前端对 429/503、`Retry-After`、同步最终拒绝和待恢复账本执行有界同请求重试，并为 ACK/状态轮询加入
-  不改变截止时间的分布式抖动，降低大规模客户端同步重试波峰；
+- 前端对 429/503、`Retry-After`、同步最终拒绝和待恢复账本执行有界状态恢复，并为 ACK/状态轮询加入
+  不改变截止时间的分布式抖动；exchange 越过发包边界前即清除本实例 launch code，网络、HTTP 或
+  协议失败均不重放；同游标 token refresh 禁止改写余额/特性，待处理轮次之外的回退或前跳失败关闭；
 - 新增 HTTP、PostgreSQL、Valkey 三类显式高并发入口；每次报告使用唯一临时文件、固定 schema、批准
   阈值和功能不变量校验后才原子发布到 ignored `.artifacts`，本机结果不替代 AWS/第三方/24h soak；
 - 增加 Valkey 引擎 CPU、容量、连接、复制延迟、流量管理和 EVAL 延迟，以及 RDS CPU、连接、内存、
@@ -23,9 +40,14 @@
   Multi-AZ failover、SNS 最终接收和外部钱包认证仍是上线门禁；
 - 将正式交付主线改为 AWS，并增加四环境应用 IaC：VPC/EKS、RDS Multi-AZ、ElastiCache Valkey、
   不可变 ECR、Secrets Manager 元数据、私有 S3/OAC/CloudFront、AMP/CloudWatch、备份和归档基线；
-  账号工厂、远端 state/部署身份、DNS/证书/WAF 与组织级安全仍由企业落地区提供；
+  账号工厂、远端 state/部署身份、DNS/ACM、CloudFront global WAF、可选 Shield Advanced/DRT 与
+  组织级安全仍由企业落地区提供，API Regional WAF 则由本仓库应用 IaC 交付；
 - 增加基础设施、应用发布和 HMAC 静默证据三个 AWS workflow 源码，使用 OIDC、已保存 Terraform
   plan、版本化 delivery 与失败关闭门禁；这些能力仍须在真实目标账号完成 plan/apply 和验收；
+- conformance workflow 按 workflow/ref 取消陈旧提交；供应链发布按精确镜像仓库/tag 串行且不取消
+  在途发布，并在 candidate push 前失败关闭地确认 final tag 不存在。AWS 实时平台检查同时要求四个
+  关键 add-on Deployment 已观测最新 generation、全部副本可用且无 unavailable；这些源码门禁仍不
+  替代 ECR tag immutability、目标账号实时回读或外部审批；
 - 将同一 RGS 制品拆成可独立扩缩的 API/Worker 运行角色，交付独立 HPA/PDB/Secret/NetworkPolicy，
   并保持 PostgreSQL 对会话、轮次、钱包结果和 `operationId` 幂等的唯一权威；
 - 补齐固定枚举的钱包 method/outcome 延迟、inflight 与熔断观测，增加数据库全局恢复 backlog、最老
@@ -36,8 +58,9 @@
   键摘要，故障时失败闭合且不把缓存提升为资金权威；
 - 增加 Valkey A/B 密码轮换和 HMAC 静默维护状态机；HMAC entry/exit 后由应用
   `maintenance-complete` 两阶段切换，禁止用旧 delivery 的 `resume` 恢复旧 HMAC Pod；
-- 成功访问日志默认确定性采样 1%，4xx/5xx、资金审计和安全事件全量保留；补充低基数采样指标、
-  API/Worker HPA 与共享准入故障告警；
+- 成功访问日志默认确定性采样 1%；4xx/5xx 与 nonce 重放的权威计数、资金审计和安全事件语义
+  保持完整，重复物理访问/WARN 日志则使用固定速率和非阻塞写入上限，防止日志背压成为二次 DoS；
+  补充低基数采样/丢弃指标、API/Worker HPA 与共享准入故障告警；
 - 以基准驱动复用不可变数学配置、固定数组和连续分配，将代表 Spin 路径从 97 降至 22 allocs/op；
   不采用未经 profile 证明的 `sync.Pool` 或伪“零分配”承诺；
 - 增加加密、版本化、对象锁定的 S3 冷归档基线与 RDS export 角色；自动快照导出编排、数据库分区

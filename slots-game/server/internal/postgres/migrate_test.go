@@ -133,6 +133,13 @@ func TestMigrateAndReconcileUsesOneLockedTransaction(t *testing.T) {
 		ledgerRows.AddRow(item.Version, item.Checksum)
 	}
 	mock.ExpectQuery(regexp.QuoteMeta(schemaLedgerSQL)).WillReturnRows(ledgerRows)
+	mock.ExpectQuery(regexp.QuoteMeta(walletRecoveryRegistryInvariantSQL)).
+		WithArgs(
+			walletRecoveryRegistryFunctionSource,
+			walletRecoveryRegistryInsertTriggerDefinition,
+			walletRecoveryRegistryUpdateTriggerDefinition,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"policy_ok"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta(runtimePrivilegeCheckSQL)).
 		WithArgs(CanonicalRuntimeRole, false).
 		WillReturnRows(sqlmock.NewRows([]string{"policy_ok"}).AddRow(true))
@@ -290,4 +297,49 @@ func TestHighConcurrencyMigrationIndexesClaimPathsAndRemovesSupersededWriteAmpli
 		return
 	}
 	t.Fatal("0009_postgres_hot_path migration is missing")
+}
+
+func TestWalletRecoveryRegistryInvariantMigrationClosesRollingWriteGap(t *testing.T) {
+	items, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations returned error: %v", err)
+	}
+	for _, item := range items {
+		if item.version != "0010_wallet_recovery_registry_invariant" {
+			continue
+		}
+		for _, required := range []string{
+			"SECURITY INVOKER",
+			"SET search_path = pg_catalog, public",
+			"REVOKE ALL ON FUNCTION public.rgs_register_wallet_recovery_operator() FROM PUBLIC",
+			"LOCK TABLE rgs_rounds IN SHARE ROW EXCLUSIVE MODE",
+			"INSERT INTO rgs_wallet_recovery_operators (operator_id)",
+			"SELECT DISTINCT operator_id",
+			"WHERE status IN ('PREPARED', 'WALLET_PENDING')",
+			"wallet_phase IN ('APPLY', 'LOOKUP')",
+			"ON CONFLICT (operator_id) DO NOTHING",
+			"CREATE TRIGGER rgs_register_wallet_recovery_operator_insert",
+			"AFTER INSERT ON rgs_rounds",
+			"NEW.status IN ('PREPARED', 'WALLET_PENDING')",
+			"CREATE TRIGGER rgs_register_wallet_recovery_operator_recovery_update",
+			"AFTER UPDATE OF status, wallet_phase ON rgs_rounds",
+			"OLD.status NOT IN ('PREPARED', 'WALLET_PENDING')",
+			"OLD.wallet_phase NOT IN ('APPLY', 'LOOKUP')",
+		} {
+			if !strings.Contains(item.contents, required) {
+				t.Fatalf("wallet recovery registry invariant migration is missing %q", required)
+			}
+		}
+		if !strings.Contains(item.contents, walletRecoveryRegistryFunctionSource) {
+			t.Fatal("wallet recovery registry invariant migration function body drifted")
+		}
+		lock := strings.Index(item.contents, "LOCK TABLE rgs_rounds")
+		backfill := strings.Index(item.contents, "INSERT INTO rgs_wallet_recovery_operators")
+		trigger := strings.Index(item.contents, "CREATE TRIGGER rgs_register_wallet_recovery_operator_insert")
+		if lock < 0 || backfill <= lock || trigger <= backfill {
+			t.Fatal("rolling registry migration must lock writes, backfill, then install its trigger")
+		}
+		return
+	}
+	t.Fatal("0010_wallet_recovery_registry_invariant migration is missing")
 }

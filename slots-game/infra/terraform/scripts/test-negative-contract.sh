@@ -46,6 +46,36 @@ reject_mutation() {
 
 reject_mutation public-eks-api modules/eks/main.tf \
   'endpoint_public_access  = false' 'endpoint_public_access  = true'
+reject_mutation false-api-origin-bypass-model contracts/landing-zone-interface.v1.yaml \
+  'sourceBypassModel: not-applicable-alb-is-authoritative-origin' 'sourceBypassModel: cloudfront-secret-header'
+reject_mutation include-recovery-in-low-rate-scope contracts/landing-zone-interface.v1.yaml \
+  'statusResultAckExcludedFromLowRateRules: true' 'statusResultAckExcludedFromLowRateRules: false'
+reject_mutation allow-options-to-bypass-api-high-rate contracts/landing-zone-interface.v1.yaml \
+  'optionsPreflightCoveredByHighRateRule: true' 'optionsPreflightCoveredByHighRateRule: false'
+reject_mutation treat-source-ip-as-identity-authority contracts/landing-zone-interface.v1.yaml \
+  'sourceIpRateRulesAreNotIdentityAuthority: true' 'sourceIpRateRulesAreNotIdentityAuthority: false'
+reject_mutation claim-unverified-edge-enhancement contracts/landing-zone-interface.v1.yaml \
+  'noneMayBeClaimedWithoutLiveEvidence: true' 'noneMayBeClaimedWithoutLiveEvidence: false'
+reject_mutation allow-waf-sampled-request-data-plane contracts/landing-zone-interface.v1.yaml \
+  'sampledRequestsEnabled: false' 'sampledRequestsEnabled: true'
+reject_mutation allow-unapproved-waf-evidence-kms contracts/landing-zone-interface.v1.yaml \
+  'blockPromotionRequiresApprovedKmsKey: true' 'blockPromotionRequiresApprovedKmsKey: false'
+reject_mutation allow-unlocked-waf-evidence contracts/landing-zone-interface.v1.yaml \
+  'blockPromotionRequiresComplianceObjectLock: true' 'blockPromotionRequiresComplianceObjectLock: false'
+reject_mutation omit-waf-object-retention-read contracts/landing-zone-interface.v1.yaml \
+  's3:GetObjectRetention' 's3:GetRetentionRemoved'
+reject_mutation omit-web-origin-public-access-read contracts/landing-zone-interface.v1.yaml \
+  's3:GetBucketPublicAccessBlock' 's3:GetBucketPublicAccessRemoved'
+reject_mutation omit-web-origin-policy-read contracts/landing-zone-interface.v1.yaml \
+  's3:GetBucketPolicy' 's3:ReadBucketPolicyRemoved'
+reject_mutation omit-alb-listener-rule-read contracts/landing-zone-interface.v1.yaml \
+  'elasticloadbalancing:DescribeRules' 'elasticloadbalancing:GetRules'
+reject_mutation omit-eks-addon-read contracts/landing-zone-interface.v1.yaml \
+  'eks:DescribeAddon' 'eks:GetAddon'
+reject_mutation omit-eks-pod-identity-read contracts/landing-zone-interface.v1.yaml \
+  'eks:DescribePodIdentityAssociation' 'eks:GetPodIdentityAssociation'
+reject_mutation omit-eks-pod-identity-list contracts/landing-zone-interface.v1.yaml \
+  'eks:ListPodIdentityAssociations' 'eks:GetPodIdentityAssociations'
 reject_mutation reset-autoscaled-desired-size modules/eks/main.tf \
   'ignore_changes = [scaling_config[0].desired_size]' 'ignore_changes = []'
 reject_mutation ignore-autoscaler-boundaries modules/eks/main.tf \
@@ -70,6 +100,80 @@ reject_mutation omit-alert-topic-sns-kms-principal modules/kms/main.tf \
   'identifiers = ["sns.amazonaws.com"]' 'identifiers = ["events.amazonaws.com"]'
 reject_mutation remove-alert-topic-kms-encryption-context modules/kms/main.tf \
   'variable = "kms:EncryptionContext:aws:sns:topicArn"' 'variable = "kms:EncryptionContext:other"'
+reject_mutation remove-api-waf-managed-common modules/api-edge-security/main.tf \
+  'AWSManagedRulesCommonRuleSet' 'DisabledCommonRuleGroup'
+reject_mutation expose-public-healthz modules/api-edge-security/main.tf \
+  'search_string         = "/healthz"' 'search_string         = "/readyz"'
+reject_mutation widen-api-waf-protocol-surface modules/api-edge-security/main.tf \
+  'search_string         = "/operator/"' 'search_string         = "/"'
+reject_mutation widen-api-waf-launch-to-all-operator modules/api-edge-security/main.tf \
+  'search_string         = "/operator/v1/launches"' 'search_string         = "/operator/"'
+reject_mutation weaken-api-waf-low-rate-match modules/api-edge-security/main.tf \
+  'positional_constraint = "EXACTLY"' 'positional_constraint = "STARTS_WITH"'
+reject_mutation count-options-as-api-new-intent modules/api-edge-security/main.tf \
+  'search_string         = "POST"' 'search_string         = "OPTIONS"'
+reject_mutation remove-api-high-rate-get-recovery modules/api-edge-security/main.tf \
+  'search_string         = "GET"' 'search_string         = "OPTIONS"'
+reject_mutation remove-api-high-rate-options-protection modules/api-edge-security/main.tf \
+  'search_string         = "OPTIONS"' 'search_string         = "HEAD"'
+reject_mutation remove-api-rate-edge-marker modules/api-edge-security/main.tf \
+  'value = "RATE_LIMITED"' 'value = "UNMARKED"'
+reject_mutation exceed-client-api-rate-retry-window modules/api-edge-security/main.tf \
+  'value = "30"' 'value = "60"'
+reject_mutation hide-api-rate-retry-from-browser modules/api-edge-security/main.tf \
+  'value = "Retry-After, X-RGS-Edge-Error"' 'value = "X-RGS-Edge-Error"'
+reject_mutation collapse-api-waf-public-budget modules/api-edge-security/main.tf \
+  'limit                 = var.rate_limits.public_requests_per_minute' 'limit                 = var.rate_limits.launch_requests_per_minute'
+reject_mutation bypass-api-managed-count-stage modules/api-edge-security/main.tf \
+  'for_each = var.managed_rule_rollout.action == "count" ? [1] : []' 'for_each = []'
+reject_mutation bypass-api-rate-count-stage modules/api-edge-security/main.tf \
+  'for_each = var.rate_rule_rollouts["launch-rate-limit"].action == "count" ? [1] : []' 'for_each = []'
+reject_mutation bypass-api-header-count-stage modules/api-edge-security/main.tf \
+  'for_each = var.header_size_rule_rollout.action == "count" ? [1] : []' 'for_each = []'
+reject_mutation allow-unknown-api-rate-rollout-key modules/api-edge-security/variables.tf \
+  '["launch-rate-limit", "public-api-rate-limit", "spin-rate-limit"]' '["launch-rate-limit", "public-api-rate-limit", "unknown-rate-limit"]'
+reject_mutation permit-api-managed-block-without-evidence modules/api-edge-security/variables.tf \
+  'can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[^?#]+\\?versionId=[A-Za-z0-9._~+/=-]{1,1024}#[0-9a-f]{64}$", var.managed_rule_rollout.evidence_reference))' 'var.managed_rule_rollout.evidence_reference == "observation-pending"'
+reject_mutation bypass-api-waf-body-oversize modules/api-edge-security/main.tf \
+  'oversize_handling = "MATCH"' 'oversize_handling = "NO_MATCH"'
+reject_mutation weaken-api-waf-rate-window modules/api-edge-security/main.tf \
+  'evaluation_window_sec = 60' 'evaluation_window_sec = 300'
+reject_mutation retain-all-api-waf-logs modules/api-edge-security/main.tf \
+  'default_behavior = "DROP"' 'default_behavior = "KEEP"'
+reject_mutation leak-api-waf-authorization modules/api-edge-security/main.tf \
+  'name = "authorization"' 'name = "unredacted-secret-header"'
+reject_mutation leak-api-waf-query-string modules/api-edge-security/main.tf \
+  'query_string {}' 'uri_path {}'
+reject_mutation enable-api-waf-sampled-requests modules/api-edge-security/main.tf \
+  'sampled_requests_enabled   = false' 'sampled_requests_enabled   = true'
+reject_mutation unpin-api-managed-rule-version modules/api-edge-security/main.tf \
+  'version     = var.managed_rule_versions[rule.key]' 'version     = null'
+reject_mutation disable-api-waf-alarm-delivery modules/api-edge-security/main.tf \
+  'alarm_actions       = [var.alert_topic_arn]' 'alarm_actions       = []'
+reject_mutation use-resource-name-for-waf-alarm-dimension modules/api-edge-security/main.tf \
+  'WebACL = local.web_acl_metric' 'WebACL = local.web_acl_name'
+reject_mutation falsely-claim-api-cloudfront-proxy modules/api-edge-security/outputs.tf \
+  'cloudfront_is_api_proxy      = false' 'cloudfront_is_api_proxy      = true'
+reject_mutation falsely-claim-public-web-origin-private modules/web-edge/outputs.tf \
+  'origin_public_access_blocked = true' 'origin_public_access_blocked = false'
+reject_mutation falsely-use-cloudfront-as-api-proxy modules/web-edge/outputs.tf \
+  'api_proxy                    = false' 'api_proxy                    = true'
+reject_mutation claim-cloudfront-sampled-requests-safe modules/web-edge/outputs.tf \
+  'sampled_requests_enabled     = false' 'sampled_requests_enabled     = true'
+reject_mutation omit-cloudfront-waf-metric-contract modules/web-edge/outputs.tf \
+  'web_acl_metric_name          = replace("${var.name_prefix}-web", "-", "_")' \
+  'web_acl_metric_name          = "unbound"'
+reject_mutation omit-cloudfront-response-function-delivery stacks/environment/outputs.tf \
+  '    cloudfront_release_response_function_arn  = module.platform.cloudfront_release_response_function_arn' \
+  '    cloudfront_release_response_function_arn  = ""'
+reject_mutation omit-cloudfront-managed-rule-versions modules/web-edge/outputs.tf \
+  'managed_rule_versions           = var.waf_managed_rule_versions' 'managed_rule_versions           = {}'
+reject_mutation bypass-cloudfront-managed-count-stage modules/web-edge/variables.tf \
+  'var.waf_managed_rule_rollout.action == "count"' 'var.waf_managed_rule_rollout.action == "block"'
+reject_mutation bypass-cloudfront-rate-count-stage modules/web-edge/variables.tf \
+  'var.waf_rate_rule_rollout.action == "count"' 'var.waf_rate_rule_rollout.action == "block"'
+reject_mutation promote-managed-rules-without-evidence environments/prod-primary/terraform.tfvars.example \
+  'action             = "count"' 'action             = "block"'
 reject_mutation public-rds modules/rds/main.tf \
   'publicly_accessible    = false' 'publicly_accessible    = true'
 reject_mutation unencrypted-rds-logs modules/rds/main.tf \
@@ -108,6 +212,16 @@ reject_mutation omit-alert-topic-policy-dependency modules/observability/outputs
   'depends_on  = [aws_sns_topic_policy.alerts]' 'depends_on  = []'
 reject_mutation weak-valkey-tls modules/cache/main.tf \
   'transit_encryption_mode    = "required"' 'transit_encryption_mode    = "preferred"'
+reject_mutation allow-valkey-admission-eviction modules/cache/main.tf \
+  'value = "noeviction"' 'value = "volatile-lru"'
+reject_mutation detach-valkey-noeviction-parameter-group modules/cache/main.tf \
+  'parameter_group_name = aws_elasticache_parameter_group.noeviction.name' 'parameter_group_name = null'
+reject_mutation hardcode-wrong-valkey-parameter-family modules/cache/main.tf \
+  'family      = local.valkey_parameter_group_family' 'family      = "valkey7"'
+reject_mutation omit-valkey-live-parameter-group-handoff stacks/environment/outputs.tf \
+  'valkey_parameter_group_name               = module.platform.valkey_parameter_group_name' 'removed_valkey_parameter_group_name       = module.platform.valkey_parameter_group_name'
+reject_mutation omit-valkey-live-policy-read-permission contracts/landing-zone-interface.v1.yaml \
+  '        - elasticache:DescribeCacheParameters' '        - elasticache:DescribeCacheParameterGroups'
 reject_mutation authoritative-cache modules/cache/main.tf \
   'AuthoritativeEconomicState = "false"' 'AuthoritativeEconomicState = "true"'
 reject_mutation stateful-valkey-password-a modules/cache/main.tf \
@@ -155,25 +269,34 @@ reject_mutation reject-normal-terraform-data-computed-fields scripts/verify-valk
 reject_mutation allow-extra-resource-in-hmac-plan scripts/verify-valkey-rotation-plan.rb \
   'assert(actual_addresses.sort == expected_addresses.sort, "HMAC #{transition == :hmac_entry ? "入口" : "出口"} plan 的非 no-op 资源集合不符合精确 allowlist")' \
   'assert(true, "HMAC #{transition == :hmac_entry ? "入口" : "出口"} plan 的非 no-op 资源集合不符合精确 allowlist")'
-reject_mutation allow-steady-valkey-acl-schema-change scripts/verify-valkey-rotation-plan.rb \
-  'assert(transition == :hmac_entry, "Valkey ACL schema 迁移只能进入有静默证据的 HMAC 维护计划")' \
-  'assert(true, "Valkey ACL schema 迁移只能进入有静默证据的 HMAC 维护计划")'
+reject_mutation allow-steady-valkey-v1-schema-change scripts/verify-valkey-rotation-plan.rb \
+  'assert(transition == :hmac_entry, "Valkey v1 keyspace 迁移只能进入有静默证据的 HMAC 维护计划")' \
+  'assert(true, "Valkey v1 keyspace 迁移只能进入有静默证据的 HMAC 维护计划")'
+reject_mutation allow-economic-acl-expansion-during-password-rotation scripts/verify-valkey-rotation-plan.rb \
+  'assert(transition == :steady, "Valkey v2 economic ACL 追加只能在 steady 计划中先于新 runtime 应用")' \
+  'assert(true, "Valkey v2 economic ACL 追加只能在 steady 计划中先于新 runtime 应用")'
 reject_mutation broad-valkey-keyspace modules/cache/main.tf \
   '~rgs:shared-admission:v2:*' '~*'
 reject_mutation legacy-valkey-keyspace modules/cache/main.tf \
   '~rgs:shared-admission:v2:*' '~rgs:shared-admission:v1:*'
 reject_mutation missing-valkey-pttl modules/cache/main.tf \
   '+evalsha +eval +get +pttl +set' '+evalsha +eval +get +set'
+reject_mutation missing-valkey-economic-time modules/cache/main.tf \
+  '+set +time +mset +pexpire' '+set +mset +pexpire'
+reject_mutation missing-valkey-economic-mset modules/cache/main.tf \
+  '+set +time +mset +pexpire' '+set +time +pexpire'
+reject_mutation missing-valkey-economic-expiry modules/cache/main.tf \
+  '+set +time +mset +pexpire' '+set +time +mset'
 reject_mutation reintroduce-legacy-valkey-commands modules/cache/main.tf \
-  '+evalsha +eval +get +pttl +set' '+evalsha +eval +get +pttl +set +time +hmget +hset +pexpire'
+  '+set +time +mset +pexpire' '+set +time +mset +pexpire +hmget +hset'
 reject_mutation bypass-valkey-acl-maintenance-transition modules/cache/outputs.tf \
-  'acl_schema_transition                         = "maintenance-quiesced"' 'acl_schema_transition                         = "rolling"'
+  'acl_schema_transition                  = "maintenance-quiesced"' 'acl_schema_transition                  = "rolling"'
 reject_mutation allow-rolling-valkey-acl-schema modules/cache/outputs.tf \
-  'acl_schema_rolling_compatible                 = false' 'acl_schema_rolling_compatible                 = true'
+  'acl_schema_rolling_compatible          = false' 'acl_schema_rolling_compatible          = true'
 reject_mutation allow-dual-valkey-acl-schema modules/cache/outputs.tf \
-  'acl_schema_dual_permissions_allowed           = false' 'acl_schema_dual_permissions_allowed           = true'
+  'acl_schema_dual_permissions_allowed    = false' 'acl_schema_dual_permissions_allowed    = true'
 reject_mutation bypass-valkey-acl-quiesce modules/cache/outputs.tf \
-  'acl_schema_migration_requires_quiesced        = true' 'acl_schema_migration_requires_quiesced        = false'
+  'acl_schema_migration_requires_quiesced = true' 'acl_schema_migration_requires_quiesced = false'
 reject_mutation omit-valkey-acl-contract-from-handoff stacks/application-platform/outputs.tf \
   'valkey_rotation_contract        = module.cache.rotation_contract' 'removed_valkey_rotation_contract = module.cache.rotation_contract'
 reject_mutation invalid-valkey-alarm-dimension modules/cache/main.tf \
@@ -216,6 +339,12 @@ reject_mutation same-region-backup modules/delivery-contract/variables.tf \
   'split(":", var.backup_copy_destination_vault_arn)[3] != var.aws_region' 'split(":", var.backup_copy_destination_vault_arn)[3] == var.aws_region'
 reject_mutation broad-alb-egress modules/network/main.tf \
   'ip_protocol       = "tcp"' 'ip_protocol       = "-1"'
+reject_mutation omit-alb-operations-health-egress modules/network/main.tf \
+  'from_port         = 8081' 'from_port         = 8080'
+reject_mutation widen-alb-health-egress-to-internet modules/network/main.tf \
+  'cidr_ipv4         = var.vpc_cidr
+  from_port         = 8081' 'cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 8081'
 reject_mutation false-application-ready stacks/application-platform/outputs.tf \
   'foundation_apply_is_application_ready = false' 'foundation_apply_is_application_ready = true'
 reject_mutation public-runner-contract contracts/cluster-addons-interface.v1.yaml \

@@ -1326,7 +1326,6 @@ export class DomOverlay {
   private readonly gameMenuClose: HTMLButtonElement;
   private readonly gameMenuTabs: readonly HTMLButtonElement[];
   private readonly gameMenuPanels: readonly HTMLElement[];
-  private readonly settingSwitches: readonly HTMLButtonElement[];
   private readonly settingsSoundSwitch: HTMLButtonElement;
   private readonly autoplayScrim: HTMLElement;
   private readonly autoplayModal: HTMLElement;
@@ -2067,7 +2066,6 @@ export class DomOverlay {
     this.gameMenuClose = this.require(host, "game-menu-close") as HTMLButtonElement;
     this.gameMenuTabs = [...host.querySelectorAll<HTMLButtonElement>("[data-menu-tab]")];
     this.gameMenuPanels = [...host.querySelectorAll<HTMLElement>("[data-menu-panel]")];
-    this.settingSwitches = [...host.querySelectorAll<HTMLButtonElement>("[data-setting]")];
     this.settingsSoundSwitch = this.require(host, "settings-sound") as HTMLButtonElement;
     this.autoplayScrim = this.require(host, "autoplay-scrim");
     this.autoplayModal = this.require(host, "autoplay-modal");

@@ -33,12 +33,15 @@ func TestMiddlewareAppliesSecurityCORSAndAdmissionLimits(t *testing.T) {
 	}
 	second := httptest.NewRecorder()
 	handler.ServeHTTP(second, request)
-	if second.Code != http.StatusTooManyRequests || metrics.RateLimited.Load() != 1 {
-		t.Fatalf("second response = %d, rate limited = %d", second.Code, metrics.RateLimited.Load())
+	if second.Code != http.StatusServiceUnavailable || metrics.PreAuthCapacityRejected.Load() != 1 ||
+		metrics.RateLimited.Load() != 0 || metrics.HTTPServerFailures.Load() != 1 {
+		t.Fatalf("second response = %d, preauth = %d, rate limited = %d, server failures = %d",
+			second.Code, metrics.PreAuthCapacityRejected.Load(), metrics.RateLimited.Load(),
+			metrics.HTTPServerFailures.Load())
 	}
 	if second.Header().Get("Content-Type") != "application/json" ||
-		!bytes.Contains(second.Body.Bytes(), []byte(`"code":"RATE_LIMITED"`)) {
-		t.Fatalf("rate-limit envelope = headers:%v body:%s", second.Header(), second.Body.Bytes())
+		!bytes.Contains(second.Body.Bytes(), []byte(`"code":"CAPACITY_UNAVAILABLE"`)) {
+		t.Fatalf("pre-auth capacity envelope = headers:%v body:%s", second.Header(), second.Body.Bytes())
 	}
 }
 
@@ -82,8 +85,67 @@ func TestMiddlewareAdmissionIgnoresUnverifiedOperatorHeader(t *testing.T) {
 	second.Header.Set("X-Operator-Id", "operator-b")
 	secondRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(secondRecorder, second)
-	if secondRecorder.Code != http.StatusTooManyRequests {
+	if secondRecorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("rotated unverified tenant header bypassed peer limit: %d", secondRecorder.Code)
+	}
+}
+
+func TestMiddlewareAdmissionCannotBeBypassedByRotatingNetworkMetadata(t *testing.T) {
+	middleware := Middleware{Limiter: NewLimiter(1, 1, 1, time.Minute)}
+	handler := middleware.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	first := httptest.NewRequest(http.MethodPost, "/client/v1/spins", nil)
+	first.RemoteAddr = "192.0.2.10:1234"
+	first.Header.Set("X-Forwarded-For", "198.51.100.10")
+	firstResponse := httptest.NewRecorder()
+	handler.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusNoContent {
+		t.Fatalf("first response = %d", firstResponse.Code)
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/client/v1/spins", nil)
+	second.RemoteAddr = "192.0.2.11:5678"
+	second.Header.Set("X-Forwarded-For", "198.51.100.11")
+	second.Header.Set("X-Operator-Id", "rotated-claim")
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("rotating network metadata bypassed the global bucket: %d", secondResponse.Code)
+	}
+}
+
+func TestMiddlewarePreAuthRejectionClosesUnreadRequestBody(t *testing.T) {
+	metrics := &Metrics{}
+	middleware := Middleware{Metrics: metrics, Limiter: NewLimiter(1, 1, 1, time.Minute)}
+	handler := middleware.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/client/v1/spins", nil))
+	rejected := httptest.NewRequest(http.MethodPost, "/client/v1/spins", strings.NewReader(`{"large":"unread"}`))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, rejected)
+
+	if recorder.Code != http.StatusServiceUnavailable || !rejected.Close ||
+		metrics.PreAuthCapacityRejected.Load() != 1 || metrics.RateLimited.Load() != 0 {
+		t.Fatalf("pre-auth rejection = status:%d close:%v preauth:%d rate:%d body:%s",
+			recorder.Code, rejected.Close, metrics.PreAuthCapacityRejected.Load(),
+			metrics.RateLimited.Load(), recorder.Body.String())
+	}
+}
+
+func TestMiddlewarePreflightClosesUnexpectedBody(t *testing.T) {
+	handler := Middleware{}.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("preflight reached business handler")
+	}))
+	request := httptest.NewRequest(http.MethodOptions, "/client/v1/spins", strings.NewReader(`{"unexpected":true}`))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent || !request.Close {
+		t.Fatalf("preflight response = status:%d close:%v", recorder.Code, request.Close)
 	}
 }
 

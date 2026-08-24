@@ -51,8 +51,14 @@ const DEFAULT_ACKNOWLEDGEMENT_RETRY_BASE_DELAY_MS = 500;
 const DEFAULT_ACKNOWLEDGEMENT_RETRY_MAX_DELAY_MS = 30_000;
 const DEFAULT_ACKNOWLEDGEMENT_MAX_ATTEMPTS = 8;
 const DEFAULT_ACKNOWLEDGEMENT_RETRY_WINDOW_MS = 120_000;
+// 当前 RGS HTTP 准入精确收取一个成本单位，并接受最低 0.001 单位/秒回填率，
+// 因此最长合法 token-ready 延迟为 1,000 秒。该传输上限刻意独立于 ACK 退避；
+// 上线加权 HTTP 成本前必须显式修订。
+const MAX_ADMISSION_RETRY_AFTER_MS = 1_000_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const IMF_FIXDATE_PATTERN = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$/;
+const EDGE_ERROR_HEADER = "X-RGS-Edge-Error";
+const EDGE_RATE_LIMITED = "RATE_LIMITED";
 
 export class RgsGatewayConfigurationError extends Error {
   constructor(message: string) {
@@ -283,9 +289,10 @@ function configuredInteger(
 
 /**
  * Retry-After 是不可信网络输入。只接受规范的正整数秒或 IMF-fixdate，且解析后的
- * 延迟必须落在本页 ACK 配置的安全上限内；负数、零、重复合并值和超大值一律忽略。
+ * 延迟必须落在当前服务端单成本单位准入契约上限内。ACK 的退避上限与绝对截止
+ * 时间与该输入安全界限独立；负数、零、重复合并值和超大值一律忽略。
  */
-function safeRetryAfterMs(value: string | null, nowMs: number, maximumMs: number): number | null {
+function safeRetryAfterMs(value: string | null, nowMs: number): number | null {
   if (value === null) return null;
   let delayMs: number;
   if (/^[1-9][0-9]{0,5}$/.test(value)) {
@@ -297,8 +304,41 @@ function safeRetryAfterMs(value: string | null, nowMs: number, maximumMs: number
   } else {
     return null;
   }
-  if (!Number.isSafeInteger(delayMs) || delayMs < 1_000 || delayMs > maximumMs) return null;
+  if (!Number.isSafeInteger(delayMs) || delayMs < 1_000
+    || delayMs > MAX_ADMISSION_RETRY_AFTER_MS) return null;
   return delayMs;
+}
+
+/**
+ * AWS WAF 的限流响应不经过 RGS JSON envelope。只有精确的受管边缘标记和安全的
+ * Retry-After 同时存在时才映射为可重试错误；其余空响应继续按协议损坏失败关闭。
+ */
+function throwIfEdgeRateLimited(
+  response: Response,
+  requestId: string,
+  nowMs: number,
+): void {
+  if (response.status !== 429 || response.headers.get(EDGE_ERROR_HEADER) !== EDGE_RATE_LIMITED) {
+    return;
+  }
+  const retryAfterMs = safeRetryAfterMs(
+    response.headers.get("Retry-After"),
+    nowMs,
+  );
+  if (retryAfterMs === null) {
+    const error = new RgsProtocolError("RGS edge rate limit response has an unsafe Retry-After");
+    cancelNetworkResponse(response, error);
+    throw error;
+  }
+  const error = new RgsHttpError(
+    429,
+    requestId,
+    EDGE_RATE_LIMITED,
+    "RGS edge admission is temporarily rate limited",
+    retryAfterMs,
+  );
+  cancelNetworkResponse(response, error);
+  throw error;
 }
 
 function endpoint(baseUrl: URL, path: string): string {
@@ -1375,21 +1415,23 @@ export class RgsGateway implements GameGateway {
       const requestId = this.nextRequestId();
       const launchCode = this.launchCode;
       if (!launchCode) throw new RgsGatewayConfigurationError("RGS launch code is unavailable");
+      // 离线/后台停放发生在 connect()，尚未越过交接边界；一旦准备实际发出
+      // exchange，就必须先在本实例原子消费一次性码。网络不确定、HTTP 错误或
+      // 畸形响应都可能意味着服务端已经消费，当前实例绝不能再次重放。
+      this.launchCode = null;
       const raw = await this.post(
         this.config.exchangeUrl,
         { launchCode, operatorId: this.config.operatorId, sessionId: this.config.sessionId },
         requestId,
         null,
       );
-      // 任意 HTTP 响应都可能表示一次性启动码已消费；成功解码会话交换响应后
-      // 禁止继续保留该启动码。
+      // 启动码已经越过不可重放边界；此后只解析响应，任何失败都不能恢复它。
       const exchange = decodeRgsExchange(
         raw,
         requestId,
         this.config.operatorId,
         this.config.sessionId,
       );
-      this.launchCode = null;
       if (exchange.session.status !== "ACTIVE") {
         throw new RgsProtocolError("RGS exchange returned a non-ACTIVE session");
       }
@@ -1964,7 +2006,10 @@ export class RgsGateway implements GameGateway {
           || !sameCompleteBinding(exchange.session.binding, sessionBefore.binding)) {
           throw new RgsProtocolError("RGS refresh changed the immutable session binding or status");
         }
-        this.validateRefreshedSession(exchange.session);
+        exchange = Object.freeze({
+          ...exchange,
+          session: this.validateRefreshedSession(exchange.session, sessionBefore),
+        });
       } catch (error) {
         if (this.isCurrent(generation)) {
           if (error instanceof RgsProtocolError) {
@@ -2002,18 +2047,56 @@ export class RgsGateway implements GameGateway {
     }
   }
 
-  private validateRefreshedSession(refreshed: DecodedRgsSession): void {
+  private validateRefreshedSession(
+    refreshed: DecodedRgsSession,
+    requestBaseline: DecodedRgsSession,
+  ): DecodedRgsSession {
     const current = this.requireSession();
-    if (!this.pending) {
-      if (refreshed.revision !== current.revision || refreshed.sequence !== current.sequence) {
-        throw new RgsProtocolError("RGS session advanced without a pending browser round");
+    if (!sameCompleteBinding(current.binding, requestBaseline.binding)) {
+      throw new RgsProtocolError("RGS session binding changed during refresh");
+    }
+    if (refreshed.revision === current.revision
+      && refreshed.sequence === current.sequence) {
+      // Revision 是经济/特性状态的乐观并发令牌；相同游标下 refresh 只能
+      // 轮换 access token / expiry，不能借 refresh 静默改写权威投影。
+      // sameFeatureState 按规范化字段比较，不依赖 JSON 对象键顺序。
+      if (refreshed.balanceMinor !== current.balanceMinor
+        || !sameFeatureState(refreshed.featureState, current.featureState)) {
+        throw new RgsProtocolError(
+          "refreshed RGS session changed economic state without advancing revision",
+        );
       }
-      return;
+      return Object.freeze({
+        ...current,
+        expiresAt: refreshed.expiresAt,
+      });
+    }
+    if (!this.pending) {
+      throw new RgsProtocolError("RGS session advanced without a pending browser round");
     }
     const startRevision = BigInt(this.pending.ledger.startRevision);
+    const baselineRevision = BigInt(requestBaseline.revision);
     const currentRevision = BigInt(current.revision);
     const refreshedRevision = BigInt(refreshed.revision);
     const revisionDelta = refreshedRevision - currentRevision;
+
+    // 合法并发交错：refresh 在待处理轮次提交前读取 start，响应却在同一轮次的
+    // COMMITTED 结果已经推进本页到 start+1 后抵达。此时只采用新 token/expiry；
+    // 余额、revision、sequence 与特性投影必须保留已经验证的 committed 当前值。
+    const staleCommittedOverlap = baselineRevision === startRevision
+      && refreshedRevision === startRevision
+      && currentRevision === startRevision + 1n
+      && requestBaseline.sequence === refreshed.sequence
+      && current.sequence === requestBaseline.sequence + 1
+      && refreshed.balanceMinor === requestBaseline.balanceMinor
+      && sameFeatureState(refreshed.featureState, requestBaseline.featureState);
+    if (staleCommittedOverlap) {
+      return Object.freeze({
+        ...current,
+        expiresAt: refreshed.expiresAt,
+      });
+    }
+
     // pending 轮次至多提交一次：refresh 可以保持当前游标，或同时推进 revision/sequence 一步。
     // 已观察到提交后的当前游标绝不能倒退回 startRevision。
     if (refreshedRevision < startRevision
@@ -2025,6 +2108,7 @@ export class RgsGateway implements GameGateway {
         "refreshed RGS session is outside the pending round revision/sequence window",
       );
     }
+    return refreshed;
   }
 
   private scheduleProactiveRefresh(token: string): void {
@@ -2055,10 +2139,17 @@ export class RgsGateway implements GameGateway {
           const now = this.config.now();
           const remaining = lifetime ? lifetime.expiresMs - now : 0;
           const backoff = Math.min(30_000, 1_000 * 2 ** Math.min(this.proactiveRefreshAttempt, 5));
+          const delay = distributedRetryDelayMs(
+            backoff,
+            error instanceof RgsHttpError ? error.retryAfterMs ?? 0 : 0,
+            this.config.retryJitter,
+          );
           this.proactiveRefreshAttempt += 1;
-          if (remaining > backoff + 1_000) {
+          // 主动续期同样把 Retry-After 作为下界，但绝不能延长签名 token 生命周期；
+          // 为最终请求保留一秒，否则失败关闭并要求运营商重新 launch。
+          if (remaining > delay + 1_000) {
             this.reportError(error, this.pending ?? undefined);
-            this.scheduleProactiveRefreshAttempt(token, backoff);
+            this.scheduleProactiveRefreshAttempt(token, delay);
             return;
           }
         }
@@ -2130,6 +2221,11 @@ export class RgsGateway implements GameGateway {
           requestId,
         );
       }
+      throwIfEdgeRateLimited(
+        response,
+        requestId,
+        this.config.now(),
+      );
       let responseText: string;
       try {
         responseText = await readBoundedResponseText(response, {
@@ -2174,7 +2270,6 @@ export class RgsGateway implements GameGateway {
           safeRetryAfterMs(
             response.headers.get("Retry-After"),
             this.config.now(),
-            this.config.acknowledgementRetryMaxDelayMs,
           ),
         );
       }
@@ -2225,6 +2320,11 @@ export class RgsGateway implements GameGateway {
           requestId,
         );
       }
+      throwIfEdgeRateLimited(
+        response,
+        requestId,
+        this.config.now(),
+      );
       const contentType = response.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
       if (contentType !== "application/json") {
         const error = new RgsProtocolError("RGS response Content-Type must be application/json");
@@ -2263,7 +2363,6 @@ export class RgsGateway implements GameGateway {
           safeRetryAfterMs(
             response.headers.get("Retry-After"),
             this.config.now(),
-            this.config.acknowledgementRetryMaxDelayMs,
           ),
         );
       }

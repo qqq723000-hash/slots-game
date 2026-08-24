@@ -68,7 +68,7 @@ run_scenario() {
     AWS_CLOUDFRONT_DOMAIN_NAME=fixture.cloudfront.net \
     AWS_CLOUDFRONT_RESPONSE_HEADERS_POLICY_ID=policy-fixture \
     AWS_CLOUDFRONT_KVS_ARN=arn:aws:cloudfront::123456789012:key-value-store/kvs-fixture \
-    AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME=router-fixture \
+    AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME=slots-fixture-release-request \
     "$publisher" "$static_root" "$extraction_evidence" \
       "123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/web@$web_digest" \
       "$configuration_sha256" "$delivery_evidence" \
@@ -148,5 +148,17 @@ if grep -E '^(public-target|rollback-put|rollback-delete)$' \
   "$fixture_root/lookup-error/state/events.log" >/dev/null; then
   fail 'lookup-error 在未知状态下继续公网验证或盲目回退'
 fi
+
+for unsafe_distribution_scenario in \
+  cloudfront-lambda-association \
+  cloudfront-extra-cache-behavior \
+  cloudfront-extra-function-association
+do
+  run_scenario "$unsafe_distribution_scenario" "$previous_release" failure
+  if grep -E '^(public-target|rollback-put|rollback-delete)$' \
+    "$fixture_root/$unsafe_distribution_scenario/state/events.log" >/dev/null; then
+    fail "$unsafe_distribution_scenario 在 distribution 门禁失败后仍进入公网切换或补偿"
+  fi
+done
 
 printf '%s\n' 'AWS Web KVS 模糊成功故障夹具通过。'

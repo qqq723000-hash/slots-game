@@ -112,9 +112,13 @@ expected_alerts = %w[
   SlotsRGSServerErrorRateHigh
   SlotsRGSCapacityRejected
   SlotsRGSNewIntentCapacityRejected
+  SlotsRGSCryptographicCapacityRejected
   SlotsRGSHPAUnableToScale
   SlotsRGSSharedAdmissionErrors
+  SlotsRGSEconomicAdmissionLimitedSustained
+  SlotsRGSEconomicAdmissionErrors
   SlotsRGSAuthReplay
+  SlotsRGSSecurityLogDropsSustained
   SlotsRGSWalletUnknownOutcome
   SlotsRGSWalletIsolationRejected
   SlotsRGSWalletCircuitOpen
@@ -171,6 +175,13 @@ abort "认证重放告警必须使用五分钟 increase 并在首次事件时触
     'sum(increase(rgs_auth_replays_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0'
 abort "认证重放告警必须保持 warning 级别" unless
   auth_replay_rule.dig("labels", "severity") == "warning"
+security_log_drop_rule = rules.find { |rule| rule.fetch("alert") == "SlotsRGSSecurityLogDropsSustained" }
+abort "安全日志丢弃告警必须使用五分钟 increase 且持续五分钟" unless
+  security_log_drop_rule.fetch("expr").strip ==
+    'sum(increase(rgs_security_logs_dropped_total{job=~"slots-rgs|slots-rgs-worker",namespace="slots-production"}[5m])) > 0' &&
+    security_log_drop_rule.fetch("for") == "5m"
+abort "安全日志丢弃告警必须保持 warning 级别" unless
+  security_log_drop_rule.dig("labels", "severity") == "warning"
 {
   "SlotsRGSRecoveryBacklogHigh" => ["rgs_recovery_backlog", ">= 501"],
   "SlotsRGSRecoveryOldestDue" => ["rgs_recovery_oldest_due_age_seconds", "> 120"],
@@ -188,8 +199,10 @@ required_metrics = %w[
   rgs_http_requests_total
   rgs_capacity_rejected_total
   rgs_new_intent_capacity_rejected_total
+  rgs_cryptographic_capacity_rejected_total
   rgs_shared_admission_errors_total
   rgs_auth_replays_total
+  rgs_security_logs_dropped_total
   rgs_wallet_unknown_outcomes_total
   rgs_wallet_isolation_rejected_total
   rgs_wallet_breakers
@@ -224,6 +237,12 @@ end
 abort "缺少 RGS Worker Deployment" unless worker
 api_container = rgs.dig("spec", "template", "spec", "containers").fetch(0)
 worker_container = worker.dig("spec", "template", "spec", "containers").fetch(0)
+abort "RGS liveness 必须使用私有 operations 8081 /healthz" unless
+  api_container.dig("livenessProbe", "httpGet", "path") == "/healthz" &&
+    api_container.dig("livenessProbe", "httpGet", "port") == "operations"
+abort "RGS readiness 必须通过携带 operations Bearer 的私有 /service-probe" unless
+  api_container.dig("readinessProbe", "exec", "command") == ["/service-probe"] &&
+    api_container.dig("startupProbe", "exec", "command") == ["/service-probe"]
 api_environment = api_container.fetch("env").to_h { |item| [item.fetch("name"), item["value"]] }
 worker_environment = worker_container.fetch("env").to_h { |item| [item.fetch("name"), item["value"]] }
 api_environment_items = api_container.fetch("env").to_h { |item| [item.fetch("name"), item] }
@@ -244,6 +263,16 @@ abort "Worker 没有绑定候选数学定义身份" unless worker_environment.sl
       annotations["slots-game.io/definition-sha256"] == expected_definition_identity["RGS_EXPECTED_DEFINITION_SHA256"]
 end
 abort "RGS API 没有显式固定 api 角色" unless api_environment["RGS_RUNTIME_ROLE"] == "api"
+abort "RGS API 请求体硬上限没有与 ALB WAF 8 KiB 检查窗口对齐" unless
+  api_environment["RGS_MAX_REQUEST_BYTES"] == "8192"
+abort "RGS API 没有固定匿名并发/加密容量或预认证高水位" unless
+  api_environment["RGS_MAX_IN_FLIGHT_REQUESTS"] == "128" &&
+    api_environment["RGS_MAX_CRYPTO_IN_FLIGHT"] == "64" &&
+    api_environment["RGS_PREAUTH_RATE_PER_SECOND"] == "5000" &&
+    api_environment["RGS_PREAUTH_RATE_BURST"] == "10000"
+abort "RGS API 不得按未认证 method/path 授予恢复预留" if
+  api_environment.key?("RGS_RECOVERY_IN_FLIGHT_RESERVE") ||
+    api_environment.key?("RGS_CRYPTO_RECOVERY_RESERVE")
 abort "RGS API 没有固定独立的一秒钱包快速路径预算" unless
   api_environment["RGS_WALLET_FAST_PATH_TIMEOUT"] == "1s" &&
     api_environment["RGS_WALLET_TIMEOUT"] == "4s"
@@ -260,10 +289,19 @@ required_shared_environment = %w[
   RGS_SHARED_ADMISSION_TIMEOUT
   RGS_SHARED_ADMISSION_RATE_PER_SECOND
   RGS_SHARED_ADMISSION_RATE_BURST
+  RGS_ECONOMIC_OPERATOR_RATE_PER_SECOND
+  RGS_ECONOMIC_OPERATOR_RATE_BURST
+  RGS_ECONOMIC_BACKEND_RATE_PER_SECOND
+  RGS_ECONOMIC_BACKEND_RATE_BURST
 ]
 abort "RGS API 缺少共享准入配置" unless
   (required_shared_environment - api_environment.keys).empty? &&
     api_environment["RGS_SHARED_ADMISSION_URL"].start_with?("rediss://")
+abort "RGS API EDoS 双成本桶未固定经审计基线" unless
+  api_environment["RGS_ECONOMIC_OPERATOR_RATE_PER_SECOND"] == "20" &&
+    api_environment["RGS_ECONOMIC_OPERATOR_RATE_BURST"] == "40" &&
+    api_environment["RGS_ECONOMIC_BACKEND_RATE_PER_SECOND"] == "100" &&
+    api_environment["RGS_ECONOMIC_BACKEND_RATE_BURST"] == "200"
 shared_username = api_environment_items.fetch("RGS_SHARED_ADMISSION_USERNAME")
 abort "RGS API 没有从独立共享准入 Secret 读取 ACL 用户名" unless
   shared_username["value"].nil? &&
@@ -274,8 +312,14 @@ abort "RGS Worker 被错误授予 API 新意图数据库保留配置" if
   worker_environment.key?("RGS_DB_CRITICAL_RESERVE_CONNS")
 abort "RGS Worker 被错误授予 API 快速路径预算" if worker_environment.key?("RGS_WALLET_FAST_PATH_TIMEOUT")
 abort "RGS Worker 缺少 outbox 所有者身份" unless worker_environment.key?("RGS_OUTBOX_OWNER")
+abort "RGS Worker 没有固定加密并发上限" unless
+  worker_environment["RGS_MAX_CRYPTO_IN_FLIGHT"] == "64"
+abort "RGS Worker 不得按未认证任务类型授予恢复加密预留" if
+  worker_environment.key?("RGS_CRYPTO_RECOVERY_RESERVE")
 abort "RGS Worker 被错误授予共享准入配置" if
-  worker_environment.keys.any? { |name| name.start_with?("RGS_SHARED_ADMISSION_") }
+  worker_environment.keys.any? do |name|
+    name.start_with?("RGS_SHARED_ADMISSION_") || name.start_with?("RGS_ECONOMIC_")
+  end
 worker_ports = worker_container.fetch("ports").map { |port| port.fetch("name") }
 abort "RGS Worker 暴露了运维端口以外的监听端口" unless worker_ports == ["operations"]
 
@@ -339,6 +383,18 @@ abort "共享准入出口必须只由一个 NetworkPolicy 授权" unless shared_
 shared_selector = shared_policies.fetch(0).dig("spec", "podSelector", "matchLabels")
 abort "共享准入出口没有严格选择 RGS API" unless
   shared_selector["app.kubernetes.io/component"] == "rgs"
+
+rgs_ingress_policy = resources.fetch("NetworkPolicy", []).find do |policy|
+  policy.dig("metadata", "name")&.end_with?("-rgs-ingress")
+end
+abort "缺少 RGS 入口 NetworkPolicy" unless rgs_ingress_policy
+entry_rule = rgs_ingress_policy.dig("spec", "ingress").find do |rule|
+  rule.fetch("ports", []).any? { |port| port["port"] == 8080 }
+end
+abort "RGS 入口 NetworkPolicy 缺少业务端口" unless entry_rule
+abort "入口来源必须只访问业务 8080 与私有健康检查 8081" unless
+  entry_rule.fetch("ports").map { |port| [port["port"], port["protocol"]] }.sort ==
+    [[8080, "TCP"], [8081, "TCP"]]
 
 deployments.each do |deployment|
   labels = deployment.dig("spec", "template", "metadata", "labels")

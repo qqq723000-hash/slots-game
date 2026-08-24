@@ -169,6 +169,15 @@ def acl_schema_changes
   %w[a b].map { |slot| acl_schema_change(slot) }
 end
 
+def economic_acl_expansion_changes
+  %w[a b].map do |slot|
+    acl_schema_change(
+      slot,
+      before_access: ValkeyRotationPlanContract::PRE_ECONOMIC_SHARED_ADMISSION_ACL,
+    )
+  end
+end
+
 def with_computed_resource_fields(payload)
   candidate = deep_copy(payload)
   candidate["resource_changes"][0]["change"]["after_unknown"] = {
@@ -326,6 +335,28 @@ base = {
 expect_accept("首次创建", plan(nil, base, ["create"]))
 expect_accept("Terraform data 计算属性未知但 input 完全已知", with_computed_resource_fields(plan(nil, base, ["create"])))
 expect_accept("普通无变更", plan(base, base, ["no-op"]))
+expect_accept(
+  "steady 计划先行追加 v2 economic ACL 且保持旧 runtime 兼容",
+  plan(base, base, ["no-op"], economic_acl_expansion_changes),
+)
+
+partial_economic_acl_expansion = plan(base, base, ["no-op"], [economic_acl_expansion_changes.first])
+expect_reject("v2 economic ACL 追加禁止只更新单一凭据槽", partial_economic_acl_expansion)
+
+unknown_economic_acl_source = economic_acl_expansion_changes
+unknown_economic_acl_source.first.fetch("change").fetch("before")["access_string"] = "on ~unexpected:* -@all +get"
+expect_reject(
+  "v2 economic ACL 追加拒绝未知或 A/B 不一致前态",
+  plan(base, base, ["no-op"], unknown_economic_acl_source),
+)
+
+extra_economic_acl_permission = economic_acl_expansion_changes
+extra_economic_acl_permission.last.fetch("change").fetch("after")["access_string"] =
+  "#{ValkeyRotationPlanContract::CURRENT_SHARED_ADMISSION_ACL} +del"
+expect_reject(
+  "v2 economic ACL 追加拒绝额外命令或 A/B 不一致后态",
+  plan(base, base, ["no-op"], extra_economic_acl_permission),
+)
 
 unknown_input = plan(base, base, ["update"])
 unknown_input["resource_changes"][0]["change"]["after_unknown"] = {
@@ -346,6 +377,10 @@ prepared_b["reset_approvals"]["b"] = {
   "live_evidence_reference" => "change/VALKEY-0001",
 }
 expect_accept("准备非活动 B 槽", plan(base, prepared_b, ["update"]))
+expect_reject(
+  "v2 economic ACL 追加禁止混入密码轮换",
+  plan(base, prepared_b, ["update"], economic_acl_expansion_changes),
+)
 
 switched_b = deep_copy(prepared_b)
 switched_b["active_slot"] = "b"

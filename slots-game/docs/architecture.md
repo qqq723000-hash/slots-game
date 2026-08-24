@@ -51,11 +51,12 @@ slots-game-production
 │   │   │   ├── /operator/、/launch、/api/v1/launches → local-operator
 │   │   │   └── 其余静态资源 → web
 │   │   └── rgs.localhost
-│   │       └── /operator/v1/*、/client/v1/*、/healthz → rgs-server 公共监听器
+│   │       ├── /operator/v1/*、/client/v1/* → rgs-server 公共业务监听器
+│   │       └── /healthz、/readyz、/metrics → 404，不转发到私有运维面
 │   ├── 9090/TCP  Prometheus 查询与规则状态
 │   ├── 3000/TCP  Grafana 管理界面
 │   ├── 9093/TCP  Alertmanager TLS 代理
-│   │   ├── /healthz：不含状态的公开存活探针
+│   │   ├── /healthz：不含状态的无鉴权存活探针，仅绑定宿主机回环
 │   │   └── 其余管理路径：Bearer 鉴权后转发
 │   └── 24224/TCP Vector Fluent 日志入口，仅供本机 Docker 日志驱动
 │
@@ -111,8 +112,8 @@ slots-game-production
 │
 ├── operations 与 observability 内部网络
 │   ├── rgs-server:8081 私有运维面
-│   │   ├── /healthz：进程存活状态
-│   │   ├── /readyz：数据库、密钥、定义和工作器就绪状态
+│   │   ├── /healthz：无需 Bearer 的进程存活状态，仅限私网探针
+│   │   ├── /readyz：Bearer 保护的数据库、密钥、定义和工作器就绪状态
 │   │   └── /metrics：Bearer 保护、低基数 Prometheus 指标
 │   ├── vector:9598：采集器内部缓冲、错误、丢弃与交付指标
 │   ├── local-operator:8443/metrics：钱包、审计、日志、告警和容量指标
@@ -248,7 +249,7 @@ PostgreSQL 或本机 Compose 观测栈。
 │   │   ├── PDB：minAvailable=2
 │   │   ├── 三可用区 DoNotSchedule、主机拓扑分散、主机反亲和偏好
 │   │   ├── startup/readiness：/service-probe → 私有 8081/readyz + operations Bearer
-│   │   ├── liveness：公共 8080/healthz，仅证明进程存活
+│   │   ├── liveness：私有 operations 8081/healthz，无 Bearer 且仅证明进程存活
 │   │   ├── preStop 5 秒摘流 + 应用 shutdown 30 秒 + 至少 5 秒调度余量
 │   │   ├── 不启动钱包恢复、Outbox 投递或 nonce/launch 清理循环
 │   │   ├── logPipelineProvider 标签记录公司节点日志责任方
@@ -402,7 +403,8 @@ sequenceDiagram
 
 ## 安全与资源控制
 
-- 公共业务监听器和私有运维监听器分离；`/readyz`、`/metrics` 使用 secret-file Bearer；
+- 公共业务监听器和私有运维监听器分离；`/healthz` 仅在私有运维面无鉴权提供，
+  `/readyz`、`/metrics` 使用 secret-file Bearer，三者在公共监听器均返回 404；
 - PostgreSQL、钱包、审计和入口 TLS 使用独立证书/密钥，在线容器不得挂载 CA 私钥；
 - 运行时与迁移器使用不同数据库角色，连接池、并发请求、连接数、正文大小和超时均有硬上限；
 - CORS、CSP `connect-src` 与 `frame-ancestors` 由同一组精确构建 origin 生成，禁止通配符；

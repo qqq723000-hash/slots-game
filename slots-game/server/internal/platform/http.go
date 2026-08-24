@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -34,22 +33,24 @@ func (m Middleware) Wrap(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		m.applyCORS(w, r)
 		if r.Method == http.MethodOptions {
+			closeUnreadBody(r)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		if m.Metrics != nil {
 			m.Metrics.HTTPRequests.Add(1)
 		}
-		// 此中间件运行在请求签名及访问令牌验证之前，因此只把直接传输对端作为准入键；
-		// 若接受 X-Operator-Id，未认证调用方即可轮换或污染租户限流桶。
-		key := clientIP(r.RemoteAddr)
-		if m.Limiter != nil && !m.Limiter.Allow(key, started) {
+		// 预认证阶段没有可信网络或租户身份。只使用一个固定进程桶：RemoteAddr 在
+		// ALB 后代表代理节点，X-Forwarded-For 可伪造，二者都会制造错误共享或键轮换。
+		if m.Limiter != nil && !m.Limiter.Allow("public-preauth", started) {
+			closeUnreadBody(r)
 			if m.Metrics != nil {
-				m.Metrics.RateLimited.Add(1)
+				m.Metrics.PreAuthCapacityRejected.Add(1)
 				m.Metrics.HTTPFailures.Add(1)
+				m.Metrics.HTTPServerFailures.Add(1)
 			}
 			w.Header().Set("Retry-After", "1")
-			writeMiddlewareError(w, requestID, http.StatusTooManyRequests, "RATE_LIMITED", "request rate limit exceeded")
+			writeMiddlewareError(w, requestID, http.StatusServiceUnavailable, "CAPACITY_UNAVAILABLE", "service capacity is temporarily unavailable")
 			return
 		}
 		if m.MaxRequestBytes > 0 && r.Body != nil {
@@ -76,6 +77,14 @@ func (m Middleware) Wrap(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
+}
+
+func closeUnreadBody(request *http.Request) {
+	if request != nil && request.Body != nil && request.Body != http.NoBody {
+		// 在限流/预检短路前正文尚未读取。HTTP/1 失败响应必须关闭该连接，避免
+		// net/http 为复用而替攻击者继续排空正文；HTTP/2 会在流级停止传输。
+		request.Close = true
+	}
 }
 
 func writeMiddlewareError(writer http.ResponseWriter, requestID string, status int, code, message string) {
@@ -148,12 +157,4 @@ func randomRequestID() string {
 		return "unavailable"
 	}
 	return "req_" + hex.EncodeToString(raw[:])
-}
-
-func clientIP(remote string) string {
-	host, _, err := net.SplitHostPort(remote)
-	if err == nil {
-		return host
-	}
-	return remote
 }

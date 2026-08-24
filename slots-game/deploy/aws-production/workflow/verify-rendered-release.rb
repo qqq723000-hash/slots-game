@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 
 # 该门禁校验正式 values 的实际 Helm 输出，不接受示例域名、宽松网络或未绑定摘要的镜像。
+require "json"
 require "yaml"
 
 rendered_path, expected_rgs_image, expected_migrator_image, expected_namespace,
@@ -188,9 +189,28 @@ abort "ALB 终止 TLS 时不得引用 Kubernetes TLS Secret" if ingress.fetch("s
 host = ingress.dig("spec", "rules", 0, "host").to_s
 abort "API Ingress 主机名不是正式域名" unless host.match?(/\A[a-z0-9][a-z0-9.-]+\.[a-z]{2,}\z/) && !host.end_with?(".example.com")
 annotations = ingress.dig("metadata", "annotations") || {}
+abort "ALB 必须是公网权威入口" unless annotations["alb.ingress.kubernetes.io/scheme"] == "internet-facing"
 abort "ALB target 必须使用 IP 模式" unless annotations["alb.ingress.kubernetes.io/target-type"] == "ip"
+abort "ALB 必须固定 IPv4 地址类型" unless annotations["alb.ingress.kubernetes.io/ip-address-type"] == "ipv4"
+abort "ALB 到 target 的业务协议必须固定 HTTP" unless
+  annotations["alb.ingress.kubernetes.io/backend-protocol"] == "HTTP"
+begin
+  listen_ports = JSON.parse(annotations.fetch("alb.ingress.kubernetes.io/listen-ports", ""))
+rescue JSON::ParserError
+  abort "ALB listen-ports 不是合法 JSON"
+end
+abort "ALB 监听器必须精确为 HTTP 80 与 HTTPS 443" unless
+  listen_ports == [{"HTTP" => 80}, {"HTTPS" => 443}]
+abort "ALB TLS policy 必须固定 TLS 1.2/1.3 基线" unless
+  annotations["alb.ingress.kubernetes.io/ssl-policy"] == "ELBSecurityPolicy-TLS13-1-2-2021-06"
+abort "自管 ALB SG 必须允许 controller 维护 backend SG rules" unless
+  annotations["alb.ingress.kubernetes.io/manage-backend-security-group-rules"] == "true"
 abort "ALB 必须把 HTTP 重定向到 HTTPS" unless annotations["alb.ingress.kubernetes.io/ssl-redirect"] == "443"
 abort "ALB 不得把私有 /readyz 暴露为公网探针" unless annotations["alb.ingress.kubernetes.io/healthcheck-path"] == "/healthz"
+abort "ALB 必须在 IP target 的私有 operations 8081 执行健康检查" unless
+  annotations["alb.ingress.kubernetes.io/healthcheck-port"] == "8081"
+abort "ALB health success code 必须精确为 200" unless
+  annotations["alb.ingress.kubernetes.io/success-codes"] == "200"
 certificate = annotations.fetch("alb.ingress.kubernetes.io/certificate-arn", "")
 waf = annotations.fetch("alb.ingress.kubernetes.io/wafv2-acl-arn", "")
 abort "ALB ACM 证书账号或区域错误" unless
@@ -203,8 +223,80 @@ abort "ALB 必须显式绑定三个不同子网" unless
 abort "ALB 必须显式绑定安全组" unless
   annotations.fetch("alb.ingress.kubernetes.io/security-groups", "").match?(/\Asg-[0-9a-f]+\z/)
 attributes = annotations.fetch("alb.ingress.kubernetes.io/load-balancer-attributes", "").split(",")
-%w[deletion_protection.enabled=true routing.http.drop_invalid_header_fields.enabled=true access_logs.s3.enabled=true].each do |required|
-  abort "ALB 缺少安全或审计属性：#{required}" unless attributes.include?(required)
+attribute_pairs = attributes.map do |attribute|
+  key, value = attribute.split("=", 2)
+  abort "ALB 属性格式不合法" if key.nil? || key.empty? || value.nil? || value.empty?
+  [key, value]
+end
+attribute_keys = attribute_pairs.map(&:first)
+abort "ALB 属性键不得重复" unless attribute_keys.uniq.length == attribute_keys.length
+expected_attribute_values = {
+  "deletion_protection.enabled" => "true",
+  "waf.fail_open.enabled" => "false",
+  "routing.http.drop_invalid_header_fields.enabled" => "true",
+  "routing.http.desync_mitigation_mode" => "strictest",
+  "routing.http2.enabled" => "true",
+  "idle_timeout.timeout_seconds" => "30",
+  "client_keep_alive.seconds" => "300",
+  "access_logs.s3.enabled" => "true",
+}
+allowed_attribute_keys = expected_attribute_values.keys + %w[access_logs.s3.bucket access_logs.s3.prefix]
+abort "ALB 属性键集合不精确" unless attribute_keys.sort == allowed_attribute_keys.sort
+attribute_map = attribute_pairs.to_h
+abort "ALB 安全、容量或审计属性漂移" unless
+  expected_attribute_values.all? { |key, value| attribute_map[key] == value }
+abort "ALB 访问日志 bucket 不合法" unless
+  attribute_map.fetch("access_logs.s3.bucket", "").match?(/\A[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\z/)
+abort "ALB 访问日志 prefix 不合法" unless
+  attribute_map.fetch("access_logs.s3.prefix", "").match?(%r{\A[a-z0-9][a-z0-9/_-]{1,127}\z})
+
+delivery_path = ENV["TERRAFORM_DELIVERY_FILE"]
+if delivery_path && !delivery_path.empty?
+  delivery = JSON.parse(File.binread(delivery_path))
+  expected_subnets = delivery.fetch("public_subnet_ids")
+  expected_security_group = delivery.fetch("alb_security_group_id")
+  abort "ALB 子网没有精确绑定当前 Terraform delivery" unless
+    expected_subnets.is_a?(Array) && expected_subnets.length == 3 &&
+      subnets.sort == expected_subnets.sort
+  abort "ALB 安全组没有精确绑定当前 Terraform delivery" unless
+    annotations.fetch("alb.ingress.kubernetes.io/security-groups", "") == expected_security_group
+  abort "ALB certificate 或 TLS policy 没有精确绑定当前 Terraform delivery" unless
+    certificate == delivery.fetch("regional_acm_certificate_arn") &&
+      delivery.fetch("api_alb_tls_policy") == "ELBSecurityPolicy-TLS13-1-2-2021-06" &&
+      delivery.dig("application_handoff", "api_alb_tls_policy") == delivery.fetch("api_alb_tls_policy")
+  abort "ALB access log bucket/prefix 没有精确绑定当前 Terraform delivery" unless
+    attribute_map.fetch("access_logs.s3.bucket") == delivery.fetch("alb_access_log_bucket_name") &&
+      attribute_map.fetch("access_logs.s3.prefix") == delivery.fetch("alb_access_log_prefix") &&
+      delivery.dig("application_handoff", "alb_access_logs") == {
+        "bucket" => delivery.fetch("alb_access_log_bucket_name"),
+        "prefix" => delivery.fetch("alb_access_log_prefix"),
+      }
+  abort "Terraform delivery 未证明 ALB SG 同时允许业务与 operations health target" unless
+    delivery.fetch("alb_egress_target_ports") == [8080, 8081] &&
+      delivery.dig("application_handoff", "alb_egress_target_ports") == [8080, 8081]
+  expected_waf = delivery.fetch("api_waf_web_acl_arn")
+  contract = delivery.fetch("api_edge_security_contract")
+  abort "ALB 没有绑定当前 Terraform delivery 的区域 WAF" unless waf == expected_waf
+  abort "API 边缘安全合同与 WAF ARN 不一致" unless contract.fetch("web_acl_arn") == expected_waf
+  abort "API 边缘安全合同版本或入口权威模型错误" unless
+    contract.fetch("contract_version") == "1.0.0" &&
+      contract.fetch("authoritative_public_entry") == "internet-facing-alb" &&
+      contract.fetch("web_acl_scope") == "REGIONAL" &&
+      contract.fetch("cloudfront_is_api_proxy") == false &&
+      contract.fetch("origin_bypass_model") == "not-applicable-alb-is-authoritative-origin"
+  abort "API 请求体限制没有在 WAF 与应用之间失败闭合" unless
+    contract.fetch("body_inspection_limit_bytes") == 8192 &&
+      contract.fetch("application_body_limit_bytes") == 8192 &&
+      contract.fetch("oversized_body_action") == "BLOCK_AT_WAF_AND_APPLICATION"
+  abort "公网 health path 未在 WAF 失败闭合或未与 ALB 私有探针端口对齐" unless
+    contract.fetch("public_health_path") == "/healthz" &&
+      contract.fetch("public_health_path_action") == "BLOCK_AT_WAF" &&
+      contract.fetch("alb_target_health_port") == 8081 &&
+      contract.fetch("required_path_rule_names").sort == %w[
+        public-healthz-block public-protocol-surface-block
+      ] &&
+      contract.fetch("allowed_public_path_prefixes") == ["/client/", "/operator/"] &&
+      contract.fetch("allowed_public_methods") == %w[GET OPTIONS POST]
 end
 
 services = resources.fetch("Service", [])
@@ -227,6 +319,40 @@ network_policies.each do |policy|
       abort "NetworkPolicy 允许全网出口" if cidr == "0.0.0.0/0"
     end
   end
+end
+
+if delivery_path && !delivery_path.empty?
+  expected_alb_source_cidrs = delivery.fetch("public_subnet_cidrs")
+  abort "Terraform delivery 公网子网 CIDR 集合不合法" unless
+    expected_alb_source_cidrs.is_a?(Array) && expected_alb_source_cidrs.length == 3 &&
+      expected_alb_source_cidrs.uniq.length == 3
+  rgs_policies = network_policies.select do |policy|
+    policy.dig("metadata", "labels", "app.kubernetes.io/component") == "rgs" &&
+      Array(policy.dig("spec", "policyTypes")).include?("Ingress")
+  end
+  abort "RGS ingress NetworkPolicy 集合不精确" unless rgs_policies.length == 1
+  controller_rules = Array(rgs_policies.fetch(0).dig("spec", "ingress")).select do |rule|
+    Array(rule["ports"]).map { |port| port.fetch("port") }.sort == [8080, 8081]
+  end
+  abort "RGS NetworkPolicy 缺少 ALB 业务/health 精确端口规则" unless controller_rules.length == 1
+  controller_sources = Array(controller_rules.fetch(0)["from"])
+  actual_alb_source_cidrs = controller_sources.map { |source| source.dig("ipBlock", "cidr") }
+  abort "RGS NetworkPolicy 的 ALB 来源必须全部是 Terraform 公网子网 CIDR" unless
+    actual_alb_source_cidrs.none?(&:nil?) &&
+      actual_alb_source_cidrs.sort == expected_alb_source_cidrs.sort
+  monitoring_rules = Array(rgs_policies.fetch(0).dig("spec", "ingress")).select do |rule|
+    Array(rule["ports"]) == [{"port" => 8081, "protocol" => "TCP"}]
+  end
+  abort "RGS NetworkPolicy monitoring 8081 规则集合不精确" unless monitoring_rules.length == 1
+  abort "RGS NetworkPolicy monitoring 来源未绑定批准的 Prometheus agent" unless
+    Array(monitoring_rules.fetch(0)["from"]) == [{
+      "namespaceSelector" => {
+        "matchLabels" => {"kubernetes.io/metadata.name" => "monitoring"},
+      },
+      "podSelector" => {
+        "matchLabels" => {"app.kubernetes.io/name" => "prometheus-agent"},
+      },
+    }]
 end
 
 puts "AWS 正式 Helm 渲染发布契约通过。"

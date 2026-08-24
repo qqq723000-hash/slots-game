@@ -11,6 +11,9 @@ spec:
     - 开启版本控制、SSE-KMS 和对象锁定保护的 Terraform state bucket
     - S3 原生 state 锁文件所需的最小对象权限
     - 三个可用区、组织 DNS zone、ACM 证书和网络互联审批
+    - CloudFront scope 的 global WAFv2 Web ACL、us-east-1 拒绝日志组及变更审批
+    - Route 53 Web/API alias、DNSSEC 与域名注册账户保护的实际配置和演练证据
+    - 如经成本与业务审批启用 Shield Advanced，由企业平台持有订阅、protection 与 DRT 响应边界
     - 组织级 CloudTrail、Config、GuardDuty、Security Hub、日志归档和预算告警
     - 跨账号备份目标策略以及灾备账号 KMS 授权
   consumedByApplicationRepository:
@@ -22,6 +25,8 @@ spec:
     - terraformDeploymentRoleArn
     - publicDnsZoneId
     - regionalAcmCertificateArn
+    - albAccessLogBucketName
+    - albAccessLogEnvironmentPrefix
     - globalAcmCertificateArn
     - backupCopyDestinationVaultArn
     - applicationNamespace
@@ -30,11 +35,18 @@ spec:
     - hmacQuiesceEvidenceKey
     - hmacQuiesceEvidenceKmsKeyArn
     - hmacQuiesceEvidenceProducerRoleArn
+    - wafRolloutEvidenceKmsKeyArn
   guaranteesByApplicationRepository:
     - Provider 拒绝未声明账号
     - EKS 和 RDS 只部署到私有或隔离子网
     - 应用 Secret 值不进入 Terraform state
     - Web S3 禁止公共访问且仅允许指定 CloudFront OAC
+    - 公网 API 以 internet-facing ALB 为权威入口并绑定仓库自管 regional WAF，不虚构 CloudFront API 代理
+    - regional WAF 包含 managed、分层 rate、8 KiB body/header、脱敏日志与 CloudWatch 告警合同
+    - 8 KiB body 因业务协议边界直接 Block；aggregate header、按来源 IP rate 与 managed rules 默认 Count
+    - aggregate header、rate 或 managed rules 切换 Block 前必须绑定精确版本、SHA-256、批准 KMS key 与 COMPLIANCE Object Lock 的 S3 观测证据
+    - API 与 CloudFront managed rule groups 必须固定精确版本并纳入晋级证据摘要
+    - CloudFront 只交付静态 Web，global WAF 与私有 S3 OAC 的实际绑定由实时门禁回读
     - 生产备份启用 Vault Lock 并要求跨区域副本
     - EKS 节点 CMK 只把使用与持久资源 grant 授予默认 Auto Scaling 服务关联角色
   excludedResponsibilities:
@@ -42,11 +54,103 @@ spec:
     - 企业身份中心与人员生命周期
     - 组织级 SCP 和集中取证账号
     - 企业共享网络和第三方专线
+    - Route 53 hosted zone/alias/DNSSEC、注册商锁和权威 DNS 灾备
+    - Shield Advanced 订阅、Firewall Manager 组织策略、DRT 授权和攻击成本保护审批
+  edgeDdosContracts:
+    api:
+      authoritativePublicEntry: internet-facing-alb
+      cloudFrontProxy: false
+      regionalWafOwnership: application-repository
+      shieldStandardServiceBaseline: automatic-for-alb
+      sourceBypassModel: not-applicable-alb-is-authoritative-origin
+      publicHealthPath: /healthz
+      publicHealthPathAction: block-at-waf
+      albTargetHealthPort: 8081
+      unknownPathOrMethodAction: block-at-waf
+      allowedPublicPathPrefixes:
+        - /client/
+        - /operator/
+      allowedPublicMethods:
+        - GET
+        - OPTIONS
+        - POST
+      bodyOversizeAction: block
+      headerOversizeDefaultAction: count
+      lowRateRulesExactNewIntentPathsOnly: true
+      lowRateRuleMethods:
+        - POST
+      statusResultAckExcludedFromLowRateRules: true
+      publicApiHighRateRuleStillApplies: true
+      publicHighRateRuleMethods:
+        - GET
+        - OPTIONS
+        - POST
+      optionsPreflightCoveredByHighRateRule: true
+      rateLimitBrowserResponse:
+        status: 429
+        retryAfterSeconds: 30
+        accessControlAllowOrigin: "*"
+        accessControlExposeHeaders: "Retry-After, X-RGS-Edge-Error"
+        markerHeader: X-RGS-Edge-Error
+        markerValue: RATE_LIMITED
+      sourceIpRateRulesAreNotIdentityAuthority: true
+      stagedRulesRequireImmutableCalibrationEvidence: true
+      blockPromotionReadsExactS3ObjectVersion: true
+      blockPromotionVerifiesContentSha256: true
+      blockPromotionValidatesRuleBoundApprovalSchema: true
+      blockPromotionRequiresApprovedKmsKey: true
+      blockPromotionRequiresComplianceObjectLock: true
+      managedRuleVersionsPinned: true
+      wafLogsRedactQueryString: true
+      sampledRequestsEnabled: false
+    web:
+      authoritativePublicEntry: cloudfront
+      origin: private-s3-oac
+      globalWafOwnership: enterprise-platform
+      shieldStandardServiceBaseline: automatic-for-cloudfront
+      sourceIpRateDefaultAction: count
+      stagedRulesRequireImmutableCalibrationEvidence: true
+      blockPromotionReadsExactS3ObjectVersion: true
+      blockPromotionVerifiesContentSha256: true
+      blockPromotionValidatesRuleBoundApprovalSchema: true
+      blockPromotionRequiresApprovedKmsKey: true
+      blockPromotionRequiresComplianceObjectLock: true
+      managedRuleVersionsPinned: true
+      wafLogsRedactQueryString: true
+      sampledRequestsEnabled: false
+    optionalEnterpriseEnhancements:
+      globalAcceleratorRequiresReachabilityAndHealthDesign: true
+      shieldAdvancedRequiresExplicitCostApproval: true
+      cloudFrontApiProxyRequiresOriginAuthenticationAndSgMigration: true
+      noneMayBeClaimedWithoutLiveEvidence: true
   protectedRoleContracts:
     applicationRelease:
       requiredReadOnlyActions:
+        - cloudfront:GetDistribution
+        - cloudwatch:DescribeAlarms
+        - ec2:DescribeSecurityGroupRules
+        - elasticache:DescribeCacheClusters
+        - elasticache:DescribeCacheParameters
+        - elasticache:DescribeReplicationGroups
+        - elasticloadbalancing:DescribeListeners
+        - elasticloadbalancing:DescribeLoadBalancerAttributes
+        - elasticloadbalancing:DescribeLoadBalancers
+        - elasticloadbalancing:DescribeRules
+        - elasticloadbalancing:DescribeTargetGroups
+        - elasticloadbalancing:DescribeTargetHealth
+        - eks:DescribeAddon
+        - eks:DescribePodIdentityAssociation
+        - eks:ListPodIdentityAssociations
         - iam:GetRolePolicy
-      purpose: 实时核对 Cluster Autoscaler 内联策略的容量发现权限集
+        - kms:Decrypt
+        - s3:GetBucketPublicAccessBlock
+        - s3:GetBucketPolicy
+        - s3:GetObjectVersion
+        - s3:GetObjectRetention
+        - wafv2:GetLoggingConfiguration
+        - wafv2:GetWebACL
+        - wafv2:GetWebACLForResource
+      purpose: 应用发布前后只读核对 WAF/CloudFront、ALB listeners/rules/targets、Valkey noeviction 实际收敛、EKS add-on 与 Pod Identity、Cluster Autoscaler IAM 及不可变 Block 证据
     hmacQuiesceEvidenceProducer:
       privateEksAccessRequired: true
       evidenceObjectVersioningRequired: true
@@ -54,5 +158,9 @@ spec:
     terraformPlanApply:
       hmacEvidenceReadActions:
         - s3:GetObjectVersion
+        - kms:Decrypt
+      wafBlockPromotionEvidenceReadActions:
+        - s3:GetObjectVersion
+        - s3:GetObjectRetention
         - kms:Decrypt
       eksAccessAllowedForHmacMaintenance: false

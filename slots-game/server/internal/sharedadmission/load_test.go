@@ -129,6 +129,7 @@ type loadCounters struct {
 
 type loadScriptRunner struct {
 	client     valkey.Client
+	transport  *valkeyExecutor
 	body       string
 	sha        string
 	counters   *loadCounters
@@ -143,15 +144,18 @@ func (runner *loadScriptRunner) evaluate(ctx context.Context, key string, args [
 		runner.record(values, err)
 		return
 	}
-	result := runner.client.Do(ctx, runner.client.B().Evalsha().Sha1(runner.sha).
-		Numkeys(1).Key(key).Arg(args...).Build())
-	if serverError, ok := valkey.IsValkeyErr(result.Error()); ok && serverError.IsNoScript() {
-		runner.counters.noscriptFallbacks.Add(1)
-		result = runner.client.Do(ctx, runner.client.B().Eval().Script(runner.body).
+	result := runner.transport.call(ctx, func() valkey.ValkeyResult {
+		return runner.client.Do(ctx, runner.client.B().Evalsha().Sha1(runner.sha).
 			Numkeys(1).Key(key).Arg(args...).Build())
+	})
+	if result.noScript {
+		runner.counters.noscriptFallbacks.Add(1)
+		result = runner.transport.call(ctx, func() valkey.ValkeyResult {
+			return runner.client.Do(ctx, runner.client.B().Eval().Script(runner.body).
+				Numkeys(1).Key(key).Arg(args...).Build())
+		})
 	}
-	values, err := result.AsIntSlice()
-	runner.record(values, err)
+	runner.record(result.values, result.err)
 }
 
 func (runner *loadScriptRunner) record(values []int64, err error) {
@@ -178,14 +182,10 @@ func TestSharedAdmissionLoadProfile(t *testing.T) {
 		t.Skip("Valkey SCRIPT uses SHA-1 protocol addresses, unavailable in this test process under FIPS-only mode")
 	}
 	requests := loadRequestCount(t)
-	client, err := valkey.NewClient(valkey.ClientOption{
-		InitAddress:       []string{address},
-		ForceSingleClient: true,
-		ClientName:        "rgs-shared-admission-load",
-		PipelineMultiplex: singlePipelineConnectionMultiplex,
-		DisableRetry:      true,
-		DisableCache:      true,
-	})
+	clientOptions := boundedValkeyClientOptions(500 * time.Millisecond)
+	clientOptions.InitAddress = []string{address}
+	clientOptions.ClientName = "rgs-shared-admission-load"
+	client, err := valkey.NewClient(clientOptions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,6 +200,7 @@ func TestSharedAdmissionLoadProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireDisposableLoadTarget(t, ctx, client, address, serverInfo)
+	warmBoundedValkeyPool(t, ctx, client)
 	environment := loadEnvironment{
 		CapacityEnvironment: "local-non-tls",
 		ValkeyVersion:       parseInfoString(serverInfo, "valkey_version"),
@@ -207,7 +208,7 @@ func TestSharedAdmissionLoadProfile(t *testing.T) {
 		GoVersion:           runtime.Version(),
 		LoadArch:            runtime.GOOS + "/" + runtime.GOARCH,
 		Topology:            "one disposable primary plus one replica over Docker loopback",
-		ClientConnections:   1,
+		ClientConnections:   maximumValkeyConnectionsPerPod,
 		Persistence:         "disabled",
 	}
 	encodedEnvironment, err := json.Marshal(environment)
@@ -276,7 +277,8 @@ func TestSharedAdmissionLoadProfile(t *testing.T) {
 		}
 		for _, result := range []loadResult{baseline, optimized} {
 			if result.UnexpectedServerErrors != 0 || result.RejectedConnections != 0 ||
-				result.NewConnections != 0 || result.ConnectedClients != 1 || result.ConnectedReplicas < 1 {
+				result.NewConnections != 0 || result.ConnectedClients != maximumValkeyConnectionsPerPod ||
+				result.ConnectedReplicas < 1 {
 				t.Fatalf("%s/%s connection or server error gate failed: %+v", result.Variant, result.Scenario, result)
 			}
 		}
@@ -298,6 +300,44 @@ func TestSharedAdmissionLoadProfile(t *testing.T) {
 	}
 	verifyOptimizedScriptIntegrity(t, ctx, client)
 	writeLoadReport(t, requests, environment, thresholds, scenarios, results)
+}
+
+func warmBoundedValkeyPool(t *testing.T, parent context.Context, client valkey.Client) {
+	t.Helper()
+	executor := newValkeyExecutor(client)
+	ctx, cancel := context.WithTimeout(parent, time.Second)
+	defer cancel()
+	start := make(chan struct{})
+	var group sync.WaitGroup
+	var failures atomic.Int64
+	for index := range synchronousValkeyPoolSize {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			if err := executor.acquireTransport(ctx); err != nil {
+				failures.Add(1)
+				return
+			}
+			defer executor.releaseTransport()
+			key := fmt.Sprintf("rgs:shared-admission:v2:{load-warmup-%d}", index)
+			if err := client.Do(ctx, client.B().Arbitrary("BLPOP", key, "0.05").Build()).Error(); err != nil && !valkey.IsValkeyNil(err) {
+				failures.Add(1)
+			}
+		}()
+	}
+	close(start)
+	group.Wait()
+	if failures.Load() != 0 {
+		t.Fatalf("warm bounded Valkey pool failures = %d", failures.Load())
+	}
+	clientsInfo, err := client.Do(ctx, client.B().Arbitrary("INFO", "clients").Build()).ToString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connected := parseInfoInteger(clientsInfo, "connected_clients"); connected != maximumValkeyConnectionsPerPod {
+		t.Fatalf("bounded Valkey pool connections = %d, want %d", connected, maximumValkeyConnectionsPerPod)
+	}
 }
 
 func requireDisposableLoadTarget(
@@ -326,8 +366,10 @@ func requireDisposableLoadTarget(
 	if err != nil {
 		t.Fatalf("read disposable Valkey clients: %v", err)
 	}
-	if connected := parseInfoInteger(clientsInfo, "connected_clients"); connected != 1 {
-		t.Fatalf("destructive Valkey load target is not exclusively held: connected_clients=%d", connected)
+	// 此时客户端包含一条基础 mux socket 和第一条延迟创建的同步业务 socket；
+	// 出现第三条连接说明另有客户端正在访问本应独占的破坏性测试目标。
+	if connected := parseInfoInteger(clientsInfo, "connected_clients"); connected != 2 {
+		t.Fatalf("destructive Valkey load target is not exclusively held: connected_clients=%d want=2", connected)
 	}
 	replicationInfo, err := client.Do(ctx, client.B().Arbitrary("INFO", "replication").Build()).ToString()
 	if err != nil {
@@ -589,7 +631,9 @@ func runLoadScenario(
 	}
 	before := readLoadServerStats(t, ctx, client)
 	counters := &loadCounters{}
-	runner := &loadScriptRunner{client: client, body: body, sha: sha, counters: counters}
+	runner := &loadScriptRunner{
+		client: client, transport: newValkeyExecutor(client), body: body, sha: sha, counters: counters,
+	}
 	if variant == "optimized_v2" {
 		// 使用与生产完全相同的执行器，覆盖感知截止时间的 NOSCRIPT 重载合并，
 		// 而不是只在基准测试中使用近似实现。

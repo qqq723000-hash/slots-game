@@ -21,26 +21,28 @@ func (f DefinitionResolverFunc) Resolve(ctx context.Context, gameID, version, ha
 }
 
 type CoordinatorConfig struct {
-	WalletLease           time.Duration
-	WalletFastPathTimeout time.Duration
-	PendingWait           time.Duration
-	PollInterval          time.Duration
-	PollMaximumInterval   time.Duration
-	MaxWalletAttempts     int
+	WalletLease             time.Duration
+	WalletFastPathTimeout   time.Duration
+	PendingWait             time.Duration
+	PollInterval            time.Duration
+	PollMaximumInterval     time.Duration
+	MaxWalletAttempts       int
+	EconomicIntentAdmission EconomicIntentAdmitter
 }
 
 type Coordinator struct {
-	repository            Repository
-	wallet                WalletResolutionPort
-	intentAdmitter        walletIntentAdmitter
-	definitions           DefinitionRegistry
-	walletLease           time.Duration
-	walletFastPathTimeout time.Duration
-	pendingWait           time.Duration
-	pollInterval          time.Duration
-	pollMaximumInterval   time.Duration
-	maxWalletAttempts     int
-	observer              RoundObserver
+	repository              Repository
+	wallet                  WalletResolutionPort
+	intentAdmitter          walletIntentAdmitter
+	definitions             DefinitionRegistry
+	walletLease             time.Duration
+	walletFastPathTimeout   time.Duration
+	pendingWait             time.Duration
+	pollInterval            time.Duration
+	pollMaximumInterval     time.Duration
+	maxWalletAttempts       int
+	observer                RoundObserver
+	economicIntentAdmission EconomicIntentAdmitter
 }
 
 const persistedRoundIntegrityFailure = "persisted round integrity validation failed"
@@ -49,6 +51,12 @@ const persistedRoundIntegrityFailure = "persisted round integrity validation fai
 // SubmitRound 的非阻塞舱壁决定，因此检查成功绝不构成资金操作已获准的承诺。
 type walletIntentAdmitter interface {
 	AdmitNewIntent(string) error
+}
+
+// EconomicIntentAdmitter 只在 Repository 已锁定会话且确认 round 不存在后调用。
+// 它可以等待一个有界共享准入 RTT，但不得执行钱包、RNG 或持久化副作用。
+type EconomicIntentAdmitter interface {
+	AdmitNewEconomicIntent(context.Context, string, int) error
 }
 
 func NewCoordinator(
@@ -108,9 +116,10 @@ func NewCoordinator(
 		walletLease: config.WalletLease, pendingWait: config.PendingWait,
 		walletFastPathTimeout: config.WalletFastPathTimeout,
 		pollInterval:          config.PollInterval, pollMaximumInterval: config.PollMaximumInterval,
-		maxWalletAttempts: config.MaxWalletAttempts,
-		observer:          firstRoundObserver(observers),
-		intentAdmitter:    firstWalletIntentAdmitter(wallet),
+		maxWalletAttempts:       config.MaxWalletAttempts,
+		observer:                firstRoundObserver(observers),
+		intentAdmitter:          firstWalletIntentAdmitter(wallet),
+		economicIntentAdmission: config.EconomicIntentAdmission,
 	}, nil
 }
 
@@ -146,12 +155,30 @@ func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (SpinResult
 		return SpinResult{}, errors.Join(ErrWalletUnavailable, err)
 	}
 	record, prepared, err := c.repository.PrepareRound(ctx, request, fingerprint, walletProfile, func(session Session) (SpinResult, error) {
+		// PrepareOutcome 由存储层在会话锁内、且仅对首次出现的 round 调用一次；
+		// 因此 committed/prepared 重放和同 round 并发不会重复消耗经济成本预算。
 		if c.intentAdmitter != nil {
 			if err := c.intentAdmitter.AdmitNewIntent(request.OperatorID); err != nil {
 				return SpinResult{}, errors.Join(ErrWalletUnavailable, err)
 			}
 		}
-		return c.prepareOutcome(ctx, session, request)
+		result, err := c.prepareOutcome(ctx, session, request)
+		if err != nil {
+			return SpinResult{}, err
+		}
+		// 存储层仍会重复验证这一不变量；先在共享成本扣减前验证一次，避免
+		// 定义/RNG 或内部结果错误变成可反复消耗后端钱包预算的反向 EDoS。
+		if err := validatePreparedResult(session, request, result); err != nil {
+			return SpinResult{}, err
+		}
+		if c.economicIntentAdmission != nil {
+			// 当前 SubmitRound 的供应商成本固定为一个单位；不要从 bet 金额或
+			// 未验证请求字段推断成本。接口保留显式单位供未来已审定路由使用。
+			if err := c.economicIntentAdmission.AdmitNewEconomicIntent(ctx, request.OperatorID, 1); err != nil {
+				return SpinResult{}, err
+			}
+		}
+		return result, nil
 	})
 	if err != nil {
 		if errors.Is(err, ErrIdempotencyConflict) {
@@ -359,6 +386,9 @@ func (c *Coordinator) ReconcileClaim(
 	}
 	if claim.Action == WalletRecoveryApply && claim.Record.WalletApplyAttempts > c.maxWalletAttempts {
 		return c.markClaimForManualReview(ctx, claim, "wallet apply attempt limit exceeded", nil)
+	}
+	if claim.Action == WalletRecoveryLookup && claim.Record.WalletLookupAttempts > c.maxWalletAttempts {
+		return c.markClaimForManualReview(ctx, claim, "wallet lookup attempt limit exceeded", nil)
 	}
 	if err := ValidateWalletCommand(claim.Record.WalletCommand); err != nil {
 		return c.markClaimForManualReview(ctx, claim, "wallet command binding is invalid", err)

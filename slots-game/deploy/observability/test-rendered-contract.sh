@@ -111,5 +111,19 @@ if "$incompatible_tls_contract/verify-static-contract.sh" >/dev/null 2>&1; then
   exit 1
 fi
 
+evicting_valkey_contract="$test_root/evicting-valkey-contract"
+cp -R "$script_dir" "$evicting_valkey_contract"
+ruby -e '
+  path = ARGV.fetch(0)
+  value = File.read(path)
+  changed = value.sub("maxmemory-policy noeviction", "maxmemory-policy volatile-lru")
+  abort "Valkey eviction mutation did not apply" if changed == value
+  File.write(path, changed)
+' "$evicting_valkey_contract/ci-runtime-production-smoke.sh"
+if "$evicting_valkey_contract/verify-static-contract.sh" >/dev/null 2>&1; then
+  printf '%s\n' 'rendered contract test: evicting Valkey runtime smoke was accepted' >&2
+  exit 1
+fi
+
 printf '%s\n' \
-  'observability rendered bundle regression: good accepted; missing RGS/Vector, invalid rules, untrusted promtool and incompatible PostgreSQL TLS rejected'
+  'observability rendered bundle regression: good accepted; missing RGS/Vector, invalid rules, untrusted promtool, incompatible PostgreSQL TLS and evicting Valkey rejected'

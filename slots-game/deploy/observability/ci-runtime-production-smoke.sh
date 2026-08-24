@@ -16,8 +16,10 @@ development_fixture_dir="$fixture_root/development"
 negative_fixture_dir="$fixture_root/negative-v1"
 artifact_dir="${RGS_RUNTIME_SMOKE_ARTIFACT_DIR:-$repository_root/.artifacts/runtime-smoke}"
 runtime_container=''
+valkey_container=''
 audit_sink_pid=''
 postgres_data_dir=''
+valkey_image='valkey/valkey:8.1-alpine@sha256:e0eb7c480958d32bdc4357a74bdd70653ae15f2f9b4c93c4a5a9fad1dc471c84'
 
 cleanup() {
   exit_code=$?
@@ -25,6 +27,11 @@ cleanup() {
     # 原始 stderr 可能包含第三方库错误文本，只留在短命目录并随 secret 一起删除，绝不上传。
     docker logs "$runtime_container" >"$fixture_root/runtime-production-ci-only.raw.log" 2>&1 || true
     docker rm -f "$runtime_container" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$valkey_container" ] && docker container inspect "$valkey_container" >/dev/null 2>&1; then
+    # Valkey 原始日志同样只留在短命目录；ACL、证书和客户端错误不得进入 artifact。
+    docker logs "$valkey_container" >"$fixture_root/valkey-production-ci-only.raw.log" 2>&1 || true
+    docker rm -f "$valkey_container" >/dev/null 2>&1 || true
   fi
   if [ -n "$audit_sink_pid" ]; then
     kill "$audit_sink_pid" >/dev/null 2>&1 || true
@@ -65,8 +72,9 @@ command -v openssl >/dev/null 2>&1 || {
 # TLS 握手。数据库链改用短命 RSA-3072/SHA-256 专用 CA；仍须通过 verify-full、SAN
 # 主机名校验和 pg_stat_ssl.ssl=true，不能回退为 require、verify-ca 或明文连接。
 generate_postgres_tls_fixture() {
-  local postgres_ca_key postgres_csr postgres_certificate_text
+  local postgres_ca_key postgres_csr postgres_certificate_text valkey_csr valkey_certificate_text
   local postgres_certificate_key_digest postgres_private_key_digest
+  local valkey_certificate_key_digest valkey_private_key_digest
   postgres_ca_key="$fixture_root/postgres-root-ca-key.pem"
   postgres_csr="$fixture_root/postgres-server.csr"
 
@@ -109,6 +117,43 @@ generate_postgres_tls_fixture() {
       openssl dgst -sha256
   )"
   test "$postgres_certificate_key_digest" = "$postgres_private_key_digest"
+
+  # Valkey 使用同一短命 CI 根 CA，但必须有独立 RSA 私钥和证书，避免测试夹具把
+  # 数据库与准入服务的服务端身份错误折叠为同一个密钥主体。
+  valkey_csr="$fixture_root/valkey-server.csr"
+  openssl req -new -newkey rsa:3072 -nodes -sha256 \
+    -subj '/CN=localhost' \
+    -keyout "$fixture_dir/valkey-server-key.pem" -out "$valkey_csr"
+  openssl x509 -req -in "$valkey_csr" \
+    -CA "$fixture_dir/postgres-root-ca.pem" -CAkey "$postgres_ca_key" \
+    -set_serial 3 -days 2 -sha256 \
+    -extfile <(printf '%s\n' \
+      '[server]' \
+      'basicConstraints=critical,CA:FALSE' \
+      'keyUsage=critical,digitalSignature,keyEncipherment' \
+      'extendedKeyUsage=serverAuth' \
+      'subjectAltName=DNS:localhost,IP:127.0.0.1') \
+    -extensions server -out "$fixture_dir/valkey-server.pem"
+  chmod 0600 "$fixture_dir/valkey-server-key.pem" "$fixture_dir/valkey-server.pem"
+  openssl verify -purpose sslserver -CAfile "$fixture_dir/postgres-root-ca.pem" \
+    "$fixture_dir/valkey-server.pem"
+
+  valkey_certificate_text="$(openssl x509 -in "$fixture_dir/valkey-server.pem" -noout -text)"
+  printf '%s\n' "$valkey_certificate_text" | grep -F 'Signature Algorithm: sha256WithRSAEncryption' >/dev/null
+  printf '%s\n' "$valkey_certificate_text" | grep -F 'Public Key Algorithm: rsaEncryption' >/dev/null
+  printf '%s\n' "$valkey_certificate_text" | grep -F '(3072 bit)' >/dev/null
+  printf '%s\n' "$valkey_certificate_text" | grep -F 'TLS Web Server Authentication' >/dev/null
+  printf '%s\n' "$valkey_certificate_text" | grep -F 'DNS:localhost, IP Address:127.0.0.1' >/dev/null
+
+  valkey_certificate_key_digest="$(
+    openssl x509 -in "$fixture_dir/valkey-server.pem" -pubkey -noout |
+      openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256
+  )"
+  valkey_private_key_digest="$(
+    openssl pkey -in "$fixture_dir/valkey-server-key.pem" -pubout -outform DER 2>/dev/null |
+      openssl dgst -sha256
+  )"
+  test "$valkey_certificate_key_digest" = "$valkey_private_key_digest"
 }
 
 postgres_tls_generation_log="$fixture_root/postgres-tls-generation.raw.log"
@@ -118,10 +163,40 @@ if ! generate_postgres_tls_fixture >"$postgres_tls_generation_log" 2>&1; then
   exit 1
 fi
 
+# 共享准入必须走真实 TLS、ACL 与 Lua 命令能力。密码/HMAC、ACL 和配置均只存在于
+# 短命目录；运行镜像按摘要固定，测试退出后容器和材料一并删除。
+openssl rand -hex 32 >"$fixture_dir/valkey-password"
+openssl rand -base64 32 >"$fixture_dir/admission-hmac.key"
+valkey_password=''
+IFS= read -r valkey_password <"$fixture_dir/valkey-password"
+test "${#valkey_password}" -eq 64
+printf '%s\n' \
+  'user default off' \
+  "user rgs-api on >$valkey_password ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +time +mset +pexpire +ping +hello +auth +client|setname +client|setinfo" \
+  >"$fixture_dir/valkey.acl"
+printf '%s\n' \
+  'bind 127.0.0.1' \
+  'protected-mode yes' \
+  'port 0' \
+  'tls-port 18445' \
+  'tls-cert-file /run/rgs-production-smoke/valkey-server.pem' \
+  'tls-key-file /run/rgs-production-smoke/valkey-server-key.pem' \
+  'tls-ca-cert-file /run/rgs-production-smoke/postgres-root-ca.pem' \
+  'tls-auth-clients no' \
+  'aclfile /run/rgs-production-smoke/valkey.acl' \
+  'save ""' \
+  'appendonly no' \
+  'maxmemory 64mb' \
+  'maxmemory-policy noeviction' \
+  >"$fixture_dir/valkey.conf"
+chmod 0600 "$fixture_dir/valkey-password" "$fixture_dir/admission-hmac.key" \
+  "$fixture_dir/valkey.acl" "$fixture_dir/valkey.conf"
+
 for required_fixture in definition.json definition-approval.json definition-approval-public.pem \
   operators.json launch-hmac.key operations.token CI_ONLY_NOT_RELEASE_EVIDENCE ci-root-ca.pem \
   audit-server.pem audit-server-key.pem postgres-root-ca.pem postgres-server.pem \
-  postgres-server-key.pem outbox-hmac.key; do
+  postgres-server-key.pem valkey-server.pem valkey-server-key.pem valkey-password \
+  admission-hmac.key valkey.acl valkey.conf outbox-hmac.key; do
   test -s "$fixture_dir/$required_fixture" || {
     printf '%s\n' "production smoke: fixture generator omitted $required_fixture" >&2
     exit 1
@@ -168,6 +243,35 @@ case "$RGS_POSTGRES_TEST_URL" in
     exit 2
     ;;
 esac
+
+valkey_container="rgs-production-smoke-valkey-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-0}"
+docker run --detach --rm --name "$valkey_container" --network host \
+  --user "$(id -u):$(id -g)" --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 128m --cpus 1 \
+  --tmpfs /data:rw,nosuid,nodev,noexec,size=16m \
+  --mount "type=bind,src=$fixture_dir,dst=/run/rgs-production-smoke,readonly" \
+  "$valkey_image" valkey-server /run/rgs-production-smoke/valkey.conf >/dev/null
+
+valkey_ready=0
+for _attempt in $(seq 1 30); do
+  if docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
+    valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
+      --user rgs-api -h 127.0.0.1 -p 18445 ping 2>/dev/null | \
+      grep -F -x PONG >/dev/null; then
+    valkey_ready=1
+    break
+  fi
+  if [ "$(docker inspect --format '{{.State.Running}}' "$valkey_container" 2>/dev/null || true)" != true ]; then
+    break
+  fi
+  sleep 1
+done
+if [ "$valkey_ready" != 1 ]; then
+  printf '%s\n' 'production smoke: TLS/ACL Valkey did not become ready' >&2
+  docker logs "$valkey_container" >"$fixture_root/valkey-startup-failure.raw.log" 2>&1 || true
+  printf '%s\n' 'production smoke: raw Valkey startup log withheld from retained CI output' >&2
+  exit 1
+fi
 
 runtime_image="${RGS_RUNTIME_SMOKE_RUNTIME_IMAGE:-slots-rgs-runtime:conformance}"
 migrator_image="${RGS_RUNTIME_SMOKE_MIGRATOR_IMAGE:-slots-rgs-migrator:conformance}"
@@ -253,6 +357,14 @@ production_env=(
   -e RGS_DEFINITION_APPROVAL_FILE=/run/rgs-production-smoke/definition-approval.json
   -e RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE=/run/rgs-production-smoke/definition-approval-public.pem
   -e RGS_LAUNCH_HMAC_KEY_FILE=/run/rgs-production-smoke/launch-hmac.key
+  -e RGS_SHARED_ADMISSION_URL=rediss://127.0.0.1:18445
+  -e RGS_SHARED_ADMISSION_USERNAME=rgs-api
+  -e RGS_SHARED_ADMISSION_PASSWORD_FILE=/run/rgs-production-smoke/valkey-password
+  -e RGS_SHARED_ADMISSION_HMAC_KEY_FILE=/run/rgs-production-smoke/admission-hmac.key
+  -e RGS_SHARED_ADMISSION_ROOT_CA_FILE=/run/rgs-production-smoke/postgres-root-ca.pem
+  -e RGS_SHARED_ADMISSION_TIMEOUT=200ms
+  -e RGS_SHARED_ADMISSION_RATE_PER_SECOND=500
+  -e RGS_SHARED_ADMISSION_RATE_BURST=1000
   -e RGS_OUTBOX_ENDPOINT_URL=https://127.0.0.1:18443/audit
   -e RGS_OUTBOX_HMAC_KEY_ID=ci-only-outbox
   -e RGS_OUTBOX_HMAC_KEY_FILE=/run/rgs-production-smoke/outbox-hmac.key
@@ -319,11 +431,11 @@ docker run --detach --rm --name "$container_name" "${runtime_security[@]}" \
   -e RGS_OPERATIONS_BEARER_TOKEN_FILE=/run/rgs-production-smoke/operations.token \
   "$runtime_image" >/dev/null
 
-public_health_status='000'
+operations_health_status='000'
 for _attempt in $(seq 1 30); do
-  public_health_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-    http://127.0.0.1:18180/healthz || true)"
-  [ "$public_health_status" = 200 ] && break
+  operations_health_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    http://127.0.0.1:18181/healthz || true)"
+  [ "$operations_health_status" = 200 ] && break
   if [ "$(docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null || true)" != true ]; then
     printf '%s\n' 'production smoke: rgs-server exited before liveness succeeded' >&2
     docker logs "$container_name" >"$fixture_root/runtime-startup-failure.raw.log" 2>&1 || true
@@ -332,7 +444,7 @@ for _attempt in $(seq 1 30); do
   fi
   sleep 1
 done
-test "$public_health_status" = 200
+test "$operations_health_status" = 200
 
 operations_token=''
 IFS= read -r operations_token <"$fixture_dir/operations.token"
@@ -354,7 +466,7 @@ expect_status() {
   }
 }
 
-expect_status 200 http://127.0.0.1:18180/healthz
+expect_status 404 http://127.0.0.1:18180/healthz
 expect_status 404 http://127.0.0.1:18180/readyz
 expect_status 404 http://127.0.0.1:18180/metrics
 expect_status 200 http://127.0.0.1:18181/healthz

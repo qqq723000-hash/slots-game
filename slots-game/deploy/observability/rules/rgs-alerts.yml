@@ -177,6 +177,39 @@ groups:
           description: 五分钟本地限流超过 20；同时核查边缘限流、容量与攻击流量。
           runbook_url: "__RUNBOOK_BASE_URL__/rgs-rate-limiting"
 
+      - alert: RGSEconomicAdmissionLimitedSustained
+        expr: |
+          (
+            sum by (job, environment) (rate(rgs_economic_admission_limited_total[5m]))
+            /
+            clamp_min(
+              sum by (job, environment) (rate(rgs_economic_admission_allowed_total[5m]))
+              + sum by (job, environment) (rate(rgs_economic_admission_limited_total[5m])),
+              0.001
+            )
+          ) > 0.05
+          and on (job, environment)
+          sum by (job, environment) (rate(rgs_economic_admission_limited_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 钱包成本预算持续拒绝新 Spin
+          description: 已验证 Spin 意图的 operator/backend 原子成本桶拒绝比例持续超过 5%；核对 EDoS 攻击、运营商异常重试及钱包合同容量，禁止放宽恢复查询通道。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-economic-admission"
+
+      - alert: RGSEconomicAdmissionErrors
+        expr: sum by (job, environment) (increase(rgs_economic_admission_errors_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: rgs
+        annotations:
+          summary: RGS 钱包成本准入持续故障
+          description: Valkey 双桶脚本、静态 operator/backend 路由或返回协议持续失败；新 Spin 已失败关闭，status/result/ACK 与 Worker 恢复必须继续可用。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-economic-admission"
+
       - alert: RGSCapacityRejectionsSustained
         # 容量耗尽与租户/攻击限流语义不同；使用独立无标签 counter，避免误判根因。
         expr: sum(increase(rgs_capacity_rejected_total[5m])) > 20
@@ -199,6 +232,28 @@ groups:
           summary: RGS 公网连接容量接近硬上限
           description: 单副本已接受连接持续五分钟超过硬上限的 85%；检查慢请求头、悬挂正文、TLS 握手、keep-alive、边缘连接保护与文件描述符预算。
           runbook_url: "__RUNBOOK_BASE_URL__/rgs-connection-capacity"
+
+      - alert: RGSCryptographicCapacitySaturated
+        expr: sum by (job, environment) (increase(rgs_cryptographic_capacity_rejected_total[5m])) > 20
+        for: 2m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 验签 CPU 容量持续拒绝请求
+          description: 五分钟内验签、令牌验证或响应签名容量拒绝超过 20 次并持续两分钟；联合 WAF、认证失败、CPU、连接和合法流量 SLO 判断攻击或爆款，禁止通过放宽验签恢复吞吐。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-cryptographic-capacity"
+
+      - alert: RGSSecurityLogDropsSustained
+        expr: sum by (job, environment) (increase(rgs_security_logs_dropped_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 重复安全 WARN 持续被有界抑制
+          description: 权威安全事件计数仍完整，但固定物理 WARN 写入预算连续耗尽；关联认证重放、WAF、认证失败和采集管道判断攻击或错误重试，禁止通过阻塞请求线程换取完整重复日志。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-security-log-drops"
 
   - name: observability-plane-alerts
     interval: 30s

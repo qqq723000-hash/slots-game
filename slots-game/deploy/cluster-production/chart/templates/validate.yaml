@@ -9,6 +9,12 @@
 {{- if eq .Values.ingress.apiHost .Values.ingress.webHost -}}
 {{- fail "API 与 Web 必须使用不同主机名以隔离安全边界" -}}
 {{- end -}}
+{{- if and (eq .Values.ingress.className "alb") (ne (index .Values.ingress.apiAnnotations "alb.ingress.kubernetes.io/healthcheck-path" | default "") .Values.ingress.apiHealthCheckPath) -}}
+{{- fail "ALB healthcheck path 必须与私有 operations 探针合同一致" -}}
+{{- end -}}
+{{- if and (eq .Values.ingress.className "alb") (ne (index .Values.ingress.apiAnnotations "alb.ingress.kubernetes.io/healthcheck-port" | default "") (toString .Values.ingress.apiHealthCheckPort)) -}}
+{{- fail "ALB healthcheck port 必须固定到私有 operations 监听器" -}}
+{{- end -}}
 {{- if ge (int .Values.rgs.pdb.minAvailable) (int .Values.rgs.autoscaling.minReplicas) -}}
 {{- fail "RGS PDB minAvailable 必须小于 HPA minReplicas" -}}
 {{- end -}}

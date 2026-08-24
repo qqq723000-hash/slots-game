@@ -77,6 +77,12 @@ const prepareRoundWriteSQL = `
 		WHERE session.operator_id=$1 AND session.session_id=$2
 		  AND session.revision=$15 AND session.pending_round_id IS NULL
 		RETURNING session.operator_id
+	), registered_recovery_operator AS (
+		-- 0010 触发器是旧新 writer 的数据库不变量；本 CTE 则覆盖触发器被 DBA 漂移后、
+		-- readiness 尚未隔离当前 Pod 的短窗口。健康路径只多一次有界主键冲突探测。
+		INSERT INTO rgs_wallet_recovery_operators (operator_id)
+		SELECT operator_id FROM updated_session
+		ON CONFLICT (operator_id) DO NOTHING
 	), inserted_outbox AS (
 		INSERT INTO rgs_outbox (
 			operator_id, aggregate_type, aggregate_id, event_type, payload
@@ -405,7 +411,7 @@ func (r *Repository) PrepareRound(
 	if resultDeliveryPending {
 		return rgs.RoundRecord{}, false, rgs.ErrResultDeliveryPending
 	}
-	if err := validateBinding(session, request); err != nil {
+	if err := validateBinding(session, request, now); err != nil {
 		return rgs.RoundRecord{}, false, err
 	}
 	if session.PendingRoundID != "" {
@@ -897,9 +903,6 @@ func (r *Repository) ClaimRecoverableRounds(
 		return nil, fmt.Errorf("postgres repository: read recovery clock: %w", err)
 	}
 	selectionNow = selectionNow.UTC()
-	if _, err := tx.ExecContext(ctx, ensureRecoveryOperatorsSQL); err != nil {
-		return nil, fmt.Errorf("postgres repository: register recovery operators: %w", err)
-	}
 	// session 行在候选 SQL 内以 SKIP LOCKED 领取；PostgreSQL 的 LockRows 节点先于
 	// LIMIT 产出行，因此热会话不会占掉批次名额。返回后再按 session→round→wallet
 	// ledger 完成完整锁序与校验，绝不把未经核验的命令交给外部钱包。
@@ -1001,14 +1004,6 @@ func (r *Repository) ClaimRecoverableRounds(
 	}
 	return claims, nil
 }
-
-const ensureRecoveryOperatorsSQL = `
-	INSERT INTO rgs_wallet_recovery_operators (operator_id)
-	SELECT DISTINCT r.operator_id
-	FROM rgs_rounds r
-	WHERE r.status IN ('PREPARED', 'WALLET_PENDING')
-	  AND r.wallet_phase IN ('APPLY', 'LOOKUP')
-	ON CONFLICT (operator_id) DO NOTHING`
 
 const touchRecoveryOperatorSQL = `
 	UPDATE rgs_wallet_recovery_operators
@@ -1869,7 +1864,7 @@ func lockRound(ctx context.Context, tx *sql.Tx, key rgs.RoundKey) (rgs.RoundReco
 	))
 }
 
-func validateBinding(session rgs.Session, request rgs.SpinRequest) error {
+func validateBinding(session rgs.Session, request rgs.SpinRequest, databaseNow time.Time) error {
 	if session.OperatorID != request.OperatorID || session.SessionID != request.SessionID {
 		return rgs.ErrSessionNotFound
 	}
@@ -1885,7 +1880,9 @@ func validateBinding(session rgs.Session, request rgs.SpinRequest) error {
 	if session.Status != rgs.SessionActive {
 		return rgs.ErrInvalidRequest
 	}
-	if !session.ExpiresAt.After(time.Now()) {
+	// 会话与数据库时钟已由同一条加锁查询取得。这里绝不能回退到 Pod 时钟，
+	// 否则慢时钟副本会接受数据库已过期的经济会话，快时钟副本则会误拒绝。
+	if databaseNow.IsZero() || !session.ExpiresAt.After(databaseNow) {
 		return rgs.ErrSessionExpired
 	}
 	if session.Revision != request.StartRevision {

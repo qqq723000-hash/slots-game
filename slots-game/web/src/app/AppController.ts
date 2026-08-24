@@ -113,7 +113,6 @@ import {
   type BigWinPlan,
 } from "../renderer/BigWinView";
 import {
-  PRIMAL_NORMAL_WIN_RECORD_HOLD_MS,
   primalWinRecordHoldDurationMs,
   type WinCelebrationResidentFacts,
   type WinCelebrationMilestone,
@@ -3686,11 +3685,5 @@ export class AppController {
       this.ui.setHudReveal(1);
       this.renderer.setJackpotHudReveal(1);
     }
-  }
-
-  private require(root: HTMLElement, role: string): HTMLElement {
-    const element = root.querySelector(`[data-role="${role}"]`);
-    if (!(element instanceof HTMLElement)) throw new Error(`Missing application host ${role}`);
-    return element;
   }
 }

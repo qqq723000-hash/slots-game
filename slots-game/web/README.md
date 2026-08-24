@@ -53,6 +53,7 @@ WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
 
 ## 资源与运行边界
 
+- 静态资源目录职责、权属状态与外部审批要求见 [`ASSETS.md`](./ASSETS.md)；
 - `public/assets/primal-runtime/runtime-manifest.json` 绑定每个运行资源的字节长度和 SHA-256；
 - streaming package manifest 必须可离线重现，并覆盖每个权威 URL 一次；
 - 子路径部署必须用实际公开前缀构建，服务器不得把缺失资源重写成 `index.html`；

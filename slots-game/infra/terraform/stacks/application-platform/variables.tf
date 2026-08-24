@@ -382,6 +382,57 @@ variable "application_secret_versions" {
   type        = map(number)
 }
 
+variable "api_waf_rate_limits" {
+  description = "公网 API 区域 WAF 每来源 IP 的一分钟初始限额"
+  type = object({
+    public_requests_per_minute = number
+    spin_requests_per_minute   = number
+    launch_requests_per_minute = number
+  })
+}
+
+variable "api_waf_alarm_thresholds" {
+  description = "公网 API WAF 一分钟攻击量与成本异常阈值"
+  type = object({
+    blocked_requests_per_minute = number
+    allowed_requests_per_minute = number
+  })
+}
+
+variable "api_waf_rate_rule_rollouts" {
+  description = "API regional WAF 三条按来源 IP rate rule 的 Count→Block 状态"
+  type = map(object({
+    action             = string
+    evidence_reference = string
+  }))
+}
+
+variable "api_waf_header_size_rule_rollout" {
+  description = "API regional WAF 8 KiB aggregate header rule 的 Count→Block 状态"
+  type = object({
+    action             = string
+    evidence_reference = string
+  })
+}
+
+variable "api_waf_managed_rule_rollout" {
+  description = "API regional WAF managed rules 的 Count→Block 发布状态"
+  type = object({
+    action             = string
+    evidence_reference = string
+  })
+}
+
+variable "api_waf_managed_rule_versions" {
+  description = "API regional WAF managed rule group 精确版本"
+  type        = map(string)
+}
+
+variable "waf_rollout_evidence_kms_key_arn" {
+  description = "API 与 CloudFront WAF Block 晋级证据的批准 KMS key ARN"
+  type        = string
+}
+
 variable "web_bucket_name" {
   description = "Web release bucket 名称"
   type        = string
@@ -402,9 +453,65 @@ variable "cloudfront_acm_certificate_arn" {
   type        = string
 }
 
+variable "regional_acm_certificate_arn" {
+  description = "公网 API ALB HTTPS listener 使用的区域 ACM certificate ARN"
+  type        = string
+}
+
+variable "alb_access_log_bucket_name" {
+  description = "企业落地区批准的 ALB access log S3 bucket 名称；legacy ALB 日志使用 SSE-S3"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.alb_access_log_bucket_name))
+    error_message = "ALB access log bucket 名称不合法。"
+  }
+}
+
+variable "alb_access_log_prefix" {
+  description = "当前环境独占的 ALB access log S3 prefix"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9/_-]{1,127}$", var.alb_access_log_prefix))
+    error_message = "ALB access log prefix 必须是 2-128 字符的规范环境路径。"
+  }
+}
+
 variable "cloudfront_waf_web_acl_arn" {
   description = "CloudFront WAFv2 Web ACL ARN"
   type        = string
+}
+
+variable "cloudfront_waf_rate_limit_per_minute" {
+  description = "CloudFront global WAF 每来源 IP 一分钟请求限额"
+  type        = number
+}
+
+variable "cloudfront_waf_log_group_name" {
+  description = "CloudFront global WAF 在 us-east-1 的日志组名"
+  type        = string
+}
+
+variable "cloudfront_waf_rate_rule_rollout" {
+  description = "CloudFront global WAF 按来源 IP rate rule 的 Count→Block 状态"
+  type = object({
+    action             = string
+    evidence_reference = string
+  })
+}
+
+variable "cloudfront_waf_managed_rule_rollout" {
+  description = "CloudFront global WAF managed rules 的 Count→Block 企业交接状态"
+  type = object({
+    action             = string
+    evidence_reference = string
+  })
+}
+
+variable "cloudfront_waf_managed_rule_versions" {
+  description = "CloudFront global WAF managed rule group 精确版本"
+  type        = map(string)
 }
 
 variable "web_content_security_policy" {
