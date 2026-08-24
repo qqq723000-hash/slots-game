@@ -571,6 +571,12 @@ func canonicalBackendKey(raw string) (string, error) {
 	return strings.ToLower(parsed.Scheme) + "://" + host, nil
 }
 
+// CanonicalBackendIdentity 返回钱包物理 origin 的稳定成本/隔离身份。调用方可在
+// 启动期建立 operator -> backend 静态映射；返回值不得直接作为监控标签或日志字段。
+func CanonicalBackendIdentity(raw string) (string, error) {
+	return canonicalBackendKey(raw)
+}
+
 func canonicalLedgerTarget(raw string) (string, error) {
 	origin, err := canonicalBackendKey(raw)
 	if err != nil {

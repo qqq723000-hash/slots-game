@@ -18,6 +18,12 @@ rgs:
     - https://slots.example.com
   sharedAdmission:
     endpointURL: rediss://valkey.example.internal:6379
+    # 仅为平台保护上限；必须替换为经钱包合同和目标环境压测批准的值。
+    economic:
+      operatorRatePerSecond: 20
+      operatorRateBurst: 40
+      backendRatePerSecond: 100
+      backendRateBurst: 200
 
 worker:
   maintenanceQuiesced: false
@@ -29,6 +35,8 @@ ingress:
   className: nginx
   tlsSecretEnabled: true
   apiHost: rgs.example.com
+  apiHealthCheckPath: /healthz
+  apiHealthCheckPort: 8081
   webHost: slots.example.com
   apiTLSSecretName: rgs-ingress-tls
   webTLSSecretName: web-ingress-tls

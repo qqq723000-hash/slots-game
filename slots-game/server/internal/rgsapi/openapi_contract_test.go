@@ -75,6 +75,12 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 			t.Errorf("%s does not declare body-bearing GET rejection", path)
 		}
 	}
+	health := openAPIPathSection(t, document, "/healthz")
+	if strings.Contains(health, "https://rgs.example.invalid") ||
+		!strings.Contains(health, "http://127.0.0.1:8081") ||
+		!strings.Contains(health, "the public RGS listener returns 404") {
+		t.Error("liveness is not restricted to the private operations listener")
+	}
 	for _, expectation := range []struct {
 		name        string
 		contentType string

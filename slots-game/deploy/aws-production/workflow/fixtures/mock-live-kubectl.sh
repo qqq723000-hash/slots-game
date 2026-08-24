@@ -100,7 +100,44 @@ emit_deployment() {
       '
       ;;
     *) fail "未知 Deployment：$deployment_name" ;;
-  esac
+  esac | jq \
+    --arg deployment "$deployment_name" \
+    --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
+      if [
+        "aws-load-balancer-controller",
+        "cluster-autoscaler",
+        "external-secrets",
+        "kube-prometheus-stack-operator"
+      ] | index($deployment) then
+        .metadata.generation = 7 |
+        .spec.replicas = 2 |
+        .status = {
+          observedGeneration: 7,
+          replicas: 2,
+          updatedReplicas: 2,
+          readyReplicas: 2,
+          availableReplicas: 2,
+          unavailableReplicas: 0
+        } |
+        if $mode == ("addon-" + $deployment + "-zero") then
+          .spec.replicas = 0 |
+          .status.replicas = 0 |
+          .status.updatedReplicas = 0 |
+          .status.readyReplicas = 0 |
+          .status.availableReplicas = 0
+        elif $mode == ("addon-" + $deployment + "-partial") then
+          .status.readyReplicas = 1 |
+          .status.availableReplicas = 1 |
+          .status.unavailableReplicas = 1
+        elif $mode == ("addon-" + $deployment + "-unobserved") then
+          .metadata.generation = 8
+        elif $mode == ("addon-" + $deployment + "-extra-old-replica") then
+          .status.replicas = 3
+        elif $mode == ("addon-" + $deployment + "-deleting") then
+          .metadata.deletionTimestamp = "2026-08-24T00:00:00Z"
+        else . end
+      else . end
+    '
 }
 
 emit_native_secret() {
@@ -172,6 +209,14 @@ if test "$#" -ge 1 && test "$1" = -n; then
   case "$operation" in
     rollout)
       test "$resource" = status || fail '只允许 rollout status'
+      if test "${MOCK_PLATFORM_MODE:-valid}" = cloudwatch-agent-workload-not-ready && \
+        test "${3:-}" = daemonset/cloudwatch-agent; then
+        exit 1
+      fi
+      if test "${MOCK_PLATFORM_MODE:-valid}" = cloudwatch-fluent-bit-not-ready && \
+        test "${3:-}" = daemonset/fluent-bit; then
+        exit 1
+      fi
       exit 0
       ;;
     wait)
@@ -182,6 +227,31 @@ if test "$#" -ge 1 && test "$1" = -n; then
         serviceaccount/*) exit 0 ;;
         deployment/*)
           emit_deployment "${resource#deployment/}"
+          ;;
+        daemonset/*)
+          daemonset_name=${resource#daemonset/}
+          case "$daemonset_name" in cloudwatch-agent|fluent-bit) ;; *) fail "未知 DaemonSet：$daemonset_name" ;; esac
+          jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" --arg name "$daemonset_name" '
+            (($mode == "cloudwatch-agent-workload-not-ready" and $name == "cloudwatch-agent") or
+              ($mode == "cloudwatch-fluent-bit-not-ready" and $name == "fluent-bit")) as $not_ready |
+            {
+              spec: {template: {spec: {
+                serviceAccountName: (if $name == "cloudwatch-agent" then "cloudwatch-agent"
+                  elif $mode == "cloudwatch-fluent-bit-sa-drift" then "forbidden-fluent-bit"
+                  else "fluent-bit" end),
+                containers: [{name: (if $mode == "cloudwatch-fluent-bit-container-drift" and $name == "fluent-bit"
+                  then "forbidden-container" else $name end)}]
+              }}},
+              status: {
+                desiredNumberScheduled: 3,
+                currentNumberScheduled: (if $not_ready then 2 else 3 end),
+                updatedNumberScheduled: (if $not_ready then 2 else 3 end),
+                numberReady: (if $not_ready then 2 else 3 end),
+                numberAvailable: (if $not_ready then 2 else 3 end),
+                numberUnavailable: (if $not_ready then 1 else 0 end)
+              }
+            }
+          '
           ;;
         externalsecret/*)
           secret_name=${resource#externalsecret/}
@@ -218,6 +288,132 @@ if test "$#" -ge 1 && test "$1" = -n; then
                 ]
               }
             }
+          '
+          ;;
+        ingress)
+          test "${3:-}" = -l || fail 'Ingress 查询缺少 selector'
+          test "${4:-}" = 'app.kubernetes.io/component=rgs,app.kubernetes.io/instance=slots' || \
+            fail 'Ingress 未绑定当前 Helm release selector'
+          jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
+            {items: [{
+              metadata: {name: "slots-rgs-api"},
+              spec: {ingressClassName: "alb", rules: [{host: "api.example.com", http: {paths: [{
+                path: "/", pathType: "Prefix"
+              }]}}]},
+              status: {loadBalancer: {ingress: (if $mode == "alb-ingress-hostname-missing"
+                then [] else [{hostname: "slots-prod-primary-api-123456.ap-southeast-1.elb.amazonaws.com"}] end)}}
+            }]}
+          '
+          ;;
+        networkpolicy)
+          test "${3:-}" = -o && test "${4:-}" = json || \
+            fail 'NetworkPolicy 必须回读 namespace 全量对象'
+          jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
+            def default_deny: {
+              metadata: {name: "slots-default-deny", labels: {
+                "app.kubernetes.io/instance": "slots"
+              }},
+              spec: {
+                podSelector: {matchLabels: {
+                  "app.kubernetes.io/name": "slots-cluster-production",
+                  "app.kubernetes.io/instance": "slots"
+                }},
+                policyTypes: ["Ingress", "Egress"]
+              }
+            };
+            def monitoring_source: {
+              namespaceSelector: {matchLabels: (if $mode == "networkpolicy-monitoring-selector-empty"
+                then {} elif $mode == "networkpolicy-monitoring-selector-drift"
+                then {"kubernetes.io/metadata.name": "foreign-monitoring"}
+                else {"kubernetes.io/metadata.name": "monitoring"} end)},
+              podSelector: {matchLabels: {"app.kubernetes.io/name": "prometheus-agent"}}
+            };
+            def rgs_ingress: {
+              metadata: {name: "slots-rgs-ingress", labels: {
+                "app.kubernetes.io/instance": "slots",
+                "app.kubernetes.io/component": "rgs"
+              }},
+              spec: {
+                podSelector: {matchLabels: ({
+                  "app.kubernetes.io/name": "slots-cluster-production",
+                  "app.kubernetes.io/instance": "slots",
+                  "app.kubernetes.io/component": "rgs"
+                } | if $mode == "networkpolicy-rgs-selector-widened" then
+                  del(."app.kubernetes.io/component") else . end)},
+                policyTypes: ["Ingress"],
+                ingress: ([
+                  {
+                    from: ["10.30.0.0/24", "10.30.1.0/24", "10.30.2.0/24"] | map({ipBlock: {
+                      cidr: (if $mode == "networkpolicy-alb-cidr-drift" and . == "10.30.2.0/24"
+                        then "10.31.0.0/16" else . end)
+                    }}),
+                    ports: [
+                      {port: 8080, protocol: "TCP"},
+                      {port: (if $mode == "networkpolicy-alb-port-drift" then 9090 else 8081 end), protocol: "TCP"}
+                    ]
+                  },
+                  {from: [monitoring_source], ports: [{port: 8081, protocol: "TCP"}]}
+                ] + (if $mode == "networkpolicy-extra-ingress" then [{
+                  from: [{ipBlock: {cidr: "10.0.0.0/8"}}], ports: [{port: 8080, protocol: "TCP"}]
+                }] else [] end))
+              }
+            };
+            def extra_rgs_allow: {
+              metadata: {name: "foreign-rgs-allow", labels: {"app.kubernetes.io/instance": "slots"}},
+              spec: {
+                podSelector: {matchLabels: {
+                  "app.kubernetes.io/name": "slots-cluster-production",
+                  "app.kubernetes.io/instance": "slots"
+                }},
+                policyTypes: ["Ingress"],
+                ingress: [{from: [{ipBlock: {cidr: "10.0.0.0/8"}}], ports: [{port: 8080, protocol: "TCP"}]}]
+              }
+            };
+            def unlabeled_rgs_allow: {
+              metadata: {name: "unlabeled-rgs-allow"},
+              spec: {
+                podSelector: {matchLabels: {
+                  "app.kubernetes.io/name": "slots-cluster-production",
+                  "app.kubernetes.io/instance": "slots"
+                }},
+                policyTypes: ["Ingress"],
+                ingress: [{from: [{ipBlock: {cidr: "10.0.0.0/8"}}], ports: [{port: 8080, protocol: "TCP"}]}]
+              }
+            };
+            def foreign_instance_rgs_allow: {
+              metadata: {name: "foreign-instance-rgs-allow", labels: {
+                "app.kubernetes.io/instance": "foreign-release"
+              }},
+              spec: {
+                podSelector: {matchLabels: {
+                  "app.kubernetes.io/name": "slots-cluster-production",
+                  "app.kubernetes.io/instance": "slots"
+                }},
+                policyTypes: ["Ingress"],
+                ingress: [{from: [{ipBlock: {cidr: "10.0.0.0/8"}}], ports: [{port: 8080, protocol: "TCP"}]}]
+              }
+            };
+            ([default_deny, rgs_ingress] |
+              if $mode == "networkpolicy-default-deny-missing" then map(select(.metadata.name != "slots-default-deny"))
+              elif $mode == "networkpolicy-extra-rgs-policy" then . + [extra_rgs_allow]
+              elif $mode == "networkpolicy-unlabeled-rgs-policy" then . + [unlabeled_rgs_allow]
+              elif $mode == "networkpolicy-foreign-instance-rgs-policy" then . + [foreign_instance_rgs_allow]
+              else . end) | {items: .}
+          '
+          ;;
+        pods)
+          test "${3:-}" = -l || fail 'Pod 查询缺少 selector'
+          test "${4:-}" = 'app.kubernetes.io/component=rgs,app.kubernetes.io/instance=slots' || \
+            fail 'Pod 未绑定当前 Helm release selector'
+          jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
+            {items: [{
+              metadata: {name: "slots-rgs-api-7f8c9d-abcde"},
+              status: {
+                phase: "Running",
+                podIP: (if $mode == "alb-current-target-missing" then "10.30.10.11" else "10.30.10.10" end),
+                conditions: [{type: "Ready", status: "True"}]
+              }
+            }]}
           '
           ;;
         *) fail "未知 namespace 资源：$resource" ;;

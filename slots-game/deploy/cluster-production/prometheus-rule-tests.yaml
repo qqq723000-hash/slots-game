@@ -114,6 +114,71 @@ tests:
               summary: RGS 新经济意图因数据库保留容量被拒绝
               description: 新 launch 或 spin 已为保护状态查询、待交付结果和确认路径而返回容量错误；应核对数据库池、HPA 和入口流量，且只能在 PostgreSQL 总连接预算允许时扩容。
 
+  - name: 加密 CPU 闸门持续拒绝必须告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_cryptographic_capacity_rejected_total{job="slots-rgs",namespace="slots-production"}'
+        values: '0 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SlotsRGSCryptographicCapacityRejected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: RGS 加密 CPU 闸门持续拒绝请求
+              description: Ed25519 验签、令牌验证或响应签名已耗尽有界 CPU 许可；应核对边缘攻击、预认证流量、Pod CPU/HPA 和加密并发预算，禁止通过无界 goroutine 规避。
+
+  - name: 钱包经济成本预算持续拒绝必须告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_economic_admission_allowed_total{job="slots-rgs",namespace="slots-production"}'
+        values: '0+60x14'
+      - series: 'rgs_economic_admission_limited_total{job="slots-rgs",namespace="slots-production"}'
+        values: '0+10x14'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: SlotsRGSEconomicAdmissionLimitedSustained
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: RGS 钱包成本预算持续拒绝新 Spin
+              description: 已验证 Spin 意图的 operator/backend 原子成本桶拒绝比例持续超过百分之五；应核对 EDoS 攻击、运营商异常重试和钱包合同容量，禁止牺牲状态查询或恢复通道。
+
+  - name: 钱包经济成本准入故障必须告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_economic_admission_errors_total{job="slots-rgs",namespace="slots-production"}'
+        values: '0 1 2 3 4 5'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SlotsRGSEconomicAdmissionErrors
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: RGS 钱包成本准入持续故障
+              description: Valkey 双桶脚本、静态 operator/backend 路由或返回协议持续失败；新 Spin 已失败关闭，status/result/ACK 与 Worker 恢复必须继续可用。
+
+  - name: 重复安全日志只有持续被抑制才告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_security_logs_dropped_total{job="slots-rgs",namespace="slots-production"}'
+        values: '0 1 2 3 4 5 6 7 8 9'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SlotsRGSSecurityLogDropsSustained
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: SlotsRGSSecurityLogDropsSustained
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: RGS 重复安全 WARN 持续被有界抑制
+              description: 权威安全事件计数仍完整，但固定物理 WARN 写入预算连续耗尽；应关联认证重放、边缘防护和认证失败判断攻击或错误重试，禁止用阻塞请求线程换取完整重复日志。
+
   - name: 钱包隔离拒绝必须触发告警
     interval: 1m
     input_series:

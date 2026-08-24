@@ -72,6 +72,7 @@ ruby -ryaml -rjson -e '
   expected_rotation_keys = %w[
     active_slot
     active_user_name
+    acl_command_profile
     acl_schema_dual_permissions_allowed
     acl_schema_migration_order
     acl_schema_migration_requires_quiesced
@@ -120,6 +121,7 @@ ruby -ryaml -rjson -e '
       rotation.fetch("hmac_maintenance_attestation_schema") == "slots-game/hmac-quiesce-attestation/v1" &&
       rotation.fetch("hmac_maintenance_evidence_maximum_ttl_seconds") == 3600 &&
       rotation.fetch("hmac_maintenance_persistent_lock_name") == "slots-hmac-maintenance-lock" &&
+      rotation.fetch("acl_command_profile") == "v2-economic" &&
       rotation.fetch("acl_schema_version") == "v2" &&
       rotation.fetch("acl_schema_transition") == "maintenance-quiesced" &&
       rotation.fetch("acl_schema_migration_requires_quiesced") == true &&

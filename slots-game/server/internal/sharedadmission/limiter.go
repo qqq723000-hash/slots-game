@@ -35,9 +35,16 @@ const (
 	// v2 使用单字符串状态，避免与旧 hash 状态发生 WRONGTYPE；花括号使每个身份及其
 	// 未来的关联键在 Valkey Cluster 中稳定落到同一 slot，而不同 HMAC 仍均匀分布。
 	keyPrefix = "rgs:shared-admission:v2:{"
-	// valkey-go 的单节点客户端会把 0 解释为按 GOMAXPROCS 扩展连接；-1 会
-	// 规范化为一条管线连接，避免每个 API Pod 在故障时放大连接风暴。
+	// valkey-go 的单节点客户端会把 0 解释为按 GOMAXPROCS 扩展管线；-1 会
+	// 规范化为一条未用的管线通道。业务命令强制走下面的有界同步池。
 	singlePipelineConnectionMultiplex = -1
+	// 自动管线的环形队列在黑洞 peer 下不保证 PutOne 响应 context。应用层
+	// 四许可闸门保证不会有第五条命令进入依赖池，socket deadline 限制在途读写；四条是
+	// 对健康跨 AZ RTT 吞吐与每 Pod 连接上界的保守折中。
+	synchronousValkeyPoolSize = 4
+	// ForceSingleClient 在构造时还会保留一条基础 mux socket；禁用自动
+	// 管线后它不承载业务命令，但必须计入 ElastiCache 连接预算。
+	maximumValkeyConnectionsPerPod = synchronousValkeyPoolSize + 1
 	// ElastiCache 端点使用关闭集群模式的单节点协议；显式关闭集群探测，
 	// 避免客户端发送 ACL 未授权的 CLUSTER SLOTS 并制造误告警。
 	forceSingleValkeyClient = true
@@ -115,23 +122,79 @@ type scriptExecutor interface {
 }
 
 type valkeyExecutor struct {
-	client           valkey.Client
-	scriptReload     chan struct{}
-	scriptGeneration atomic.Uint64
-	noScriptMisses   atomic.Uint64
+	client                 valkey.Client
+	transportPermits       chan struct{}
+	scriptReload           chan struct{}
+	economicReload         chan struct{}
+	scriptGeneration       atomic.Uint64
+	economicGeneration     atomic.Uint64
+	noScriptMisses         atomic.Uint64
+	economicNoScriptMisses atomic.Uint64
 }
 
 func (executor *valkeyExecutor) Evaluate(ctx context.Context, key string, args []string) ([]int64, error) {
 	evalsha := func() scriptCallResult {
-		return parseScriptCallResult(executor.client.Do(ctx, executor.client.B().Evalsha().Sha1(tokenBucketScriptSHA1).
-			Numkeys(1).Key(key).Arg(args...).Build()))
+		return executor.call(ctx, func() valkey.ValkeyResult {
+			return executor.client.Do(ctx, executor.client.B().Evalsha().Sha1(tokenBucketScriptSHA1).
+				Numkeys(1).Key(key).Arg(args...).Build())
+		})
 	}
 	eval := func() scriptCallResult {
-		return parseScriptCallResult(executor.client.Do(ctx, executor.client.B().Eval().Script(tokenBucketScriptBody).
-			Numkeys(1).Key(key).Arg(args...).Build()))
+		return executor.call(ctx, func() valkey.ValkeyResult {
+			return executor.client.Do(ctx, executor.client.B().Eval().Script(tokenBucketScriptBody).
+				Numkeys(1).Key(key).Arg(args...).Build())
+		})
 	}
 	return executor.evaluateCached(ctx, evalsha, eval)
 }
+
+func (executor *valkeyExecutor) EvaluateEconomic(
+	ctx context.Context,
+	keys []string,
+	args []string,
+) ([]int64, error) {
+	if len(keys) != 2 {
+		return nil, errors.New("economic admission requires exactly two keys")
+	}
+	evalsha := func() scriptCallResult {
+		return executor.call(ctx, func() valkey.ValkeyResult {
+			return executor.client.Do(ctx, executor.client.B().Evalsha().Sha1(economicTokenBucketScriptSHA1).
+				Numkeys(2).Key(keys...).Arg(args...).Build())
+		})
+	}
+	eval := func() scriptCallResult {
+		return executor.call(ctx, func() valkey.ValkeyResult {
+			return executor.client.Do(ctx, executor.client.B().Eval().Script(economicTokenBucketScriptBody).
+				Numkeys(2).Key(keys...).Arg(args...).Build())
+		})
+	}
+	return executor.evaluateEconomicCached(ctx, evalsha, eval)
+}
+
+func (executor *valkeyExecutor) call(ctx context.Context, command func() valkey.ValkeyResult) scriptCallResult {
+	if err := executor.acquireTransport(ctx); err != nil {
+		return scriptCallResult{err: err}
+	}
+	defer executor.releaseTransport()
+	return parseScriptCallResult(command())
+}
+
+func (executor *valkeyExecutor) acquireTransport(ctx context.Context) error {
+	select {
+	case executor.transportPermits <- struct{}{}:
+		// 取消与许可同时就绪时 select 可能选择任一分支；进入 valkey-go 前再次检查，
+		// 防止已经过期的等待者进入依赖连接池。
+		if err := ctx.Err(); err != nil {
+			executor.releaseTransport()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (executor *valkeyExecutor) releaseTransport() { <-executor.transportPermits }
 
 type scriptCallResult struct {
 	values   []int64
@@ -179,7 +242,41 @@ func (executor *valkeyExecutor) evaluateCached(
 	}
 }
 
+func (executor *valkeyExecutor) evaluateEconomicCached(
+	ctx context.Context,
+	evalsha func() scriptCallResult,
+	eval func() scriptCallResult,
+) ([]int64, error) {
+	for {
+		generation := executor.economicGeneration.Load()
+		result := evalsha()
+		if !result.noScript {
+			return result.values, result.err
+		}
+		executor.economicNoScriptMisses.Add(1)
+		select {
+		case executor.economicReload <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if executor.economicGeneration.Load() != generation {
+			<-executor.economicReload
+			continue
+		}
+		result = eval()
+		if result.err == nil {
+			executor.economicGeneration.Add(1)
+		}
+		<-executor.economicReload
+		return result.values, result.err
+	}
+}
+
 func (executor *valkeyExecutor) Ping(ctx context.Context) error {
+	if err := executor.acquireTransport(ctx); err != nil {
+		return err
+	}
+	defer executor.releaseTransport()
 	return executor.client.Do(ctx, executor.client.B().Ping().Build()).Error()
 }
 
@@ -219,20 +316,17 @@ func New(config Config, metrics *platform.Metrics) (*Limiter, error) {
 	if endpoint.Port() == "" {
 		address = net.JoinHostPort(endpoint.Hostname(), "6379")
 	}
-	client, err := valkey.NewClient(valkey.ClientOption{
-		InitAddress:       []string{address},
-		ForceSingleClient: forceSingleValkeyClient,
-		Username:          config.Username,
-		Password:          string(password),
-		ClientName:        "rgs-shared-admission",
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, ServerName: endpoint.Hostname(), RootCAs: rootCAs},
-		Dialer:            net.Dialer{Timeout: config.Timeout, KeepAlive: 30 * time.Second},
-		ConnWriteTimeout:  config.Timeout,
-		PipelineMultiplex: singlePipelineConnectionMultiplex,
-		BlockingPoolSize:  1,
-		DisableRetry:      true,
-		DisableCache:      true,
-	})
+	clientOptions := boundedValkeyClientOptions(config.Timeout)
+	clientOptions.InitAddress = []string{address}
+	clientOptions.Username = config.Username
+	clientOptions.Password = string(password)
+	clientOptions.ClientName = "rgs-shared-admission"
+	clientOptions.TLSConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: endpoint.Hostname(),
+		RootCAs:    rootCAs,
+	}
+	client, err := valkey.NewClient(clientOptions)
 	if err != nil {
 		clear(hmacKey)
 		return nil, fmt.Errorf("construct shared admission client: %w", err)
@@ -246,8 +340,31 @@ func New(config Config, metrics *platform.Metrics) (*Limiter, error) {
 	return limiter, nil
 }
 
+// boundedValkeyClientOptions 是生产和故障/负载测试共用的传输安全契约。
+// DisableAutoPipelining 不能被省略：valkey-go v1.0.67 的自动管线环形队列在
+// peer 不读响应时可能在 context 取消后仍阻塞入队。valkeyExecutor 的应用许可
+// 在调用依赖前响应 context，因此同步池不承担等待队列；ConnWriteTimeout 为已获准
+// 命令的读写设置第二道硬上界。
+func boundedValkeyClientOptions(timeout time.Duration) valkey.ClientOption {
+	return valkey.ClientOption{
+		ForceSingleClient:     forceSingleValkeyClient,
+		Dialer:                net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second},
+		ConnWriteTimeout:      timeout,
+		PipelineMultiplex:     singlePipelineConnectionMultiplex,
+		BlockingPoolSize:      synchronousValkeyPoolSize,
+		DisableAutoPipelining: true,
+		DisableRetry:          true,
+		DisableCache:          true,
+	}
+}
+
 func newValkeyExecutor(client valkey.Client) *valkeyExecutor {
-	return &valkeyExecutor{client: client, scriptReload: make(chan struct{}, 1)}
+	return &valkeyExecutor{
+		client:           client,
+		transportPermits: make(chan struct{}, synchronousValkeyPoolSize),
+		scriptReload:     make(chan struct{}, 1),
+		economicReload:   make(chan struct{}, 1),
+	}
 }
 
 func newLimiter(executor scriptExecutor, config Config, hmacKey []byte, metrics *platform.Metrics) (*Limiter, error) {
@@ -255,14 +372,15 @@ func newLimiter(executor scriptExecutor, config Config, hmacKey []byte, metrics 
 		return nil, errors.New("shared admission executor and 32-byte HMAC key are required")
 	}
 	if config.Timeout < 10*time.Millisecond || config.Timeout > 500*time.Millisecond ||
+		math.IsNaN(config.Rate) || math.IsInf(config.Rate, 0) ||
 		config.Rate <= 0 || config.Rate > 100_000 || config.Burst < 1 || config.Burst > 1_000_000 {
 		return nil, errors.New("invalid shared admission bounds")
 	}
-	rateMilli := math.Round(config.Rate * 1_000)
-	if rateMilli < 1 || rateMilli > math.MaxInt64 || float64(config.Burst)*1_000 > math.MaxInt64 {
-		return nil, errors.New("shared admission rate cannot be represented safely")
+	rateMilli, exact := exactMilliRate(config.Rate)
+	if !exact || rateMilli < 1 || float64(config.Burst)*1_000 > math.MaxInt64 {
+		return nil, errors.New("shared admission rate must be exactly representable in millitokens")
 	}
-	fillMilliseconds := math.Ceil(float64(config.Burst) * 1_000 * 1_000 / rateMilli)
+	fillMilliseconds := math.Ceil(float64(config.Burst) * 1_000 * 1_000 / float64(rateMilli))
 	if fillMilliseconds+1_000 > float64(maximumBucketTTL/time.Millisecond) {
 		return nil, errors.New("shared admission full-refill TTL exceeds 24 hours")
 	}
@@ -272,7 +390,7 @@ func newLimiter(executor scriptExecutor, config Config, hmacKey []byte, metrics 
 		timeout:  config.Timeout,
 		arguments: []string{
 			strconv.FormatInt(int64(config.Burst)*1_000, 10),
-			strconv.FormatInt(int64(rateMilli), 10),
+			strconv.FormatInt(rateMilli, 10),
 		},
 		metrics: metrics,
 		now:     time.Now,

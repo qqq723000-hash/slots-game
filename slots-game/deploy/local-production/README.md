@@ -45,6 +45,10 @@ Compose 环境前校验。静态约束可单独执行：
 - Prometheus：`http://127.0.0.1:9090`
 - Alertmanager：`https://localhost:9093`（Bearer token 位于仓库外状态目录）
 
+RGS 公共入口只发布业务 API，`https://rgs.localhost:8443/healthz` 固定返回 404。容器存活由
+私有 operations `8081/healthz` 无 Bearer 探测，就绪与指标仍在同一私有端口使用文件 Bearer；
+运维监听器不发布到宿主机。
+
 `slots.localhost` 与 `rgs.localhost` 统一返回一年 HSTS。Grafana 仅使用固定 digest
 镜像和随部署生成的 provisioning bundle；版本检查、使用统计、插件目录写入与插件
 自动安装均已关闭。如需新增插件，应更新固定镜像并重新完成供应链审核，不能在运行

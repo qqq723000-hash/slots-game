@@ -35,6 +35,14 @@ require_pattern() {
   grep -E -- "$pattern" "$file" >/dev/null || fail "缺少契约模式：$pattern"
 }
 
+reject_fixed() {
+  needle=$1
+  file=$2
+  if grep -F -- "$needle" "$file" >/dev/null; then
+    fail "包含禁止契约：$needle"
+  fi
+}
+
 for file in "$infrastructure_workflow" "$application_workflow" "$hmac_workflow" \
   "$workflow_directory/validate-environment.sh" "$workflow_directory/validate-release-inputs.sh" \
   "$workflow_directory/README.md" \
@@ -53,6 +61,8 @@ for file in "$infrastructure_workflow" "$application_workflow" "$hmac_workflow" 
   "$workflow_directory/test-hmac-only-release-diff.sh" \
   "$workflow_directory/test-latest-terraform-delivery.sh" \
   "$workflow_directory/test-live-application-secrets.sh" \
+  "$workflow_directory/test-rendered-release-network.sh" \
+  "$workflow_directory/test-web-rgs-origin.sh" \
   "$workflow_directory/test-live-definition-identity.sh" \
   "$workflow_directory/test-web-release-switch-faults.sh" \
   "$workflow_directory/fixtures/mock-kubectl.sh" \
@@ -64,12 +74,170 @@ for file in "$infrastructure_workflow" "$application_workflow" "$hmac_workflow" 
   "$workflow_directory/fixtures/live-values.yaml" \
   "$workflow_directory/fixtures/definition-rendered.yaml" \
   "$workflow_directory/verify-ecr-release.sh" "$workflow_directory/publish-web-release.sh" \
-  "$workflow_directory/verify-rendered-release.rb" \
+  "$workflow_directory/verify-rendered-release.rb" "$workflow_directory/verify-web-rgs-origin.rb" \
   "$production_directory/render-external-secrets.rb" \
-  "$production_directory/verify-live-platform-prerequisites.sh" "$addon_contract" \
+  "$production_directory/verify-live-alb-edge.sh" \
+  "$production_directory/verify-live-platform-prerequisites.sh" \
+  "$production_directory/verify-waf-rollout-evidence.rb" "$addon_contract" \
   "$rotation_plan_verifier"; do
   require_file "$file"
 done
+
+require_fixed 'ruby "$script_directory/verify-waf-rollout-evidence.rb"' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 's3api", "head-object"' "$production_directory/verify-waf-rollout-evidence.rb"
+require_fixed 's3api", "get-object"' "$production_directory/verify-waf-rollout-evidence.rb"
+require_fixed 'Digest::SHA256.file' "$production_directory/verify-waf-rollout-evidence.rb"
+require_fixed 'ServerSideEncryption' "$production_directory/verify-waf-rollout-evidence.rb"
+require_fixed 'SSEKMSKeyId' "$production_directory/verify-waf-rollout-evidence.rb"
+require_fixed 'ObjectLockMode' "$production_directory/verify-waf-rollout-evidence.rb"
+require_fixed 'ObjectLockRetainUntilDate' "$production_directory/verify-waf-rollout-evidence.rb"
+if grep -F -- '--checksum-mode' "$production_directory/verify-waf-rollout-evidence.rb" >/dev/null; then
+  fail 'WAF evidence 本地 SHA 校验不得请求未使用且扩大 KMS 权限的 S3 checksum mode'
+fi
+require_fixed 'configuration_sha256' "$production_directory/verify-waf-rollout-evidence.rb"
+require_fixed 'source_commit_sha' "$production_directory/verify-waf-rollout-evidence.rb"
+require_fixed 'require_current_approval: require_current_approval' \
+  "$production_directory/verify-waf-rollout-evidence.rb"
+reject_fixed 'GITHUB_SHA' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'rule_names' "$production_directory/verify-waf-rollout-evidence.rb"
+require_fixed 'slots-game/deploy/aws-production/verify-waf-rollout-evidence.rb' "$application_workflow"
+require_fixed 'slots-game/deploy/aws-production/verify-live-alb-edge.sh' "$application_workflow"
+require_fixed 'deploy/aws-production/workflow/test-rendered-release-network.sh' "$application_workflow"
+require_fixed 'elbv2 describe-target-health' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'elbv2 describe-rules' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'delivery.fetch("regional_acm_certificate_arn")' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'delivery.fetch("api_alb_tls_policy")' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'get networkpolicy \' "$production_directory/verify-live-alb-edge.sh"
+require_fixed '-o json > "$network_policies_json"' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'wafv2 get-web-acl-for-resource' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'ec2 describe-security-group-rules' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'get networkpolicy' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'default-deny ingress/egress NetworkPolicy 缺失或不精确' \
+  "$production_directory/verify-live-alb-edge.sh"
+require_fixed '实际 RGS NetworkPolicy ALB 来源未精确绑定 Terraform 公网子网 CIDR' \
+  "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'actual_cidrs.length == expected_cidrs.length && actual_cidrs.sort == expected_cidrs.sort' \
+  "$production_directory/verify-live-alb-edge.sh"
+require_fixed '"kubernetes.io/metadata.name" => "monitoring"' \
+  "$production_directory/verify-live-alb-edge.sh"
+require_fixed '"app.kubernetes.io/name" => "prometheus-agent"' \
+  "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'RGS NetworkPolicy monitoring 来源未绑定批准的 Prometheus agent' \
+  "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'assert_mutation_rejected wrong-monitoring-selector' \
+  "$workflow_directory/test-rendered-release-network.sh"
+require_fixed '检测到额外 NetworkPolicy 对当前 RGS Pod 放宽 ingress' \
+  "$production_directory/verify-live-alb-edge.sh"
+for network_policy_negative_mode in \
+  networkpolicy-default-deny-missing \
+  networkpolicy-alb-cidr-drift \
+  networkpolicy-alb-port-drift \
+  networkpolicy-rgs-selector-widened \
+  networkpolicy-monitoring-selector-empty \
+  networkpolicy-monitoring-selector-drift \
+  networkpolicy-extra-ingress \
+  networkpolicy-extra-rgs-policy \
+  networkpolicy-unlabeled-rgs-policy \
+  networkpolicy-foreign-instance-rgs-policy
+do
+  require_fixed "$network_policy_negative_mode" "$workflow_directory/test-live-application-secrets.sh"
+done
+require_fixed 'managed.keys.sort == %w[Name VendorName Version]' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'managed_statement.keys.sort == %w[Name VendorName Version]' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'header_match.fetch("MatchScope") == "ALL"' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'header_match.fetch("MatchPattern") == {"All" => {}}' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'size.fetch("TextTransformations") == [{"Priority" => 0, "Type" => "NONE"}]' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'rate.keys.sort == %w[AggregateKeyType EvaluationWindowSec Limit]' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'visibility.fetch("CloudWatchMetricsEnabled") == true' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+test "$(grep -F -c 'web_acl_visibility.fetch("CloudWatchMetricsEnabled") == true' \
+  "$production_directory/verify-live-platform-prerequisites.sh" || true)" -eq 2 || \
+  fail 'Regional 与 CloudFront WAF WebACL visibility 都必须启用精确 CloudWatch metric'
+test "$(grep -E -c '^[[:space:]]+visibility\.fetch\("CloudWatchMetricsEnabled"\) == true' \
+  "$production_directory/verify-live-platform-prerequisites.sh" || true)" -eq 2 || \
+  fail 'Regional 与 CloudFront WAF 每条规则 visibility 都必须启用精确 CloudWatch metric'
+require_fixed 'alarm.fetch("MetricName") == expected_metrics.fetch(name)' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'alarm.fetch("ComparisonOperator") == "GreaterThanOrEqualToThreshold"' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'filter.fetch("Behavior") == "KEEP" && filter.fetch("Requirement") == "MEETS_ANY"' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+test "$(grep -F -c 'filter.fetch("Behavior") == "KEEP" && filter.fetch("Requirement") == "MEETS_ANY"' \
+  "$production_directory/verify-live-platform-prerequisites.sh" || true)" -eq 2 || \
+  fail 'Regional 与 CloudFront WAF logging filter 都必须精确 KEEP+MEETS_ANY'
+require_fixed 'cloudfront_release_response_function_arn' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'default_behavior.fetch("LambdaFunctionAssociations")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'ordered.fetch("LambdaFunctionAssociations")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'cache_behaviors.fetch("Quantity") == 1' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+for cloudfront_negative_mode in \
+  cloudfront-lambda-association \
+  cloudfront-extra-cache-behavior \
+  cloudfront-extra-function-association \
+  cloudfront-response-function-drift \
+  cloudfront-managed-excluded-rules \
+  cloudfront-managed-action-override \
+  cloudfront-managed-scope-down \
+  cloudfront-logging-behavior-drift \
+  cloudfront-logging-requirement-drift
+do
+  require_fixed "$cloudfront_negative_mode" "$workflow_directory/test-live-application-secrets.sh"
+done
+for regional_negative_mode in \
+  waf-managed-excluded-rules \
+  waf-managed-action-override \
+  waf-managed-scope-down \
+  waf-logging-behavior-drift \
+  waf-logging-requirement-drift
+do
+  require_fixed "$regional_negative_mode" "$workflow_directory/test-live-application-secrets.sh"
+done
+for final_execution_negative_mode in \
+  waf-body-size-transform-drift \
+  waf-header-size-transform-drift \
+  waf-header-match-scope-drift \
+  waf-header-match-pattern-drift \
+  waf-web-acl-metrics-disabled \
+  waf-web-acl-metric-name-drift \
+  waf-rule-metrics-disabled \
+  waf-rule-metric-name-drift \
+  waf-alarm-metric-name-drift \
+  waf-alarm-statistic-drift \
+  waf-alarm-comparison-drift \
+  cloudfront-rate-scope-down \
+  cloudfront-web-acl-metrics-disabled \
+  cloudfront-web-acl-metric-name-drift \
+  cloudfront-rule-metrics-disabled \
+  cloudfront-rule-metric-name-drift
+do
+  require_fixed "$final_execution_negative_mode" "$workflow_directory/test-live-application-secrets.sh"
+done
+require_fixed 'HTTP listener 必须仅包含默认规则' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'HTTPS listener 规则集合必须精确为默认 404 与唯一 API host forward' \
+  "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'alb-http-extra-rule' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'alb-http-redirect-host-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'alb-http-rule-redirect-path-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'alb-http-rule-redirect-query-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'alb-https-default-forward' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'alb-https-extra-rule' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'alb-log-bucket-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'alb-log-prefix-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'delivery.fetch("alb_access_log_bucket_name")' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'delivery.fetch("alb_access_log_prefix")' "$production_directory/verify-live-alb-edge.sh"
+require_fixed 'slots-game/deploy/aws-production/verify-waf-rollout-evidence.rb' "$infrastructure_workflow"
+require_fixed '--terraform-plan aws "$AWS_REGION" "$source_sha"' "$infrastructure_workflow"
+require_fixed 'ruby -c deploy/aws-production/verify-waf-rollout-evidence.rb' "$infrastructure_workflow"
 
 workflow_readme="$workflow_directory/README.md"
 require_fixed '本目录由三个 GitHub Actions 工作流调用' "$workflow_readme"
@@ -363,9 +531,14 @@ test "$plan_command_line" -lt "$plan_rotation_line" -a "$plan_rotation_line" -lt
   fail 'Valkey A/B plan 状态机门禁必须位于 plan 生成后、artifact 上传前'
 apply_init_line=$(printf '%s\n' "$infrastructure_apply" | grep -nF 'terraform init -input=false' | head -n 1 | cut -d: -f1)
 apply_rotation_line=$(printf '%s\n' "$infrastructure_apply" | grep -nF -- "$rotation_gate" | head -n 1 | cut -d: -f1)
+apply_waf_evidence_line=$(printf '%s\n' "$infrastructure_apply" | grep -nF -- 'verify-waf-rollout-evidence.rb' | head -n 1 | cut -d: -f1)
 apply_command_line=$(printf '%s\n' "$infrastructure_apply" | grep -nF 'terraform apply -input=false' | head -n 1 | cut -d: -f1)
-test "$apply_init_line" -lt "$apply_rotation_line" -a "$apply_rotation_line" -lt "$apply_command_line" || \
-  fail 'apply 必须初始化 provider 后复核下载的同一 plan，才允许执行 apply'
+test "$apply_init_line" -lt "$apply_rotation_line" -a \
+  "$apply_rotation_line" -lt "$apply_waf_evidence_line" -a \
+  "$apply_waf_evidence_line" -lt "$apply_command_line" || \
+  fail 'apply 必须在初始化后复核 Valkey 状态及 planned WAF Block evidence，才允许执行 apply'
+require_fixed 'source_sha=$(sed -n '\''s/^SOURCE_SHA=//p'\'' "$TF_PLAN_DIR/plan-metadata.env")' "$infrastructure_workflow"
+require_fixed 'test "$source_sha" = "$GITHUB_SHA"' "$infrastructure_workflow"
 require_fixed 'artifact_id: ${{ steps.upload.outputs.artifact-id }}' "$infrastructure_workflow"
 require_fixed 'artifact_digest: ${{ steps.upload.outputs.artifact-digest }}' "$infrastructure_workflow"
 require_fixed 'artifact-ids: ${{ needs.terraform-plan.outputs.artifact_id }}' "$infrastructure_workflow"
@@ -435,6 +608,7 @@ for valkey_delivery_contract in \
   '($rotation.password_fingerprints | keys | sort) == ["a", "b"]' \
   '($rotation.hmac_key_fingerprint | type == "string" and test("^[0-9a-f]{64}$"))' \
   '$rotation.published_secret_version == $secret_version' \
+  '$rotation.acl_command_profile == "v2-economic"' \
   '$rotation.acl_schema_version == "v2"' \
   '$rotation.acl_schema_transition == "maintenance-quiesced"' \
   '$rotation.acl_schema_migration_requires_quiesced == true' \
@@ -470,7 +644,11 @@ do
   require_fixed "$application_rotation_safety" "$application_workflow"
 done
 for platform_delivery_contract in \
+  '$handoff.alb_access_logs == {' \
   '$handoff.metrics_server_addon_version |' \
+  '$handoff.vpc_cni_network_policy.expected_status == "ACTIVE"' \
+  '$handoff.cloudwatch_observability == {' \
+  '$handoff.cloudwatch_observability.configuration_values.containerLogs.enabled == true' \
   '$handoff.required_deployments == {' \
   '$handoff.required_api_services == {"resource_metrics": "v1beta1.metrics.k8s.io"}' \
   '$handoff.kube_state_metrics_release_name == "kube-prometheus-stack"'
@@ -561,6 +739,21 @@ test "$(grep -F -c 'if-no-files-found: warn' "$application_workflow" || true)" -
 require_fixed 'umask 077' "$workflow_directory/verify-ecr-release.sh"
 require_fixed 'umask 077' "$workflow_directory/manage-hmac-quiesce-evidence.sh"
 require_fixed 'umask 077' "$workflow_directory/publish-web-release.sh"
+require_fixed 'response_function_name=${AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME%-release-request}-release-response' \
+  "$workflow_directory/publish-web-release.sh"
+require_fixed '.DistributionConfig.CacheBehaviors.Quantity == 1' \
+  "$workflow_directory/publish-web-release.sh"
+require_fixed '.DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations.Quantity == 0' \
+  "$workflow_directory/publish-web-release.sh"
+require_fixed '.DistributionConfig.CacheBehaviors.Items[0].FunctionAssociations.Quantity == 0' \
+  "$workflow_directory/publish-web-release.sh"
+for web_distribution_negative in \
+  cloudfront-lambda-association \
+  cloudfront-extra-cache-behavior \
+  cloudfront-extra-function-association
+do
+  require_fixed "$web_distribution_negative" "$workflow_directory/test-web-release-switch-faults.sh"
+done
 require_fixed '"RGS_IMAGE=$registry/$AWS_ECR_RGS_RUNTIME_REPOSITORY@$INPUT_RGS_DIGEST"' "$application_workflow"
 require_fixed '"MIGRATOR_IMAGE=$registry/$AWS_ECR_RGS_MIGRATOR_REPOSITORY@$INPUT_MIGRATOR_DIGEST"' "$application_workflow"
 require_fixed '"WEB_IMAGE=$registry/$AWS_ECR_WEB_REPOSITORY@$INPUT_WEB_DIGEST"' "$application_workflow"
@@ -582,6 +775,20 @@ require_fixed 'all($repositories[];' "$application_workflow"
 require_fixed '.scanFrequency == "CONTINUOUS_SCAN"' "$application_workflow"
 require_fixed 'extract-aws-web-static-root.sh' "$application_workflow"
 require_fixed 'publish-web-release.sh' "$application_workflow"
+require_fixed 'deploy/aws-production/workflow/test-web-rgs-origin.sh' "$application_workflow"
+require_fixed 'ruby -c deploy/aws-production/workflow/verify-web-rgs-origin.rb' "$application_workflow"
+require_fixed 'slots-game/deploy/aws-production/workflow/verify-web-rgs-origin.rb' "$application_workflow"
+require_fixed 'rgs_base_url == "https://#{api_host}"' "$workflow_directory/verify-web-rgs-origin.rb"
+require_fixed 'app.kubernetes.io/component=rgs,app.kubernetes.io/instance=#{release_name}' \
+  "$workflow_directory/verify-web-rgs-origin.rb"
+require_fixed 'Web 提取身份记录字段集合不精确' "$workflow_directory/verify-web-rgs-origin.rb"
+require_fixed "expect_rejected 'foreign RGS Origin' https://foreign.example.com" \
+  "$workflow_directory/test-web-rgs-origin.sh"
+web_extract_line=$(grep -nF 'extract-aws-web-static-root.sh" \' "$application_workflow" | tail -1 | cut -d: -f1)
+web_origin_line=$(grep -nF 'verify-web-rgs-origin.rb" \' "$application_workflow" | tail -1 | cut -d: -f1)
+web_publish_command_line=$(grep -nF 'publish-web-release.sh" \' "$application_workflow" | tail -1 | cut -d: -f1)
+test "$web_extract_line" -lt "$web_origin_line" -a "$web_origin_line" -lt "$web_publish_command_line" || \
+  fail '已签名 Web RGS Origin 必须在 OCI 提取后、任何 Web 发布前绑定实际 Ingress'
 require_fixed '--atomic --wait --wait-for-jobs --timeout 20m' "$application_workflow"
 require_fixed 'if: inputs.deployment_mode == '\''standard'\''' "$application_workflow"
 require_fixed '.Key == "active-release" and .Value == $digest' "$application_workflow"
@@ -630,6 +837,26 @@ phase_b_line=$(grep -nF '"${common_arguments[@]}" --no-hooks --atomic --wait --t
 test "$phase_a_line" -lt "$phase_b_line" || fail 'HMAC Phase A 安全 revision 必须先于 Phase B atomic 恢复'
 require_fixed '"$HELM_BIN" lint --strict "$chart" --namespace "$AWS_EKS_NAMESPACE"' "$application_workflow"
 require_fixed '"$HELM_BIN" upgrade --install "$AWS_HELM_RELEASE_NAME" "$chart"' "$application_workflow"
+test "$(grep -F -c 'sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-alb-edge.sh"' \
+  "$application_workflow" || true)" -eq 1 || \
+  fail '应用发布必须恰好一次执行 ALB/WAF/target-health 发布后实时门禁'
+test "$(grep -F -c 'sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"' \
+  "$application_workflow" || true)" -eq 2 || \
+  fail '应用发布必须在 Helm 前与最终 mutation 后各执行一次完整平台/WAF 实时门禁'
+last_helm_mutation_line=$(grep -nF '"$HELM_BIN" upgrade' "$application_workflow" | tail -1 | cut -d: -f1)
+post_alb_gate_line=$(grep -nF 'sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-alb-edge.sh"' \
+  "$application_workflow" | cut -d: -f1)
+pre_platform_gate_line=$(grep -nF 'sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"' \
+  "$application_workflow" | head -1 | cut -d: -f1)
+post_platform_gate_line=$(grep -nF 'sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"' \
+  "$application_workflow" | tail -1 | cut -d: -f1)
+web_publish_line=$(grep -nF 'name: 从已验证 Web digest 提取并发布不可变 release' \
+  "$application_workflow" | cut -d: -f1)
+test "$pre_platform_gate_line" -lt "$last_helm_mutation_line" -a \
+  "$last_helm_mutation_line" -lt "$post_alb_gate_line" -a \
+  "$post_alb_gate_line" -lt "$post_platform_gate_line" -a \
+  "$post_platform_gate_line" -lt "$web_publish_line" || \
+  fail '完整平台/WAF 与 ALB 实时门禁必须包围 Helm，并在 Web 发布前完成最终回读'
 require_fixed '"$HELM_BIN" status "$AWS_HELM_RELEASE_NAME" --namespace "$AWS_EKS_NAMESPACE"' "$application_workflow"
 require_fixed 'AWS_HELM_VALUES_VERSION_ID: ${{ vars.AWS_HELM_VALUES_VERSION_ID }}' "$application_workflow"
 require_fixed '--version-id "$AWS_HELM_VALUES_VERSION_ID"' "$application_workflow"
@@ -638,8 +865,8 @@ require_fixed 'AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME: ${{ vars.AWS_CLOUDFRONT_ROUT
 require_fixed 'AWS_WEB_KMS_KEY_ARN: ${{ vars.AWS_WEB_KMS_KEY_ARN }}' "$application_workflow"
 test "$(grep -F -c 'slots-game/deploy/aws-production/render-external-secrets.rb' "$application_workflow" || true)" -eq 2 || \
   fail 'ExternalSecret renderer 必须同时进入最小源码 artifact 并在私网 runner 调用'
-test "$(grep -F -c 'slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh' "$application_workflow" || true)" -eq 2 || \
-  fail '平台实时门禁必须同时进入最小源码 artifact 并在 Helm 前调用'
+test "$(grep -F -c 'slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh' "$application_workflow" || true)" -eq 3 || \
+  fail '平台实时门禁必须进入最小源码 artifact，并在 Helm 前后各调用一次'
 test "$(grep -F -c 'slots-game/deploy/aws-production/workflow/verify-live-application-secrets.sh' "$application_workflow" || true)" -eq 2 || \
   fail '原生 Secret 实时门禁必须同时进入最小源码 artifact 并在 Helm 前调用'
 test "$(grep -F -c 'slots-game/deploy/aws-production/workflow/verify-live-definition-identity.sh' "$application_workflow" || true)" -eq 2 || \
@@ -679,7 +906,7 @@ require_fixed 'sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/workflow/
   "$application_workflow"
 require_fixed 'test-live-application-secrets.sh' "$application_workflow"
 require_fixed 'test-live-definition-identity.sh' "$application_workflow"
-platform_gate_line=$(grep -nF 'verify-live-platform-prerequisites.sh" \' "$application_workflow" | tail -1 | cut -d: -f1)
+platform_gate_line=$(grep -nF 'verify-live-platform-prerequisites.sh" \' "$application_workflow" | head -1 | cut -d: -f1)
 secret_gate_line=$(grep -nF 'verify-live-application-secrets.sh" \' "$application_workflow" | tail -1 | cut -d: -f1)
 definition_gate_line=$(grep -nF 'verify-live-definition-identity.sh" \' "$application_workflow" | tail -1 | cut -d: -f1)
 cluster_gate_line=$(grep -nF 'test "$current_cluster" = "$expected_cluster_arn" || {' \
@@ -746,11 +973,90 @@ require_fixed 'kind: SecretStore' "$production_directory/render-external-secrets
 require_fixed '      - secretKey: username' "$production_directory/render-external-secrets.rb"
 require_fixed '          property: username' "$production_directory/render-external-secrets.rb"
 require_fixed 'list-pod-identity-associations' "$production_directory/verify-live-platform-prerequisites.sh"
+if sed -n '/eks list-pod-identity-associations/,+8p' "$production_directory/verify-live-platform-prerequisites.sh" | \
+  grep -F -- '--no-paginate' >/dev/null; then
+  fail 'Pod Identity association 实时门禁禁止关闭分页'
+fi
 require_fixed 'describe-pod-identity-association' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'elasticache describe-replication-groups' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'elasticache describe-cache-clusters' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'elasticache describe-cache-parameters' "$production_directory/verify-live-platform-prerequisites.sh"
+if grep -F -- '--no-paginate' "$production_directory/verify-live-platform-prerequisites.sh" >/dev/null; then
+  fail '平台实时门禁禁止关闭 AWS CLI 自动分页'
+fi
+require_fixed 'parameter.fetch("ParameterApplyStatus") == "in-sync"' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'vpc_cni_network_policy' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'enableNetworkPolicy' "$production_directory/verify-live-platform-prerequisites.sh"
 require_fixed 'cluster-autoscaler' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'abort "Deployment 期望副本数必须至少为 1" unless desired >= 1' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'abort "Deployment controller 尚未观测最新 generation" unless observed == generation' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'abort "Deployment 正在删除" unless workload.dig("metadata", "deletionTimestamp").nil?' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'replicas == desired && updated == desired && ready == desired && available == desired' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'abort "Deployment 仍有不可用副本" unless unavailable == 0' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'for unsafe_state in zero partial unobserved extra-old-replica deleting' \
+  "$workflow_directory/test-live-application-secrets.sh"
+require_fixed 'replicas: 2,' "$workflow_directory/fixtures/mock-live-kubectl.sh"
+require_fixed '"-extra-old-replica") then' "$workflow_directory/fixtures/mock-live-kubectl.sh"
+require_fixed '"-deleting") then' "$workflow_directory/fixtures/mock-live-kubectl.sh"
+for critical_addon in \
+  aws-load-balancer-controller \
+  cluster-autoscaler \
+  external-secrets
+do
+  require_fixed "  $critical_addon \\" "$workflow_directory/test-live-application-secrets.sh"
+done
+require_fixed '  kube-prometheus-stack-operator' "$workflow_directory/test-live-application-secrets.sh"
 require_fixed 'pod-identity-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'vpc-cni-network-policy-disabled' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'vpc-cni-degraded' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'vpc-cni-pod-identity-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudwatch-container-logs-disabled' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudwatch-observability-degraded' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudwatch-observability-config-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudwatch-pod-identity-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudwatch-agent-workload-not-ready' "$workflow_directory/fixtures/mock-live-kubectl.sh"
+require_fixed 'cloudwatch-fluent-bit-not-ready' "$workflow_directory/fixtures/mock-live-kubectl.sh"
+require_fixed 'cloudwatch-fluent-bit-sa-drift' "$workflow_directory/fixtures/mock-live-kubectl.sh"
+require_fixed 'cloudwatch-fluent-bit-container-drift' "$workflow_directory/fixtures/mock-live-kubectl.sh"
 require_fixed 'autoscaler-policy-missing-describe-tags' "$workflow_directory/fixtures/mock-live-aws.sh"
 require_fixed 'autoscaler-policy-wildcard' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-rule-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-low-rate-scope-widened' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-managed-stage-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-managed-version-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-rate-stage-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-header-stage-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-logging-unredacted' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-logging-query-visible' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-sampled-requests-enabled' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'waf-alarm-disabled' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-waf-rate-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-managed-stage-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-managed-version-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-rate-stage-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-origin-bypass' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 's3api get-public-access-block' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'cloudfront-origin-public-access-block-missing' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-origin-public-acls-enabled' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-origin-public-policy-enabled' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 's3api get-bucket-policy' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'cloudfront-origin-bucket-policy-missing' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-origin-source-arn-drift' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-origin-external-principal' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-logging-query-visible' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'cloudfront-sampled-requests-enabled' "$workflow_directory/fixtures/mock-live-aws.sh"
+require_fixed 'SampledRequestsEnabled' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'wafv2 get-web-acl' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'managed_rule_rollout' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed '/operator/v1/launches' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed '/client/v1/spins' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'wafv2 get-logging-configuration' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'cloudwatch describe-alarms' "$production_directory/verify-live-platform-prerequisites.sh"
 require_fixed 'iam get-role-policy' "$production_directory/verify-live-platform-prerequisites.sh"
 require_fixed 'autoscaling:DescribeTags' "$production_directory/verify-live-platform-prerequisites.sh"
 test "$(grep -F -c 'autoscaling:DescribeTags' \
@@ -775,12 +1081,17 @@ require_fixed 'live-values-name-override.yaml' \
 require_fixed 'MOCK_SECRET_MODE=missing-username' "$workflow_directory/test-live-application-secrets.sh"
 require_fixed 'MOCK_PLATFORM_MODE=missing-shared-username' \
   "$workflow_directory/test-live-application-secrets.sh"
+require_fixed 'valkey-eviction-policy-drift' "$workflow_directory/test-live-application-secrets.sh"
+require_fixed 'valkey-parameter-applying' "$workflow_directory/test-live-application-secrets.sh"
 require_fixed 'wrong-endpoint-values.yaml' "$workflow_directory/test-live-application-secrets.sh"
 require_fixed '"valkey_active_slot": "a"' "$workflow_directory/fixtures/live-delivery.json"
 require_fixed '"valkey_user_names": {' "$workflow_directory/fixtures/live-delivery.json"
 require_fixed '"valkey_password_versions": {' "$workflow_directory/fixtures/live-delivery.json"
 require_fixed '"valkey_rotation_contract": {' "$workflow_directory/fixtures/live-delivery.json"
 require_fixed '"valkey_rotation_mode": "steady"' "$workflow_directory/fixtures/live-delivery.json"
+require_fixed '"valkey_maxmemory_policy": "noeviction"' "$workflow_directory/fixtures/live-delivery.json"
+require_fixed '"valkey_parameter_group_name": "slots-prod-primary-valkey-noeviction"' "$workflow_directory/fixtures/live-delivery.json"
+require_fixed '"valkey_replication_group_id": "slots-prod-primary-valkey"' "$workflow_directory/fixtures/live-delivery.json"
 require_fixed '"password_fingerprints": {' "$workflow_directory/fixtures/live-delivery.json"
 require_fixed '"hmac_key_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"' \
   "$workflow_directory/fixtures/live-delivery.json"
@@ -788,6 +1099,29 @@ require_fixed '"username": "Zml4dHVyZQ=="' "$workflow_directory/fixtures/mock-ku
 require_fixed '"username": "Zml4dHVyZQ=="' "$workflow_directory/fixtures/mock-live-kubectl.sh"
 require_fixed '"rgs" => expected_api_runtime_secret' "$workflow_directory/verify-rendered-release.rb"
 require_fixed '"rgs-worker" => expected_worker_runtime_secret' "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'annotations["alb.ingress.kubernetes.io/scheme"] == "internet-facing"' \
+  "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'annotations["alb.ingress.kubernetes.io/ip-address-type"] == "ipv4"' \
+  "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'annotations["alb.ingress.kubernetes.io/backend-protocol"] == "HTTP"' \
+  "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'listen_ports == [{"HTTP" => 80}, {"HTTPS" => 443}]' \
+  "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'annotations["alb.ingress.kubernetes.io/manage-backend-security-group-rules"] == "true"' \
+  "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'subnets.sort == expected_subnets.sort' "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'actual_alb_source_cidrs.sort == expected_alb_source_cidrs.sort' \
+  "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'annotations.fetch("alb.ingress.kubernetes.io/security-groups", "") == expected_security_group' \
+  "$workflow_directory/verify-rendered-release.rb"
+require_fixed 'delivery.fetch("alb_egress_target_ports") == [8080, 8081]' \
+  "$workflow_directory/verify-rendered-release.rb"
+require_fixed '"alb_security_group_id": "sg-00000000000000001"' \
+  "$workflow_directory/fixtures/live-delivery.json"
+require_fixed '"alb_egress_target_ports": [8080, 8081]' \
+  "$workflow_directory/fixtures/live-delivery.json"
+require_fixed '"public_subnet_ids": [' "$workflow_directory/fixtures/live-delivery.json"
+require_fixed '"public_subnet_cidrs": [' "$workflow_directory/fixtures/live-delivery.json"
 require_fixed 'username_reference["name"] == expected_shared_admission_secret' \
   "$workflow_directory/verify-rendered-release.rb"
 require_fixed 'username_reference["key"] == "username"' \

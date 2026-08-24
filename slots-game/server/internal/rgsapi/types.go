@@ -25,7 +25,7 @@ const (
 	ClientPendingResultPath   = "/client/v1/results/pending"
 	ClientResultAckPath       = "/client/v1/results/acknowledgements"
 
-	DefaultMaxRequestBytes int64 = 64 << 10
+	DefaultMaxRequestBytes int64 = 8 << 10
 )
 
 var (
@@ -94,6 +94,13 @@ func (f AdmissionResultFunc) Admit(ctx context.Context, key string, now time.Tim
 	return f(ctx, key, now)
 }
 
+// CryptographicCapacity 是验签、令牌验证和运营商响应签名之前的非阻塞 CPU bulkhead。
+// 认证前不存在可信恢复身份，所有请求必须使用同一个匿名硬上限；容量耗尽返回 503，
+// 不能按攻击者可伪造的 path 分配预留，也不能伪装成调用方超过业务配额的 429。
+type CryptographicCapacity interface {
+	TryAcquire(context.Context) (release func(), result AdmissionResult)
+}
+
 // SecurityEventObserver 只接收已经完成分类的固定安全事件。实现不得附加运营商、
 // 密钥、随机数、玩家、会话或请求标识，避免安全日志与监控时序泄漏敏感信息。
 type SecurityEventObserver interface {
@@ -134,13 +141,16 @@ type Config struct {
 	// ClientAdmission 的键只能来自已验证声明，禁止使用请求头、RemoteAddr
 	// 或 X-Forwarded-For 构造，避免伪造键和反向代理后的跨玩家误限流。
 	ClientAdmission Admission
-	// LaunchAdmission 与 SpinAdmission 只保护创建新经济意图的路径，并分别按已验证
-	// operator 聚合，避免大量 session 把共享配额乘开。共享后端故障时，状态查询、
-	// 待交付结果、确认和令牌续期仍由进程内准入保护并保持可用。
-	LaunchAdmission Admission
-	SpinAdmission   Admission
-	// NewIntentCapacity 为 launch/spin 持有一个进程内硬许可，使公网新意图不能耗尽
-	// PostgreSQL 为 status、pending result、ACK 和 refresh 预留的连接预算。
+	// LaunchAdmission 与 SpinAdmission 是按已验证 operator 聚合的跨副本高水位，
+	// 防止大量 session 把请求配额乘开。SpinAdmission 覆盖包括重放/冲突在内的全部
+	// Spin 尝试；仅首次合法、可持久化 round 的精确经济成本预算在 Coordinator 内
+	// 执行。状态查询、待交付结果、确认和令牌续期均不经过这两个新意图高水位。
+	LaunchAdmission       Admission
+	SpinAdmission         Admission
+	CryptographicCapacity CryptographicCapacity
+	// NewIntentCapacity 为 session exchange/launch/spin 持有一个进程内硬许可，使
+	// 公网新会话/经济意图不能耗尽 PostgreSQL 为 status、pending result、ACK 和
+	// refresh 预留的连接预算。
 	NewIntentCapacity    NewIntentCapacity
 	SecurityEvents       SecurityEventObserver
 	MaxRequestBytes      int64

@@ -274,11 +274,20 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
   description       = "HTTPS 业务入口"
 }
 
-resource "aws_vpc_security_group_egress_rule" "alb_vpc" {
+resource "aws_vpc_security_group_egress_rule" "alb_application" {
   security_group_id = aws_security_group.alb.id
   cidr_ipv4         = var.vpc_cidr
   from_port         = 8080
   to_port           = 8080
   ip_protocol       = "tcp"
   description       = "只允许 ALB 向应用 HTTP target 转发"
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_operations_health" {
+  security_group_id = aws_security_group.alb.id
+  cidr_ipv4         = var.vpc_cidr
+  from_port         = 8081
+  to_port           = 8081
+  ip_protocol       = "tcp"
+  description       = "只允许 ALB 向私有 operations target 执行健康探针"
 }

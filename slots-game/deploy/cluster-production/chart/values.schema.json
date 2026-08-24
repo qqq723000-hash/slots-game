@@ -71,12 +71,23 @@
         "sharedAdmission": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["endpointURL", "timeout", "ratePerSecond", "rateBurst"],
+          "required": ["endpointURL", "timeout", "ratePerSecond", "rateBurst", "economic"],
           "properties": {
             "endpointURL": {"type": "string", "pattern": "^rediss://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/?$", "maxLength": 300},
             "timeout": {"type": "string", "pattern": "^(?:[1-9][0-9]|[1-4][0-9]{2}|500)ms$"},
-            "ratePerSecond": {"type": "number", "minimum": 0.001, "maximum": 100000},
-            "rateBurst": {"type": "integer", "minimum": 1, "maximum": 1000000}
+            "ratePerSecond": {"type": "number", "minimum": 0.001, "maximum": 100000, "multipleOf": 0.001},
+            "rateBurst": {"type": "integer", "minimum": 1, "maximum": 1000000},
+            "economic": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["operatorRatePerSecond", "operatorRateBurst", "backendRatePerSecond", "backendRateBurst"],
+              "properties": {
+                "operatorRatePerSecond": {"type": "number", "minimum": 0.001, "maximum": 100000, "multipleOf": 0.001},
+                "operatorRateBurst": {"type": "integer", "minimum": 1, "maximum": 1000000},
+                "backendRatePerSecond": {"type": "number", "minimum": 0.001, "maximum": 100000, "multipleOf": 0.001},
+                "backendRateBurst": {"type": "integer", "minimum": 1, "maximum": 1000000}
+              }
+            }
           }
         },
         "terminationGracePeriodSeconds": {"type": "integer", "minimum": 10, "maximum": 300},
@@ -89,11 +100,15 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
+            "maxRequestBytes",
             "databaseMaxOpenConnections",
             "databaseMaxIdleConnections",
             "databaseCriticalReserveConnections",
             "maxInFlightRequests",
+            "maxCryptoInFlight",
             "maxConnectionsPerListener",
+            "preAuthRatePerSecond",
+            "preAuthRateBurst",
             "ratePerSecondPerPod",
             "rateBurstPerPod",
             "successAccessLogSamplePerMillion",
@@ -102,11 +117,15 @@
             "walletMaxAttempts"
           ],
           "properties": {
+            "maxRequestBytes": {"type": "integer", "const": 8192},
             "databaseMaxOpenConnections": {"type": "integer", "minimum": 2, "maximum": 200},
             "databaseMaxIdleConnections": {"type": "integer", "minimum": 1, "maximum": 200},
             "databaseCriticalReserveConnections": {"type": "integer", "minimum": 1, "maximum": 199},
             "maxInFlightRequests": {"type": "integer", "minimum": 1, "maximum": 4096},
+            "maxCryptoInFlight": {"type": "integer", "minimum": 2, "maximum": 1024},
             "maxConnectionsPerListener": {"type": "integer", "minimum": 16, "maximum": 16384},
+            "preAuthRatePerSecond": {"type": "number", "minimum": 1, "maximum": 1000000},
+            "preAuthRateBurst": {"type": "integer", "minimum": 1, "maximum": 2000000},
             "ratePerSecondPerPod": {"type": "number", "exclusiveMinimum": 0, "maximum": 100000},
             "rateBurstPerPod": {"type": "integer", "minimum": 1, "maximum": 1000000},
             "successAccessLogSamplePerMillion": {"type": "integer", "minimum": 0, "maximum": 1000000},
@@ -149,6 +168,7 @@
           "required": [
             "databaseMaxOpenConnections",
             "databaseMaxIdleConnections",
+            "maxCryptoInFlight",
             "maxConnectionsPerListener",
             "walletTimeoutSeconds",
             "walletMaxAttempts",
@@ -160,6 +180,7 @@
           "properties": {
             "databaseMaxOpenConnections": {"type": "integer", "minimum": 2, "maximum": 200},
             "databaseMaxIdleConnections": {"type": "integer", "minimum": 1, "maximum": 200},
+            "maxCryptoInFlight": {"type": "integer", "minimum": 2, "maximum": 1024},
             "maxConnectionsPerListener": {"type": "integer", "minimum": 16, "maximum": 16384},
             "walletTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 14},
             "walletMaxAttempts": {"type": "integer", "minimum": 1, "maximum": 1000},
@@ -201,6 +222,8 @@
         "className",
         "tlsSecretEnabled",
         "apiHost",
+        "apiHealthCheckPath",
+        "apiHealthCheckPort",
         "webHost",
         "apiTLSSecretName",
         "webTLSSecretName",
@@ -214,6 +237,8 @@
         "className": {"$ref": "#/definitions/nonEmpty"},
         "tlsSecretEnabled": {"type": "boolean"},
         "apiHost": {"$ref": "#/definitions/dnsName"},
+        "apiHealthCheckPath": {"const": "/healthz"},
+        "apiHealthCheckPort": {"const": 8081},
         "webHost": {"$ref": "#/definitions/dnsName"},
         "apiTLSSecretName": {"$ref": "#/definitions/dnsName"},
         "webTLSSecretName": {"$ref": "#/definitions/dnsName"},

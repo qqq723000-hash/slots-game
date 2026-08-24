@@ -24,7 +24,7 @@ const RAGE_CELLS = [
   { reel: 2, row: 2 },
 ] as const;
 
-const GUARANTEED_RAGE_GRID: GridCell[][] = THREE_ROWS.map((reel, reelIndex) => (
+const GUARANTEED_RAGE_GRID: GridCell[][] = THREE_ROWS.map((reel) => (
   reel.map((cell, rowIndex) => (
     rowIndex === 2 ? { symbol: "SURGE" as const } : cell
   ))

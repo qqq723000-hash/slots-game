@@ -12,6 +12,10 @@ RGS 首会话在 15 秒内未建立，或 exchange 在此之前失败时，客�
 3. 仅发送一次 `slots-game:operator-session-required` 恢复通知；
 4. 拒绝迟到的旧会话响应，避免已失败凭据重新激活页面。
 
+离线或后台停放发生在 exchange 之前，此时一次性 code 尚未消费；一旦客户端准备实际发包，会先在
+本实例内清除 code。此后无论出现网络不确定、HTTP 拒绝还是协议解码失败，同一 gateway 的再次
+`connect()` 都不会重放，宿主只能签发新的完整会话。
+
 事件 `detail` 只包含以下稳定字段：
 
 ```ts
@@ -52,13 +56,23 @@ Free Spins 状态。
 `GET`、`Authorization`、`X-Operator-Id`、`X-Request-Id`，并拒绝未列入的 origin；不要允许
 credentials/cookie 模式代替 Bearer token。
 
-ACK 遇到断网、`202`、`429` 或 `5xx` 时会自动重试同一 tuple；默认退避从 500 ms 开始，
+ACK 遇到断网、`202`、`429` 或 `5xx` 时会自动重试同一 tuple；默认指数退避从 500 ms 开始，
 单次最多 30 秒、最多 8 次逻辑尝试，并受 120 秒页内硬截止约束。`Retry-After` 只接受规范的
-正整数秒或 IMF-fixdate，且必须落在配置的安全上限内；零、负数、重复合并、非法或超界值会
-被忽略，不能延长硬截止。硬截止会取消在途 ACK。一次 `401` 仍沿用既有 token refresh 后
+正整数秒或 IMF-fixdate。当前 RGS HTTP 只扣一个准入成本单位且最低回填率为 `0.001/s`，因此
+前端独立接受最长 1000 秒的服务端下界，不再错用 30 秒 ACK 退避配置裁剪。该下界仍不能延长
+ACK 的 120 秒绝对截止；若已超过剩余窗口，立即交接运营商恢复。零、负数、重复合并、非规范或超过
+1000 秒的值会被忽略；未来 weighted-cost HTTP 契约必须显式升级此界限，不得默认沿用。硬截止会
+取消在途 ACK。一次 `401` 仍沿用既有 token refresh 后
 重试一次的语义；refresh 失败或 ACK 恢复耗尽时，客户端保留本地 ledger 和服务端 cursor、
 终止旧 transport，并向宿主发送 reason=`committed-result-recovery-required` 的白名单通知。
 宿主应换发完整新会话，不得让 iframe 重放旧 launch code。
+
+token refresh 把发起请求时的 session 作为不可变基线。相同 revision/sequence 的响应必须保持
+余额与规范化特性状态不变；存在待处理轮次时，普通响应只允许保持当前游标，或在该轮次的
+`start..start+1` 窗口内让 revision/sequence 同步前进一步。另一个明确允许的迟到交错是本页已经从
+`start` 提交到 `start+1`，而较早的 refresh 仍返回未经改变的 `start` 快照；此时只采用新
+token/expiry，绝不回退当前投影。窗口外的旧游标、超过一步的前跳、sequence 不匹配或同 revision
+的经济状态漂移都会失败关闭并请求运营商新会话。
 
 ### 跨源 iframe 恢复桥
 

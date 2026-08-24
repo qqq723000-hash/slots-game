@@ -85,11 +85,68 @@ configuration = {
     worker-runtime-assets = 1
   }
 
+  api_waf_rate_limits = {
+    public_requests_per_minute = 6000
+    spin_requests_per_minute   = 300
+    launch_requests_per_minute = 120
+  }
+  api_waf_rate_rule_rollouts = {
+    launch-rate-limit = {
+      action             = "count"
+      evidence_reference = "observation-pending"
+    }
+    public-api-rate-limit = {
+      action             = "count"
+      evidence_reference = "observation-pending"
+    }
+    spin-rate-limit = {
+      action             = "count"
+      evidence_reference = "observation-pending"
+    }
+  }
+  api_waf_header_size_rule_rollout = {
+    action             = "count"
+    evidence_reference = "observation-pending"
+  }
+  api_waf_alarm_thresholds = {
+    blocked_requests_per_minute = 500
+    allowed_requests_per_minute = 30000
+  }
+  api_waf_managed_rule_rollout = {
+    action             = "count"
+    evidence_reference = "observation-pending"
+  }
+  api_waf_managed_rule_versions = {
+    amazon-ip-reputation = "REPLACE_WITH_EXACT_AWS_MANAGED_RULE_VERSION"
+    common               = "REPLACE_WITH_EXACT_AWS_MANAGED_RULE_VERSION"
+    known-bad-inputs     = "REPLACE_WITH_EXACT_AWS_MANAGED_RULE_VERSION"
+    sqli                 = "REPLACE_WITH_EXACT_AWS_MANAGED_RULE_VERSION"
+  }
+  waf_rollout_evidence_kms_key_arn = "REPLACE_WITH_WAF_EVIDENCE_KMS_KEY_ARN"
+
   web_bucket_name                    = "replace-with-unique-dev-web-bucket"
   cloudfront_log_bucket_name         = "replace-with-unique-dev-cloudfront-log-bucket"
   web_domain_name                    = "slots.dev.example.com"
   cloudfront_acm_certificate_arn     = "REPLACE_WITH_US_EAST_1_ACM_CERTIFICATE_ARN"
+  regional_acm_certificate_arn       = "REPLACE_WITH_REGIONAL_ACM_CERTIFICATE_ARN"
+  alb_access_log_bucket_name         = "replace-with-approved-dev-alb-access-log-bucket"
+  alb_access_log_prefix              = "slots-dev"
   cloudfront_waf_web_acl_arn         = "REPLACE_WITH_GLOBAL_WAF_WEB_ACL_ARN"
+  cloudfront_waf_rate_limit_per_minute = 6000
+  cloudfront_waf_rate_rule_rollout = {
+    action             = "count"
+    evidence_reference = "observation-pending"
+  }
+  cloudfront_waf_log_group_name        = "aws-waf-logs-slots-dev-web"
+  cloudfront_waf_managed_rule_rollout = {
+    action             = "count"
+    evidence_reference = "observation-pending"
+  }
+  cloudfront_waf_managed_rule_versions = {
+    amazon-ip-reputation = "REPLACE_WITH_EXACT_AWS_MANAGED_RULE_VERSION"
+    common               = "REPLACE_WITH_EXACT_AWS_MANAGED_RULE_VERSION"
+    known-bad-inputs     = "REPLACE_WITH_EXACT_AWS_MANAGED_RULE_VERSION"
+  }
   web_content_security_policy        = "REPLACE_WITH_CSP_FROM_VERIFIED_WEB_DIGEST"
   cloudfront_price_class             = "PriceClass_100"
 

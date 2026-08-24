@@ -26,10 +26,12 @@ AWS 是唯一正式生产主线。本目录交付应用容器、Helm Chart、本
 - `rgs-server` 与 `rgs-migrator` 使用不同镜像入口和数据库身份；运行时不得取得 DDL 凭据。
 - 正式镜像只按 `repository@sha256:digest` 部署，Secret、私钥、令牌、DSN 和资源审批文件不得进入
   Git、镜像层、公开构建参数、URL 或日志。
-- `/readyz` 与 `/metrics` 只存在于私有运维监听器并使用文件 Bearer；公网入口只能发布业务端口。
+- `/healthz`、`/readyz` 与 `/metrics` 只存在于私有运维监听器；前者无需 Bearer 且只表示进程
+  存活，后两者使用文件 Bearer。公网入口只能发布业务端口，三个运维路径均返回 404。
 - 数据库、钱包、审计接收端、密钥系统、集中日志、告警路由和恢复能力必须由正式平台
-  实例化并验收。仓库已以 API + Valkey 实现已验证身份的跨副本新意图准入；平台 WAF/网关仍只负责
-  未认证攻击面和粗粒度容量保护。缺少任何必需依赖或实时验收时应用拒绝接流。
+  实例化并验收。仓库已以 API + Valkey 实现已验证身份的跨副本新意图准入，并用 Terraform 自管 API
+  Regional WAF；企业平台提供静态 CloudFront global WAF、DNS/ACM 与可选 Shield Advanced。两类
+  WAF/网关都只负责未认证攻击面和粗粒度容量保护。缺少任何必需依赖或实时验收时应用拒绝接流。
 - Helm migrator hook 的安装、升级和失败保留语义不得由直接 `kubectl apply` 绕过。
 - 本机 Compose、CI fixture、示例 values 和示例运营商配置均不得作为正式生产发布证据。
 

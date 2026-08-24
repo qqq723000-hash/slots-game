@@ -83,6 +83,15 @@ spec:
           annotations:
             summary: RGS 新经济意图因数据库保留容量被拒绝
             description: 新 launch 或 spin 已为保护状态查询、待交付结果和确认路径而返回容量错误；应核对数据库池、HPA 和入口流量，且只能在 PostgreSQL 总连接预算允许时扩容。
+        - alert: SlotsRGSCryptographicCapacityRejected
+          expr: |
+            sum(increase(rgs_cryptographic_capacity_rejected_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: RGS 加密 CPU 闸门持续拒绝请求
+            description: Ed25519 验签、令牌验证或响应签名已耗尽有界 CPU 许可；应核对边缘攻击、预认证流量、Pod CPU/HPA 和加密并发预算，禁止通过无界 goroutine 规避。
         - alert: SlotsRGSHPAUnableToScale
           expr: |
             count(max by (horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="{{ .Release.Namespace }}",condition="ScalingActive",status="true",horizontalpodautoscaler=~"{{ include "slots.resourceName" (dict "root" . "suffix" "rgs") }}|{{ include "slots.resourceName" (dict "root" . "suffix" "rgs-worker") }}"} == 1)) < 2
@@ -102,6 +111,33 @@ spec:
           annotations:
             summary: RGS 共享准入后端持续故障
             description: Valkey 准入错误持续发生；新启动和 Spin 会失败关闭，但已提交结果恢复路径仍保持就绪，应立即检查 TLS、ACL、NetworkPolicy 和集群健康。
+        - alert: SlotsRGSEconomicAdmissionLimitedSustained
+          expr: |
+            (
+              sum(rate(rgs_economic_admission_limited_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m]))
+              /
+              clamp_min(
+                sum(rate(rgs_economic_admission_allowed_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m]))
+                + sum(rate(rgs_economic_admission_limited_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])),
+                0.001
+              )
+            ) > 0.05
+            and sum(rate(rgs_economic_admission_limited_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: RGS 钱包成本预算持续拒绝新 Spin
+            description: 已验证 Spin 意图的 operator/backend 原子成本桶拒绝比例持续超过百分之五；应核对 EDoS 攻击、运营商异常重试和钱包合同容量，禁止牺牲状态查询或恢复通道。
+        - alert: SlotsRGSEconomicAdmissionErrors
+          expr: |
+            sum(increase(rgs_economic_admission_errors_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS 钱包成本准入持续故障
+            description: Valkey 双桶脚本、静态 operator/backend 路由或返回协议持续失败；新 Spin 已失败关闭，status/result/ACK 与 Worker 恢复必须继续可用。
         - alert: SlotsRGSAuthReplay
           expr: |
             sum(increase(rgs_auth_replays_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
@@ -110,6 +146,15 @@ spec:
           annotations:
             summary: RGS 检测到认证随机数重放
             description: 已验证签名的运营商请求重复使用随机数并被拒绝；应检查调用方重试实现、凭据泄漏风险及相关安全日志。
+        - alert: SlotsRGSSecurityLogDropsSustained
+          expr: |
+            sum(increase(rgs_security_logs_dropped_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: RGS 重复安全 WARN 持续被有界抑制
+            description: 权威安全事件计数仍完整，但固定物理 WARN 写入预算连续耗尽；应关联认证重放、边缘防护和认证失败判断攻击或错误重试，禁止用阻塞请求线程换取完整重复日志。
         - alert: SlotsRGSWalletUnknownOutcome
           expr: |
             sum(increase(rgs_wallet_unknown_outcomes_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])) > 0

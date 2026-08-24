@@ -465,6 +465,22 @@ replace_once '          persist-credentials: false' '          persist-credentia
 expect_rejected 'frontend CI retained checkout credentials while running repository code'
 
 reset_fixture
+replace_once 'concurrency:' 'backend-concurrency-disabled:' "$fixture/.github/workflows/backend-conformance.yml"
+expect_rejected 'backend conformance omitted stale-run cancellation'
+
+reset_fixture
+replace_once '  cancel-in-progress: true' '  cancel-in-progress: false' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'frontend conformance preserved stale same-ref runs'
+
+reset_fixture
+replace_once '${{ github.workflow }}' 'backend-conformance' "$fixture/.github/workflows/backend-conformance.yml"
+expect_rejected 'backend conformance lock omitted the workflow identity'
+
+reset_fixture
+replace_once '${{ github.ref }}' '${{ github.workflow }}' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'frontend conformance lock omitted the ref identity'
+
+reset_fixture
 replace_once '        run: make verify-deployment-contracts' '        run: true # deployment contracts removed' "$fixture/.github/workflows/deployment-conformance.yml"
 expect_rejected 'required deployment conformance workflow skipped local and cluster contracts'
 
@@ -579,6 +595,22 @@ expect_rejected 'unapproved vulnerability exception'
 reset_fixture
 replace_once '  workflow_dispatch:' '  push:' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'automatic release signing trigger'
+
+reset_fixture
+replace_once 'concurrency:' 'release-concurrency-disabled:' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'release workflow omitted the same-target concurrency lock'
+
+reset_fixture
+replace_once '  cancel-in-progress: false' '  cancel-in-progress: true' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'release workflow could cancel an in-flight immutable publication'
+
+reset_fixture
+replace_once "inputs.image_repository, inputs.image_tag" "inputs.image_tag, inputs.image_tag" "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'release concurrency group omitted the image repository'
+
+reset_fixture
+replace_once "inputs.image_repository, inputs.image_tag" "inputs.image_repository, inputs.image_repository" "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'release concurrency group omitted the final image tag'
 
 reset_fixture
 replace_once '        run: make verify' '        run: make verify-supply-chain-contract' "$fixture/.github/workflows/supply-chain-release.yml"
@@ -822,5 +854,11 @@ expect_rejected 'ECR immutable-tag enforcement was weakened'
 reset_fixture
 replace_once '$configuration.scanType == "ENHANCED"' '$configuration.scanType == "BASIC"' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'ECR enhanced continuous scanning enforcement was weakened'
+
+reset_fixture
+preflight_command='if aws ecr describe-images --repository-name "$repository_name" --image-ids "imageTag=$SUPPLY_CHAIN_IMAGE_TAG" --output json >"$final_tag_probe" 2>"$final_tag_error"; then'
+replace_once "$preflight_command" 'if false; then # final-tag preflight moved too late' "$fixture/.github/workflows/supply-chain-release.yml"
+replace_once '          docker push "$candidate_ref"' "          docker push \"\$candidate_ref\"\n          # $preflight_command" "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'final-tag preflight ran after candidate publication'
 
 printf '%s\n' 'supply-chain contract tests: ok'

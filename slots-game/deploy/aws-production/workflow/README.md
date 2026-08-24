@@ -20,6 +20,14 @@ concurrency group；PR 与 push 的无凭据静态 run 使用“workflow identit
 来自受保护 GitHub Environment 的 `vars`；dispatch 输入不能覆盖这些边界。取得 AWS 权限的 job 只使用
 `aws-actions/configure-aws-credentials` 换取 GitHub OIDC 短期凭据。
 
+API 或 CloudFront 任一 staged WAF rule 从 Count 晋升为 Block，或者已经 Block 的 configuration / evidence
+引用发生变化时，基础设施工作流会在 `terraform apply` 前调用 `verify-waf-rollout-evidence.rb`，把当前
+受保护 infrastructure source SHA 与仍在有效期内的批准证据绑定。后续稳态 Block 的应用发布仍会在 Helm
+前读取精确 S3 version，重算 SHA-256，并重验 SSE-KMS、COMPLIANCE Object Lock、schema、原始 40 位
+source SHA 与 configuration hash；它不会把应用发布的 `GITHUB_SHA` 当成 WAF 证据 SHA，历史批准到期也
+不是阻断日常发布的租约。规则配置或证据引用一旦变化，infra pre-apply 会再次要求未过期审批。对象正文
+不会输出到日志；这不替代安全团队对原始观测真实性的审批。
+
 GitHub Branch Protection API 的 required status-check context 使用 job 的 `name`，不包含 workflow display
 name。为避免三个 workflow 共同使用 job id `static-contract` 造成歧义，分支保护必须精确配置以下三个唯一
 required contexts，确保合并前与进入 `main` 后都得到对应动态检查结果：
@@ -141,6 +149,10 @@ Terraform delivery 只发布非秘密的 `valkey_active_slot`、`valkey_user_nam
 `hmac-maintenance`；基础设施 plan 校验器只允许 rotation guard、版本化 Secret/SecretVersion 和 A/B
 两个用户的精确 v1→v2 ACL 更新。退出 HMAC 维护后才启动 v2 镜像并验证，最后恢复新意图；普通
 `steady`/密码轮换 plan 会拒绝 ACL 变化，Worker 资金恢复和既有状态/ACK 绕行不得随该维护停止。
+这与既有 v2-basic 到 `acl_command_profile=v2-economic` 的命令追加是两个不同迁移：后者不改 keyspace
+或 HMAC，旧 runtime 所需权限是新 profile 的严格子集，因此必须先用 `steady` Terraform plan 同时
+只更新 A/B 两个用户的 `access_string`，再把携带新 profile 的 delivery 交给应用发布。partial A/B、
+未知前态、额外命令、密码/HMAC 混入都会被 plan 门禁拒绝；新 runtime 启动 canary 再验证实际权限。
 应用实时门禁会验证 delivery 的活动用户名与 A/B 槽位一致，并要求不可变
 共享准入 Secret 同时包含 `username`、`password`、`hmac.key`、`root-ca.pem` 四个非空 key；Helm 渲染
 门禁还会确认 `RGS_SHARED_ADMISSION_USERNAME` 精确引用该版本化 Secret 的 `username` key。合并后的

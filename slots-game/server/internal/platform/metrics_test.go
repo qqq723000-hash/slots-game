@@ -31,9 +31,12 @@ func TestMetricsHaveNoHighCardinalityLabels(t *testing.T) {
 	metrics.HTTPServerFailures.Add(3)
 	metrics.CapacityRejected.Add(4)
 	metrics.NewIntentCapacityRejected.Add(5)
+	metrics.PreAuthCapacityRejected.Add(6)
+	metrics.CryptographicCapacityRejected.Add(8)
 	metrics.NonceReplay()
 	metrics.AccessLogEmitted()
 	metrics.AccessLogDropped()
+	metrics.SecurityLogDropped()
 	var output bytes.Buffer
 	if err := metrics.WritePrometheus(&output); err != nil {
 		t.Fatal(err)
@@ -54,8 +57,25 @@ func TestMetricsHaveNoHighCardinalityLabels(t *testing.T) {
 		!strings.Contains(text, "rgs_new_intent_capacity_rejected_total 5") {
 		t.Fatalf("new-intent capacity rejection counter missing from output: %s", text)
 	}
+	for _, metric := range []string{
+		"rgs_preauth_capacity_rejected_total 6",
+		"rgs_cryptographic_capacity_rejected_total 8",
+	} {
+		if !strings.Contains(text, metric) {
+			t.Fatalf("bounded capacity metric %q missing from output: %s", metric, text)
+		}
+	}
+	for _, forbidden := range []string{
+		"rgs_http_priority_capacity_rejected_total",
+		"rgs_cryptographic_recovery_capacity_rejected_total",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("metric %q trusts an unauthenticated recovery path: %s", forbidden, text)
+		}
+	}
 	if !strings.Contains(text, "rgs_access_logs_emitted_total 1") ||
-		!strings.Contains(text, "rgs_access_logs_dropped_total 1") {
+		!strings.Contains(text, "rgs_access_logs_dropped_total 1") ||
+		!strings.Contains(text, "rgs_security_logs_dropped_total 1") {
 		t.Fatalf("access log counters missing from output: %s", text)
 	}
 	if !strings.Contains(text, "# TYPE rgs_auth_replays_total counter") ||

@@ -2,11 +2,13 @@
 
 状态：正式环境实施与验收手册
 
-前置阅读：[AWS 正式生产架构](aws-production-architecture.md)
+前置阅读：[AWS 正式生产架构](aws-production-architecture.md)、
+[DDoS 威胁模型与边缘门禁](ddos-threat-model.md)
 
 本文描述如何把本仓库交付到公司 AWS 正式环境。仓库已包含 `infra/terraform` 应用专属 IaC，
 但源码存在不代表目标账号已经创建资源；开发者电脑也不得保存正式凭据。企业落地区先提供账号、
-state/部署身份、DNS/证书/WAF 和组织级安全边界，再由受保护流水线评审并应用本仓库 IaC、不可变
+state/部署身份、DNS/证书、CloudFront global WAF 和组织级安全边界，再由受保护流水线评审并应用
+本仓库 IaC（包括 API regional WAF）、不可变
 制品与 Helm，最后以真实云资源和验收证据确认交付。
 
 ## 1. 部署原则
@@ -16,8 +18,9 @@ state/部署身份、DNS/证书/WAF 和组织级安全边界，再由受保护�
 3. RGS 与 migrator 镜像使用 ECR manifest digest；Web 使用不可变 S3 `release ID` 前缀。
 4. 数据库先由 DBA 建立分离角色，再执行 migrator；RGS 运行时永远不能取得 DDL 权限。
 5. 先发布不可见制品，再迁移/验证，再部署工作负载，最后逐步放量。
-6. AWS WAF 只承担边缘攻击面与传输层粗粒度限速；仓库已实现的 API + Valkey 共享准入负责按已
-   验证运营商/会话的跨副本精确限流，并必须在目标集群完成多 Pod 与故障闭合验收。
+6. AWS WAF 只承担边缘攻击面与按来源 IP 的粗粒度限速；aggregate header、rate 和 managed rules
+   默认 Count，未经目标环境误杀/NAT/容量证据不得 Block。API + Valkey 共享准入负责按已验证
+   运营商/会话的跨副本精确限流，并必须在目标集群完成多 Pod 与故障闭合验收。
 7. 所有发布都可追溯到 Git commit、tag、OCI digest、Web 清单、定义摘要、Secret 版本和 IaC commit。
 8. 普通回滚不得逆向执行数据库迁移，也不得让新旧数学定义随机混部。
 
@@ -33,7 +36,7 @@ state/部署身份、DNS/证书/WAF 和组织级安全边界，再由受保护�
 | EKS | cluster 名、Kubernetes 版本、namespace、节点架构 | 满足 Chart 版本契约；当前仅 `linux/amd64` |
 | 部署执行器 | VPC 内短生命周期 CodeBuild/GitHub runner、IAM role、审计日志 | 能访问私有 EKS endpoint；任务结束即销毁 |
 | DNS/TLS | Web 域名、API 域名、Route 53 zone、ACM certificate ARN | CloudFront 证书在 `us-east-1`，ALB 证书在主区域；精确覆盖域名 |
-| 边缘 | Web/API WAF Web ACL、ALB、CloudFront distribution | Web ACL 记录规则版本与容量 |
+| 边缘 | Web/API WAF Web ACL、ALB、CloudFront distribution | 记录规则版本/动作/scope/阈值；staged rule Block 绑定不可变证据 |
 | Web | 私有 S3 bucket、OAC、release router、日志目标 | Block Public Access 开启；旧 release 可回退 |
 | 镜像 | RGS/migrator ECR repository；可选 Web 容器回退 repository | tag immutable、增强扫描、生命周期已审批 |
 | 数据库 | RDS endpoint、port、database、CA、参数组、备份策略 | Multi-AZ DB instance、`verify-full`、无公网访问 |
@@ -47,6 +50,16 @@ state/部署身份、DNS/证书/WAF 和组织级安全边界，再由受保护�
 以下任一项缺失都应阻断正式上线：正式运营商控制面、正式钱包与审计接收端、API + Valkey 共享
 准入的多 Pod/故障验收、Web release pinning、RDS Multi-AZ、Secret 注入、告警最终路由、跨账号/
 跨区域备份或恢复演练计划。
+
+staged WAF rule 从 Count 切到 Block，或 Block configuration / evidence 引用变化时，Terraform apply
+角色还必须只读访问批准的 versioned evidence bucket。
+引用必须是 `s3://...?...versionId=...#sha256`，正文采用 `slots-game/waf-rollout-evidence/v1`，绑定当前
+environment、Web ACL、rule names、阈值/scope configuration hash 和本次受保护源码 commit，并记录
+七天以上观测、样本/误杀/合法存活率、类型专属评审、两个不同审批主体、有效期与回滚 runbook。
+infra pre-apply 会读取精确 object version、重算 SHA-256，并要求当前批准未过期且 source SHA 等于
+受保护基础设施提交；无 `s3:GetObjectVersion`、`s3:GetObjectRetention`、KMS 解密或任一字段漂移都失败
+关闭。稳态 Block 的应用 live gate 继续重验 exact version/hash、SSE-KMS/Object Lock、schema 与
+configuration，但不把应用发布 SHA 当作 evidence SHA，也不把历史批准有效期当作日常发布租约。
 
 ## 3. 平台基础设施顺序
 
@@ -327,6 +340,11 @@ CloudWatch Observability EKS add-on 采集容器 stdout/stderr。平台配置必
 - RGS/migrator 使用 ECR digest；
 - AWS overlay 已关闭 EKS Web workload/Ingress；
 - API Ingress 使用 `alb` class、HTTPS、正确 ACM/WAF/target-type 注解；
+- API ALB 为权威公网入口；CloudFront 不代理 API，不得用 CloudFront IP/伪造共享 Header 把 ALB 源站误封；
+- `RGS_MAX_REQUEST_BYTES=8192` 与 WAF body oversize Block 一致；aggregate header、三条 API rate、
+  CloudFront rate 和 managed rules 的 rollout 默认均为 Count/`observation-pending`；
+- launch/spin 低阈值仅精确匹配新意图路径，status/result/ACK 只受高阈值公网总规则，不得按未认证
+  method/path 声称应用恢复预留；
 - API/Web origin 与已构建 Web 完全一致；
 - 六个 Secret、网络 selector、数据子网/钱包/Valkey/审计 CIDR 和端口准确；
 - `externalControls` 分别填写实际 WAF 边缘保护、Valkey 已验证身份共享准入、TLS、日志和 Web 版本隔离提供方；
@@ -414,9 +432,13 @@ Helm 成功不等于排空完成：发布系统必须保存渲染 diff，并等�
 
 1. `0%`：只允许合成探针和公司验收身份；验证迁移、Secret、监控、日志与网络策略。
 2. 内部白名单：执行真实启动、旋转、展示 ACK、钱包未知结果、审计积压和 Pod 驱逐。
-3. 小比例：由 Route 53/ALB/运营商入口按已验证身份分群，不按随机请求拆散会话。
-4. 逐级扩大：每级检查错误率、延迟、钱包未知、outbox、DB pool、ALB target 和容量拒绝。
-5. `100%`：观察完整业务高峰后关闭旧应用流量，但保留旧 OCI/Web release 与数据库恢复点。
+3. WAF 观测：managed、aggregate header 和 per-IP rate 保持 Count，覆盖正常高峰、运营商出口、
+   移动 NAT/CGNAT 与营销画像；审查误杀、合法流量存活率、规则版本和源站余量。
+4. 小比例：由 Route 53/ALB/运营商入口按已验证身份分群，不按随机请求拆散会话。
+5. 逐级扩大：每级检查错误率、延迟、钱包未知、outbox、DB pool、ALB target 和容量拒绝。
+6. 仅在不可变 S3 证据绑定环境、规则版本/scope/阈值、批准人与回滚后，逐规则从 Count 切 Block；
+   任一参数或 managed 版本变化先退回 Count。
+7. `100%`：观察完整业务高峰后关闭旧应用流量，但保留旧 OCI/Web release 与数据库恢复点。
 
 任一阶段出现经济完整性隔离、重复/未知钱包操作持续增长、审计无法持久化、RGS 未就绪、数据库
 连接饱和、规则未求值或日志链路丢弃，立即停止放量并按运行手册处理。
@@ -424,11 +446,17 @@ Helm 成功不等于排空完成：发布系统必须保存渲染 diff，并等�
 ## 11. 上线验收清单
 
 - [ ] 正式基础设施 IaC plan/apply、策略扫描和审批记录可追溯。
-- [ ] CloudFront 只能通过 OAC 读私有 S3，S3 Block Public Access 开启。
+- [ ] CloudFront 只能通过 OAC 读私有 S3；应用发布角色已获最小 `s3:GetBucketPublicAccessBlock`/`s3:GetBucketPolicy`，实时门禁确认四项 Block Public Access 全部为 `true`，且 policy 只允许当前 distribution 读取并拒绝明文传输。
 - [ ] S3 静态根来自已验证 OCI digest，逐文件通过 `release-manifest.json`；没有从工作区 dist 直传。
 - [ ] CloudFront CSP 与同一 digest 提取值逐字节一致，且变更证据绑定 `CONFIGURATION_SHA256`。
 - [ ] 两个并发 Web release 的真实浏览器追踪证明会话没有跨版本资源。
-- [ ] WAF、ALB、TLS、正文上限和传输层限速通过正/负向测试。
+- [ ] Regional WAF 实际绑定公网 ALB；CloudFront 只绑定静态 Web 与私有 S3 OAC，两条入口没有混用。
+- [ ] WAF body 8 KiB oversize 直接 Block；应用 `RGS_MAX_REQUEST_BYTES=8192`，分块/超限请求失败关闭。
+- [ ] aggregate header、managed 与 per-IP rate 仍处 Count，或每条 Block 都绑定版本化/KMS/不可变
+  `s3://...?versionId=...#sha256` 证据；launch/spin scope 不包含 status/result/ACK。
+- [ ] WAF BLOCK/COUNT-only 日志目的地、完整 query string 与敏感 Header 脱敏、Allowed/Blocked
+  成本/攻击告警及最终 SNS 路由已真实回读演练；URI path/method 仍可用于处置。
+- [ ] ALB 删除保护、invalid-header drop、strictest desync、访问日志、idle/client keepalive 属性与日志 bucket policy 已真实回读。
 - [ ] API + Valkey 的已验证身份共享准入通过多 Pod 压测和 Valkey 故障闭合演练；未信任 header 不影响 key。
 - [ ] 正式运营商控制面完成 SSO/MFA、授权、管理审计和签名一次性 launch 验收；浏览器不持有管理凭据。
 - [ ] RGS API 至少 3 个暖副本跨 3 区，Worker 至少 2 副本；暖副本仅由 HPA `minReplicas` 管理，Deployment 无 `spec.replicas`，两类角色的 HPA/PDB/NetworkPolicy/优雅关闭按各自契约真实生效。

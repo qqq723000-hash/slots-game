@@ -33,3 +33,8 @@ output "cluster_autoscaler_inline_policy_name" {
   description = "实时门禁读取的 Cluster Autoscaler 最小内联策略名"
   value       = aws_iam_role_policy.cluster_autoscaler.name
 }
+
+output "vpc_cni_role_arn" {
+  description = "vpc-cni aws-node 专用 Pod Identity role ARN"
+  value       = aws_iam_role.vpc_cni.arn
+}

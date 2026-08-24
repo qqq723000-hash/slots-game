@@ -34,6 +34,8 @@ reset_fixture() {
     "$fixture_root/slots-game/deploy/aws-production/workflow/"
   cp -R "$script_directory/fixtures" "$fixture_root/slots-game/deploy/aws-production/workflow/"
   cp "$repository_root/slots-game/deploy/aws-production/render-external-secrets.rb" \
+    "$repository_root/slots-game/deploy/aws-production/verify-live-alb-edge.sh" \
+    "$repository_root/slots-game/deploy/aws-production/verify-waf-rollout-evidence.rb" \
     "$repository_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh" \
     "$fixture_root/slots-game/deploy/aws-production/"
   cp "$repository_root/slots-game/infra/terraform/contracts/cluster-addons-interface.v1.yaml" \
@@ -68,6 +70,96 @@ expect_rejected() {
 reset_fixture
 AWS_WORKFLOW_REPOSITORY_ROOT="$fixture_root" "$contract_verifier" >/dev/null || \
   fail '未注入危险变体的基线副本未通过静态契约'
+
+reset_fixture
+replace_once 'rgs_base_url == "https://#{api_host}"' \
+  'rgs_base_url != "https://#{api_host}"' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/verify-web-rgs-origin.rb"
+expect_rejected 'Web RGS Origin 未精确绑定实际 Ingress host'
+
+reset_fixture
+replace_once "expect_rejected 'foreign RGS Origin' https://foreign.example.com" \
+  "true # foreign RGS negative removed" \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/test-web-rgs-origin.sh"
+expect_rejected 'foreign RGS Origin 负向夹具被删除'
+
+reset_fixture
+replace_once 'managed.keys.sort == %w[Name VendorName Version] &&' \
+  'true && # managed hidden overrides accepted' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected '区域 WAF managed statement 允许隐藏 override/exclude/scope'
+
+reset_fixture
+replace_once 'filter.fetch("Behavior") == "KEEP" && filter.fetch("Requirement") == "MEETS_ANY" &&' \
+  'true && # logging filter behavior ignored' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected 'WAF logging filter 未精确固定 KEEP+MEETS_ANY'
+
+reset_fixture
+replace_once 'empty_associations.call(default_behavior.fetch("LambdaFunctionAssociations"))' \
+  'true # Lambda@Edge associations accepted' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected 'CloudFront default behavior 允许 Lambda@Edge 绕过'
+
+reset_fixture
+replace_once '.DistributionConfig.CacheBehaviors.Quantity == 1 and' \
+  'true and # extra cache behaviors accepted' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'Web publisher 允许额外 CloudFront cache behavior'
+
+reset_fixture
+replace_once 'header_match.fetch("MatchScope") == "ALL" &&' \
+  'true && # aggregate header match scope ignored' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected 'WAF header size rule 未固定检查全部 headers'
+
+reset_fixture
+replace_once 'size.fetch("TextTransformations") == [{"Priority" => 0, "Type" => "NONE"}]' \
+  'true # transformed size accepted' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected 'WAF size rule 允许压缩后计量绕过 8KiB'
+
+reset_fixture
+replace_once 'rate.keys.sort == %w[AggregateKeyType EvaluationWindowSec Limit] &&' \
+  'true && # CloudFront rate scope-down accepted' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected 'CloudFront 全站 rate rule 允许 ScopeDownStatement'
+
+reset_fixture
+replace_once 'web_acl_visibility.fetch("CloudWatchMetricsEnabled") == true &&' \
+  'true && # WebACL metrics may be disabled' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected 'WAF WebACL visibility 可静默禁用 CloudWatch metrics'
+
+reset_fixture
+replace_once 'alarm.fetch("ComparisonOperator") == "GreaterThanOrEqualToThreshold" &&' \
+  'true && # alarm comparison drift accepted' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected 'WAF alarm comparison operator 未精确固定'
+
+reset_fixture
+replace_once 'actual_cidrs.length == expected_cidrs.length && actual_cidrs.sort == expected_cidrs.sort' \
+  'true # actual NetworkPolicy CIDRs not bound to Terraform' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-alb-edge.sh"
+expect_rejected 'postdeploy ALB gate 未精确回读实际 NetworkPolicy CIDR'
+
+reset_fixture
+replace_once '"kubernetes.io/metadata.name" => "monitoring"' \
+  '"kubernetes.io/metadata.name" => "foreign-monitoring"' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-alb-edge.sh"
+expect_rejected 'postdeploy ALB gate 未精确绑定 monitoring namespace selector'
+
+reset_fixture
+replace_once '"app.kubernetes.io/name" => "prometheus-agent"' \
+  '"app.kubernetes.io/name" => "foreign-agent"' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-alb-edge.sh"
+expect_rejected 'postdeploy ALB gate 未精确绑定 monitoring pod selector'
+
+reset_fixture
+replace_once '"$kubectl_binary" -n "$application_namespace" get networkpolicy \' \
+  '"$kubectl_binary" -n "$application_namespace" get networkpolicy -l "app.kubernetes.io/instance=$release_name" \' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-alb-edge.sh"
+expect_rejected 'postdeploy ALB gate 仅按 release label 回读 NetworkPolicy，允许未标记附加策略旁路'
 
 reset_fixture
 replace_once \
@@ -313,13 +405,68 @@ replace_once \
             terraform show -json "$TF_PLAN_DIR/terraform.tfplan" |
               ruby "$GITHUB_WORKSPACE/slots-game/infra/terraform/scripts/verify-valkey-rotation-plan.rb" -
           fi
-          terraform apply' \
+          source_sha=' \
   'test "$evidence_mode" = none
             true
           fi
-          terraform apply' \
+          source_sha=' \
   "$fixture_root/.github/workflows/aws-infrastructure.yml"
 expect_rejected 'Terraform apply 执行前跳过同一 plan 的 Valkey A/B 状态机复核'
+
+reset_fixture
+replace_once \
+  '          terraform show -json "$TF_PLAN_DIR/terraform.tfplan" |
+            ruby "$GITHUB_WORKSPACE/slots-game/deploy/aws-production/verify-waf-rollout-evidence.rb" \
+              --terraform-plan aws "$AWS_REGION" "$source_sha"
+          terraform apply -input=false -auto-approve -lock-timeout=10m "$TF_PLAN_DIR/terraform.tfplan"' \
+  '          terraform apply -input=false -auto-approve -lock-timeout=10m "$TF_PLAN_DIR/terraform.tfplan"
+          terraform show -json "$TF_PLAN_DIR/terraform.tfplan" |
+            ruby "$GITHUB_WORKSPACE/slots-game/deploy/aws-production/verify-waf-rollout-evidence.rb" \
+              --terraform-plan aws "$AWS_REGION" "$source_sha"' \
+  "$fixture_root/.github/workflows/aws-infrastructure.yml"
+expect_rejected 'Terraform apply 在 planned WAF Block evidence 校验前执行'
+
+reset_fixture
+replace_once '"$aws_region" ||' '"$aws_region" "${GITHUB_SHA:-}" ||' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected '应用发布错误使用自身 tag SHA 复核 infrastructure WAF evidence'
+
+reset_fixture
+replace_once 'sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-alb-edge.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"' \
+  'true "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-alb-edge.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected '应用 Helm 发布后跳过实际 ALB/WAF/target-health 回读'
+
+reset_fixture
+replace_once '          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-alb-edge.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"
+          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"' \
+  '          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-alb-edge.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"
+          true "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected '应用 Helm 发布后删除完整平台/WAF 实时回读'
+
+reset_fixture
+replace_once '          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-alb-edge.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"
+          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"' \
+  '          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-alb-edge.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+replace_once '          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"' \
+  '          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"
+          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"' \
+  "$fixture_root/.github/workflows/aws-application-deploy.yml"
+expect_rejected '应用把最终平台/WAF 回读错误移到 Helm mutation 之前'
 
 reset_fixture
 replace_once 'grep -F -x "EPHEMERAL_INPUTS_HMAC=$ephemeral_fingerprint" "$metadata"' \
@@ -352,6 +499,23 @@ replace_once '$handoff.required_api_services == {"resource_metrics": "v1beta1.me
   '$handoff.required_api_services == {}' \
   "$fixture_root/.github/workflows/aws-infrastructure.yml"
 expect_rejected 'Terraform delivery 发布前跳过 metrics APIService 交接校验'
+
+reset_fixture
+replace_once '$handoff.vpc_cni_network_policy.expected_status == "ACTIVE"' \
+  '$handoff.vpc_cni_network_policy.expected_status == "DEGRADED"' \
+  "$fixture_root/.github/workflows/aws-infrastructure.yml"
+expect_rejected 'Terraform delivery 未失败关闭绑定 vpc-cni ACTIVE NetworkPolicy 执行面'
+
+reset_fixture
+replace_once '$handoff.cloudwatch_observability.configuration_values.containerLogs.enabled == true' \
+  '$handoff.cloudwatch_observability.configuration_values.containerLogs.enabled == false' \
+  "$fixture_root/.github/workflows/aws-infrastructure.yml"
+expect_rejected 'Terraform delivery 未失败关闭绑定 CloudWatch containerLogs 执行面'
+
+reset_fixture
+replace_once '$handoff.alb_access_logs == {' '$handoff.alb_access_logs != {' \
+  "$fixture_root/.github/workflows/aws-infrastructure.yml"
+expect_rejected 'Terraform delivery 未精确绑定批准的 ALB access log bucket/prefix'
 
 reset_fixture
 replace_once 'AWS_TERRAFORM_APPLY_ROLE_ARN: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
@@ -406,6 +570,13 @@ reset_fixture
 replace_once 'list-pod-identity-associations' 'list-unsafe-associations' \
   "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
 expect_rejected '平台实时门禁跳过 EKS Pod Identity 列表校验'
+
+reset_fixture
+replace_once '      --region "$aws_region" \' \
+  '      --region "$aws_region" \
+      --no-paginate \' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected 'Pod Identity association 回读禁用分页而可能漏掉额外身份'
 
 reset_fixture
 rm "$fixture_root/slots-game/deploy/aws-production/workflow/verify-live-application-secrets.sh"
@@ -484,6 +655,37 @@ replace_once 'username_reference["key"] == "username"' \
   'username_reference["key"] == "password"' \
   "$fixture_root/slots-game/deploy/aws-production/workflow/verify-rendered-release.rb"
 expect_rejected 'Helm 渲染门禁允许共享准入用户名引用错误 Secret key'
+
+reset_fixture
+replace_once 'subnets.sort == expected_subnets.sort' \
+  'subnets.sort == subnets.sort' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/verify-rendered-release.rb"
+expect_rejected 'Helm 渲染门禁未精确绑定 Terraform 公网子网集合'
+
+reset_fixture
+replace_once 'actual_alb_source_cidrs.sort == expected_alb_source_cidrs.sort' \
+  'actual_alb_source_cidrs.sort == actual_alb_source_cidrs.sort' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/verify-rendered-release.rb"
+expect_rejected 'Helm 渲染门禁未精确绑定 ALB 节点来源 CIDR 与 NetworkPolicy'
+
+reset_fixture
+replace_once \
+  'annotations.fetch("alb.ingress.kubernetes.io/security-groups", "") == expected_security_group' \
+  'annotations.fetch("alb.ingress.kubernetes.io/security-groups", "") == annotations.fetch("alb.ingress.kubernetes.io/security-groups", "")' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/verify-rendered-release.rb"
+expect_rejected 'Helm 渲染门禁未精确绑定 Terraform ALB 安全组'
+
+reset_fixture
+replace_once 'annotations["alb.ingress.kubernetes.io/scheme"] == "internet-facing"' \
+  'annotations.key?("alb.ingress.kubernetes.io/scheme")' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/verify-rendered-release.rb"
+expect_rejected 'Helm 渲染门禁允许 ALB scheme 漂移'
+
+reset_fixture
+replace_once 'listen_ports == [{"HTTP" => 80}, {"HTTPS" => 443}]' \
+  'listen_ports.is_a?(Array)' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/verify-rendered-release.rb"
+expect_rejected 'Helm 渲染门禁允许 ALB listener 集合漂移'
 
 reset_fixture
 replace_once 'test "$current_cluster" = "$expected_cluster_arn" || {' \

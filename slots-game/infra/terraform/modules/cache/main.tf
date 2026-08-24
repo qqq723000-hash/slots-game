@@ -1,4 +1,11 @@
 locals {
+  valkey_parameter_group_families = {
+    "7" = "valkey7"
+    "8" = "valkey8"
+    "9" = "valkey9"
+  }
+  valkey_engine_major           = split(".", var.engine_version)[0]
+  valkey_parameter_group_family = local.valkey_parameter_group_families[local.valkey_engine_major]
   acl_user_ids = {
     a = "${replace(var.name_prefix, "-", "")}-rgs-a"
     b = "${replace(var.name_prefix, "-", "")}-rgs-b"
@@ -91,6 +98,24 @@ resource "aws_elasticache_subnet_group" "this" {
   tags       = var.tags
 }
 
+# 共享/经济 token bucket 都带 TTL。任何 LRU/LFU 逐出都会把被删桶在下一次请求
+# 重建为满额，形成内存压力下的准入 fail-open；noeviction 让写入显式 OOM，应用
+# 将脚本错误映射为新经济意图 503 fail-closed，资金恢复读路径不依赖此缓存。
+resource "aws_elasticache_parameter_group" "noeviction" {
+  name        = "${var.name_prefix}-valkey-noeviction"
+  family      = local.valkey_parameter_group_family
+  description = "RGS admission state must fail closed instead of resetting evicted token buckets"
+
+  parameter {
+    name  = "maxmemory-policy"
+    value = "noeviction"
+  }
+
+  tags = merge(var.tags, {
+    AdmissionFailureMode = "fail-closed"
+  })
+}
+
 resource "aws_security_group" "this" {
   name_prefix = "${var.name_prefix}-valkey-"
   description = "共享身份限流 Valkey 私网入口"
@@ -129,7 +154,7 @@ resource "aws_elasticache_user" "rate_limiter_a" {
   user_id       = local.acl_user_ids.a
   user_name     = local.acl_user_ids.a
   engine        = "valkey"
-  access_string = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +ping +hello +auth +client|setname +client|setinfo"
+  access_string = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +time +mset +pexpire +ping +hello +auth +client|setname +client|setinfo"
   passwords_wo  = var.valkey_password_a
 
   passwords_wo_version = var.valkey_password_version_a
@@ -143,7 +168,7 @@ resource "aws_elasticache_user" "rate_limiter_b" {
   user_id       = local.acl_user_ids.b
   user_name     = local.acl_user_ids.b
   engine        = "valkey"
-  access_string = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +ping +hello +auth +client|setname +client|setinfo"
+  access_string = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +time +mset +pexpire +ping +hello +auth +client|setname +client|setinfo"
   passwords_wo  = var.valkey_password_b
 
   passwords_wo_version = var.valkey_password_version_b
@@ -200,10 +225,11 @@ resource "aws_elasticache_replication_group" "this" {
   replication_group_id = "${var.name_prefix}-valkey"
   description          = "共享身份限流和可丢弃重复抑制；禁止作为资金幂等权威"
 
-  engine         = "valkey"
-  engine_version = var.engine_version
-  node_type      = var.node_type
-  port           = 6379
+  engine               = "valkey"
+  engine_version       = var.engine_version
+  parameter_group_name = aws_elasticache_parameter_group.noeviction.name
+  node_type            = var.node_type
+  port                 = 6379
 
   num_cache_clusters         = 3
   automatic_failover_enabled = true

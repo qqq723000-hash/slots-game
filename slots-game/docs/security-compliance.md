@@ -39,7 +39,8 @@
 - 一个与 `RGS_HTTP_ADDR` 不冲突的私有/回环运维监听器
   （`RGS_OPERATIONS_HTTP_ADDR`）和一个 regular、最小 16 字节、无空白、无执行/组写/任何 world
   权限的 `RGS_OPERATIONS_BEARER_TOKEN_FILE`；生产环境、以及任意环境的非回环监听必须用常量时间
-  Bearer 比对保护 `/readyz` 与 `/metrics`，不得将这两个端点发布到公网监听器；
+  Bearer 比对保护 `/readyz` 与 `/metrics`；无鉴权 `/healthz` 也只能存在于该私有运维监听器，
+  三个运维端点均不得发布到公网监听器；
 - 确切规范数学定义文件（`RGS_DEFINITION_FILE`）、匹配哈希、签名
   `rgs-definition-approval-v2` `APPROVED` 封套、至少一个数学报告、RNG 报告和逐辖区审批的外部引用，
   以及独立挂载可信 Ed25519 公钥（`RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE`）。生产还拒绝
@@ -95,9 +96,10 @@ v2 门禁只证明这些引用与精确定义身份/哈希位于可信密钥签�
 - 用通用公开错误。绝不暴露 SQL、栈、密钥、签名、钱包传输或内部依赖文本。
 - 应用分层准入控制：边缘 DDoS/WAF 限制、端点/租户限制、请求大小限制、连接限制与有界
   worker 队列。每个副本必须设置 `RGS_MAX_IN_FLIGHT_REQUESTS`（1..4096，默认 256）的非阻塞
-  公网硬闸门，在签名、令牌和数据库工作前满载返回 `503` 与 `Retry-After`；`/healthz` 绕过该
-  闸门。每次容量拒绝必须精确累加无标签 `rgs_capacity_rejected_total`，不得混入
-  `rgs_rate_limited_total`，同时仍按普通 5xx 进入外层可用性指标。本地 token bucket 本身不是分布
+  公网硬闸门，在签名、令牌和数据库工作前满载返回 `503` 与 `Retry-After`；公网 `/healthz`
+  不存在，也不得形成匿名绕过。每次容量拒绝必须精确累加无标签
+  `rgs_capacity_rejected_total`，不得混入 `rgs_rate_limited_total`，同时仍按普通 5xx 进入外层
+  可用性指标。本地 token bucket 本身不是分布
   式限速。预认证控制不得信任 `X-Forwarded-For`、`RemoteAddr` 或未校验身份：反向代理会让无关玩家
   共享传输地址，而调用方 header 又可伪造。运营商接口仅在请求签名验证后按运营商限流，只有准入
   成功才消费 nonce；因此签名 429 可在有效窗口内原样重试且不会制造 nonce 表写入。客户端接口仅在
@@ -167,10 +169,10 @@ runtime rollout 的顺序部署。运行容器不得持有 migrator DSN，runtim
 DDL、TRUNCATE、migration ledger 写权限。具体契约见
 [`database-migrations.md`](database-migrations.md)。
 
-仅用 `/healthz` 查存活，`/readyz` 查依赖路由。公网 `RGS_HTTP_ADDR` 上 `/readyz` 与 `/metrics`
-必须为 404；只能通过独立的 `RGS_OPERATIONS_HTTP_ADDR` 访问。生产 Prometheus 和编排探针必须从
-只读 `bearer_token_file` 取 `RGS_OPERATIONS_BEARER_TOKEN_FILE` 的相同值，不得以内联 token、URL 或
-命令行传递。`/metrics` 必须在同一总计两秒预算内执行 `/readyz` 的依赖集合并导出无标签
+仅在私有 `RGS_OPERATIONS_HTTP_ADDR` 用无 Bearer `/healthz` 查存活，用 `/readyz` 查依赖路由；
+公网 `RGS_HTTP_ADDR` 上 `/healthz`、`/readyz` 与 `/metrics` 必须为 404。生产 Prometheus 和
+编排探针必须从只读 `bearer_token_file` 取 `RGS_OPERATIONS_BEARER_TOKEN_FILE` 的相同值，不得以
+内联 token、URL 或命令行传递。`/metrics` 必须在同一总计两秒预算内执行 `/readyz` 的依赖集合并导出无标签
 `rgs_ready`；即使该值为 0，抓取 HTTP 仍为 200，告警不得只依赖 Prometheus `up`。优雅关闭必须
 停止新投注、完成或留下可恢复持久状态，并允许持久租约安全过期。
 

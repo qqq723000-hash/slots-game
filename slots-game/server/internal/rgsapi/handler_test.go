@@ -585,6 +585,88 @@ func TestSharedAdmissionFailureBlocksOnlyNewEconomicIntents(t *testing.T) {
 	}
 }
 
+func TestSpinSharedHighWaterAggregatesSessionsAndStillCountsReplay(t *testing.T) {
+	security := newSecurityFixture(t)
+	var sharedKeys []string
+	shared := AdmissionResultFunc(func(_ context.Context, key string, _ time.Time) AdmissionResult {
+		sharedKeys = append(sharedKeys, key)
+		return AdmissionResult{Decision: AdmissionAllowed}
+	})
+	spins := &fakeCoordinator{spin: func(_ context.Context, request rgs.SpinRequest) (rgs.SpinResult, error) {
+		return committedResult(request), nil
+	}}
+	handler := security.newHandlerWithAllAdmissions(
+		t, &fakeLaunchService{}, spins, &fakeRoundReader{}, nil,
+		AdmissionFunc(func(string, time.Time) bool { return true }), nil, shared,
+	)
+	tokenA := security.issueAccessTokenForSession(t, "session-a", testDefinitionHash)
+	tokenB := security.issueAccessTokenForSession(t, "session-b", testDefinitionHash)
+	requests := []struct {
+		sessionID  string
+		roundID    string
+		token      string
+		remoteAddr string
+	}{
+		{sessionID: "session-a", roundID: "round-a", token: tokenA, remoteAddr: "10.0.0.10:1001"},
+		// 已提交重放仍刻意计入普通高水位桶；精确经济预算位于 Coordinator 内，
+		// 因此不会对该重放再次扣费。
+		{sessionID: "session-a", roundID: "round-a", token: tokenA, remoteAddr: "10.0.0.11:1002"},
+		{sessionID: "session-b", roundID: "round-b", token: tokenB, remoteAddr: "10.0.0.12:1003"},
+	}
+	for _, test := range requests {
+		request := clientRequest(
+			ClientSpinPath,
+			clientSpinBodyForSession(test.sessionID, test.roundID, testDefinitionHash),
+			test.token,
+		)
+		request.RemoteAddr = test.remoteAddr
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("session %s round %s status = %d, body = %s", test.sessionID, test.roundID, recorder.Code, recorder.Body.Bytes())
+		}
+	}
+	if spins.calls != len(requests) || len(sharedKeys) != len(requests) {
+		t.Fatalf("coordinator/shared calls = %d/%d, want %d", spins.calls, len(sharedKeys), len(requests))
+	}
+	for _, key := range sharedKeys {
+		if key != "spin-operator:"+testOperatorID {
+			t.Fatalf("multi-session/replay shared key = %q; all calls must aggregate by verified operator", key)
+		}
+	}
+}
+
+func TestCoordinatorEconomicAdmissionErrorsPreserveRateAndFailureSemantics(t *testing.T) {
+	security := newSecurityFixture(t)
+	for _, test := range []struct {
+		name       string
+		cause      error
+		status     int
+		code       string
+		retryAfter time.Duration
+	}{
+		{name: "budget limited", cause: rgs.ErrEconomicRateLimited, status: http.StatusTooManyRequests, code: "RATE_LIMITED", retryAfter: 1250 * time.Millisecond},
+		{name: "backend unavailable", cause: rgs.ErrEconomicAdmissionUnavailable, status: http.StatusServiceUnavailable, code: "ADMISSION_UNAVAILABLE", retryAfter: time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spins := &fakeCoordinator{spin: func(context.Context, rgs.SpinRequest) (rgs.SpinResult, error) {
+				return rgs.SpinResult{}, &rgs.EconomicAdmissionError{Cause: test.cause, RetryAfter: test.retryAfter}
+			}}
+			handler := security.newHandlerWithAllAdmissions(
+				t, &fakeLaunchService{}, spins, &fakeRoundReader{},
+				nil, AdmissionFunc(func(string, time.Time) bool { return true }), nil, nil,
+			)
+			token := security.issueAccessTokenForSession(t, testSessionID, testDefinitionHash)
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, clientRequest(ClientSpinPath, clientSpinBody(testDefinitionHash), token))
+			if recorder.Code != test.status || recorder.Header().Get("Retry-After") != strconv.FormatInt(int64((test.retryAfter+time.Second-1)/time.Second), 10) ||
+				!bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"`+test.code+`"`)) {
+				t.Fatalf("response = status:%d retry:%q body:%s", recorder.Code, recorder.Header().Get("Retry-After"), recorder.Body.Bytes())
+			}
+		})
+	}
+}
+
 func TestLocalAdmissionRejectsBeforeSharedAdmission(t *testing.T) {
 	security := newSecurityFixture(t)
 	sharedCalls := 0
@@ -1320,8 +1402,8 @@ func TestStrictJSONRejectsExcessiveNestingBeforeTypedDecode(t *testing.T) {
 	}
 }
 
-func TestStrictJSONRejectsTenThousandObjectNestingBomb(t *testing.T) {
-	const nestedObjects = 9_000
+func TestStrictJSONRejectsThousandObjectNestingBomb(t *testing.T) {
+	const nestedObjects = 1_000
 	type nestedDocument struct {
 		Value any `json:"value"`
 	}
@@ -1348,8 +1430,508 @@ func TestRequestBodyLimitAppliesWhenContentLengthIsUnknown(t *testing.T) {
 
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusRequestEntityTooLarge || !bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"BODY_TOO_LARGE"`)) {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.Bytes())
+	if recorder.Code != http.StatusRequestEntityTooLarge || !request.Close ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"BODY_TOO_LARGE"`)) {
+		t.Fatalf("status = %d, close = %v, body = %s", recorder.Code, request.Close, recorder.Body.Bytes())
+	}
+}
+
+func TestDeclaredOversizedBodyClosesInsteadOfDrainingRejectedConnection(t *testing.T) {
+	security := newSecurityFixture(t)
+	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
+	request := clientRequest(ClientSpinPath, []byte(`{}`), "")
+	request.ContentLength = maxPublicRequestBytes + 1
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge || !request.Close {
+		t.Fatalf("oversized body response/connection = %d/%v", recorder.Code, request.Close)
+	}
+}
+
+func TestRejectedQueryClosesUnreadRequestBody(t *testing.T) {
+	security := newSecurityFixture(t)
+	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
+	request := clientRequest(ClientSpinPath+"?debug=1", []byte(`{"unexpected":true}`), "")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest || !request.Close {
+		t.Fatalf("query rejection response/connection = %d/%v body:%s",
+			recorder.Code, request.Close, recorder.Body.String())
+	}
+}
+
+func TestPendingResultRejectsUnknownLengthGETBodyAndClosesConnection(t *testing.T) {
+	security := newSecurityFixture(t)
+	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
+	request := httptest.NewRequest(http.MethodGet, ClientPendingResultPath, strings.NewReader(`{"unexpected":true}`))
+	request.ContentLength = -1
+	request.TransferEncoding = []string{"chunked"}
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest || !request.Close ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"INVALID_REQUEST"`)) {
+		t.Fatalf("GET body rejection response/connection = %d/%v body:%s",
+			recorder.Code, request.Close, recorder.Body.String())
+	}
+}
+
+func TestRequestBodyLimitsAreRouteSpecificBeforeJSONAndCrypto(t *testing.T) {
+	security := newSecurityFixture(t)
+	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
+	handler.maxRequestBytes = DefaultMaxRequestBytes
+
+	body := bytes.Repeat([]byte("x"), int(maxClientRecoveryRequestBytes)+1)
+	request := clientRequest(ClientRoundStatusPath, body, "not-a-token")
+	request.ContentLength = -1
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"BODY_TOO_LARGE"`)) {
+		t.Fatalf("route-specific body response = %d %s", recorder.Code, recorder.Body.Bytes())
+	}
+
+	exchangeBody := bytes.Repeat([]byte("x"), int(maxSessionExchangeRequestBytes)+1)
+	exchange := clientRequest(ClientSessionExchangePath, exchangeBody, "")
+	exchange.ContentLength = -1
+	exchangeRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(exchangeRecorder, exchange)
+	if exchangeRecorder.Code != http.StatusRequestEntityTooLarge ||
+		!bytes.Contains(exchangeRecorder.Body.Bytes(), []byte(`"code":"BODY_TOO_LARGE"`)) {
+		t.Fatalf("exchange body response = %d %s", exchangeRecorder.Code, exchangeRecorder.Body.Bytes())
+	}
+}
+
+func TestMaximumSchemaValidBodiesFitCompleteEdgeInspectionWindow(t *testing.T) {
+	id := strings.Repeat("a", 128)
+	digest := strings.Repeat("a", 64)
+	binding := sessionBindingRequest{
+		OperatorID: id, SessionID: id, GameID: id, DefinitionVersion: id,
+		DefinitionHash: digest, Currency: "EUR", CurrencyExponent: 6,
+		Jurisdiction: strings.Repeat("A", 16),
+	}
+	tests := []struct {
+		name     string
+		value    any
+		limit    int
+		validate func([]byte) error
+	}{
+		{
+			name: "operator launch",
+			value: operatorLaunchRequest{
+				PlayerID: id, WalletAccountID: id, WalletSessionID: id,
+				SessionID: id, GameID: id, DefinitionVersion: id,
+				DefinitionHash: digest, Currency: "EUR", CurrencyExponent: 6,
+				Jurisdiction: strings.Repeat("A", 16), BalanceMinor: "9223372036854775807",
+				SessionTTLSeconds: 86400,
+			},
+			limit: maxPublicRequestBytes,
+			validate: func(body []byte) error {
+				var value operatorLaunchRequest
+				if err := decodeStrictJSON(body, &value); err != nil {
+					return err
+				}
+				return validateOperatorLaunchRequest(value)
+			},
+		},
+		{
+			name: "session exchange",
+			value: clientSessionExchangeRequest{
+				LaunchCode: validTestLaunchCode(1), OperatorID: id, SessionID: id,
+			},
+			limit: maxSessionExchangeRequestBytes,
+			validate: func(body []byte) error {
+				var value clientSessionExchangeRequest
+				if err := decodeStrictJSON(body, &value); err != nil {
+					return err
+				}
+				return validateClientSessionExchangeRequest(value)
+			},
+		},
+		{
+			name: "session refresh", value: clientSessionRefreshRequest{sessionBindingRequest: binding},
+			limit: maxPublicRequestBytes,
+			validate: func(body []byte) error {
+				var value clientSessionRefreshRequest
+				if err := decodeStrictJSON(body, &value); err != nil {
+					return err
+				}
+				return validateBinding(value.sessionBindingRequest)
+			},
+		},
+		{
+			name: "spin",
+			value: clientSpinRequest{
+				sessionBindingRequest: binding, RoundID: id, RoundKind: rgs.RoundKindFreeSpin,
+				BetMinor: "9223372036854775807", StartRevision: "9223372036854775807",
+			},
+			limit: maxPublicRequestBytes,
+			validate: func(body []byte) error {
+				var value clientSpinRequest
+				if err := decodeStrictJSON(body, &value); err != nil {
+					return err
+				}
+				_, _, err := validateClientSpinRequest(value)
+				return err
+			},
+		},
+		{
+			name: "round status", value: roundStatusRequest{sessionBindingRequest: binding, RoundID: id},
+			limit: maxPublicRequestBytes,
+			validate: func(body []byte) error {
+				var value roundStatusRequest
+				if err := decodeStrictJSON(body, &value); err != nil {
+					return err
+				}
+				return validateRoundStatusRequest(value)
+			},
+		},
+		{
+			name: "result acknowledgement",
+			value: resultDeliveryAcknowledgementRequest{
+				sessionBindingRequest: binding, RoundID: id,
+				Sequence: "9007199254740991", ResultHash: digest,
+			},
+			limit: maxPublicRequestBytes,
+			validate: func(body []byte) error {
+				var value resultDeliveryAcknowledgementRequest
+				if err := decodeStrictJSON(body, &value); err != nil {
+					return err
+				}
+				_, err := validateResultDeliveryAcknowledgementRequest(value)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			compact, err := json.Marshal(test.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			escaped := maximallyEscapeJSONStrings(t, compact)
+			if len(escaped) > test.limit {
+				t.Fatalf("maximally escaped body = %d bytes, limit = %d", len(escaped), test.limit)
+			}
+			if err := test.validate(escaped); err != nil {
+				t.Fatalf("maximally escaped schema-valid body rejected: %v", err)
+			}
+			t.Logf("compact=%d maximally_escaped=%d limit=%d", len(compact), len(escaped), test.limit)
+		})
+	}
+}
+
+func maximallyEscapeJSONStrings(t *testing.T, compact []byte) []byte {
+	t.Helper()
+	var escaped bytes.Buffer
+	inString := false
+	for _, character := range compact {
+		if character == '"' {
+			inString = !inString
+			escaped.WriteByte(character)
+			continue
+		}
+		if !inString {
+			escaped.WriteByte(character)
+			continue
+		}
+		if character < 0x20 || character > 0x7e || character == '\\' {
+			t.Fatalf("fixture contains unsupported pre-escaped character %#x", character)
+		}
+		_, _ = fmt.Fprintf(&escaped, `\u%04x`, character)
+	}
+	if inString {
+		t.Fatal("fixture ended inside JSON string")
+	}
+	return escaped.Bytes()
+}
+
+type rejectingCryptographicCapacity struct {
+	calls int
+}
+
+func (capacity *rejectingCryptographicCapacity) TryAcquire(
+	_ context.Context,
+) (func(), AdmissionResult) {
+	capacity.calls++
+	return nil, AdmissionResult{Decision: AdmissionCapacityUnavailable}
+}
+
+type scriptedCryptographicCapacity struct {
+	calls    int
+	rejectAt int
+	active   int
+	releases int
+	maximum  int
+}
+
+type boundedTestCryptographicCapacity struct {
+	mu       sync.Mutex
+	limit    int
+	calls    int
+	active   int
+	maximum  int
+	releases int
+}
+
+func (capacity *boundedTestCryptographicCapacity) TryAcquire(
+	_ context.Context,
+) (func(), AdmissionResult) {
+	capacity.mu.Lock()
+	capacity.calls++
+	if capacity.active >= capacity.limit {
+		capacity.mu.Unlock()
+		return nil, AdmissionResult{Decision: AdmissionCapacityUnavailable}
+	}
+	capacity.active++
+	if capacity.active > capacity.maximum {
+		capacity.maximum = capacity.active
+	}
+	capacity.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			capacity.mu.Lock()
+			capacity.active--
+			capacity.releases++
+			capacity.mu.Unlock()
+		})
+	}, AdmissionResult{Decision: AdmissionAllowed}
+}
+
+func (capacity *boundedTestCryptographicCapacity) snapshot() (calls, active, maximum, releases int) {
+	capacity.mu.Lock()
+	defer capacity.mu.Unlock()
+	return capacity.calls, capacity.active, capacity.maximum, capacity.releases
+}
+
+func (capacity *scriptedCryptographicCapacity) TryAcquire(
+	_ context.Context,
+) (func(), AdmissionResult) {
+	capacity.calls++
+	if capacity.calls == capacity.rejectAt {
+		return nil, AdmissionResult{Decision: AdmissionCapacityUnavailable}
+	}
+	capacity.active++
+	if capacity.active > capacity.maximum {
+		capacity.maximum = capacity.active
+	}
+	return func() {
+		capacity.active--
+		capacity.releases++
+	}, AdmissionResult{Decision: AdmissionAllowed}
+}
+
+func TestCryptographicCapacityRejectsBeforeUntrustedVerification(t *testing.T) {
+	security := newSecurityFixture(t)
+	capacity := &rejectingCryptographicCapacity{}
+	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
+	handler.cryptographicCapacity = capacity
+
+	spin := clientRequest(
+		ClientSpinPath,
+		clientSpinBody(testDefinitionHash),
+		security.issueAccessToken(t, testDefinitionHash),
+	)
+	spinRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(spinRecorder, spin)
+	if spinRecorder.Code != http.StatusServiceUnavailable || capacity.calls != 1 {
+		t.Fatalf("spin crypto capacity = status:%d calls:%d body:%s",
+			spinRecorder.Code, capacity.calls, spinRecorder.Body.Bytes())
+	}
+
+	capacity.calls = 0
+	status := clientRequest(
+		ClientRoundStatusPath,
+		roundStatusBody(),
+		security.issueAccessToken(t, testDefinitionHash),
+	)
+	statusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(statusRecorder, status)
+	if statusRecorder.Code != http.StatusServiceUnavailable || capacity.calls != 1 {
+		t.Fatalf("spoofable status path did not use the same anonymous crypto capacity = status:%d calls:%d body:%s",
+			statusRecorder.Code, capacity.calls, statusRecorder.Body.Bytes())
+	}
+}
+
+func TestCryptographicCapacityRejectsExchangeBeforeOneTimeCodeConsumption(t *testing.T) {
+	security := newSecurityFixture(t)
+	capacity := &rejectingCryptographicCapacity{}
+	launches := &fakeLaunchService{exchange: func(context.Context, ExchangeCommand) (ExchangeResult, error) {
+		t.Fatal("crypto-capacity rejection consumed a one-time launch code")
+		return ExchangeResult{}, nil
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+	handler.cryptographicCapacity = capacity
+	body := []byte(`{"launchCode":"` + validTestLaunchCode(41) + `","operatorId":"operator-a","sessionId":"session-a"}`)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, clientRequest(ClientSessionExchangePath, body, ""))
+
+	if recorder.Code != http.StatusServiceUnavailable || capacity.calls != 1 ||
+		launches.exchangeCalls != 0 || recorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf("exchange crypto gate = status:%d capacity:%d exchange:%d retry:%q body:%s",
+			recorder.Code, capacity.calls, launches.exchangeCalls,
+			recorder.Header().Get("Retry-After"), recorder.Body.String())
+	}
+}
+
+func TestCryptographicCapacityProtectsRefreshResultTokenVerification(t *testing.T) {
+	security := newSecurityFixture(t)
+	capacity := &scriptedCryptographicCapacity{rejectAt: 2}
+	session := validSession(security.now)
+	launches := &fakeLaunchService{refresh: func(context.Context, RefreshCommand) (ExchangeResult, error) {
+		return ExchangeResult{
+			Session:     session,
+			AccessToken: security.issueAccessToken(t, testDefinitionHash),
+		}, nil
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+	handler.cryptographicCapacity = capacity
+	token := security.issueAccessToken(t, testDefinitionHash)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(
+		recorder,
+		clientRequest(ClientSessionRefreshPath, sessionBindingBody(testDefinitionHash), token),
+	)
+
+	if recorder.Code != http.StatusServiceUnavailable || capacity.calls != 2 ||
+		capacity.releases != 1 || capacity.active != 0 || launches.refreshCalls != 0 ||
+		recorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf("refresh result crypto gate = status:%d calls:%d releases:%d active:%d refresh:%d retry:%q body:%s",
+			recorder.Code, capacity.calls, capacity.releases, capacity.active,
+			launches.refreshCalls, recorder.Header().Get("Retry-After"), recorder.Body.String())
+	}
+}
+
+func TestRefreshSigningAndReturnedTokenVerificationShareOneCryptographicPermit(t *testing.T) {
+	security := newSecurityFixture(t)
+	capacity := &scriptedCryptographicCapacity{}
+	session := validSession(security.now)
+	resultToken := security.issueAccessToken(t, testDefinitionHash)
+	launches := &fakeLaunchService{refresh: func(context.Context, RefreshCommand) (ExchangeResult, error) {
+		if capacity.active != 1 {
+			t.Fatalf("refresh token signing ran with crypto capacity active=%d, want 1", capacity.active)
+		}
+		return ExchangeResult{Session: session, AccessToken: resultToken}, nil
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+	handler.cryptographicCapacity = capacity
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(
+		recorder,
+		clientRequest(
+			ClientSessionRefreshPath,
+			sessionBindingBody(testDefinitionHash),
+			security.issueAccessToken(t, testDefinitionHash),
+		),
+	)
+
+	if recorder.Code != http.StatusOK || capacity.calls != 2 || capacity.releases != 2 ||
+		capacity.active != 0 || capacity.maximum != 1 || launches.refreshCalls != 1 {
+		t.Fatalf("refresh crypto chain = status:%d calls:%d releases:%d active:%d max:%d refresh:%d body:%s",
+			recorder.Code, capacity.calls, capacity.releases, capacity.active,
+			capacity.maximum, launches.refreshCalls, recorder.Body.String())
+	}
+}
+
+func TestConcurrentRefreshSigningCannotExceedCryptographicCapacity(t *testing.T) {
+	security := newSecurityFixture(t)
+	capacity := &boundedTestCryptographicCapacity{limit: 1}
+	session := validSession(security.now)
+	resultToken := security.issueAccessToken(t, testDefinitionHash)
+	firstRefreshEntered := make(chan struct{})
+	releaseFirstRefresh := make(chan struct{})
+
+	var signingMu sync.Mutex
+	signingActive := 0
+	signingMaximum := 0
+	signingOutsideCapacity := 0
+	signingEntries := 0
+	launches := &fakeLaunchService{refresh: func(context.Context, RefreshCommand) (ExchangeResult, error) {
+		signingMu.Lock()
+		signingEntries++
+		entry := signingEntries
+		signingActive++
+		if signingActive > signingMaximum {
+			signingMaximum = signingActive
+		}
+		_, cryptoActive, _, _ := capacity.snapshot()
+		if cryptoActive != 1 {
+			signingOutsideCapacity++
+		}
+		signingMu.Unlock()
+		defer func() {
+			signingMu.Lock()
+			signingActive--
+			signingMu.Unlock()
+		}()
+
+		if entry == 1 {
+			close(firstRefreshEntered)
+			<-releaseFirstRefresh
+		}
+		return ExchangeResult{Session: session, AccessToken: resultToken}, nil
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+	handler.cryptographicCapacity = capacity
+	token := security.issueAccessToken(t, testDefinitionHash)
+
+	firstRecorder := httptest.NewRecorder()
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		handler.ServeHTTP(
+			firstRecorder,
+			clientRequest(ClientSessionRefreshPath, sessionBindingBody(testDefinitionHash), token),
+		)
+	}()
+	select {
+	case <-firstRefreshEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first refresh never entered the signing chain")
+	}
+
+	secondRecorder := httptest.NewRecorder()
+	secondDone := make(chan struct{})
+	go func() {
+		defer close(secondDone)
+		handler.ServeHTTP(
+			secondRecorder,
+			clientRequest(ClientSessionRefreshPath, sessionBindingBody(testDefinitionHash), token),
+		)
+	}()
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		close(releaseFirstRefresh)
+		<-firstDone
+		t.Fatal("second refresh queued behind saturated cryptographic capacity")
+	}
+	close(releaseFirstRefresh)
+	<-firstDone
+
+	calls, active, maximum, releases := capacity.snapshot()
+	signingMu.Lock()
+	maxSigning, outsideCapacity := signingMaximum, signingOutsideCapacity
+	signingMu.Unlock()
+	if firstRecorder.Code != http.StatusOK || secondRecorder.Code != http.StatusServiceUnavailable ||
+		launches.refreshCalls != 1 || calls != 3 || releases != 2 || active != 0 || maximum != 1 ||
+		maxSigning != 1 || outsideCapacity != 0 {
+		t.Fatalf("concurrent refresh crypto chain = first:%d second:%d refresh:%d calls:%d releases:%d active:%d max_crypto:%d max_signing:%d outside:%d",
+			firstRecorder.Code, secondRecorder.Code, launches.refreshCalls, calls, releases,
+			active, maximum, maxSigning, outsideCapacity)
 	}
 }
 
@@ -1373,12 +1955,16 @@ func operatorLaunchBody(balance string) []byte {
 }
 
 func clientSpinBody(definitionHash string) []byte {
+	return clientSpinBodyForSession(testSessionID, "round-a", definitionHash)
+}
+
+func clientSpinBodyForSession(sessionID, roundID, definitionHash string) []byte {
 	payload := map[string]any{
-		"operatorId": testOperatorID, "sessionId": testSessionID,
+		"operatorId": testOperatorID, "sessionId": sessionID,
 		"gameId": testGameID, "definitionVersion": testDefinition,
 		"definitionHash": definitionHash, "currency": testCurrency,
 		"currencyExponent": 2, "jurisdiction": testRegion,
-		"roundId": "round-a", "roundKind": "BASE",
+		"roundId": roundID, "roundKind": "BASE",
 		"betMinor": "100", "startRevision": "0",
 	}
 	encoded, _ := json.Marshal(payload)

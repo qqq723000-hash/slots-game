@@ -17,6 +17,7 @@ const protectedFiles = [
   { path: "assets/primal-runtime/audio/ambient.m4a", bytes: 101, sha256: hash("a") },
   { path: "assets/primal-reference/character.svg", bytes: 202, sha256: hash("b") },
   { path: "assets/brand/statusbar.png", bytes: 303, sha256: hash("c") },
+  { path: "favicon.ico", bytes: 304, sha256: hash("e") },
 ];
 
 const temporaryDirectories: string[] = [];
@@ -63,7 +64,7 @@ describe("release asset approval gate", () => {
   it("accepts an unexpired, exact approval for every protected release asset", () => {
     const fixture = makeFixture();
 
-    expect(verifyReleaseAssetApproval(fixture)).toEqual({ approvedAssets: 3 });
+    expect(verifyReleaseAssetApproval(fixture)).toEqual({ approvedAssets: 4 });
   });
 
   it("fails closed when RELEASE_ASSET_APPROVAL_FILE is absent", () => {
@@ -158,6 +159,21 @@ describe("release asset approval gate", () => {
         jurisdictions: ["TEST-ONLY"],
         expiresAt: "2035-01-01T00:00:00.000Z",
         assets: protectedFiles.slice(0, 2),
+      },
+    });
+
+    expect(() => verifyReleaseAssetApproval(fixture)).toThrow("approval does not cover protected release asset");
+  });
+
+  it("requires an exact approval for the public favicon", () => {
+    const fixture = makeFixture({
+      approval: {
+        schemaVersion: 1,
+        status: "APPROVED",
+        approvalReference: "test-only-approval-reference",
+        jurisdictions: ["TEST-ONLY"],
+        expiresAt: "2035-01-01T00:00:00.000Z",
+        assets: protectedFiles.slice(0, 3),
       },
     });
 

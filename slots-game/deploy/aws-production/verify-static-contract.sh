@@ -39,6 +39,10 @@ grep -F 'applyMeansApplicationReady: false' "$cluster_addons_contract" >/dev/nul
 grep -F 'requiresPrivateVpcRunner: true' "$cluster_addons_contract" >/dev/null || fail '集群 add-on 契约没有强制私网执行器'
 grep -F 'prometheusagents.monitoring.coreos.com' "$cluster_addons_contract" >/dev/null || fail '集群 add-on 契约缺少 Prometheus Agent CRD'
 grep -F 'id: cluster-autoscaler' "$cluster_addons_contract" >/dev/null || fail '集群 add-on 契约缺少 Cluster Autoscaler'
+grep -F 'id: vpc-cni-network-policy' "$cluster_addons_contract" >/dev/null || fail '集群 add-on 契约缺少 vpc-cni NetworkPolicy 执行面'
+grep -F 'enableNetworkPolicy: "true"' "$cluster_addons_contract" >/dev/null || fail 'vpc-cni add-on 契约未失败关闭启用 NetworkPolicy'
+grep -F 'id: amazon-cloudwatch-observability' "$cluster_addons_contract" >/dev/null || fail '集群 add-on 契约缺少 CloudWatch Observability 日志执行面'
+grep -F '        - fluent-bit' "$cluster_addons_contract" >/dev/null || fail 'CloudWatch Observability add-on 契约缺少 Fluent Bit 日志投递工作负载'
 grep -F 'cluster_autoscaler_role_arn' "$cluster_addons_contract" >/dev/null || fail '集群 add-on 契约缺少节点扩容专用身份'
 grep -F 'syncedResourceVersion' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有验证 ExternalSecret 同步版本'
 grep -F 'sigv4' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有验证 AMP SigV4'
@@ -53,6 +57,25 @@ grep -F 'application_release_allowed' "$live_platform_gate" >/dev/null || fail '
 grep -F 'maintenance_in_progress' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有校验 HMAC 维护状态'
 grep -F 'eks describe-addon' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有读取 metrics-server EKS add-on 状态'
 grep -F 'addon.fetch("status") == "ACTIVE"' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有要求 metrics-server add-on ACTIVE'
+grep -F 'elasticache describe-replication-groups' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有读取 Valkey replication group 当前状态'
+grep -F 'elasticache describe-cache-clusters' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有读取 Valkey 节点 parameter group 生效状态'
+grep -F 'elasticache describe-cache-parameters' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有读取 Valkey maxmemory-policy 实际值'
+grep -F 'ParameterApplyStatus' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有拒绝 Valkey parameter group pending apply'
+grep -F 'ParameterValue") == ARGV.fetch(0)' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有固定 Valkey noeviction 实际值'
+grep -F 'wafv2 get-web-acl' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有回读实际 WAF Web ACL'
+grep -F 'wafv2 get-logging-configuration' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有回读 WAF 日志配置'
+grep -F 'cloudwatch describe-alarms' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有回读 WAF CloudWatch 告警'
+grep -F 'cloudfront get-distribution' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有回读 CloudFront/WAF/OAC 绑定'
+grep -F 's3api get-public-access-block' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有回读 CloudFront S3 源站 Public Access Block'
+grep -F 'BlockPublicAcls IgnorePublicAcls BlockPublicPolicy RestrictPublicBuckets' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有精确要求 S3 四项 Public Access Block'
+grep -F 's3api get-bucket-policy' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有回读 CloudFront S3 源站 bucket policy'
+grep -F 'AllowCloudFrontOacRead DenyInsecureTransport' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有精确限制 OAC Allow 与 TLS Deny 语句'
+grep -F '/operator/v1/launches' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有固定 launch 低阈值 scope'
+grep -F '/client/v1/spins' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有固定 spin 低阈值 scope'
+grep -F 'header_size_rule_rollout' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有验证 aggregate header Count→Block 阶段'
+grep -F 'rate_rule_rollouts' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有验证 rate Count→Block 阶段'
+grep -F 'managed_rule_rollout' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有验证 managed Count→Block 阶段'
+grep -F 'SampledRequestsEnabled' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有关闭 WAF sampled requests 数据面'
 grep -F 'apiservice/v1beta1.metrics.k8s.io' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有读取资源指标 APIService'
 grep -F 'condition["type"] == "Available" && condition["status"] == "True"' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有要求资源指标 APIService Available=True'
 grep -F 'deployment/kube-prometheus-stack-kube-state-metrics' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有验证 kube-state-metrics Deployment'
@@ -105,6 +128,40 @@ render_phase install "$rendered_directory/install.yaml"
 render_phase upgrade "$rendered_directory/upgrade.yaml"
 ruby "$rendered_contract" "$rendered_directory/install.yaml" up
 ruby "$rendered_contract" "$rendered_directory/upgrade.yaml" verify
+HELM_BIN="$helm_binary" "$script_directory/workflow/test-rendered-release-network.sh" >/dev/null
+
+unsafe_attributes="$rendered_directory/unsafe-alb-attributes.yaml"
+cp -- "$rendered_directory/install.yaml" "$unsafe_attributes"
+ruby -e '
+  path = ARGV.fetch(0)
+  content = File.binread(path)
+  required = "routing.http.desync_mitigation_mode=strictest"
+  abort "负测缺少 strictest ALB 属性" unless content.include?(required)
+  File.binwrite(path, content.sub(required, "routing.http.desync_mitigation_mode=defensive"))
+' "$unsafe_attributes"
+if ruby "$rendered_contract" "$unsafe_attributes" up >/dev/null 2>&1; then
+  fail 'ALB desync mitigation 降级被错误接受'
+fi
+
+for mutation in waf-fail-open duplicate-waf-fail-open; do
+  unsafe_waf_attributes="$rendered_directory/$mutation.yaml"
+  cp -- "$rendered_directory/install.yaml" "$unsafe_waf_attributes"
+  MUTATION=$mutation ruby -e '
+    path = ARGV.fetch(0)
+    content = File.binread(path)
+    required = "waf.fail_open.enabled=false"
+    abort "负测缺少 WAF fail-open ALB 属性" unless content.include?(required)
+    replacement = if ENV.fetch("MUTATION") == "waf-fail-open"
+      "waf.fail_open.enabled=true"
+    else
+      "#{required},waf.fail_open.enabled=true"
+    end
+    File.binwrite(path, content.sub(required, replacement))
+  ' "$unsafe_waf_attributes"
+  if ruby "$rendered_contract" "$unsafe_waf_attributes" up >/dev/null 2>&1; then
+    fail "ALB WAF fail-open 危险属性被错误接受：$mutation"
+  fi
+done
 
 for phase in install upgrade; do
   "$kubeconform_binary" \
@@ -122,6 +179,9 @@ for override in \
   'web.enabled=true' \
   'ingress.className=nginx' \
   'ingress.tlsSecretEnabled=true' \
+  'ingress.apiHealthCheckPath=/readyz' \
+  'ingress.apiHealthCheckPort=8080' \
+  'rgs.runtime.maxRequestBytes=8193' \
   'networkPolicy.ingressController.mode=selectors,networkPolicy.ingressController.cidrs={}'; do
   unsafe_render="$rendered_directory/unsafe.yaml"
   if "$helm_binary" template slots "$chart_directory" --namespace slots-production \

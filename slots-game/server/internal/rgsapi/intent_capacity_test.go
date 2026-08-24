@@ -35,14 +35,20 @@ func (capacity *recordingIntentCapacity) TryAcquire(context.Context) (func(), Ad
 	}, AdmissionResult{Decision: AdmissionAllowed}
 }
 
-func TestNewIntentCapacityRejectsOnlyLaunchAndSpinAndReleasesPermits(t *testing.T) {
+func TestNewIntentCapacityRejectsOnlyNewSessionAndEconomicIntentsAndReleasesPermits(t *testing.T) {
 	security := newSecurityFixture(t)
 	capacity := &recordingIntentCapacity{decision: AdmissionCapacityUnavailable}
 	pendingCalls := 0
 	acknowledgementCalls := 0
-	launches := &fakeLaunchService{refresh: func(context.Context, RefreshCommand) (ExchangeResult, error) {
-		return ExchangeResult{}, ErrUnavailable
-	}}
+	launches := &fakeLaunchService{
+		exchange: func(context.Context, ExchangeCommand) (ExchangeResult, error) {
+			t.Fatal("capacity-rejected request reached session exchange service")
+			return ExchangeResult{}, nil
+		},
+		refresh: func(context.Context, RefreshCommand) (ExchangeResult, error) {
+			return ExchangeResult{}, ErrUnavailable
+		},
+	}
 	spins := &fakeCoordinator{
 		spin: func(context.Context, rgs.SpinRequest) (rgs.SpinResult, error) {
 			t.Fatal("capacity-rejected request reached spin coordinator")
@@ -82,6 +88,18 @@ func TestNewIntentCapacityRejectsOnlyLaunchAndSpinAndReleasesPermits(t *testing.
 			spinRecorder.Code, spins.calls, spinRecorder.Body.String())
 	}
 
+	exchangeBody := []byte(`{"launchCode":"` + validTestLaunchCode(31) + `","operatorId":"operator-a","sessionId":"session-a"}`)
+	exchangeRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(exchangeRecorder, clientRequest(ClientSessionExchangePath, exchangeBody, ""))
+	if exchangeRecorder.Code != http.StatusServiceUnavailable ||
+		exchangeRecorder.Header().Get("Retry-After") != "1" ||
+		!strings.Contains(exchangeRecorder.Body.String(), `"code":"CAPACITY_UNAVAILABLE"`) ||
+		launches.exchangeCalls != 0 {
+		t.Fatalf("exchange capacity response = status:%d retry:%q calls:%d body:%s",
+			exchangeRecorder.Code, exchangeRecorder.Header().Get("Retry-After"),
+			launches.exchangeCalls, exchangeRecorder.Body.String())
+	}
+
 	statusRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(statusRecorder, clientRequest(ClientRoundStatusPath, roundStatusBody(), token))
 	if rounds.calls != 1 {
@@ -119,8 +137,32 @@ func TestNewIntentCapacityRejectsOnlyLaunchAndSpinAndReleasesPermits(t *testing.
 		t.Fatalf("ack route did not bypass new-intent capacity: calls=%d status=%d body=%s",
 			acknowledgementCalls, acknowledgementRecorder.Code, acknowledgementRecorder.Body.String())
 	}
-	if capacity.calls != 2 || capacity.active != 0 || capacity.releases != 0 {
+	if capacity.calls != 3 || capacity.active != 0 || capacity.releases != 0 {
 		t.Fatalf("capacity calls=%d active=%d releases=%d", capacity.calls, capacity.active, capacity.releases)
+	}
+}
+
+func TestNewIntentCapacityPermitCoversSessionExchangeAndIsReleased(t *testing.T) {
+	security := newSecurityFixture(t)
+	capacity := &recordingIntentCapacity{decision: AdmissionAllowed}
+	launches := &fakeLaunchService{exchange: func(context.Context, ExchangeCommand) (ExchangeResult, error) {
+		if capacity.active != 1 {
+			t.Fatalf("capacity was not held during session exchange: active=%d", capacity.active)
+		}
+		return ExchangeResult{}, ErrUnavailable
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+	handler.newIntentCapacity = capacity
+	body := []byte(`{"launchCode":"` + validTestLaunchCode(32) + `","operatorId":"operator-a","sessionId":"session-a"}`)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, clientRequest(ClientSessionExchangePath, body, ""))
+
+	if recorder.Code != http.StatusServiceUnavailable || launches.exchangeCalls != 1 ||
+		capacity.calls != 1 || capacity.releases != 1 || capacity.active != 0 || capacity.maximum != 1 {
+		t.Fatalf("exchange permit lifecycle = status:%d service-calls:%d capacity-calls:%d releases:%d active:%d max:%d body:%s",
+			recorder.Code, launches.exchangeCalls, capacity.calls, capacity.releases,
+			capacity.active, capacity.maximum, recorder.Body.String())
 	}
 }
 

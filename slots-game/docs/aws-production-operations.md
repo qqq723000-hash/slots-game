@@ -63,9 +63,10 @@ SLO 排除必须在合同中明确，不能事后调整查询。
 ```text
 RGS Pod
 ├── 公共 8080
-│   ├── /healthz：只证明进程存活
-│   └── 业务路由：结构化、低基数指标
+│   ├── /healthz：不存在并返回 404；Regional WAF 更早精确 Block
+│   └── 仅业务路由：结构化、低基数指标
 ├── 私有 8081
+│   ├── /healthz：无需 Bearer，只供 Kubernetes/ALB 受控来源证明进程存活
 │   ├── /readyz：数据库、密钥、定义和工作器就绪
 │   └── /metrics：operations Bearer；即使 rgs_ready=0 仍可返回 200
 └── stdout/stderr：结构化 JSON，不含凭据、正文、查询串和玩家敏感值
@@ -319,6 +320,12 @@ Kubernetes 滚动期间，终止中的 Pod 可能让实际总数短时超过 `re
 使用预发布驱逐/滚动测试的观测上界，而不是假定为 0。总值必须低于 RDS 实际可用连接预算，并为
 failover 重连风暴留余量。RDS Proxy 启用后仍按数据库端连接、固定比例和 Proxy 指标核算，不能只
 看客户端连接数。
+
+Valkey 只由 API Pod 连接。每 Pod 四条同步业务连接加 valkey-go 一条不承载业务
+自动管线的基础 socket，必须按五条计算。当前 API HPA `maxReplicas=12` 稳态上限是
+`12 × 5 = 60`；`maxSurge=1` 时非终止滚动上限是 `13 × 5 = 65`。这两个值都不包含
+终止中 Pod 重叠、平台监控/管理连接、节点切换重连和应急余量；ElastiCache
+`CurrConnections` 告警与实例容量必须按完整上界校准，不能只数业务池。
 
 API 的 `RGS_DB_CRITICAL_RESERVE_CONNS` 默认是 5，且必须小于本 Pod 的
 `RGS_DB_MAX_OPEN_CONNS`。新 launch/spin 的本机 permit 数等于两者之差；数据库 `InUse` 达到该阈值

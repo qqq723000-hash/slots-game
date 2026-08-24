@@ -25,6 +25,12 @@ rgs:
     timeout: 100ms
     ratePerSecond: 500
     rateBurst: 1000
+    economic:
+      # 平台 EDoS 护栏，不是第三方钱包承诺容量；上线前按合同/压测证据审定。
+      operatorRatePerSecond: 20
+      operatorRateBurst: 40
+      backendRatePerSecond: 100
+      backendRateBurst: 200
   terminationGracePeriodSeconds: 45
   preStopSeconds: 5
   shutdownTimeoutSeconds: 30
@@ -45,11 +51,15 @@ rgs:
   pdb:
     minAvailable: 2
   runtime:
+    maxRequestBytes: 8192
     databaseMaxOpenConnections: 20
     databaseMaxIdleConnections: 5
     databaseCriticalReserveConnections: 5
     maxInFlightRequests: 128
+    maxCryptoInFlight: 64
     maxConnectionsPerListener: 512
+    preAuthRatePerSecond: 5000
+    preAuthRateBurst: 10000
     ratePerSecondPerPod: 50
     rateBurstPerPod: 100
     successAccessLogSamplePerMillion: 10000
@@ -81,6 +91,7 @@ worker:
   runtime:
     databaseMaxOpenConnections: 10
     databaseMaxIdleConnections: 2
+    maxCryptoInFlight: 64
     maxConnectionsPerListener: 128
     walletTimeoutSeconds: 4
     walletMaxAttempts: 100
@@ -127,6 +138,9 @@ ingress:
   className: ""
   tlsSecretEnabled: true
   apiHost: ""
+  # 公网业务使用 8080；负载均衡健康检查固定走私有 operations 监听器。
+  apiHealthCheckPath: /healthz
+  apiHealthCheckPort: 8081
   webHost: ""
   apiTLSSecretName: ""
   webTLSSecretName: ""

@@ -12,6 +12,14 @@ export const PROTECTED_RELEASE_ASSET_PREFIXES = Object.freeze([
   "assets/primal-reference/",
   "assets/brand/",
 ]);
+export const PROTECTED_RELEASE_ASSET_EXACT_PATHS = Object.freeze([
+  "favicon.ico",
+]);
+
+export function isProtectedReleaseAsset(path) {
+  return PROTECTED_RELEASE_ASSET_EXACT_PATHS.includes(path)
+    || PROTECTED_RELEASE_ASSET_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
 
 export class ReleaseAssetApprovalError extends Error {
   constructor(message) {
@@ -63,8 +71,8 @@ function sha256(value, label) {
 
 function protectedPath(value, label) {
   nonEmptyString(value, label);
-  if (!PROTECTED_RELEASE_ASSET_PREFIXES.some((prefix) => value.startsWith(prefix))) {
-    fail(`${label} must be under a protected release asset prefix`);
+  if (!isProtectedReleaseAsset(value)) {
+    fail(`${label} must match a protected release asset selector`);
   }
   if (value.includes("\\") || value.split("/").some((part) => part === "." || part === "..")) {
     fail(`${label} must be a normalized release asset path`);
@@ -142,7 +150,7 @@ export function verifyReleaseAssetApproval({
 
   const protectedEntries = manifest.files.filter((entry) => (
     entry && typeof entry.path === "string"
-      && PROTECTED_RELEASE_ASSET_PREFIXES.some((prefix) => entry.path.startsWith(prefix))
+      && isProtectedReleaseAsset(entry.path)
   ));
   if (protectedEntries.length === 0) fail("release manifest contains no protected release assets");
   const manifestAssets = indexUniqueAssets(protectedEntries, "release manifest protected files");

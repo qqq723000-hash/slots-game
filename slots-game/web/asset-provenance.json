@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "policy": "DENY_COMMERCIAL_RELEASE_WITHOUT_EXTERNAL_EXACT_HASH_APPROVAL",
+  "groups": [
+    {
+      "selector": "favicon.ico",
+      "match": "exact",
+      "repositoryEvidence": "UNVERIFIED_IN_REPOSITORY",
+      "releaseDisposition": "EXTERNAL_APPROVAL_REQUIRED"
+    },
+    {
+      "selector": "assets/brand/",
+      "match": "prefix",
+      "repositoryEvidence": "OWNER_ASSERTED_FIRST_PARTY",
+      "releaseDisposition": "EXTERNAL_APPROVAL_REQUIRED"
+    },
+    {
+      "selector": "assets/primal-reference/",
+      "match": "prefix",
+      "repositoryEvidence": "UNVERIFIED_IN_REPOSITORY",
+      "releaseDisposition": "EXTERNAL_APPROVAL_REQUIRED"
+    },
+    {
+      "selector": "assets/primal-runtime/",
+      "match": "prefix",
+      "repositoryEvidence": "UNVERIFIED_IN_REPOSITORY",
+      "releaseDisposition": "EXTERNAL_APPROVAL_REQUIRED"
+    }
+  ]
+}

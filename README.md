@@ -11,16 +11,31 @@ Amazon S3 并通过 CloudFront OAC 分发，公共 API 经 Route 53、AWS WAF、
 - [AWS 正式生产架构](slots-game/docs/aws-production-architecture.md)
 - [AWS 正式生产部署](slots-game/docs/aws-production-deployment.md)
 - [AWS 正式生产运维](slots-game/docs/aws-production-operations.md)
+- [DDoS 威胁模型与演练边界](slots-game/docs/ddos-threat-model.md)
 - [通用 Kubernetes/Helm 应用交付](slots-game/deploy/cluster-production/README.md)
+- [Web 素材权属与发布门禁](slots-game/web/ASSETS.md)
 
 macOS Docker Compose 仅用于开发、集成与端到端验收，不是公司正式生产拓扑，也不能作为 AWS
 高可用、灾难恢复或安全控制已经生效的证明。
 
 本仓库同时交付应用源码、容器构建、Helm Chart、验证门禁与应用专属 AWS Terraform。
 `slots-game/infra/terraform/` 可创建 VPC、EKS、RDS、ElastiCache Valkey、ECR、Secrets Manager
-元数据、S3/CloudFront、AMP、CloudWatch、备份与归档基线；企业落地区仍必须提供账号、
-state/部署身份、DNS/证书/WAF 和组织级安全能力。源码中存在 IaC 不等于任何 AWS
+元数据、S3/CloudFront、应用 API Regional WAF、AMP、CloudWatch、备份与归档基线；企业落地区
+仍必须提供账号、state/部署身份、DNS、ACM 证书、可选 Shield Advanced 订阅和组织级安全能力。
+源码中存在 IaC 不等于任何 AWS
 账号已经执行 `plan`/`apply` 或通过上线验收。
 
 运行密码、私钥、数据库、日志、发布审批和构建产物不得进入 Git。正式秘密由 AWS Secrets
 Manager 管理并以最小权限注入工作负载；本机验收秘密由脚本写入仓库外受限状态目录。
+
+## 许可与商业发布边界
+
+本仓库当前没有提供根级源码 `LICENSE`，因此不能把公开可见或可评审误解为已经授予开源、复制、
+再分发或商业使用许可。权利主体与授权条款必须由仓库所有者在正式对外发布前提供并经法律评审；
+本仓库不会代填权利主体或凭空生成商标、著作权证明。
+
+Go 与 Web 开源依赖的分发声明分别见
+[`server/THIRD_PARTY_NOTICES.txt`](slots-game/server/THIRD_PARTY_NOTICES.txt) 和
+[`web/public/THIRD_PARTY_NOTICES.txt`](slots-game/web/public/THIRD_PARTY_NOTICES.txt)。游戏运行素材还受
+[逐文件权属与哈希审批门禁](slots-game/web/ASSETS.md)约束；仓库内缺少可审计权属材料的资源不得被
+宣称为全部原创或已获商业分发授权。

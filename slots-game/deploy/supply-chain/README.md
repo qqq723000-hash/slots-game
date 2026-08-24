@@ -172,7 +172,9 @@ Web 浏览器 smoke 的 OCI→Docker 转换同样不向 Skopeo 容器挂载宿�
 延长留存。全部 release evidence 上传使用 `if-no-files-found: error`，缺失证据不能以 warning 通过。
 
 只有离线复核与转换成功后才读取 Registry secret、登录、load 相同制品字节。Web candidate push
-紧前会以当前时钟复核包内 `expiresAt`，推送本次 run
+紧前会以当前时钟复核包内 `expiresAt`。发布 workflow 以精确的镜像仓库和 final tag 为并发键串行，
+且不会取消已经在途的同目标发布；取得 AWS 身份后、Registry 登录和 candidate push 前，它必须先
+证明 final tag 不存在，非 `ImageNotFoundException` 的回读失败一律阻断。随后才推送本次 run
 唯一 candidate 并解析 Registry 返回的不可变 digest，然后：
 
 1. 使用固定完整 SHA 的 `actions/attest` 为该 digest 生成 SLSA build provenance；
@@ -180,8 +182,8 @@ Web 浏览器 smoke 的 OCI→Docker 转换同样不向 Skopeo 容器挂载宿�
 3. 使用固定 digest 的 Cosign 3.1.3 和 GitHub OIDC 短命证书签名；
 4. 立刻用精确 certificate identity/issuer 反向验证，并归档 Sigstore bundle 与验证结果；
 5. 只有以上步骤全部通过，且在最终 push 紧前再次以当前时钟复核 Web 审批仍有效，才把同一已验证
-   digest 提升为最终发布 tag；已存在的最终 tag
-   会被拒绝，Registry 端还必须配置 tag immutability 作为并发与管理员操作的外部保护。
+   digest 提升为最终发布 tag；末端仍会再次拒绝已存在的 final tag。workflow 内串行与前置回读
+   不能约束管理员或仓库外写入，Registry 端仍必须配置 tag immutability 作为外部保护。
 
 GitHub Artifact Attestations 对私有/内部仓库的套餐限制、目标 Registry 是否支持 OCI
 attestation/signature、Registry 写权限和 Environment 审批均属于真实外部发布输入。

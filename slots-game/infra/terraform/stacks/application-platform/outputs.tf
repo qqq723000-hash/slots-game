@@ -2,6 +2,10 @@ output "vpc_id" {
   value = module.network.vpc_id
 }
 
+output "vpc_cidr" {
+  value = module.network.vpc_cidr
+}
+
 output "aws_region" {
   value = var.aws_region
 }
@@ -18,6 +22,10 @@ output "public_subnet_ids" {
   value = module.network.public_subnet_ids
 }
 
+output "public_subnet_cidrs" {
+  value = module.network.public_subnet_cidrs
+}
+
 output "private_subnet_ids" {
   value = module.network.private_subnet_ids
 }
@@ -28,6 +36,26 @@ output "data_subnet_ids" {
 
 output "alb_security_group_id" {
   value = module.network.alb_security_group_id
+}
+
+output "alb_egress_target_ports" {
+  value = module.network.alb_egress_target_ports
+}
+
+output "regional_acm_certificate_arn" {
+  value = var.regional_acm_certificate_arn
+}
+
+output "api_alb_tls_policy" {
+  value = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+}
+
+output "alb_access_log_bucket_name" {
+  value = var.alb_access_log_bucket_name
+}
+
+output "alb_access_log_prefix" {
+  value = var.alb_access_log_prefix
 }
 
 output "workload_client_security_group_id" {
@@ -74,6 +102,18 @@ output "valkey_port" {
 
 output "valkey_endpoint_url" {
   value = module.cache.endpoint_url
+}
+
+output "valkey_replication_group_id" {
+  value = module.cache.replication_group_id
+}
+
+output "valkey_parameter_group_name" {
+  value = module.cache.parameter_group_name
+}
+
+output "valkey_maxmemory_policy" {
+  value = module.cache.maxmemory_policy
 }
 
 output "valkey_user_name" {
@@ -124,6 +164,16 @@ output "web_bucket_name" {
   value = module.web_edge.bucket_name
 }
 
+output "api_waf_web_acl_arn" {
+  description = "公网 RGS ALB 必须精确绑定的区域 WAFv2 Web ACL ARN"
+  value       = module.api_edge_security.web_acl_arn
+}
+
+output "api_edge_security_contract" {
+  description = "公网 RGS ALB 的应用层 DDoS 防护与可观测合同"
+  value       = module.api_edge_security.contract
+}
+
 output "web_kms_key_arn" {
   value = module.web_edge.kms_key_arn
 }
@@ -134,6 +184,38 @@ output "cloudfront_distribution_id" {
 
 output "cloudfront_distribution_domain_name" {
   value = module.web_edge.distribution_domain_name
+}
+
+output "cloudfront_alias_domain_name" {
+  value = module.web_edge.alias_domain_name
+}
+
+output "cloudfront_acm_certificate_arn" {
+  value = module.web_edge.acm_certificate_arn
+}
+
+output "cloudfront_origin_access_control_id" {
+  value = module.web_edge.origin_access_control_id
+}
+
+output "cloudfront_cache_policy_id" {
+  value = module.web_edge.cache_policy_id
+}
+
+output "cloudfront_log_bucket_domain_name" {
+  value = module.web_edge.log_bucket_domain_name
+}
+
+output "cloudfront_log_prefix" {
+  value = module.web_edge.log_prefix
+}
+
+output "cloudfront_waf_web_acl_arn" {
+  value = module.web_edge.waf_web_acl_arn
+}
+
+output "cloudfront_edge_security_contract" {
+  value = module.web_edge.edge_security_contract
 }
 
 output "cloudfront_response_headers_policy_id" {
@@ -150,6 +232,14 @@ output "cloudfront_release_request_function_arn" {
 
 output "cloudfront_release_request_function_name" {
   value = module.web_edge.release_request_function_name
+}
+
+output "cloudfront_release_response_function_arn" {
+  value = module.web_edge.release_response_function_arn
+}
+
+output "cloudfront_release_response_function_name" {
+  value = module.web_edge.release_response_function_name
 }
 
 output "amp_workspace_id" {
@@ -190,7 +280,70 @@ output "application_handoff" {
     kubernetes_version                    = var.kubernetes_version
     application_namespace                 = var.application_namespace
     helm_release_name                     = var.helm_release_name
-    metrics_server_addon_version          = var.eks_addon_versions["metrics-server"]
+    alb_egress_target_ports               = module.network.alb_egress_target_ports
+    api_alb_tls_policy                    = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+    alb_access_logs = {
+      bucket = var.alb_access_log_bucket_name
+      prefix = var.alb_access_log_prefix
+    }
+    metrics_server_addon_version = var.eks_addon_versions["metrics-server"]
+    vpc_cni_network_policy = {
+      addon_name      = "vpc-cni"
+      addon_version   = var.eks_addon_versions["vpc-cni"]
+      expected_status = "ACTIVE"
+      configuration_values = {
+        enableNetworkPolicy = "true"
+      }
+      pod_identity = {
+        namespace       = "kube-system"
+        service_account = "aws-node"
+        role_arn        = module.eks.vpc_cni_role_arn
+      }
+    }
+    cloudwatch_observability = {
+      addon_name      = "amazon-cloudwatch-observability"
+      addon_version   = var.eks_addon_versions["amazon-cloudwatch-observability"]
+      expected_status = "ACTIVE"
+      configuration_values = {
+        agent = {
+          config = {
+            logs = {
+              metrics_collected = {
+                kubernetes = {
+                  enhanced_container_insights = true
+                }
+              }
+            }
+          }
+        }
+        containerLogs = {
+          enabled = true
+        }
+      }
+      pod_identity = {
+        namespace       = "amazon-cloudwatch"
+        service_account = "cloudwatch-agent"
+        role_arn        = module.observability.cloudwatch_agent_role_arn
+      }
+      workloads = [
+        {
+          namespace       = "amazon-cloudwatch"
+          kind            = "DaemonSet"
+          name            = "cloudwatch-agent"
+          minimum_pods    = 1
+          service_account = "cloudwatch-agent"
+          container_name  = "cloudwatch-agent"
+        },
+        {
+          namespace       = "amazon-cloudwatch"
+          kind            = "DaemonSet"
+          name            = "fluent-bit"
+          minimum_pods    = 1
+          service_account = "fluent-bit"
+          container_name  = "fluent-bit"
+        },
+      ]
+    }
     required_deployments = {
       aws_load_balancer_controller = "kube-system/aws-load-balancer-controller"
       cluster_autoscaler           = "kube-system/cluster-autoscaler"
@@ -210,7 +363,9 @@ output "application_handoff" {
       "servicemonitors.monitoring.coreos.com",
       "targetgroupbindings.elbv2.k8s.aws",
     ]
-    required_ingress_class = "alb"
+    required_ingress_class   = "alb"
+    api_edge_security        = module.api_edge_security.contract
+    cloudfront_edge_security = module.web_edge.edge_security_contract
     required_api_services = {
       resource_metrics = "v1beta1.metrics.k8s.io"
     }

@@ -1373,7 +1373,7 @@ describe("VisualFixtureGateway", () => {
       expect(capRound.events.find(({ type }) => type === "free_spin.cap_reached"))
         .toEqual({ type: "free_spin.cap_reached", reel: 1, row: 2 });
     }
-    expect(freeSpins.map(({ events, grid }) => events[0])).toEqual(
+    expect(freeSpins.map(({ events }) => events[0])).toEqual(
       freeSpins.map(({ grid }) => ({
         type: "grid.expanded",
         rows: grid[0]!.length,
@@ -1448,7 +1448,7 @@ describe("VisualFixtureGateway", () => {
     });
     expect(results.every(({ totalWinMinor }) => totalWinMinor === "0")).toBe(true);
     expect(results.map(({ balanceMinor }) => balanceMinor)).toEqual(Array(9).fill("99900"));
-    expect(freeSpins.map(({ events, grid }) => events[0])).toEqual(
+    expect(freeSpins.map(({ events }) => events[0])).toEqual(
       freeSpins.map(({ grid }) => ({
         type: "grid.expanded",
         rows: grid[0]!.length,

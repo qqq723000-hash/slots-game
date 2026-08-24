@@ -80,15 +80,20 @@ jobs:
           deploy/aws-production/workflow/verify-contract.sh
           deploy/aws-production/workflow/test-negative-contract.sh
           deploy/aws-production/workflow/test-live-application-secrets.sh
+          deploy/aws-production/workflow/test-rendered-release-network.sh
+          deploy/aws-production/workflow/test-web-rgs-origin.sh
           deploy/aws-production/workflow/test-live-definition-identity.sh
           deploy/aws-production/workflow/test-hmac-quiesce-evidence.sh
           deploy/aws-production/workflow/test-hmac-only-release-diff.sh
           deploy/aws-production/workflow/test-hmac-application-maintenance.sh
           deploy/aws-production/workflow/test-latest-terraform-delivery.sh
           shellcheck deploy/aws-production/workflow/*.sh deploy/aws-production/workflow/fixtures/*.sh \
-            deploy/aws-production/verify-live-platform-prerequisites.sh
+            deploy/aws-production/verify-live-platform-prerequisites.sh \
+            deploy/aws-production/verify-live-alb-edge.sh
           ruby -c deploy/aws-production/render-external-secrets.rb
+          ruby -c deploy/aws-production/verify-waf-rollout-evidence.rb
           ruby -c deploy/aws-production/workflow/verify-rendered-release.rb
+          ruby -c deploy/aws-production/workflow/verify-web-rgs-origin.rb
           ruby -c deploy/aws-production/workflow/verify-hmac-only-release-diff.rb
           ruby -c deploy/aws-production/workflow/verify-hmac-finalize-attestation.rb
 
@@ -105,6 +110,7 @@ jobs:
             slots-game/deploy/aws-production/workflow/validate-release-inputs.sh \
             slots-game/deploy/aws-production/workflow/verify-ecr-release.sh \
             slots-game/deploy/aws-production/workflow/verify-rendered-release.rb \
+            slots-game/deploy/aws-production/workflow/verify-web-rgs-origin.rb \
             slots-game/deploy/aws-production/workflow/verify-live-application-secrets.sh \
             slots-game/deploy/aws-production/workflow/verify-live-definition-identity.sh \
             slots-game/deploy/aws-production/workflow/verify-hmac-quiesce-evidence.rb \
@@ -117,7 +123,9 @@ jobs:
             slots-game/deploy/aws-production/workflow/publish-web-release.sh \
             "$bundle/slots-game/deploy/aws-production/workflow/"
           cp slots-game/deploy/aws-production/render-external-secrets.rb \
+            slots-game/deploy/aws-production/verify-live-alb-edge.sh \
             slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh \
+            slots-game/deploy/aws-production/verify-waf-rollout-evidence.rb \
             "$bundle/slots-game/deploy/aws-production/"
           cp -R slots-game/deploy/cluster-production/chart "$bundle/slots-game/deploy/cluster-production/"
           cp slots-game/deploy/supply-chain/extract-aws-web-static-root.sh \
@@ -596,6 +604,11 @@ jobs:
             .aws_account_id == $account and .application_namespace == env.AWS_EKS_NAMESPACE and
             .helm_release_name == env.AWS_HELM_RELEASE_NAME and
             .cluster_name == $cluster and .cluster_arn == $cluster_arn and
+            (.alb_access_log_bucket_name | test("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")) and
+            (.alb_access_log_prefix | test("^[a-z0-9][a-z0-9/_-]{1,127}$")) and
+            $handoff.alb_access_logs == {
+              "bucket": .alb_access_log_bucket_name, "prefix": .alb_access_log_prefix
+            } and
             .ecr_repository_urls["rgs-runtime"] == ($registry + "/" + $rgs) and
             .ecr_repository_urls["rgs-migrator"] == ($registry + "/" + $migrator) and
             .ecr_repository_urls["web-runtime"] == ($registry + "/" + $web) and
@@ -605,6 +618,13 @@ jobs:
             .cloudfront_response_headers_policy_id == $policy and
             .cloudfront_release_key_value_store_arn == $kvs and
             .cloudfront_release_request_function_name == $router and
+            .cloudfront_release_request_function_arn ==
+              ("arn:aws:cloudfront::" + $account + ":function/" + $router) and
+            (($router | sub("-release-request$"; "-release-response")) as $response_function |
+              $response_function != $router and
+              .cloudfront_release_response_function_name == $response_function and
+              .cloudfront_release_response_function_arn ==
+                ("arn:aws:cloudfront::" + $account + ":function/" + $response_function)) and
             (.cluster_autoscaler_role_arn | startswith("arn:aws:iam::\($account):role/")) and
             (.secret_sync_role_arn | startswith("arn:aws:iam::\($account):role/")) and
             (.amp_writer_role_arn | startswith("arn:aws:iam::\($account):role/")) and
@@ -637,6 +657,7 @@ jobs:
             $rotation.hmac_maintenance_attestation_schema == "slots-game/hmac-quiesce-attestation/v1" and
             $rotation.hmac_maintenance_evidence_maximum_ttl_seconds == 3600 and
             $rotation.hmac_maintenance_persistent_lock_name == "slots-hmac-maintenance-lock" and
+            $rotation.acl_command_profile == "v2-economic" and
             $rotation.acl_schema_version == "v2" and
             $rotation.acl_schema_transition == "maintenance-quiesced" and
             $rotation.acl_schema_migration_requires_quiesced == true and
@@ -677,6 +698,44 @@ jobs:
               startswith("v\($handoff.kubernetes_version).")) and
             ($handoff.metrics_server_addon_version |
               test("^v[0-9]+\\.[0-9]+\\.[0-9]+-eksbuild\\.[0-9]+$")) and
+            ($handoff.vpc_cni_network_policy | keys | sort) ==
+              ["addon_name", "addon_version", "configuration_values", "expected_status", "pod_identity"] and
+            $handoff.vpc_cni_network_policy.addon_name == "vpc-cni" and
+            ($handoff.vpc_cni_network_policy.addon_version |
+              test("^v[0-9]+\\.[0-9]+\\.[0-9]+-eksbuild\\.[0-9]+$")) and
+            $handoff.vpc_cni_network_policy.expected_status == "ACTIVE" and
+            $handoff.vpc_cni_network_policy.configuration_values == {"enableNetworkPolicy": "true"} and
+            $handoff.vpc_cni_network_policy.pod_identity.namespace == "kube-system" and
+            $handoff.vpc_cni_network_policy.pod_identity.service_account == "aws-node" and
+            ($handoff.vpc_cni_network_policy.pod_identity.role_arn |
+              startswith("arn:aws:iam::\($account):role/")) and
+            ($handoff.cloudwatch_observability.addon_version |
+              test("^v[0-9]+\\.[0-9]+\\.[0-9]+-eksbuild\\.[0-9]+$")) and
+            $handoff.cloudwatch_observability.configuration_values.containerLogs.enabled == true and
+            $handoff.cloudwatch_observability == {
+              "addon_name": "amazon-cloudwatch-observability",
+              "addon_version": $handoff.cloudwatch_observability.addon_version,
+              "expected_status": "ACTIVE",
+              "configuration_values": {
+                "agent": {"config": {"logs": {"metrics_collected": {"kubernetes": {
+                  "enhanced_container_insights": true
+                }}}}},
+                "containerLogs": {"enabled": true}
+              },
+              "pod_identity": {
+                "namespace": "amazon-cloudwatch",
+                "service_account": "cloudwatch-agent",
+                "role_arn": $handoff.cloudwatch_observability.pod_identity.role_arn
+              },
+              "workloads": [
+                {"namespace": "amazon-cloudwatch", "kind": "DaemonSet", "name": "cloudwatch-agent",
+                  "minimum_pods": 1, "service_account": "cloudwatch-agent", "container_name": "cloudwatch-agent"},
+                {"namespace": "amazon-cloudwatch", "kind": "DaemonSet", "name": "fluent-bit",
+                  "minimum_pods": 1, "service_account": "fluent-bit", "container_name": "fluent-bit"}
+              ]
+            } and
+            ($handoff.cloudwatch_observability.pod_identity.role_arn |
+              startswith("arn:aws:iam::\($account):role/")) and
             $handoff.required_deployments == {
               "aws_load_balancer_controller": "kube-system/aws-load-balancer-controller",
               "cluster_autoscaler": "kube-system/cluster-autoscaler",
@@ -905,6 +964,10 @@ jobs:
           fi
           "$HELM_BIN" status "$AWS_HELM_RELEASE_NAME" --namespace "$AWS_EKS_NAMESPACE" --output json > \
             "$DEPLOYMENT_EVIDENCE/helm-status.json"
+          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-alb-edge.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"
+          sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE"
           if test "$INPUT_DEPLOYMENT_MODE" = maintenance-complete; then
             "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/workflow/hmac-application-maintenance-gate.sh" \
               post "$TERRAFORM_DELIVERY_FILE" "$HMAC_EVIDENCE_FILE"
@@ -934,6 +997,8 @@ jobs:
           extraction_evidence="$RUNNER_TEMP/slots-web-extraction-evidence"
           sh "$DEPLOYMENT_SOURCE/slots-game/deploy/supply-chain/extract-aws-web-static-root.sh" \
             "$web_image" "$static_root" "$extraction_evidence" "$INPUT_CONFIGURATION_SHA256"
+          ruby "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/workflow/verify-web-rgs-origin.rb" \
+            "$TERRAFORM_DELIVERY_FILE" "$AWS_EKS_NAMESPACE" "$extraction_evidence"
           sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/workflow/publish-web-release.sh" \
             "$static_root" "$extraction_evidence" "$web_image" "$INPUT_CONFIGURATION_SHA256" \
             "$DEPLOYMENT_EVIDENCE/web"

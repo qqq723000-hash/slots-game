@@ -90,8 +90,10 @@ RGS 业务正确性不依赖全局实例 ID。集中日志、指标和链路平�
 ## 5. 限流与容量
 
 API 先使用每副本、每 session 的有界限制器保护本机资源，再对已验证身份调用共享 Valkey 令牌桶。
-共享桶只覆盖会创建新经济意图的 operator launch 与 client spin；launch 与 spin 使用相互独立、按
-可信 operator 聚合的 HMAC-SHA256 键，避免爆款跨大量 session 时把每运营商配额乘开。脚本从
+普通共享高水位覆盖 operator launch 与所有 client spin 尝试（含重放与冲突）；launch 与 spin 使用相互
+独立、按可信 operator 聚合的 HMAC-SHA256 键，避免爆款跨大量 session 时把每运营商配额乘开。另一层
+经济双桶只在 PostgreSQL session 锁内确认首次合法且可持久化的 round 时扣一次，重放、状态、结果、
+确认和恢复不扣经济桶。脚本从
 Valkey `PTTL` 原子推导经过时间，不使用 Pod 时钟。状态、待交付结果、确认和令牌续期不依赖 Valkey，
 避免准入故障阻断已提交结果恢复。不得直接信任客户端传入的 `X-Forwarded-For`。
 
@@ -99,6 +101,11 @@ Valkey 不保存或裁决 operation ID、余额、轮次、钱包收据和提交
 返回带 `Retry-After` 的 503；PostgreSQL 仍是上述状态唯一权威。生产 `api` 角色必须通过绝对文件
 取得独立 ACL password、键摘要 HMAC 密钥和显式 TLS 根 CA；`worker` 角色携带这些配置会拒绝启动。
 单机 `combined` 可以不启用共享准入以保持本机兼容。
+
+客户端禁用自动管线，并在 valkey-go 之前设置四许可、响应 context 的应用闸门；
+连接内读写还受 socket deadline 保护。四条业务同步连接加一条依赖保留的基础 socket，每 API
+Pod 最多五条 Valkey 连接。默认 API HPA 稳态/`maxSurge=1` 滚动的非终止连接上界是
+60/65，并不包含终止重叠、监控、管理或故障转移余量。
 
 钱包还有一层独立的非阻塞故障隔离。当前每个进程按规范化后端地址共享 apply/lookup 舱壁，基线
 分别为 24/8 个执行许可，从连接层为状态查询保留容量；每个运营商另有 8 个 apply 许可。apply 与
@@ -153,8 +160,9 @@ lookup 使用相互独立的熔断器：连续 5 次远端失败后打开 5 秒�
 
 ## 6. 就绪、存活与优雅退出
 
-API 公网监听器只暴露无依赖的 `/healthz`。API 与 Worker 各自的独立运维监听器提供受 Bearer
-保护的 `/readyz` 与 `/metrics`，并分别通过 `slots-rgs`、`slots-rgs-worker` job 采集。API 生产
+API 公网监听器不暴露 `/healthz`，该精确路径返回 404；AWS Regional WAF 还会在到达源站前 Block。
+API 与 Worker 各自的独立运维监听器在 8081 提供无需 Bearer、只证明进程存活的 `/healthz`，以及受
+Bearer 保护的 `/readyz` 与 `/metrics`，并分别通过 `slots-rgs`、`slots-rgs-worker` job 采集。API 生产
 就绪集合包括：
 
 - `lifecycle`：副本尚未进入不可逆排空；
@@ -181,7 +189,8 @@ Worker job 暴露，不得让审计出口故障拖累 API readiness。Worker 当
 
 平台终止宽限期必须大于 `RGS_SHUTDOWN_TIMEOUT`，并额外覆盖信号投递、端点摘除与容器退出余量。
 入口应在发送新请求前观察就绪状态，并只对携带原幂等身份的请求重试。运维探针必须能在不把 Bearer
-令牌暴露到公网的前提下访问独立监听器。`/healthz` 保持存活不代表副本仍可接收业务流量。
+令牌暴露到公网的前提下访问独立监听器。ALB IP target health 必须由受控 NetworkPolicy 来源直接访问
+`8081/healthz`，业务转发仍走 8080。`/healthz` 保持存活不代表副本仍可接收业务流量。
 
 ## 7. 迁移并发与发布模式
 

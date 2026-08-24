@@ -39,6 +39,14 @@ import (
 	"slots-game/server/internal/wallet"
 )
 
+const (
+	accessLogMaxInFlight          = 4
+	successAccessLogRatePerSecond = 100
+	successAccessLogBurst         = 200
+	failureAccessLogRatePerSecond = 20
+	failureAccessLogBurst         = 100
+)
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(logger); err != nil {
@@ -149,6 +157,10 @@ func run(logger *slog.Logger) error {
 
 	metrics := &platform.Metrics{}
 	metrics.SetDatabasePool(database)
+	cryptographicCapacity := newServerCryptographicCapacity(
+		config.MaxCryptoInFlight,
+		metrics,
+	)
 	var sharedLimiter *sharedadmission.Limiter
 	if config.SharedAdmissionURL != "" {
 		sharedLimiter, err = sharedadmission.New(sharedadmission.Config{
@@ -198,6 +210,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	walletPorts := make(map[string]rgs.WalletPort, len(operators.Operators))
+	economicRoutes := make([]sharedadmission.EconomicRoute, 0, len(operators.Operators))
 	baseWalletClient, err := wallet.SecureHTTPClient(config.WalletTimeout, config.WalletRootCAFile)
 	if err != nil {
 		return fmt.Errorf("construct wallet HTTP client: %w", err)
@@ -207,6 +220,14 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("construct wallet isolation: %w", err)
 	}
 	for operatorID, loaded := range operators.Operators {
+		backendIdentity, identityErr := wallet.CanonicalBackendIdentity(loaded.Wallet.BaseURL)
+		if identityErr != nil {
+			return fmt.Errorf("derive economic wallet route for %s: %w", operatorID, identityErr)
+		}
+		economicRoutes = append(economicRoutes, sharedadmission.EconomicRoute{
+			OperatorID: operatorID,
+			BackendID:  backendIdentity,
+		})
 		port, err := wallet.NewHTTPWallet(wallet.HTTPConfig{
 			BaseURL: loaded.Wallet.BaseURL, OperatorID: operatorID,
 			RequestSigningKey: loaded.Wallet.RequestSigningKey,
@@ -226,6 +247,31 @@ func run(logger *slog.Logger) error {
 		}
 		walletPorts[operatorID] = isolatedPort
 	}
+	var economicAdmission rgs.EconomicIntentAdmitter
+	if sharedLimiter != nil {
+		configuredEconomicAdmission, economicErr := sharedadmission.NewEconomicAdmission(
+			sharedLimiter,
+			economicRoutes,
+			sharedadmission.EconomicConfig{
+				Operator: sharedadmission.EconomicPolicy{
+					RatePerSecond: config.EconomicOperatorRatePerSecond,
+					Burst:         config.EconomicOperatorRateBurst,
+				},
+				Backend: sharedadmission.EconomicPolicy{
+					RatePerSecond: config.EconomicBackendRatePerSecond,
+					Burst:         config.EconomicBackendRateBurst,
+				},
+			},
+			metrics,
+		)
+		if economicErr != nil {
+			return fmt.Errorf("configure economic admission: %w", economicErr)
+		}
+		if economicErr = configuredEconomicAdmission.Check(startupContext); economicErr != nil {
+			return fmt.Errorf("verify economic admission command contract: %w", economicErr)
+		}
+		economicAdmission = configuredEconomicAdmission
+	}
 	walletRouter, err := wallet.NewRouter(walletPorts)
 	if err != nil {
 		return err
@@ -234,7 +280,8 @@ func run(logger *slog.Logger) error {
 		WalletLease:           config.WalletTimeout + time.Second,
 		WalletFastPathTimeout: config.WalletFastPathTimeout,
 		PendingWait:           time.Second, PollInterval: 20 * time.Millisecond,
-		MaxWalletAttempts: config.WalletMaxAttempts,
+		MaxWalletAttempts:       config.WalletMaxAttempts,
+		EconomicIntentAdmission: economicAdmission,
 	}, repository, walletRouter, definitions, metrics)
 	if err != nil {
 		return err
@@ -271,6 +318,7 @@ func run(logger *slog.Logger) error {
 			coordinator,
 			sharedLimiter,
 			newIntentCapacity,
+			cryptographicCapacity,
 		)
 		if err != nil {
 			return err
@@ -308,6 +356,12 @@ func run(logger *slog.Logger) error {
 	defer clear(operationsBearerToken)
 	publicHandler := newPublicInFlightGate(
 		config.MaxInFlightRequests,
+		platform.NewLimiter(
+			config.PreAuthRatePerSecond,
+			config.PreAuthRateBurst,
+			1,
+			time.Minute,
+		),
 		metrics,
 		newPublicHandler(apiHandler, clientHandler),
 		allowedOrigins,
@@ -476,8 +530,9 @@ func newRGSAPIHandler(
 	definitionHash string,
 	repository *postgres.Repository,
 	coordinator *rgs.Coordinator,
-	sharedLimiter *sharedadmission.Limiter,
+	launchAdmission rgsapi.Admission,
 	newIntentCapacity rgsapi.NewIntentCapacity,
+	cryptographicCapacity rgsapi.CryptographicCapacity,
 ) (http.Handler, error) {
 	launchService, err := launch.NewService(launchStore, launch.Options{TTL: config.LaunchTTL})
 	if err != nil {
@@ -552,16 +607,26 @@ func newRGSAPIHandler(
 		100_000,
 		10*time.Minute,
 	)}
-	return rgsapi.NewHandler(rgsapi.Config{
+	handlerConfig := rgsapi.Config{
 		OperatorRequests: requestVerifier, AccessTokens: accessVerifier,
 		ResponseSigningKeys: responseKeys, Launches: launchManager,
 		Spins: coordinator, Rounds: coordinator, Admission: localOperatorLimiter,
-		ClientAdmission: localClientLimiter,
-		LaunchAdmission: sharedLimiter, SpinAdmission: sharedLimiter,
-		NewIntentCapacity: newIntentCapacity,
-		SecurityEvents:    newSecurityEventObserver(logger, metrics),
-		MaxRequestBytes:   config.MaxRequestBytes, ResponseSignatureTTL: time.Minute,
-	})
+		ClientAdmission:       localClientLimiter,
+		CryptographicCapacity: cryptographicCapacity,
+		NewIntentCapacity:     newIntentCapacity,
+		SecurityEvents:        newSecurityEventObserver(logger, metrics),
+		MaxRequestBytes:       config.MaxRequestBytes, ResponseSignatureTTL: time.Minute,
+	}
+	return rgsapi.NewHandler(withSharedAdmissions(handlerConfig, launchAdmission))
+}
+
+// withSharedAdmissions 把普通 operator 高水位同时组装到 launch 和所有
+// Spin 尝试（包括重放/冲突）。经济预算仍只在 Coordinator 的首次
+// 可持久化 round 边界调用，不得用它替换这两个普通高水位。
+func withSharedAdmissions(config rgsapi.Config, admission rgsapi.Admission) rgsapi.Config {
+	config.LaunchAdmission = admission
+	config.SpinAdmission = admission
+	return config
 }
 
 func validateLoadedDefinitionIdentity(config platform.Config, definition game.Config, definitionHash string) error {
@@ -589,62 +654,99 @@ func roleHTTPServers(
 }
 
 func newPublicHandler(apiHandler, clientHandler http.Handler) http.Handler {
-	mux := http.NewServeMux()
-	mux.Handle("/operator/", apiHandler)
-	mux.Handle("/client/", clientHandler)
-	// 公网只保留无依赖、无业务数据的存活探针；就绪与指标只能走独立运维监听器。
-	mux.HandleFunc("/healthz", platform.LivenessHandler)
-	return mux
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request == nil || request.URL == nil {
+			http.NotFound(writer, request)
+			return
+		}
+		// 不使用 ServeMux：它会在 API 验证前清理 ../、重复斜线并重定向，既改变
+		// 签名路径语义，也会在重定向短路时遗留未读正文。
+		switch {
+		case strings.HasPrefix(request.URL.Path, "/operator/") && apiHandler != nil:
+			apiHandler.ServeHTTP(writer, request)
+		case strings.HasPrefix(request.URL.Path, "/client/") && clientHandler != nil:
+			clientHandler.ServeHTTP(writer, request)
+		default:
+			closePublicUnreadBody(request)
+			http.NotFound(writer, request)
+		}
+	})
 }
 
 func newPublicInFlightGate(
 	limit int,
+	preAuthLimiter *platform.Limiter,
 	metrics *platform.Metrics,
 	next http.Handler,
 	allowedOrigins ...map[string]struct{},
 ) http.Handler {
-	semaphore := make(chan struct{}, limit)
+	capacity := newBoundedCapacity(limit)
 	var browserOrigins map[string]struct{}
 	if len(allowedOrigins) > 0 {
 		browserOrigins = allowedOrigins[0]
 	}
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL != nil && request.URL.Path == "/healthz" {
-			next.ServeHTTP(writer, request)
+		// 该高水位桶是 WAF/网关失效时的最后一道常数内存保护。未认证阶段不存在
+		// 可信客户端 IP、租户身份或恢复状态，因此所有公网请求只共享一个固定键。
+		// 路由 path 可由攻击者伪造，绝不能据此绕过匿名容量或取得恢复优先级。
+		if preAuthLimiter != nil && !preAuthLimiter.Allow("public-preauth", time.Now()) {
+			if metrics != nil {
+				metrics.PreAuthCapacityRejected.Add(1)
+			}
+			writePublicCapacityUnavailable(writer, request, browserOrigins)
 			return
 		}
 		// 这是调用方无关的进程级硬容量闸门，位于签名/令牌解析及数据库访问之前。
-		// 绝不使用 X-Forwarded-For 等未验证身份；满载时 /healthz 仍须可用于探活。
-		select {
-		case semaphore <- struct{}{}:
-			defer func() { <-semaphore }()
+		// 绝不使用 X-Forwarded-For 等未验证身份。公网监听器不暴露 liveness；
+		// ALB/Kubernetes 只能通过受限 operations 监听器探测，避免制造匿名旁路。
+		if release := capacity.TryAcquire(); release != nil {
+			defer release()
 			next.ServeHTTP(writer, request)
-		default:
+		} else {
 			// 每次满载拒绝只在唯一决策点累计一次；外层 observeRequests 观测逻辑仍独立计入
 			// 普通请求、总失败和 5xx，绝不把容量耗尽伪装成速率限流。
 			if metrics != nil {
 				metrics.CapacityRejected.Add(1)
 			}
-			requestID := safeLogRequestID(request.Header.Get(operator.HeaderRequestID))
-			if requestID == "" {
-				requestID = "unavailable"
-			}
-			if request.URL != nil && strings.HasPrefix(request.URL.Path, "/client/") {
-				platform.ApplyCORSHeaders(writer, request, browserOrigins)
-			}
-			writer.Header().Set(operator.HeaderRequestID, requestID)
-			writer.Header().Set("Content-Type", "application/json")
-			writer.Header().Set("Cache-Control", "no-store")
-			writer.Header().Set("X-Content-Type-Options", "nosniff")
-			writer.Header().Set("Retry-After", "1")
-			writer.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = fmt.Fprintf(
-				writer,
-				`{"error":{"code":"CAPACITY_UNAVAILABLE","message":"service unavailable"},"requestId":"%s"}`+"\n",
-				requestID,
-			)
+			writePublicCapacityUnavailable(writer, request, browserOrigins)
 		}
 	})
+}
+
+func writePublicCapacityUnavailable(
+	writer http.ResponseWriter,
+	request *http.Request,
+	allowedOrigins map[string]struct{},
+) {
+	requestID := "unavailable"
+	if request != nil {
+		closePublicUnreadBody(request)
+		if candidate := safeLogRequestID(request.Header.Get(operator.HeaderRequestID)); candidate != "" {
+			requestID = candidate
+		}
+		if request.URL != nil && strings.HasPrefix(request.URL.Path, "/client/") {
+			platform.ApplyCORSHeaders(writer, request, allowedOrigins)
+		}
+	}
+	writer.Header().Set(operator.HeaderRequestID, requestID)
+	writer.Header().Set("Content-Type", "application/json")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
+	writer.Header().Set("Retry-After", "1")
+	writer.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = fmt.Fprintf(
+		writer,
+		`{"error":{"code":"CAPACITY_UNAVAILABLE","message":"service unavailable"},"requestId":"%s"}`+"\n",
+		requestID,
+	)
+}
+
+func closePublicUnreadBody(request *http.Request) {
+	if request != nil && request.Body != nil && request.Body != http.NoBody {
+		// 短路发生在 handler 读取正文之前；关闭 HTTP/1 连接，避免服务器为
+		// keep-alive 排空攻击者正文。HTTP/2 仍由流级取消和读取截止时间约束。
+		request.Close = true
+	}
 }
 
 func newOperationsHandler(
@@ -743,7 +845,9 @@ func newHTTPServer(address string, handler http.Handler, config platform.Config)
 		Addr: address, Handler: handler,
 		ReadHeaderTimeout: config.ReadHeaderTimeout, ReadTimeout: config.ReadTimeout,
 		WriteTimeout: config.WriteTimeout, IdleTimeout: config.IdleTimeout,
-		MaxHeaderBytes: 32 << 10,
+		// 16 KiB 是应用最终兜底，不是边缘可直接采用的 aggregate-header Block 证明。
+		// 边缘 8 KiB 阈值必须先覆盖最大合法签发令牌、固定协议头及代理附加头的实测。
+		MaxHeaderBytes: 16 << 10,
 	}
 }
 
@@ -1108,13 +1212,30 @@ func observeRequests(
 	successSamplePerMillion int,
 	next http.Handler,
 ) http.Handler {
+	// 4xx 与 5xx 使用两个固定键、各自独立的日志预算。攻击流量不能创建新键，
+	// 也不能用大量 4xx 压掉稀有 5xx；完整请求/安全计数仍由无采样指标保留。
+	failureAccessLogs := platform.NewLimiter(
+		failureAccessLogRatePerSecond,
+		failureAccessLogBurst,
+		2,
+		time.Hour,
+	)
+	// 确定性采样只决定候选集合，不能成为无限日志许可：request_id 可由调用方
+	// 选择并重放。所有成功候选再共享一个固定键预算，攻击者无法制造新桶。
+	successAccessLogs := platform.NewLimiter(
+		successAccessLogRatePerSecond,
+		successAccessLogBurst,
+		1,
+		time.Hour,
+	)
+	// 日志管道本身可能因 stdout/runtime/collector 背压而阻塞。速率预算限制写入
+	// 数量，但不能限制已经阻塞的 goroutine；独立非阻塞 bulkhead 给物理写日志
+	// 设置硬并发上限，避免它在释放公网请求许可后反向耗尽连接与协程。
+	accessLogWrites := newBoundedCapacity(accessLogMaxInFlight)
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		started := time.Now()
 		route := normalizedPublicRoute(request)
-		// 健康探针验证进程存活，不代表也不应稀释业务请求的可用性或时延 SLO；
-		// 仍保留同样受限的访问日志以支持安全排障。
-		observeBusinessMetrics := route != "health"
-		if metrics != nil && observeBusinessMetrics {
+		if metrics != nil {
 			metrics.HTTPRequests.Add(1)
 			metrics.BeginHTTPRequest()
 		}
@@ -1125,7 +1246,7 @@ func observeRequests(
 				status = http.StatusOK
 			}
 			duration := time.Since(started)
-			if metrics != nil && observeBusinessMetrics {
+			if metrics != nil {
 				metrics.EndHTTPRequest(duration)
 				if status >= http.StatusBadRequest {
 					metrics.HTTPFailures.Add(1)
@@ -1154,21 +1275,67 @@ func observeRequests(
 				}
 				switch {
 				case status >= http.StatusInternalServerError:
-					logger.Error("http request", arguments...)
-					metrics.AccessLogEmitted()
+					if failureAccessLogs.Allow("5xx", time.Now()) {
+						emitBoundedAccessLog(accessLogWrites, metrics, func() {
+							logger.Error("http request", arguments...)
+						})
+					} else {
+						recordAccessLogDropped(metrics)
+					}
 				case status >= http.StatusBadRequest:
-					logger.Warn("http request", arguments...)
-					metrics.AccessLogEmitted()
+					if failureAccessLogs.Allow("4xx", time.Now()) {
+						emitBoundedAccessLog(accessLogWrites, metrics, func() {
+							logger.Warn("http request", arguments...)
+						})
+					} else {
+						recordAccessLogDropped(metrics)
+					}
 				case shouldEmitSuccessfulAccessLog(successSamplePerMillion, route, requestID):
-					logger.Info("http request", arguments...)
-					metrics.AccessLogEmitted()
+					if successAccessLogs.Allow("success", time.Now()) {
+						emitBoundedAccessLog(accessLogWrites, metrics, func() {
+							logger.Info("http request", arguments...)
+						})
+					} else {
+						recordAccessLogDropped(metrics)
+					}
 				default:
-					metrics.AccessLogDropped()
+					recordAccessLogDropped(metrics)
 				}
 			}
 		}()
 		next.ServeHTTP(recorder, request)
 	})
+}
+
+func emitBoundedAccessLog(
+	capacity *boundedCapacity,
+	metrics *platform.Metrics,
+	emit func(),
+) {
+	if emit == nil {
+		recordAccessLogDropped(metrics)
+		return
+	}
+	release := capacity.TryAcquire()
+	if release == nil {
+		recordAccessLogDropped(metrics)
+		return
+	}
+	defer release()
+	emit()
+	recordAccessLogEmitted(metrics)
+}
+
+func recordAccessLogEmitted(metrics *platform.Metrics) {
+	if metrics != nil {
+		metrics.AccessLogEmitted()
+	}
+}
+
+func recordAccessLogDropped(metrics *platform.Metrics) {
+	if metrics != nil {
+		metrics.AccessLogDropped()
+	}
 }
 
 func shouldEmitSuccessfulAccessLog(samplePerMillion int, route, requestID string) bool {
@@ -1206,8 +1373,6 @@ func normalizedPublicRoute(request *http.Request) string {
 		return "client.pending_result"
 	case rgsapi.ClientResultAckPath:
 		return "client.result_ack"
-	case "/healthz":
-		return "health"
 	default:
 		return "other"
 	}

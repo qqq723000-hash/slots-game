@@ -15,8 +15,8 @@ type databasePoolStats interface {
 	Stats() sql.DBStats
 }
 
-// databaseIntentCapacity 同时使用硬许可与数据库池快照。每个尚未结束的新意图都
-// 保守预留至多一条连接；预留与当前 InUse 的和不得侵占关键读取预算，因此并发请求
+// databaseIntentCapacity 同时使用硬许可与数据库池快照。每个尚未结束的新会话或
+// 经济意图都保守预留至多一条连接；预留与当前 InUse 的和不得侵占关键读取预算，因此并发请求
 // 不能共同观察同一个空闲快照后穿透。
 //
 // database/sql 不暴露连接与请求的归属，已经进入 InUse 的新意图仍可能同时计入预留。

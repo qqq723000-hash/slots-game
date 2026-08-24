@@ -14,11 +14,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"slots-game/server/internal/game"
+	"slots-game/server/internal/operator"
 	"slots-game/server/internal/platform"
+	"slots-game/server/internal/rgsapi"
 )
 
 func TestRuntimeDatabaseReadinessChecksIncludeSchemaAndPrivileges(t *testing.T) {
@@ -35,6 +38,39 @@ func TestRuntimeDatabaseReadinessChecksIncludeSchemaAndPrivileges(t *testing.T) 
 			t.Fatalf("checks[%d].Name() = %q, want %q", index, checks[index].Name(), name)
 		}
 	}
+}
+
+func TestRGSAPIAssemblyUsesSameSharedAdmissionForLaunchAndSpin(t *testing.T) {
+	shared := &assemblyAdmission{}
+	config := withSharedAdmissions(rgsapi.Config{}, shared)
+	if config.LaunchAdmission != shared || config.SpinAdmission != shared {
+		t.Fatalf(
+			"shared admission assembly drifted: launch=%T spin=%T want=%T",
+			config.LaunchAdmission, config.SpinAdmission, shared,
+		)
+	}
+	for _, call := range []struct {
+		admission rgsapi.Admission
+		key       string
+	}{
+		{admission: config.LaunchAdmission, key: "launch-operator:verified"},
+		{admission: config.SpinAdmission, key: "spin-operator:verified"},
+	} {
+		result := call.admission.Admit(context.Background(), call.key, time.Time{})
+		if result.Decision != rgsapi.AdmissionAllowed {
+			t.Fatalf("shared admission result for %q = %+v", call.key, result)
+		}
+	}
+	if got := strings.Join(shared.keys, ","); got != "launch-operator:verified,spin-operator:verified" {
+		t.Fatalf("shared admission keys = %q", got)
+	}
+}
+
+type assemblyAdmission struct{ keys []string }
+
+func (admission *assemblyAdmission) Admit(_ context.Context, key string, _ time.Time) rgsapi.AdmissionResult {
+	admission.keys = append(admission.keys, key)
+	return rgsapi.AdmissionResult{Decision: rgsapi.AdmissionAllowed}
 }
 
 func TestProductionSelectsStrictDefinitionApprovalPolicy(t *testing.T) {
@@ -230,6 +266,21 @@ func TestWithRequestTimeoutCancelsHandlerContext(t *testing.T) {
 	}
 }
 
+func TestHTTPServerUsesBoundedTransportTimeoutsAndHeaders(t *testing.T) {
+	config := platform.Config{
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
+	server := newHTTPServer("127.0.0.1:0", http.NotFoundHandler(), config)
+	if server.ReadHeaderTimeout != config.ReadHeaderTimeout || server.ReadTimeout != config.ReadTimeout ||
+		server.WriteTimeout != config.WriteTimeout || server.IdleTimeout != config.IdleTimeout ||
+		server.MaxHeaderBytes != 16<<10 {
+		t.Fatalf("unsafe HTTP server bounds: %+v", server)
+	}
+}
+
 func TestObserveRequestsClassifiesAuthAndAdmissionFailuresOnce(t *testing.T) {
 	for _, test := range []struct {
 		name         string
@@ -287,8 +338,8 @@ func TestOperationsEndpointsAreOffThePublicListenerAndBearerProtected(t *testing
 	}
 	publicHealth := httptest.NewRecorder()
 	public.ServeHTTP(publicHealth, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if publicHealth.Code != http.StatusOK {
-		t.Fatalf("public health status = %d, want 200", publicHealth.Code)
+	if publicHealth.Code != http.StatusNotFound {
+		t.Fatalf("public health status = %d, want 404", publicHealth.Code)
 	}
 
 	const token = "operations-token-value-1234"
@@ -432,8 +483,8 @@ func TestObserveRequestsSamplesOnlySuccessfulAccessLogs(t *testing.T) {
 	}{
 		{name: "successful request dropped", status: http.StatusNoContent, sample: 0, wantDropped: 1},
 		{name: "successful request emitted", status: http.StatusOK, sample: 1_000_000, wantLevel: "INFO", wantEmitted: 1},
-		{name: "client error is never sampled", status: http.StatusBadRequest, sample: 0, wantLevel: "WARN", wantEmitted: 1},
-		{name: "server error is never sampled", status: http.StatusServiceUnavailable, sample: 0, wantLevel: "ERROR", wantEmitted: 1},
+		{name: "client error uses available bounded budget", status: http.StatusBadRequest, sample: 0, wantLevel: "WARN", wantEmitted: 1},
+		{name: "server error uses available bounded budget", status: http.StatusServiceUnavailable, sample: 0, wantLevel: "ERROR", wantEmitted: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var logs bytes.Buffer
@@ -477,6 +528,158 @@ func TestObserveRequestsSamplesOnlySuccessfulAccessLogs(t *testing.T) {
 	}
 }
 
+func TestObserveRequestsBoundsFailureAccessLogsUnderFlood(t *testing.T) {
+	const requests = 1_000
+	var logs bytes.Buffer
+	metrics := &platform.Metrics{}
+	responseStatus := http.StatusUnauthorized
+	handler := observeRequests(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		metrics,
+		1_000_000,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(responseStatus)
+		}),
+	)
+	for index := 0; index < requests; index++ {
+		request := httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil)
+		request.Header.Set(operator.HeaderRequestID, "req-flood-"+strconv.Itoa(index))
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+	}
+
+	emitted := metrics.AccessLogsEmitted.Load()
+	dropped := metrics.AccessLogsDropped.Load()
+	if emitted >= requests/2 || dropped == 0 || emitted+dropped != requests {
+		t.Fatalf("failure access-log budget = emitted:%d dropped:%d requests:%d",
+			emitted, dropped, requests)
+	}
+	responseStatus = http.StatusServiceUnavailable
+	handler.ServeHTTP(
+		httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil),
+	)
+	if metrics.AccessLogsEmitted.Load() != emitted+1 {
+		t.Fatalf("exhausted 4xx budget suppressed independent 5xx log: before=%d after=%d",
+			emitted, metrics.AccessLogsEmitted.Load())
+	}
+	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+	if uint64(len(lines)) != emitted+1 {
+		t.Fatalf("physical log lines=%d, emitted metric=%d", len(lines), metrics.AccessLogsEmitted.Load())
+	}
+}
+
+func TestObserveRequestsBoundsRepeatedSampledSuccess(t *testing.T) {
+	const requests = 1_000
+	var logs bytes.Buffer
+	metrics := &platform.Metrics{}
+	responseStatus := http.StatusOK
+	handler := observeRequests(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		metrics,
+		1_000_000,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(responseStatus)
+		}),
+	)
+	for range requests {
+		request := httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil)
+		// 重复一个已命中确定性采样的攻击者可控 ID；采样决定不能成为无限日志许可。
+		request.Header.Set(operator.HeaderRequestID, "req-replayed-sampled")
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+	}
+
+	emitted := metrics.AccessLogsEmitted.Load()
+	dropped := metrics.AccessLogsDropped.Load()
+	if emitted >= requests/2 || dropped == 0 || emitted+dropped != requests {
+		t.Fatalf("successful access-log budget = emitted:%d dropped:%d requests:%d",
+			emitted, dropped, requests)
+	}
+	responseStatus = http.StatusServiceUnavailable
+	handler.ServeHTTP(
+		httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil),
+	)
+	if metrics.AccessLogsEmitted.Load() != emitted+1 {
+		t.Fatalf("exhausted success budget suppressed independent 5xx log: before=%d after=%d",
+			emitted, metrics.AccessLogsEmitted.Load())
+	}
+	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+	if uint64(len(lines)) != emitted+1 {
+		t.Fatalf("physical log lines=%d, emitted metric=%d", len(lines), metrics.AccessLogsEmitted.Load())
+	}
+}
+
+type blockingAccessLogHandler struct {
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (handler blockingAccessLogHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (handler blockingAccessLogHandler) Handle(context.Context, slog.Record) error {
+	handler.started <- struct{}{}
+	<-handler.release
+	return nil
+}
+
+func (handler blockingAccessLogHandler) WithAttrs([]slog.Attr) slog.Handler { return handler }
+
+func (handler blockingAccessLogHandler) WithGroup(string) slog.Handler { return handler }
+
+func TestObserveRequestsBoundsBlockedAccessLogWrites(t *testing.T) {
+	const expectedMaximumWrites = 4
+	started := make(chan struct{}, expectedMaximumWrites+1)
+	release := make(chan struct{})
+	metrics := &platform.Metrics{}
+	handler := observeRequests(
+		slog.New(blockingAccessLogHandler{started: started, release: release}),
+		metrics,
+		1_000_000,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	var admitted sync.WaitGroup
+	for range expectedMaximumWrites {
+		admitted.Add(1)
+		go func() {
+			defer admitted.Done()
+			handler.ServeHTTP(
+				httptest.NewRecorder(),
+				httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil),
+			)
+		}()
+	}
+	for range expectedMaximumWrites {
+		<-started
+	}
+
+	overflowDone := make(chan struct{})
+	go func() {
+		defer close(overflowDone)
+		handler.ServeHTTP(
+			httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil),
+		)
+	}()
+	select {
+	case <-overflowDone:
+		close(release)
+		admitted.Wait()
+	case <-time.After(250 * time.Millisecond):
+		close(release)
+		admitted.Wait()
+		<-overflowDone
+		t.Fatal("access-log overflow blocked a request instead of dropping the log")
+	}
+	if metrics.AccessLogsDropped.Load() != 1 ||
+		metrics.AccessLogsEmitted.Load() != expectedMaximumWrites {
+		t.Fatalf("blocked access-log metrics = emitted:%d dropped:%d",
+			metrics.AccessLogsEmitted.Load(), metrics.AccessLogsDropped.Load())
+	}
+}
+
 func TestSuccessfulAccessLogSamplingIsDeterministic(t *testing.T) {
 	if shouldEmitSuccessfulAccessLog(0, "client.spin", "req-1") {
 		t.Fatal("zero sample unexpectedly emitted a success")
@@ -504,34 +707,123 @@ func TestSuccessfulAccessLogSamplingIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestObserveRequestsExcludesPublicHealthFromBusinessMetrics(t *testing.T) {
+func TestObserveRequestsTreatsRemovedPublicHealthAsBusinessTraffic(t *testing.T) {
 	metrics := &platform.Metrics{}
 	handler := observeRequests(
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		nil,
 		metrics,
 		1_000_000,
-		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-			writer.WriteHeader(http.StatusOK)
-		}),
+		newPublicHandler(http.NotFoundHandler(), http.NotFoundHandler()),
 	)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
-	if response.Code != http.StatusOK {
-		t.Fatalf("health response status = %d, want 200", response.Code)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("removed public health response status = %d, want 404", response.Code)
 	}
-	if metrics.HTTPRequests.Load() != 0 || metrics.HTTPFailures.Load() != 0 ||
+	if metrics.HTTPRequests.Load() != 1 || metrics.HTTPFailures.Load() != 1 ||
 		metrics.HTTPServerFailures.Load() != 0 || metrics.HTTPActiveRequests.Load() != 0 ||
-		metrics.HTTPRequestDurationCount.Load() != 0 {
+		metrics.HTTPRequestDurationCount.Load() != 1 {
 		t.Fatalf(
-			"health probe polluted business metrics: requests:%d failures:%d server:%d active:%d durations:%d",
+			"removed public health metrics: requests:%d failures:%d server:%d active:%d durations:%d",
 			metrics.HTTPRequests.Load(), metrics.HTTPFailures.Load(), metrics.HTTPServerFailures.Load(),
 			metrics.HTTPActiveRequests.Load(), metrics.HTTPRequestDurationCount.Load(),
 		)
 	}
 }
 
-func TestPublicInFlightGateRejectsWithoutBlockingAndBypassesHealth(t *testing.T) {
+func TestObserveRequestsCountsNonCanonicalHealthTrafficAsBusinessFailure(t *testing.T) {
+	metrics := &platform.Metrics{}
+	handler := observeRequests(
+		nil,
+		metrics,
+		1_000_000,
+		newPublicHandler(http.NotFoundHandler(), http.NotFoundHandler()),
+	)
+	request := httptest.NewRequest(http.MethodPost, "/healthz", strings.NewReader(`{"unexpected":true}`))
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound || !request.Close || metrics.HTTPRequests.Load() != 1 ||
+		metrics.HTTPFailures.Load() != 1 || metrics.HTTPRequestDurationCount.Load() != 1 {
+		t.Fatalf("non-canonical health metrics = status:%d close:%v requests:%d failures:%d durations:%d",
+			response.Code, request.Close, metrics.HTTPRequests.Load(), metrics.HTTPFailures.Load(),
+			metrics.HTTPRequestDurationCount.Load())
+	}
+}
+
+func TestPublicHandlerDoesNotCanonicalizeAttackerPathAndClosesUnknownBody(t *testing.T) {
+	clientCalls := 0
+	handler := newPublicHandler(
+		http.NotFoundHandler(),
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			clientCalls++
+			writer.WriteHeader(http.StatusTeapot)
+		}),
+	)
+	nonCanonical := httptest.NewRequest(http.MethodPost, "/client/../healthz", nil)
+	nonCanonicalRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(nonCanonicalRecorder, nonCanonical)
+	if nonCanonicalRecorder.Code != http.StatusTeapot || clientCalls != 1 {
+		t.Fatalf("attacker path was canonicalized before API validation: status:%d calls:%d location:%q",
+			nonCanonicalRecorder.Code, clientCalls, nonCanonicalRecorder.Header().Get("Location"))
+	}
+
+	unknown := httptest.NewRequest(http.MethodPost, "/unknown", strings.NewReader(`{"unread":true}`))
+	unknownRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unknownRecorder, unknown)
+	if unknownRecorder.Code != http.StatusNotFound || !unknown.Close {
+		t.Fatalf("unknown route = status:%d close:%v body:%s",
+			unknownRecorder.Code, unknown.Close, unknownRecorder.Body.String())
+	}
+}
+
+func TestPublicHandlerRejectsRemovedPublicLivenessAndClosesBodies(t *testing.T) {
+	handler := newPublicHandler(http.NotFoundHandler(), http.NotFoundHandler())
+	tests := []struct {
+		name       string
+		request    *http.Request
+		wantStatus int
+		wantClose  bool
+	}{
+		{
+			name:       "removed canonical probe",
+			request:    httptest.NewRequest(http.MethodGet, "/healthz", nil),
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "post body",
+			request:    httptest.NewRequest(http.MethodPost, "/healthz", strings.NewReader(`{"unexpected":true}`)),
+			wantStatus: http.StatusNotFound,
+			wantClose:  true,
+		},
+		{
+			name:       "query",
+			request:    httptest.NewRequest(http.MethodGet, "/healthz?attacker=1", nil),
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "get body",
+			request:    httptest.NewRequest(http.MethodGet, "/healthz", strings.NewReader(`{"unexpected":true}`)),
+			wantStatus: http.StatusNotFound,
+			wantClose:  true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, test.request)
+			if response.Code != test.wantStatus || test.request.Close != test.wantClose {
+				t.Fatalf("response = status:%d close:%v body:%q, want status:%d close:%v",
+					response.Code, test.request.Close, response.Body.String(), test.wantStatus, test.wantClose)
+			}
+		})
+	}
+}
+
+func TestPublicInFlightGateRejectsWithoutBlockingAndDoesNotReservePublicHealth(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	api := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -544,7 +836,7 @@ func TestPublicInFlightGateRejectsWithoutBlockingAndBypassesHealth(t *testing.T)
 		nil,
 		metrics,
 		1_000_000,
-		newPublicInFlightGate(1, metrics, newPublicHandler(api, api)),
+		newPublicInFlightGate(1, nil, metrics, newPublicHandler(api, api)),
 	)
 
 	firstResponse := httptest.NewRecorder()
@@ -560,8 +852,10 @@ func TestPublicInFlightGateRejectsWithoutBlockingAndBypassesHealth(t *testing.T)
 
 	healthResponse := httptest.NewRecorder()
 	handler.ServeHTTP(healthResponse, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if healthResponse.Code != http.StatusOK {
-		t.Fatalf("health status at capacity = %d, want 200", healthResponse.Code)
+	if healthResponse.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(healthResponse.Body.String(), `"code":"CAPACITY_UNAVAILABLE"`) {
+		t.Fatalf("removed public health capacity response = status:%d body:%s",
+			healthResponse.Code, healthResponse.Body.String())
 	}
 
 	secondResponse := httptest.NewRecorder()
@@ -593,9 +887,9 @@ func TestPublicInFlightGateRejectsWithoutBlockingAndBypassesHealth(t *testing.T)
 	if firstResponse.Code != http.StatusNoContent {
 		t.Fatalf("admitted response = %d, want 204", firstResponse.Code)
 	}
-	if metrics.HTTPRequests.Load() != 2 || metrics.HTTPFailures.Load() != 1 ||
-		metrics.HTTPServerFailures.Load() != 1 || metrics.CapacityRejected.Load() != 1 ||
-		metrics.RateLimited.Load() != 0 || metrics.HTTPRequestDurationCount.Load() != 2 {
+	if metrics.HTTPRequests.Load() != 3 || metrics.HTTPFailures.Load() != 2 ||
+		metrics.HTTPServerFailures.Load() != 2 || metrics.CapacityRejected.Load() != 2 ||
+		metrics.RateLimited.Load() != 0 || metrics.HTTPRequestDurationCount.Load() != 3 {
 		t.Fatalf(
 			"capacity metrics = requests:%d failures:%d server:%d capacity:%d limited:%d durations:%d",
 			metrics.HTTPRequests.Load(),
@@ -608,6 +902,35 @@ func TestPublicInFlightGateRejectsWithoutBlockingAndBypassesHealth(t *testing.T)
 	}
 }
 
+func TestPublicInFlightGateDoesNotBypassNonCanonicalHealthOrDrainRejectedBody(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	api := http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		writer.WriteHeader(http.StatusNoContent)
+	})
+	handler := newPublicInFlightGate(1, nil, &platform.Metrics{}, newPublicHandler(api, api))
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil))
+	}()
+	<-started
+
+	nonCanonical := httptest.NewRequest(http.MethodPost, "/healthz", strings.NewReader(`{"unexpected":true}`))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, nonCanonical)
+	if recorder.Code != http.StatusServiceUnavailable || !nonCanonical.Close ||
+		!strings.Contains(recorder.Body.String(), `"code":"CAPACITY_UNAVAILABLE"`) {
+		t.Fatalf("non-canonical health = status:%d close:%v body:%s",
+			recorder.Code, nonCanonical.Close, recorder.Body.String())
+	}
+
+	close(release)
+	<-firstDone
+}
+
 func TestPublicInFlightGateAppliesCorsToClientCapacityResponseOnlyForAllowedOrigin(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -618,7 +941,7 @@ func TestPublicInFlightGateAppliesCorsToClientCapacityResponseOnlyForAllowedOrig
 	})
 	allowedOrigins := map[string]struct{}{"https://casino.example": {}}
 	handler := newPublicInFlightGate(
-		1, &platform.Metrics{}, newPublicHandler(api, api), allowedOrigins,
+		1, nil, &platform.Metrics{}, newPublicHandler(api, api), allowedOrigins,
 	)
 	firstDone := make(chan struct{})
 	go func() {
@@ -656,6 +979,129 @@ func TestPublicInFlightGateAppliesCorsToClientCapacityResponseOnlyForAllowedOrig
 
 	close(release)
 	<-firstDone
+}
+
+func TestPublicInFlightGateDoesNotTrustSpoofableRecoveryPath(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	api := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		started <- request.URL.Path
+		<-release
+		writer.WriteHeader(http.StatusNoContent)
+	})
+	metrics := &platform.Metrics{}
+	handler := newPublicInFlightGate(1, nil, metrics, newPublicHandler(api, api))
+
+	start := func(path string) <-chan *httptest.ResponseRecorder {
+		done := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
+			done <- response
+		}()
+		return done
+	}
+
+	spinDone := start("/client/v1/spins")
+	if path := <-started; path != "/client/v1/spins" {
+		t.Fatalf("first admitted path = %q", path)
+	}
+
+	launch := httptest.NewRecorder()
+	handler.ServeHTTP(launch, httptest.NewRequest(http.MethodPost, "/operator/v1/launches", nil))
+	if launch.Code != http.StatusServiceUnavailable {
+		t.Fatalf("second anonymous request exceeded global capacity: %d", launch.Code)
+	}
+
+	forgedACKDone := start("/client/v1/results/acknowledgements")
+	forgedAdmitted := false
+	var forgedACK *httptest.ResponseRecorder
+	select {
+	case forgedACK = <-forgedACKDone:
+	case <-started:
+		forgedAdmitted = true
+	}
+
+	close(release)
+	if response := <-spinDone; response.Code != http.StatusNoContent {
+		t.Fatalf("spin response = %d", response.Code)
+	}
+	if forgedAdmitted {
+		forgedACK = <-forgedACKDone
+	}
+	if forgedAdmitted || forgedACK.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unverified ACK path received extra capacity: admitted:%v status:%d",
+			forgedAdmitted, forgedACK.Code)
+	}
+	if metrics.CapacityRejected.Load() != 2 {
+		t.Fatalf("capacity metrics = total:%d", metrics.CapacityRejected.Load())
+	}
+}
+
+func TestPublicPreAuthenticationRateUsesOneGlobalBucket(t *testing.T) {
+	metrics := &platform.Metrics{}
+	handler := newPublicInFlightGate(
+		2,
+		platform.NewLimiter(1, 1, 1, time.Minute),
+		metrics,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusNoContent)
+		}),
+	)
+	first := httptest.NewRequest(http.MethodPost, "/client/v1/spins", nil)
+	first.RemoteAddr = "192.0.2.1:1234"
+	first.Header.Set("X-Forwarded-For", "198.51.100.1")
+	firstResponse := httptest.NewRecorder()
+	handler.ServeHTTP(firstResponse, first)
+	if firstResponse.Code != http.StatusNoContent {
+		t.Fatalf("first response = %d", firstResponse.Code)
+	}
+
+	second := httptest.NewRequest(http.MethodPost, "/operator/v1/launches", nil)
+	second.RemoteAddr = "192.0.2.2:5678"
+	second.Header.Set("X-Forwarded-For", "198.51.100.2")
+	second.Header.Set(operator.HeaderOperatorID, "rotated-operator")
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, second)
+	if secondResponse.Code != http.StatusServiceUnavailable ||
+		secondResponse.Header().Get("Retry-After") != "1" ||
+		!strings.Contains(secondResponse.Body.String(), `"code":"CAPACITY_UNAVAILABLE"`) {
+		t.Fatalf("global pre-auth response = %d %v %s",
+			secondResponse.Code, secondResponse.Header(), secondResponse.Body.String())
+	}
+	if metrics.PreAuthCapacityRejected.Load() != 1 || metrics.CapacityRejected.Load() != 0 ||
+		metrics.RateLimited.Load() != 0 {
+		t.Fatalf("pre-auth metrics = preauth:%d inflight:%d rate:%d",
+			metrics.PreAuthCapacityRejected.Load(), metrics.CapacityRejected.Load(), metrics.RateLimited.Load())
+	}
+	recovery := httptest.NewRequest(http.MethodPost, rgsapi.ClientRoundStatusPath, nil)
+	recovery.RemoteAddr = "192.0.2.3:9999"
+	recovery.Header.Set("X-Forwarded-For", "198.51.100.3")
+	recoveryResponse := httptest.NewRecorder()
+	handler.ServeHTTP(recoveryResponse, recovery)
+	if recoveryResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unverified recovery path bypassed anonymous pre-auth capacity: %d", recoveryResponse.Code)
+	}
+}
+
+func TestPublicPreAuthenticationRejectionClosesUnreadRequestBody(t *testing.T) {
+	handler := newPublicInFlightGate(
+		2,
+		platform.NewLimiter(1, 1, 1, time.Minute),
+		&platform.Metrics{},
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusNoContent)
+		}),
+	)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil))
+	rejected := httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, strings.NewReader(`{"unread":true}`))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, rejected)
+
+	if recorder.Code != http.StatusServiceUnavailable || !rejected.Close {
+		t.Fatalf("pre-auth response = status:%d close:%v body:%s", recorder.Code, rejected.Close, recorder.Body.String())
+	}
 }
 
 type shutdownOrderRecorder struct {

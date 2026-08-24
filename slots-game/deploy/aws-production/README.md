@@ -1,9 +1,9 @@
 # AWS 正式交付契约
 
 本目录把通用 Helm Chart 收敛为 AWS 正式环境的可执行发布边界，它不提交 Secret。应用专属的
-VPC、EKS、RDS、Valkey、ECR、Secrets Manager 元数据、S3、CloudFront、KMS、IAM、AMP、CloudWatch
-和备份资源由 `infra/terraform` 创建；企业平台仓库只提供账号、部署身份、state、DNS/证书/WAF
-与组织级安全能力。
+VPC、EKS、RDS、Valkey、ECR、Secrets Manager 元数据、S3、CloudFront、KMS、IAM、AMP、CloudWatch、
+API regional WAF 和备份资源由 `infra/terraform` 创建；企业平台仓库提供账号、部署身份、state、
+DNS/证书、CloudFront global WAF 与组织级安全能力。
 
 ```text
 AWS 正式交付
@@ -13,7 +13,7 @@ AWS 正式交付
 │   └── 私有 S3 + OAC + release ID 不可变前缀
 ├── RGS 在线面
 │   ├── Route 53
-│   ├── AWS WAF + 公网 ALB
+│   ├── Shield Standard 服务基线 + Regional AWS WAF + 公网 ALB
 │   │   ├── ACM 证书在 ALB 终止 TLS
 │   │   ├── HTTP 80 强制重定向到 HTTPS 443
 │   │   └── ip target 转发到 EKS RGS Service
@@ -39,8 +39,25 @@ AWS 正式交付
   Kubernetes 1.30 kubeconform strict 校验。
 - `verify-rendered-contract.rb`：解析实际 YAML，证明 EKS 不包含 Web、Ingress 使用 ALB、TLS 不引用
   Kubernetes Secret、WAF/ACM/安全组/三子网/访问日志已声明、API NetworkPolicy 只接受受控 CIDR。
+- `verify-live-platform-prerequisites.sh`：在受保护私网执行器只读回查实际 Regional/CloudFront WAF、
+  日志、CloudWatch 告警、CloudFront distribution/OAC、EKS add-on/Pod Identity 与应用依赖；其中
+  vpc-cni 必须是 delivery 固定版本、`ACTIVE`、实际 `enableNetworkPolicy=true`，且 aws-node 精确绑定专用
+  Pod Identity；CloudWatch Observability 同样必须固定版本、`ACTIVE`、实际启用 container logs/增强
+  Container Insights，并证明 cloudwatch-agent 与 fluent-bit DaemonSet 在全部节点就绪。仓库测试只运行
+  本地 AWS/kubectl 夹具，不能作为真实账号验收结果。
+- `verify-waf-rollout-evidence.rb`：只在 staged rule 为 Block 时读取精确 S3 object version，核对
+  SHA-256、SSE-KMS/Object Lock、当前规则 configuration hash、源码 commit、七天观测、双人审批与
+  回滚 schema；晋级/配置变化要求未过期批准，稳态只重验不可变历史绑定，不输出证据正文。
+- `verify-live-alb-edge.sh`：Helm 后有界重试实际 ALB reconcile，精确回查子网/SG/WAF、TLS 1.2/1.3
+  policy 与 ACM 证书、`waf.fail_open.enabled=false`、HTTP 仅默认 301、HTTPS 默认 404 加唯一
+  host + Prefix `/` forward rule、Terraform delivery 批准的 access log bucket/环境 prefix、8081 health，
+  并要求当前 release 的每个 Ready RGS Pod IP 都成为健康
+  8080 target；旧 target 仅允许 draining。本地 mock 不等于真实 AWS 验收。
 
 ## 必须保持的边界
+
+ALB access log bucket 与环境 prefix 是企业落地区受保护输入，必须由 delivery 精确传递到 Ingress 和实际
+ALB 属性；legacy ALB access logs 使用 AWS 支持的 SSE-S3 边界，本仓库不会错误要求该日志目标使用 KMS。
 
 1. `web.enabled=false`。Web 制品发布到私有 S3，CloudFront 只能通过 OAC 读取，并由 release ID
    路由隔离版本；EKS 不创建 Web Deployment、Service、Ingress、HPA、PDB 或 ServiceAccount。
@@ -49,12 +66,19 @@ AWS 正式交付
    Policy 必须使用同一 digest 提取的 CSP，并与 bundle 的 `CONFIGURATION_SHA256` 一起归档。
 2. `ingress.className=alb` 且 `ingress.tlsSecretEnabled=false`。公网证书来自 ALB 所在区域的 ACM；
    示例中的两个 TLS Secret 名称只为兼容通用 schema，渲染结果不得引用它们。
-3. ALB 必须绑定 WAFv2、ACM、三个明确子网和专用安全组，使用 `ip` target，并在公网 `8080`
-   探测 `/healthz`。依赖就绪由 Pod 对私有 `8081/readyz` 的 Kubernetes readiness 控制；ALB 不得
-   探测只存在于运维监听器且要求 Bearer 的 `/readyz`。同时必须开启
-   删除保护、无效请求头丢弃和 S3 访问日志。
-4. `networkPolicy.ingressController.mode=cidrs`。示例三个 `/24` 只表示经审批的入口子网；正式值必须
-   按实际 ALB/EKS 数据路径逐个替换并叠加 security group，禁止使用整个 VPC 或 `0.0.0.0/0`。
+3. ALB 必须绑定 WAFv2、ACM、三个明确子网和专用安全组并使用 `ip` target。业务转发仍走 Pod
+   `8080`，target health 以数值端口 `8081` 直连私有 operations `/healthz`；公网 `/healthz` 由
+   Regional WAF 精确返回 404，应用公网 handler 也不提供该路由。依赖就绪由 Pod 对私有
+   `8081/readyz` 的 Kubernetes readiness 控制；ALB 不得用需要 Bearer 的 `/readyz` 作为 target
+   health。ALB SG 必须分别只向 VPC 数据路径开放 TCP 8080 与 TCP 8081 egress，不得用端口范围或公网
+   egress 替代；443 listener 固定批准的 TLS 1.2/1.3 policy 与 regional ACM ARN。同时必须开启
+   删除保护、无效请求头丢弃、`strictest` desync mitigation、30 秒 idle timeout、300 秒 client
+   keepalive 和 S3 访问日志。动态 API 的权威入口就是公网 ALB；CloudFront 不代理 API，因此不得用
+   “只允许 CloudFront IP/共享 Header”把 ALB 误封。若未来引入 CloudFront 或 Global Accelerator，
+   必须在同一变更交付可达的上游、健康检查、源站访问和回滚方案。
+4. `networkPolicy.ingressController.mode=cidrs`。示例三个 `/24` 只表示经审批的 ALB 入口子网；正式值
+   必须按实际 ALB/EKS 数据路径逐个替换并叠加 security group，只对这些来源开放业务 8080 与健康
+   检查 8081，禁止使用整个 VPC 或 `0.0.0.0/0`。
 5. RDS、Valkey、钱包和审计出口只填写平台确认的 `/24` 或更窄 IPv4 网段。RDS/Valkey 故障转移
    需覆盖全部数据子网，同时由各自 security group 只接受 RGS 节点路径；Worker 不获得 Valkey 出口。
 6. 所有镜像使用 ECR 返回的 `sha256` manifest digest。示例的重复数字摘要不得进入变更单。
@@ -83,6 +107,18 @@ AWS 正式交付
     恢复两阶段切到 target Secret，写完成标记后才删除持久锁。`resume` 只允许在 Terraform entry 前、
     最新 delivery 仍等于旧 `steady` 时中止静默；进入维护或发布 target `steady` 后只能继续
     `maintenance-complete`。
+12. WAF `body-size-limit` 因合法 JSON 协议上界已证明而直接 Block；8 KiB aggregate header、所有
+    source-IP rate rule 和 AWS Managed Rules 的环境示例都必须从 Count 开始。launch/spin 的低阈值
+    只以 POST 精确匹配 `/operator/v1/launches` 与 `/client/v1/spins`，不得扩大到 status/result/ACK；后者
+    受覆盖 GET/OPTIONS/POST 的高阈值 `public-api-rate-limit` 粗保护，OPTIONS 不能形成分布式旁路。WAF 429 固定返回
+    `Retry-After: 30`、`X-RGS-Edge-Error: RATE_LIMITED`、`Access-Control-Allow-Origin: *` 并 expose 前两者，
+    不返回敏感 body 或 credentials。每条规则切 Block 前都要绑定
+    `s3://bucket/key?versionId=...#sha256` 不可变观测证据，覆盖 NAT/CGNAT、正常与营销高峰、合法流量存活率、误杀、
+    规则版本、owner 和回滚条件。IP 规则绝不替代认证后 operator/session + Valkey 精确准入。
+13. WAF 日志只保留 BLOCK/COUNT，并脱敏完整 query string 及 Authorization/Cookie/签名/nonce/幂等
+    Header。正式协议不使用 query；保留 URI path/method 供处置，禁止攻击者借 query 注入秘密或扩大
+    日志泄漏与摄取成本。Regional 与 CloudFront WAF 的 Web ACL/全部规则必须关闭 sampled requests；日志
+    redaction 不保护 `GetSampledRequests` 数据面，不能用采样请求调优敏感协议。
 
 ## 验证与发布
 
@@ -125,8 +161,13 @@ deploy/aws-production/verify-live-platform-prerequisites.sh \
   /secure/change/slots-delivery.json slots-production
 ```
 
-脚本会拒绝 add-on 版本契约不完整、kubectl 指向错误集群、集群 API 不可达、Controller/Autoscaler/Agent
-身份或状态不匹配、Cluster Autoscaler 实际内联策略缺少 `autoscaling:DescribeTags`、
+脚本会拒绝 Regional WAF 的规则集合、低阈值 scope、Count→Block 阶段、8 KiB oversize、日志脱敏/
+成本过滤、CloudWatch 告警与 delivery 不一致，也会核对 CloudFront global WAF 的阶段、静态限额及
+私有 S3 OAC 绑定，并精确回读源站 bucket 的四项 Public Access Block 与 bucket policy；唯一读取 `Allow` 必须是当前 CloudFront distribution，另保留全主体明文传输 `Deny`。它还会拒绝 add-on 版本契约不完整、kubectl 指向错误集群、集群 API 不可达、Controller/Autoscaler/Agent
+身份或状态不匹配；AWS Load Balancer Controller、Cluster Autoscaler、External Secrets controller
+和 kube-prometheus-stack operator 四个关键 Deployment 还必须期望副本至少为一、controller 已观测
+最新 generation、updated/ready/available 全部等于期望值且 unavailable 为零。Cluster Autoscaler
+实际内联策略缺少 `autoscaling:DescribeTags`、
 metrics-server 不是声明的 EKS add-on 版本或未达到 ACTIVE、
 `v1beta1.metrics.k8s.io` APIService 未达到 `Available=True`、固定 release 的 kube-state-metrics 未就绪、
 CRD/`alb` IngressClass 缺失、ExternalSecret 未同步、目标 Secret 缺 `username/password` 等必需 key，或

@@ -714,6 +714,64 @@
       ],
       "title": "正在触发的 RGS 告警",
       "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rgs-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "intents/s",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"}
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 21},
+      "id": 10,
+      "options": {
+        "legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(rgs_economic_admission_allowed_total[5m]))",
+          "legendFormat": "economic allowed",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(rgs_economic_admission_limited_total[5m]))",
+          "legendFormat": "economic limited",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(rgs_economic_admission_errors_total[5m]))",
+          "legendFormat": "economic admission errors",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "EDoS 钱包成本准入",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

@@ -897,9 +897,63 @@ func TestValidateBindingMapsBlockedSessionToManualReview(t *testing.T) {
 		DefinitionHash: fixture.request.DefinitionHash, Currency: fixture.request.Currency,
 		Status: rgs.SessionBlocked, ExpiresAt: time.Now().Add(time.Hour),
 	}
-	if err := validateBinding(session, fixture.request); !errors.Is(err, rgs.ErrManualReview) {
+	if err := validateBinding(session, fixture.request, time.Now().UTC()); !errors.Is(err, rgs.ErrManualReview) {
 		t.Fatalf("validateBinding() error = %v, want ErrManualReview", err)
 	}
+}
+
+func TestPrepareRoundExpiryUsesLockedDatabaseClock(t *testing.T) {
+	database, mock := newRepositoryMock(t)
+	repository, err := NewRepository(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := newRoundRowFixture(t, rgs.RoundPrepared)
+	podNow := time.Now().UTC()
+	// 模拟该 Pod 慢两小时：按进程时钟会错误接受会话，但同一事务返回的
+	// PostgreSQL 时钟已经越过会话到期点。
+	expiresAt := podNow.Add(time.Hour)
+	databaseNow := podNow.Add(2 * time.Hour)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta(prepareSessionLockSQL)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"operator_id", "session_id", "player_id", "wallet_account_id",
+			"wallet_session_id", "game_id", "definition_version", "definition_hash",
+			"currency", "currency_exponent", "jurisdiction", "status",
+			"balance_snapshot_minor", "sequence", "revision", "feature_state",
+			"pending_round_id", "expires_at", "integrity_quarantined_at",
+			"result_delivery_pending", "database_now",
+		}).AddRow(
+			fixture.request.OperatorID, fixture.request.SessionID, "player-a", "wallet-account-a",
+			"wallet-session-a", fixture.request.GameID, fixture.request.DefinitionVersion,
+			fixture.request.DefinitionHash, fixture.request.Currency, 2, "MT", string(rgs.SessionActive),
+			10_000, fixture.sequence-1, int64(fixture.request.StartRevision), fixture.inputFeatureJSON,
+			nil, expiresAt, nil, false, databaseNow,
+		))
+	mock.ExpectQuery(regexp.QuoteMeta(roundSelect+`
+		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3`)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
+		WillReturnRows(sqlmock.NewRows(roundRowColumns))
+	mock.ExpectRollback()
+
+	prepareCalled := false
+	_, prepared, err := repository.PrepareRound(
+		context.Background(), fixture.request, fixture.fingerprint,
+		rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
+			"https://wallet.test.invalid/database-clock-ledger",
+		)),
+		func(rgs.Session) (rgs.SpinResult, error) {
+			prepareCalled = true
+			return fixture.result, nil
+		},
+	)
+	if !errors.Is(err, rgs.ErrSessionExpired) || prepared || prepareCalled {
+		t.Fatalf("PrepareRound() = prepared:%v callback:%v error:%v, want database-clock expiry",
+			prepared, prepareCalled, err)
+	}
+	assertRepositoryExpectations(t, mock)
 }
 
 func newRoundRowFixture(t *testing.T, status rgs.RoundStatus) roundRowFixture {

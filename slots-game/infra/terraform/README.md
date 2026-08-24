@@ -18,6 +18,7 @@ infra/terraform
 │   ├── rds
 │   ├── cache
 │   ├── secrets
+│   ├── api-edge-security
 │   ├── web-edge
 │   ├── observability
 │   ├── backup
@@ -53,7 +54,8 @@ infra/terraform
   API operator 私钥。共享准入固定创建 A/B 两个 Valkey ACL 用户并始终保留在同一 user group；两个密码、
   HMAC key 与显式根证书通过 Terraform 1.15 ephemeral 变量进入 provider write-only 参数，不写入普通
   tfvars、plan 或 state。活动槽位的用户名和密码共同写入版本化 Secrets Manager Secret。两个用户的
-  ACL 都只允许 `rgs:shared-admission:v2:*`、`EVAL/EVALSHA`、脚本内部 `GET/PTTL/SET`、readiness
+  ACL 都只允许 `rgs:shared-admission:v2:*`、`EVAL/EVALSHA`、脚本内部
+  `GET/PTTL/SET/TIME/MSET/PEXPIRE`、readiness
   `PING` 与客户端认证/命名握手；v1 的 `TIME/HMGET/HSET/PEXPIRE`、命令类别和其他 keyspace 均不授权。
 - EKS API 默认只开放私网端点，业务 Pod 不获得 AWS IAM 权限；平台插件通过 Pod Identity 获取最小权限。
   RDS 与 Valkey 的入口引用 EKS 托管节点实际持有的集群安全组，再由 Chart 的默认拒绝 NetworkPolicy
@@ -74,11 +76,72 @@ Organizations、Control Tower、SCP、集中 CloudTrail、Security Hub、GuardDu
 应用发布角色还需对 delivery 指向的 Cluster Autoscaler role 具有只读 `iam:GetRolePolicy`，
 以让实时门禁确认实际策略包含 `autoscaling:DescribeTags`；该权限不允许写 IAM。
 
+### API 与 Web 边缘防护合同
+
+动态 API 的权威模型是 `Route 53 → internet-facing ALB + REGIONAL WAF → EKS`。应用仓库自管
+`modules/api-edge-security`，把 Web ACL ARN 输出给 ALB Ingress 精确绑定，并创建 KMS 加密的
+`aws-waf-logs-*` 日志组、BLOCK/COUNT-only 过滤、完整 query string 与敏感 Header 脱敏以及
+Allowed/Blocked 请求量告警。正式 RGS 协议不使用 query；URI path/method 仍保留用于事件处置。
+Shield Standard 是 ALB 的 AWS 服务基线；Terraform 源码、本地 plan 或夹具都不能证明真实账号已经
+历经攻击验证。CloudFront 仅承载静态 Web，使用企业 global WAF 和 private S3 OAC，不是 API 代理。
+
+Regional WAF 还精确 Block 公网 `/healthz` 并返回 404。AWS Load Balancer Controller 的 `ip` target
+业务端口仍是 8080，但 ALB target health 以数值端口 8081 直连 Pod 私有 operations `/healthz`；该
+探针不经过 WAF。Helm 渲染门禁同时要求受控 ALB 来源的 NetworkPolicy 只开放 8080/8081，避免为了
+健康检查把整个 operations 面或 VPC 暴露到公网；ALB SG 另有两条精确 TCP 8080/8081 VPC egress，禁止
+用端口范围或公网 egress 代替。发布后门禁还把当前 Helm release 的 Ready Pod IP 逐一绑定健康 target，
+并核对 TLS policy、regional ACM 证书和 host + Prefix `/` listener rule。
+
+8 KiB body rule 固定 `oversize_handling=MATCH` 并直接 Block，因为公开 API 全部合法 JSON 的最坏转义
+展开已经证明小于该窗口，应用也严格固定同一 8192 字节上限。aggregate headers 虽同样在 8 KiB
+窗口观测，但最大合法 token 加固定头、Host/User-Agent、ALB tracing/XFF 尚无充分余量证明，所以
+示例只能 Count；Go 的 16 KiB Header 上限是源站最终兜底，不是把 WAF 提前 Block 合法化的证据。
+
+所有 per-IP rate rule 也默认 Count。`launch-rate-limit` 与 `spin-rate-limit` 只以 POST 精确匹配新意图
+路径；`public-api-rate-limit` 用更高阈值覆盖 `/client/` 与 `/operator/` 的 GET/OPTIONS/POST，
+因此 status/result/ACK 不受低阈值连带阻断，也没有绕过总保护。Block 429 使用无敏感正文的固定
+`RATE_LIMITED` marker、`Retry-After: 30` 与 ACAO/Expose headers，避免跨域客户端把 edge 拒绝误判为未知网络
+错误。大型 operator 出口和移动 CGNAT 会共享 IP，示例阈值不是商用认证值；
+认证后的 operator/session 本机桶与 Valkey 共享准入才是精确业务限额。
+
+header、rate 和 managed rules 从 Count 切到 Block 都必须在对应 rollout 输入中绑定
+`s3://bucket/key?versionId=<version>#<64位小写sha256>` 不可变证据引用。证据需要记录环境、Web ACL、rule group/version、
+阈值/scope、完整观测窗口、正常与营销高峰、NAT/CGNAT、误杀率、合法流量存活率、源站余量、批准人
+和回滚条件；任一规则版本、阈值或 scope 改变都重新触发当前审批门禁。四套环境 example 明确使用
+`observation-pending`，不能被解读为“已调优”。`verify-live-platform-prerequisites.sh` 在真实发布身份下
+只读回查实际 WAF、日志、告警、CloudFront/OAC；仓库的 mock 负测只证明门禁逻辑，不证明 AWS 状态。
+
+Block evidence 不是一个只过正则的字符串。应用发布身份需要对批准的 evidence bucket 具有最小
+`s3:GetObjectVersion`、`s3:GetObjectRetention`（以及 SSE-KMS 对应 decrypt）权限；
+`verify-waf-rollout-evidence.rb` 读取 URI 指定的
+精确 version、限制 256 KiB、核对文件 SHA-256，再验证 `slots-game/waf-rollout-evidence/v1`。对象必须
+绑定 environment、Web ACL、rule names、当前阈值/scope 的 configuration hash 和受保护部署源码 SHA，
+并包含七天观测指标、规则专属评审、双人审批、有效期和回滚 runbook。Count→Block、configuration 或
+证据引用变化必须在 apply 前绑定当前 infrastructure source SHA 且审批未过期；稳态 Block 继续回读相同
+version/hash/config/schema，但历史批准到期不是日常 infra/app 发布的租约。任何读取、摘要、schema 或合同
+漂移仍失败关闭；对象内容不会写入发布日志。机器门禁只验证绑定与完整性，真实性仍由
+安全/业务审批和原始遥测归档承担。Regional/CloudFront Web ACL 与所有规则同时关闭 sampled requests，
+因为 logging redaction 不会脱敏 `GetSampledRequests`。
+
+Route 53 hosted zone/alias、DNSSEC、注册商保护、CloudFront global WAF 和 Shield Advanced/DRT 属于
+企业落地区。Global Accelerator、CloudFront API proxy、Shield Advanced 均为可选接口，启用时必须
+同时交付上游可达性/健康、源站访问迁移、成本审批与真实回读，不能只修改 ALB 安全组或在文档中宣称
+已经启用。
+
 集群 add-on 的交付边界由
 [`contracts/cluster-addons-interface.v1.yaml`](contracts/cluster-addons-interface.v1.yaml) 固定。Terraform
 基础设施 `apply` 的输出始终包含 `foundation_apply_is_application_ready=false`；AWS Load Balancer
 Controller、Cluster Autoscaler、External Secrets、Prometheus Operator 与 Prometheus Agent 未在 VPC 私网执行器上通过实时门禁前，
 禁止进入应用 Helm 发布。
+应用发布还必须回读 vpc-cni 的精确 EKS add-on 版本与 `ACTIVE` 状态，确认实际
+`enableNetworkPolicy=true` 且 kube-system/aws-node 使用 Terraform 输出的专用 Pod Identity；否则 Chart
+中的 NetworkPolicy 只是一份未证明生效的声明，门禁必须失败关闭。
+同一 delivery 还固定 `amazon-cloudwatch-observability` 的版本、container logs/增强 Container Insights
+配置和 cloudwatch-agent Pod Identity；应用发布前后必须回读 add-on `ACTIVE`，并确认 cloudwatch-agent
+与 fluent-bit DaemonSet 在所有调度节点就绪。仓库 mock 仅验证失败闭合逻辑，真实账号状态仍是外部门禁。
+企业落地区还必须提供经批准的 ALB access log bucket 与每环境独占 prefix；Terraform delivery、Helm
+渲染和发布后 ALB 属性必须三方精确一致。legacy ALB access logs 的服务端加密边界是 SSE-S3，不得将
+WAF 证据或 Terraform delivery 的 SSE-KMS 要求误套到该 bucket。
 
 `platform_addon_versions` 中除 `prometheus-agent` 外的四个值是 Helm Chart 精确版本，`prometheus-agent` 是
 Prometheus Agent CR 的 `spec.version`（配置中不带 `v`，实时门禁按 `v<SemVer>` 校验）。这些版本
@@ -174,15 +237,36 @@ SNS topic，缺少指标按不违规处理。`ReplicationLag` 只对副本发布
 CloudWatch 的 EVAL 指标是时间窗平均值，不能代替客户端 p95/p99 和 slow log。告警也不会自动扩容；
 当前非 cluster-mode 架构的主写压力需要扩节点规格或经单独数据分片设计评审，不能靠增加只读副本消除。
 
+共享准入桶和钱包经济成本桶均带 TTL，因此 ElastiCache 默认的 `volatile-lru` 不适合本系统：内存压力
+逐出一个桶后，下一次请求会把它当作首次访问并恢复为满额，攻击者可把容量攻击转换成 EDoS
+fail-open。模块按获批 `engine_version` 的 major 精确选择 `valkey7`、`valkey8` 或 `valkey9` parameter
+group family，并强制绑定 `maxmemory-policy=noeviction`。达到内存上限时写脚本报错，API 对尚未持久化的
+新经济意图返回 `503 ADMISSION_UNAVAILABLE`，不得回退到本机放行；已持久化轮次查询、ACK 与 Worker
+恢复仍绕过此准入。`DatabaseCapacityUsageCountedForEvictPercentage` 告警必须在 OOM 前触发扩容/降流，
+`Evictions` 仍保持零阈值告警，用于发现 parameter group 漂移。上线门禁还必须回读 replication group
+实际绑定的 parameter group 及其 `maxmemory-policy`，不能只审 Terraform 源码。依据见 AWS
+[逐出策略说明](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/Durability.Options.html) 与
+[parameter group family](https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/ParameterGroups.Engine.html)。
+
 ## 共享准入 v1 到 v2 一次性维护迁移
 
-当前 ACL 只授权 v2 的 string token-bucket keyspace 和 `GET/PTTL/SET`。它与旧镜像使用的 v1 hash
+当前 ACL 只授权 v2 的 string token-bucket keyspace 和普通桶所需的 `GET/PTTL/SET`，以及经济双桶
+使用的 `TIME/MSET/PEXPIRE`。经济脚本用服务端时间回填、单条 MSET 同时更新 operator/backend，过期只
+负责垃圾回收而不参与正确性；启动 canary 会真实执行整条命令链，防止只有 PING 权限时假就绪。它与旧镜像使用的 v1 hash
 keyspace 及 `TIME/HMGET/HSET/PEXPIRE` 不滚动兼容：先改 ACL 会使仍在运行的旧 Pod 失败，先发布新镜像
 也会被旧 ACL 拒绝。因此该协议迁移禁止作为普通 Helm rolling upgrade，且禁止临时放宽到双 keyspace 或
 命令类别来制造“零停机”。为让维护事实进入同一个保存 plan 的机器校验，唯一支持的升级路径复用
 `hmac-maintenance` 入口：API 零副本证据、HMAC 更新、Secret 版本精确加二以及 A/B 两个 ACL 的 v1→v2
 更新必须在同一计划完成。两个 Valkey 密码、活动槽、网络和容量不得改变；普通 `steady` 或
 `password-rotation` plan 中出现 ACL 变更会失败关闭。
+
+已经运行 v2 string keyspace、但 ACL 只有 `GET/PTTL/SET` 的版本不走上述 HMAC/停机迁移。它的
+v2-basic → `v2-economic` 变化只追加 `TIME/MSET/PEXPIRE`，旧 runtime 的权限是严格子集。受保护 plan
+校验器只在 `steady` 状态接受 A/B 两个用户同时从唯一 v2-basic 前态变为唯一 v2-economic 后态，并要求
+每个用户只有 `access_string` 改变；partial、混合/未知前态、额外权限、密码版本或 HMAC 变化全部拒绝。
+发布顺序固定为：先 apply 该 additive ACL 基础设施 plan，生成含
+`acl_command_profile=v2-economic` 的新 delivery，再发布经济准入 runtime；应用门禁拒绝缺失/旧 profile，
+进程启动 canary 最后验证实际命令权限。该兼容扩权不能倒序，也不能被描述为 v1/v2 keyspace 迁移。
 
 `valkey_rotation_contract` 把该状态机固定为 `acl_schema_transition=maintenance-quiesced`，同时声明
 `acl_schema_rolling_compatible=false`、`acl_schema_dual_permissions_allowed=false` 和完整迁移顺序；

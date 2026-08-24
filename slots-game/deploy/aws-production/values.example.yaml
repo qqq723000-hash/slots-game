@@ -16,6 +16,9 @@ rgs:
   publicBaseURL: https://rgs.production.example.com
   allowedOrigins:
     - https://slots.production.example.com
+  runtime:
+    # 与 ALB WAF 固定的 8 KiB body 检查窗口保持一致；不得放宽造成边缘检查盲区。
+    maxRequestBytes: 8192
   sharedAdmission:
     endpointURL: rediss://slots-production.example.cache.amazonaws.com:6379
 
@@ -28,6 +31,8 @@ ingress:
   # 公网证书由 ACM 绑定到 ALB HTTPS 监听器；Kubernetes TLS Secret 必须关闭。
   tlsSecretEnabled: false
   apiHost: rgs.production.example.com
+  apiHealthCheckPath: /healthz
+  apiHealthCheckPort: 8081
   webHost: slots.production.example.com
   # 通用 Chart 模式仍要求名称；关闭 tlsSecretEnabled 后它们不得出现在任何渲染资源中。
   apiTLSSecretName: unused-by-aws-alb
@@ -41,16 +46,17 @@ ingress:
     alb.ingress.kubernetes.io/ip-address-type: ipv4
     alb.ingress.kubernetes.io/backend-protocol: HTTP
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
     alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-southeast-1:123456789012:certificate/00000000-0000-4000-8000-000000000000
     alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:ap-southeast-1:123456789012:regional/webacl/slots-production/00000000-0000-4000-8000-000000000000
     alb.ingress.kubernetes.io/subnets: subnet-00000000000000001,subnet-00000000000000002,subnet-00000000000000003
     alb.ingress.kubernetes.io/security-groups: sg-00000000000000001
     alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
-    # ALB 只连接公网 8080；私有 8081 的 /readyz 由 Kubernetes readiness 与监控认证访问。
+    # target-type=ip 时业务流量仍走 8080，但健康检查直接访问 Pod 私有 operations 8081。
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/healthcheck-port: "8081"
     alb.ingress.kubernetes.io/success-codes: "200"
-    alb.ingress.kubernetes.io/load-balancer-attributes: deletion_protection.enabled=true,routing.http.drop_invalid_header_fields.enabled=true,routing.http2.enabled=true,access_logs.s3.enabled=true,access_logs.s3.bucket=company-alb-access-logs,access_logs.s3.prefix=slots-production
+    alb.ingress.kubernetes.io/load-balancer-attributes: deletion_protection.enabled=true,waf.fail_open.enabled=false,routing.http.drop_invalid_header_fields.enabled=true,routing.http.desync_mitigation_mode=strictest,routing.http2.enabled=true,idle_timeout.timeout_seconds=30,client_keep_alive.seconds=300,access_logs.s3.enabled=true,access_logs.s3.bucket=company-alb-access-logs,access_logs.s3.prefix=slots-production
     alb.ingress.kubernetes.io/tags: Environment=production,Service=slots-rgs
   webAnnotations: {}
 

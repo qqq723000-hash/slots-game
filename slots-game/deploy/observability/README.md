@@ -10,9 +10,10 @@ Prometheus Agent 或 ADOT、AMP、CloudWatch Logs、AMG、公司告警路由及�
 
 - `RGS_OPERATIONS_HTTP_ADDR` 是独立运维监听器。生产应绑定 Pod/容器私网地址，且只让
   Prometheus、编排器健康探针和值班跳板访问；公网 ingress 不得转发 `/readyz` 或
-  `/metrics`。Prometheus 通过 `authorization.credentials_file` 读取与 RGS 相同的运维
-  Bearer secret，值不进入配置或环境变量。`/healthz` 不代表业务可接流，接流必须以
-  运维端口的 `/readyz` 为准。
+  `/metrics`、`/healthz`。运维端口的 `/healthz` 无需 Bearer 且只证明进程存活；
+  `/readyz` 与 `/metrics` 才要求认证。Prometheus 通过 `authorization.credentials_file`
+  读取与 RGS 相同的运维 Bearer secret，值不进入配置或环境变量。接流必须以运维端口的
+  `/readyz` 为准。
 - Compose 默认只把 Prometheus/Grafana 端口绑定到 `127.0.0.1`。生产 Grafana 仍需置于
   SSO/MFA/RBAC 代理之后；不得通过修改 `OBSERVABILITY_BIND_ADDRESS=0.0.0.0` 直接暴露。
 - 仓库不包含任何可变镜像 tag。`PROMETHEUS_IMAGE`、`GRAFANA_IMAGE`、`VECTOR_IMAGE`
@@ -35,6 +36,10 @@ Prometheus Agent 或 ADOT、AMP、CloudWatch Logs、AMG、公司告警路由及�
   可能夹带 DSN、端点或业务标识的 `error`/stack 字段也会删除。这是纵深防御，不是允许
   应用记录请求头、请求体、钱包响应或密钥的理由。容器节点上的原始 stderr 仅可按短期
   故障缓冲处理，不能直接当作长期合规归档。
+- nonce replay 等权威安全事件计数不得采样；重复物理 WARN 可以用固定非阻塞预算有界输出。
+  无标签 `rgs_security_logs_dropped_total` 只表示重复安全日志被省略，不表示安全事件丢失；
+  `RGSSecurityLogDropsSustained` 会对连续五分钟的预算耗尽告警，并要求联合权威事件计数、WAF
+  与认证失败排查，禁止为追求重复日志完整而阻塞业务请求线程。
 - Prometheus 指标/记录规则只有固定标签；禁止新增 operator、player、session、round、
   request、transaction ID 等高基数标签。可用性比例只使用 `rgs_http_server_failures_total`
   （5xx）；`rgs_http_failures_total` 保留全部 4xx/5xx 作为诊断信号，认证攻击或限流不会
@@ -104,8 +109,9 @@ docker compose --file deploy/observability/compose.yml up -d
 
 发布后至少验证：
 
-1. 公网业务端口的 `/readyz` 与 `/metrics` 返回 404；独立运维端口缺少/错误 Bearer
-   返回 401，携带 secret 文件中的精确 Bearer 后返回 200；
+1. 公网业务端口的 `/healthz`、`/readyz` 与 `/metrics` 均返回 404；独立运维端口
+   `/healthz` 无 Bearer 返回 200，`/readyz` 与 `/metrics` 缺少/错误 Bearer 返回 401，
+   携带 secret 文件中的精确 Bearer 后返回 200；
 2. Prometheus `up{job="rgs"}`、`rgs_ready`、`up{job="prometheus"}` 与
    `up{job="vector"}` 为 1，Vector 的 `vector_component_errors_total` 无新增且
    `vector_buffer_size_bytes{component_id="approved_https_archive"}` 未接近约 256 MiB，规则组无

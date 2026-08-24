@@ -319,11 +319,11 @@ docker run --detach --rm --name "$container_name" "${runtime_security[@]}" \
   -e RGS_OPERATIONS_BEARER_TOKEN_FILE=/run/rgs-production-smoke/operations.token \
   "$runtime_image" >/dev/null
 
-public_health_status='000'
+operations_health_status='000'
 for _attempt in $(seq 1 30); do
-  public_health_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-    http://127.0.0.1:18180/healthz || true)"
-  [ "$public_health_status" = 200 ] && break
+  operations_health_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    http://127.0.0.1:18181/healthz || true)"
+  [ "$operations_health_status" = 200 ] && break
   if [ "$(docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null || true)" != true ]; then
     printf '%s\n' 'production smoke: rgs-server exited before liveness succeeded' >&2
     docker logs "$container_name" >"$fixture_root/runtime-startup-failure.raw.log" 2>&1 || true
@@ -332,7 +332,7 @@ for _attempt in $(seq 1 30); do
   fi
   sleep 1
 done
-test "$public_health_status" = 200
+test "$operations_health_status" = 200
 
 operations_token=''
 IFS= read -r operations_token <"$fixture_dir/operations.token"
@@ -354,7 +354,7 @@ expect_status() {
   }
 }
 
-expect_status 200 http://127.0.0.1:18180/healthz
+expect_status 404 http://127.0.0.1:18180/healthz
 expect_status 404 http://127.0.0.1:18180/readyz
 expect_status 404 http://127.0.0.1:18180/metrics
 expect_status 200 http://127.0.0.1:18181/healthz

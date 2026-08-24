@@ -16,6 +16,14 @@ info:
     exchange and replaced only while the prior token and durable session remain
     valid. Signed endpoints do not accept query strings.
 
+    Every public POST body has an 8192-byte wire limit, including JSON
+    whitespace and escapes; the launch-code exchange has a narrower 4096-byte
+    limit. These bounds cover the maximum schema-valid values even when every
+    ASCII key and value character uses a `\uXXXX` escape, and align the RGS with
+    the complete ALB/WAF request-body inspection window. Larger bodies are not
+    part of this API contract and receive 413 before authentication or business
+    side effects.
+
     This document is not evidence of regulatory approval or certification. A
     real-money deployment additionally requires the applicable licences,
     independent RNG and mathematics certification, an independent security
@@ -29,7 +37,7 @@ tags:
   - name: Client
     description: Browser/client launch, round and recovery integration.
   - name: Operations
-    description: Restrict readiness and metrics at the network edge.
+    description: Restrict liveness, readiness, and metrics to the private operations listener.
 
 paths:
   /operator/v1/launches:
@@ -496,10 +504,8 @@ paths:
 
   /healthz:
     servers:
-      - url: https://rgs.example.invalid
-        description: Public liveness compatibility endpoint.
       - url: http://127.0.0.1:8081
-        description: Protected operations listener.
+        description: Private operations listener only; the public RGS listener returns 404.
     get:
       tags: [Operations]
       operationId: getLiveness
@@ -856,7 +862,7 @@ components:
           schema:
             type: string
     OperationsBadRequest:
-      description: A read-only liveness, readiness, or metrics GET declared a request body; the connection is closed without reading it.
+      description: A private operations liveness, readiness, or metrics GET declared a request body; the connection is closed without reading it.
       headers:
         Cache-Control:
           required: true

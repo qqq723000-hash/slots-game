@@ -135,6 +135,34 @@ require_fixed 'service-probe: unexpected HTTP status 503' "$cluster_image_contra
 require_fixed 'prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893' "$cluster_prometheus_rule_contract"
 require_fixed 'check rules /rules.yaml' "$cluster_prometheus_rule_contract"
 
+require_cancellable_conformance_concurrency() {
+  workflow=$1
+  expected_group=$2
+  label=$3
+  concurrency_block=$(awk '
+    $0 == "concurrency:" { inside = 1 }
+    inside { print }
+    inside && $0 == "  cancel-in-progress: true" { exit }
+  ' "$workflow")
+  expected_block=$(printf '%s\n' \
+    'concurrency:' \
+    "  group: $expected_group" \
+    '  cancel-in-progress: true')
+  test "$concurrency_block" = "$expected_block" ||
+    fail "$label concurrency must cancel the stale run for the exact workflow and ref"
+  test "$(grep -F -x -c 'concurrency:' "$workflow" || true)" -eq 1 ||
+    fail "$label workflow must define exactly one workflow-level concurrency lock"
+}
+
+require_cancellable_conformance_concurrency \
+  "$backend_workflow" \
+  'backend-conformance-${{ github.workflow }}-${{ github.ref }}' \
+  'backend conformance'
+require_cancellable_conformance_concurrency \
+  "$frontend_workflow" \
+  'frontend-conformance-${{ github.workflow }}-${{ github.ref }}' \
+  'frontend conformance'
+
 # 工具版本和多架构清单 digest 均为经复核的发布输入；标签用于审计可读性，digest 才是执行身份。
 require_line 'GOLANG_IMAGE=docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36' "$tool_file"
 require_line 'NODE_IMAGE=docker.io/library/node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94' "$tool_file"
@@ -475,6 +503,20 @@ if printf '%s\n' "$release_trigger" | grep -E '^[[:space:]]+(push|pull_request|s
   fail 'release signing must not run from an automatic trigger'
 fi
 
+release_concurrency=$(awk '
+  $0 == "concurrency:" { inside = 1 }
+  inside { print }
+  inside && $0 == "  cancel-in-progress: false" { exit }
+' "$release_workflow")
+expected_release_concurrency=$(printf '%s\n' \
+  'concurrency:' \
+  '  group: ${{ format('\''slots-supply-chain-release-{0}-{1}'\'', inputs.image_repository, inputs.image_tag) }}' \
+  '  cancel-in-progress: false')
+test "$release_concurrency" = "$expected_release_concurrency" ||
+  fail 'release concurrency must serialize the exact image repository and tag without cancelling an in-flight release'
+test "$(grep -F -x -c 'concurrency:' "$release_workflow" || true)" -eq 1 ||
+  fail 'release workflow must define exactly one workflow-level concurrency lock'
+
 extract_release_job() {
   job_name=$1
   awk -v expected="  $job_name:" '
@@ -727,6 +769,9 @@ for required_control in \
   '$configuration.scanType == "ENHANCED"' \
   '($configuration.rules // []) | length' \
   '.scanFrequency == "CONTINUOUS_SCAN"' \
+  'if aws ecr describe-images --repository-name "$repository_name" --image-ids "imageTag=$SUPPLY_CHAIN_IMAGE_TAG" --output json >"$final_tag_probe" 2>"$final_tag_error"; then' \
+  'ImageNotFoundException' \
+  'unable to prove that the final release tag is absent' \
   'subject-digest: ${{ steps.publish.outputs.digest }}' \
   'sbom-path: ${{ env.BUNDLE_DOWNLOAD_DIR }}/release-image.spdx.json' \
   '"$COSIGN_IMAGE" sign --yes "$image_reference"' \
@@ -806,8 +851,10 @@ offline_verify_line=$(grep -n -F '      - name: Re-verify artifact channel, sour
 conversion_line=$(grep -n -F '"$SKOPEO_IMAGE" copy' "$release_workflow" | tail -n 1 | cut -d: -f1)
 aws_identity_line=$(grep -n -F "uses: aws-actions/configure-aws-credentials@$configure_aws_sha" "$release_workflow" | cut -d: -f1)
 aws_account_line=$(grep -n -F 'actual_account=$(aws sts get-caller-identity --query Account --output text)' "$release_workflow" | cut -d: -f1)
+final_tag_preflight_line=$(grep -n -F 'if aws ecr describe-images --repository-name "$repository_name" --image-ids "imageTag=$SUPPLY_CHAIN_IMAGE_TAG" --output json >"$final_tag_probe" 2>"$final_tag_error"; then' "$release_workflow" | cut -d: -f1)
 login_line=$(grep -n -F "uses: aws-actions/amazon-ecr-login@$ecr_login_sha" "$release_workflow" | cut -d: -f1)
 load_line=$(grep -n -F 'docker load --input "$PUBLISH_WORK_DIR/release-image.docker.tar"' "$release_workflow" | cut -d: -f1)
+candidate_push_line=$(grep -n -F 'docker push "$candidate_ref"' "$release_workflow" | cut -d: -f1)
 attest_line=$(grep -n -F "uses: actions/attest@$attest_sha # v4.2.2" "$release_workflow" | head -n 1 | cut -d: -f1)
 sign_line=$(grep -n -F '"$COSIGN_IMAGE" sign --yes "$image_reference"' "$release_workflow" | cut -d: -f1)
 promote_line=$(grep -n -F 'docker push "$final_ref"' "$release_workflow" | cut -d: -f1)
@@ -818,8 +865,10 @@ test "$rgs_checkout_line" -lt "$rgs_tree_line" && test "$rgs_tree_line" -lt "$rg
   fail 'isolated RGS context/build/scan/bundle order was weakened'
 test "$download_line" -lt "$offline_verify_line" && test "$offline_verify_line" -le "$conversion_line" && \
   test "$conversion_line" -lt "$aws_identity_line" && test "$aws_identity_line" -lt "$aws_account_line" && \
-  test "$aws_account_line" -lt "$login_line" && \
-  test "$login_line" -lt "$load_line" && test "$load_line" -lt "$attest_line" && \
+  test "$aws_account_line" -lt "$final_tag_preflight_line" && \
+  test "$final_tag_preflight_line" -lt "$login_line" && \
+  test "$login_line" -lt "$load_line" && test "$load_line" -lt "$candidate_push_line" && \
+  test "$candidate_push_line" -lt "$attest_line" && \
   test "$attest_line" -lt "$sign_line" && test "$sign_line" -lt "$promote_line" || \
   fail 'publish/sign stage order was weakened'
 

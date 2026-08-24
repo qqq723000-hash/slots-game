@@ -192,6 +192,8 @@ spec:
               value: /run/rgs/operations/operations.token
             - name: RGS_SHUTDOWN_TIMEOUT
               value: {{ printf "%ds" (int .Values.rgs.shutdownTimeoutSeconds) | quote }}
+            - name: RGS_MAX_REQUEST_BYTES
+              value: {{ .Values.rgs.runtime.maxRequestBytes | quote }}
             - name: RGS_DB_MAX_OPEN_CONNS
               value: {{ .Values.rgs.runtime.databaseMaxOpenConnections | quote }}
             - name: RGS_DB_MAX_IDLE_CONNS
@@ -200,8 +202,14 @@ spec:
               value: {{ .Values.rgs.runtime.databaseCriticalReserveConnections | quote }}
             - name: RGS_MAX_IN_FLIGHT_REQUESTS
               value: {{ .Values.rgs.runtime.maxInFlightRequests | quote }}
+            - name: RGS_MAX_CRYPTO_IN_FLIGHT
+              value: {{ .Values.rgs.runtime.maxCryptoInFlight | quote }}
             - name: RGS_MAX_CONNECTIONS_PER_LISTENER
               value: {{ .Values.rgs.runtime.maxConnectionsPerListener | quote }}
+            - name: RGS_PREAUTH_RATE_PER_SECOND
+              value: {{ .Values.rgs.runtime.preAuthRatePerSecond | quote }}
+            - name: RGS_PREAUTH_RATE_BURST
+              value: {{ .Values.rgs.runtime.preAuthRateBurst | quote }}
             - name: RGS_RATE_PER_SECOND
               value: {{ .Values.rgs.runtime.ratePerSecondPerPod | quote }}
             - name: RGS_RATE_BURST
@@ -227,6 +235,14 @@ spec:
               value: {{ .Values.rgs.sharedAdmission.ratePerSecond | quote }}
             - name: RGS_SHARED_ADMISSION_RATE_BURST
               value: {{ .Values.rgs.sharedAdmission.rateBurst | quote }}
+            - name: RGS_ECONOMIC_OPERATOR_RATE_PER_SECOND
+              value: {{ .Values.rgs.sharedAdmission.economic.operatorRatePerSecond | quote }}
+            - name: RGS_ECONOMIC_OPERATOR_RATE_BURST
+              value: {{ .Values.rgs.sharedAdmission.economic.operatorRateBurst | quote }}
+            - name: RGS_ECONOMIC_BACKEND_RATE_PER_SECOND
+              value: {{ .Values.rgs.sharedAdmission.economic.backendRatePerSecond | quote }}
+            - name: RGS_ECONOMIC_BACKEND_RATE_BURST
+              value: {{ .Values.rgs.sharedAdmission.economic.backendRateBurst | quote }}
             - name: RGS_WALLET_TIMEOUT
               value: {{ printf "%ds" (int .Values.rgs.runtime.walletTimeoutSeconds) | quote }}
             - name: RGS_WALLET_FAST_PATH_TIMEOUT
@@ -264,7 +280,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /healthz
-              port: http
+              port: operations
               scheme: HTTP
             periodSeconds: 10
             timeoutSeconds: 3

@@ -34,6 +34,22 @@ resource "terraform_data" "production_guardrails" {
 
   lifecycle {
     precondition {
+      condition = can(regex(
+        "^arn:(aws|aws-us-gov):kms:${var.aws_region}:${var.expected_account_id}:key/[0-9a-f-]{36}$",
+        var.waf_rollout_evidence_kms_key_arn
+      ))
+      error_message = "WAF evidence KMS key 必须来自当前受保护账号与区域。"
+    }
+
+    precondition {
+      condition = can(regex(
+        "^arn:(aws|aws-us-gov):acm:${var.aws_region}:${var.expected_account_id}:certificate/[0-9a-f-]+$",
+        var.regional_acm_certificate_arn
+      ))
+      error_message = "API ALB certificate 必须来自当前受保护账号与区域。"
+    }
+
+    precondition {
       condition     = startswith(var.cluster_autoscaler_image_tag, "v${var.kubernetes_version}.")
       error_message = "Cluster Autoscaler 镜像主次版本必须与 EKS Kubernetes 版本一致。"
     }
@@ -125,6 +141,25 @@ module "observability" {
   depends_on = [module.eks]
 }
 
+module "api_edge_security" {
+  source = "../../modules/api-edge-security"
+
+  name_prefix              = local.name_prefix
+  kms_key_arn              = module.kms.key_arns["observability"]
+  alert_topic_arn          = module.observability.alert_topic_arn
+  log_retention_days       = var.log_retention_days
+  rate_limits              = var.api_waf_rate_limits
+  rate_rule_rollouts       = var.api_waf_rate_rule_rollouts
+  header_size_rule_rollout = var.api_waf_header_size_rule_rollout
+  alarm_thresholds         = var.api_waf_alarm_thresholds
+  managed_rule_rollout     = var.api_waf_managed_rule_rollout
+  managed_rule_versions    = var.api_waf_managed_rule_versions
+  evidence_kms_key_arn     = var.waf_rollout_evidence_kms_key_arn
+  tags                     = local.tags
+
+  depends_on = [module.observability]
+}
+
 module "rds" {
   source = "../../modules/rds"
 
@@ -204,16 +239,22 @@ module "secrets" {
 module "web_edge" {
   source = "../../modules/web-edge"
 
-  name_prefix             = local.name_prefix
-  bucket_name             = var.web_bucket_name
-  log_bucket_name         = var.cloudfront_log_bucket_name
-  domain_name             = var.web_domain_name
-  acm_certificate_arn     = var.cloudfront_acm_certificate_arn
-  waf_web_acl_arn         = var.cloudfront_waf_web_acl_arn
-  content_security_policy = var.web_content_security_policy
-  price_class             = var.cloudfront_price_class
-  log_retention_days      = var.cloudfront_log_retention_days
-  tags                    = local.tags
+  name_prefix               = local.name_prefix
+  bucket_name               = var.web_bucket_name
+  log_bucket_name           = var.cloudfront_log_bucket_name
+  domain_name               = var.web_domain_name
+  acm_certificate_arn       = var.cloudfront_acm_certificate_arn
+  waf_web_acl_arn           = var.cloudfront_waf_web_acl_arn
+  waf_rate_limit_per_minute = var.cloudfront_waf_rate_limit_per_minute
+  waf_rate_rule_rollout     = var.cloudfront_waf_rate_rule_rollout
+  waf_log_group_name        = var.cloudfront_waf_log_group_name
+  waf_managed_rule_rollout  = var.cloudfront_waf_managed_rule_rollout
+  waf_managed_rule_versions = var.cloudfront_waf_managed_rule_versions
+  waf_evidence_kms_key_arn  = var.waf_rollout_evidence_kms_key_arn
+  content_security_policy   = var.web_content_security_policy
+  price_class               = var.cloudfront_price_class
+  log_retention_days        = var.cloudfront_log_retention_days
+  tags                      = local.tags
 
   depends_on = [terraform_data.production_guardrails]
 }

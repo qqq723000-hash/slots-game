@@ -37,6 +37,7 @@ datasource_file="$script_dir/grafana/provisioning/datasources/prometheus.yml"
 provider_file="$script_dir/grafana/provisioning/dashboards/rgs.yml"
 dashboard_file="$script_dir/grafana/dashboards/rgs-overview.json"
 vector_file="$script_dir/vector.yaml"
+metrics_source="$repository_root/server/internal/platform/metrics.go"
 retention_file="$script_dir/retention-policy.example.yml"
 readme_file="$script_dir/README.md"
 runtime_smoke_file="$script_dir/ci-runtime-smoke.sh"
@@ -81,6 +82,7 @@ for required_file in \
   "$provider_file" \
   "$dashboard_file" \
   "$vector_file" \
+  "$metrics_source" \
   "$retention_file" \
   "$readme_file" \
   "$runtime_smoke_file" \
@@ -113,6 +115,15 @@ ruby -e '
   abort "Grafana must remain on the internal observability network" unless
     services.dig("grafana", "networks") == ["observability"]
 ' "$compose_file" || fail 'compose network isolation contract failed'
+ruby -ryaml -e '
+  document = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  rules = document.fetch("groups").flat_map { |group| group.fetch("rules") }
+  alert = rules.find { |rule| rule["alert"] == "RGSSecurityLogDropsSustained" }
+  abort "missing security-log drop alert" unless alert
+  abort "security-log drop alert semantics changed" unless
+    alert.fetch("expr") == "sum by (job, environment) (increase(rgs_security_logs_dropped_total[5m])) > 0" &&
+      alert.fetch("for") == "5m" && alert.dig("labels", "severity") == "warning"
+' "$rules_file" || fail 'security-log drop alert contract failed'
 
 command -v python3 >/dev/null 2>&1 || fail 'python3 is required to parse Grafana JSON'
 python3 -m json.tool "$dashboard_file" >/dev/null || fail 'Grafana dashboard JSON parsing failed'
@@ -190,6 +201,8 @@ for metric in \
   rgs_auth_failures_total \
   rgs_rate_limited_total \
   rgs_capacity_rejected_total \
+  rgs_cryptographic_capacity_rejected_total \
+  rgs_security_logs_dropped_total \
   rgs_http_active_connections \
   rgs_http_connection_limit \
   rgs_rounds_prepared_total \
@@ -218,6 +231,8 @@ for alert_name in \
   RGSNotReady \
   RGSCapacityRejectionsSustained \
   RGSConnectionCapacityNearLimit \
+  RGSCryptographicCapacitySaturated \
+  RGSSecurityLogDropsSustained \
   RGSHTTPFailureRatioHigh \
   RGSRequestLatencyP99High \
   RGSDatabasePoolSaturated \
@@ -242,6 +257,8 @@ done
 require_fixed '__RUNBOOK_BASE_URL__' "$rules_file"
 require_fixed 'unless on (job, instance) rgs_ready{job="rgs"}' "$rules_file"
 require_fixed 'increase(rgs_capacity_rejected_total[5m])' "$rules_file"
+require_fixed 'sum by (job, environment) (increase(rgs_security_logs_dropped_total[5m])) > 0' "$rules_file"
+require_fixed '{"rgs_security_logs_dropped_total",' "$metrics_source"
 require_fixed 'rgs_http_active_connections / clamp_min(rgs_http_connection_limit, 1)' "$rules_file"
 require_fixed '214748390' "$rules_file"
 require_fixed 'uid: rgs-prometheus' "$datasource_file"
@@ -298,6 +315,16 @@ require_fixed 'release gate accepted an untrusted promtool source' "$rendered_te
 require_fixed 'incompatible PostgreSQL TLS algorithm was accepted' "$rendered_test_file"
 require_fixed 'RGS_CI_RUNTIME_FIXTURE_PROFILE=development' "$runtime_smoke_file"
 require_fixed 'RGS_CI_RUNTIME_FIXTURE_PROFILE=production' "$production_smoke_file"
+require_fixed 'http://127.0.0.1:18081/healthz || true' "$runtime_smoke_file"
+require_fixed 'expect_status 404 http://127.0.0.1:18080/healthz' "$runtime_smoke_file"
+require_fixed 'expect_status 200 http://127.0.0.1:18081/healthz' "$runtime_smoke_file"
+require_fixed 'http://127.0.0.1:18181/healthz || true' "$production_smoke_file"
+require_fixed 'expect_status 404 http://127.0.0.1:18180/healthz' "$production_smoke_file"
+require_fixed 'expect_status 200 http://127.0.0.1:18181/healthz' "$production_smoke_file"
+if grep -F 'expect_status 200 http://127.0.0.1:18080/healthz' "$runtime_smoke_file" >/dev/null \
+    || grep -F 'expect_status 200 http://127.0.0.1:18180/healthz' "$production_smoke_file" >/dev/null; then
+  fail 'runtime smoke must not restore public RGS liveness'
+fi
 require_fixed 'CI_ONLY_NOT_RELEASE_EVIDENCE' "$production_smoke_file"
 require_fixed 'RGS_ENVIRONMENT=production' "$production_smoke_file"
 require_fixed 'sslmode=verify-full' "$production_smoke_file"
@@ -530,6 +557,8 @@ if [ -n "$rendered_dir" ]; then
     ]
     required_alerts = %w[
       RGSInstanceDown RGSNotReady RGSCapacityRejectionsSustained RGSConnectionCapacityNearLimit
+      RGSCryptographicCapacitySaturated RGSSecurityLogDropsSustained
+      RGSEconomicAdmissionLimitedSustained RGSEconomicAdmissionErrors
       RGSHTTPFailureRatioHigh
       RGSRequestLatencyP99High RGSDatabasePoolSaturated RGSWalletUnknownOutcome
       RGSRoundManualReviewRequired RGSIntegrityQuarantine RGSOutboxDeliveryDeferred
@@ -538,6 +567,15 @@ if [ -n "$rendered_dir" ]; then
       VectorTelemetryUnavailable VectorLogPipelineErrors VectorLogEventsDiscarded
       VectorLogBufferNearCapacity VectorLogDeliveryStalled
     ]
+    security_log_drop = groups.flat_map { |group| group.fetch("rules") }.find do |rule|
+      rule["alert"] == "RGSSecurityLogDropsSustained"
+    end
+    abort "rendered security-log drop alert semantics changed" unless
+      security_log_drop &&
+      security_log_drop.fetch("expr") ==
+        "sum by (job, environment) (increase(rgs_security_logs_dropped_total[5m])) > 0" &&
+      security_log_drop.fetch("for") == "5m" &&
+      security_log_drop.dig("labels", "severity") == "warning"
     abort "rendered bundle removed required recording rules" unless (required_recordings - recording_names).empty?
     abort "rendered bundle removed required alerts" unless (required_alerts - alert_names).empty?
 
@@ -548,7 +586,10 @@ if [ -n "$rendered_dir" ]; then
     expressions = panels.flat_map do |panel|
       Array(panel["targets"]).map { |target_config| target_config["expr"] if target_config.is_a?(Hash) }.compact
     end
-    required_dashboard_signals = required_recordings + %w[rgs_ready rgs_capacity_rejected_total]
+    required_dashboard_signals = required_recordings + %w[
+      rgs_ready rgs_capacity_rejected_total rgs_economic_admission_allowed_total
+      rgs_economic_admission_limited_total rgs_economic_admission_errors_total
+    ]
     abort "rendered dashboard removed required release signals" unless required_dashboard_signals.all? do |signal|
       expressions.any? { |expression| expression.is_a?(String) && expression.include?(signal) }
     end

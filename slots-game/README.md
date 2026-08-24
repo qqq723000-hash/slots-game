@@ -1,4 +1,4 @@
-# Iron Colossus 商用交付源码
+# Iron Colossus 生产级工程交付候选
 
 本仓库交付 Go RGS 后端、PostgreSQL 迁移器、TypeScript/PixiJS Web、生产容器、Helm Chart、
 可观测性规则与供应链门禁。浏览器只是表现层；会话、余额、RNG、轮次、派彩、特性状态、幂等与
@@ -29,6 +29,7 @@ AWS 是本仓库唯一正式生产目标。macOS Docker Compose 只保留为开�
 - [AWS 正式生产运维](docs/aws-production-operations.md)
 - [通用 Kubernetes 多副本契约](docs/cluster-runtime-contract.md)
 - [高并发性能与数据生命周期契约](docs/performance-optimization-contract.md)
+- [DDoS 威胁模型、分层防护与演练边界](docs/ddos-threat-model.md)
 - [通用 Helm 应用交付](deploy/cluster-production/README.md)
 
 ## 交付边界
@@ -38,14 +39,19 @@ AWS 是本仓库唯一正式生产目标。macOS Docker Compose 只保留为开�
 | RGS、迁移器、Web 源码与测试 | 已实现 | 应用团队维护并通过受保护门禁 |
 | OCI 构建、摘要部署、SBOM、来源证明、签名契约 | 已实现 | 发布平台绑定 ECR 与 AWS/GitHub OIDC |
 | RGS/Web 通用 Kubernetes Chart、HPA、PDB、NetworkPolicy、监控规则 | 已实现 | 平台团队提供目标集群并验证渲染结果 |
-| 应用专属 AWS VPC、EKS、RDS、Valkey、ECR、S3/CloudFront、IAM/KMS、监控与备份 IaC | 已实现 | 受保护 AWS 工作流评审并应用保存的 plan；目标账号仍需实时验收 |
-| AWS Organizations/账号工厂、state/部署身份、DNS/证书/WAF、组织级审计与安全账号 | 不在应用仓库的创建边界 | 企业落地区先提供并验收 |
+| 应用专属 AWS VPC、EKS、RDS、Valkey、ECR、S3/CloudFront、Regional WAF、IAM/KMS、监控与备份 IaC | 已实现 | 受保护 AWS 工作流评审并应用保存的 plan；目标账号仍需实时验收 |
+| AWS Organizations/账号工厂、state/部署身份、DNS/ACM 证书、可选 Shield Advanced、组织级审计与安全账号 | 不在应用仓库的创建边界 | 企业落地区先提供并验收 |
+| Web 运行素材完整性与权属分类门禁 | 已实现；部分素材的仓库内权属证据未验证 | 权利主体提供可审计授权或自主替换，并以仓库外逐文件哈希审批放行 |
 | 正式钱包、运营商入口、审计接收端 | 仅定义协议契约 | 运营商集成团队提供并完成一致性验收 |
 | 正式 Secret 值、私钥与告警接收凭据 | Git 中禁止保存 | 安全与平台团队在目标账号受控注入并轮换 |
 | `local-operator` | 仅本机验收工具 | 正式环境禁止部署或依赖 |
 
 “仓库检查通过”只证明源码和交付契约成立，不等于某个 AWS 账号已经完成部署。正式上线必须同时
 保存基础设施变更、Helm 渲染、镜像摘要、Secret 版本、告警演练和恢复演练证据。
+
+仓库当前没有根级源码 `LICENSE`，不能把代码可见误解为已经授予复制、再分发或商业使用许可。
+游戏素材的详细边界见 [Web 素材权属与发布门禁](web/ASSETS.md)；缺少仓库内权属证据的素材必须
+在取得可审计授权或完成自主替换后才能对外宣称可商业分发或全部原创。
 
 ## 源码目录
 
@@ -65,7 +71,8 @@ AWS 是本仓库唯一正式生产目标。macOS Docker Compose 只保留为开�
 
 正式发布必须由受保护流水线和独立审批驱动，不得从开发者电脑直接上传生产制品或长期凭据。
 
-1. 企业落地区先提供账号、state/部署身份、DNS/证书/WAF 和组织级安全能力。
+1. 企业落地区先提供账号、state/部署身份、DNS/ACM 证书、CloudFront global WAF 和组织级安全能力；
+   应用 API Regional WAF 由本仓库 IaC 创建并在目标账号回读验收。
 2. 受保护基础设施工作流评审并应用 `infra/terraform` 的保存 plan，生成不含秘密的应用交接对象；实时 add-on 和外部系统验收不得省略。
 3. 受保护供应链流水线构建、扫描、签名并推送不可变镜像；AWS 应用流水线使用 GitHub Actions
    OIDC 换取短期角色，重新验证获批 digest 后部署，不在部署阶段按 tag 重建制品。

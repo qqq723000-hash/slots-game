@@ -13,8 +13,8 @@ plan/apply、云资源清单与验收证据证明。
 
 - Web 使用私有 Amazon S3 作为源站，通过 CloudFront Origin Access Control（OAC）读取；发布内容
   按不可变 `release ID` 隔离，禁止把 S3 bucket 设为公开网站。
-- API 使用 Route 53、AWS WAF、Application Load Balancer 和 Amazon EKS；AWS Load Balancer
-  Controller 将 Kubernetes Ingress 映射为 ALB。
+- API 使用 Route 53、仓库 Terraform 自管的 Regional AWS WAF、internet-facing Application Load
+  Balancer 和 Amazon EKS；AWS Load Balancer Controller 将 Kubernetes Ingress 映射为 ALB。
 - 同一 `rgs-server` 制品以 API 和 Worker 两种显式角色部署：API 承担会话、RNG、轮次、首次钱包
   命令和派彩；Worker 承担钱包未知结果恢复、审计发件箱投递和凭据清理。两类角色共享 PostgreSQL
   权威事务模型并可独立扩容，但不能为了“微服务数量”拆散一次经济事务。
@@ -37,8 +37,9 @@ plan/apply、云资源清单与验收证据证明。
 
 ## 2. 生产架构树
 
-下树中的“应用专属基础设施”由本仓库 `infra/terraform` 交付；账号工厂、state/部署身份、
-DNS/证书/WAF 和组织级安全能力由公司落地区提供。仓库没有假装任何 AWS 账号已经执行这些源码。
+下树中的“应用专属基础设施”由本仓库 `infra/terraform` 交付，其中包括 API Regional WAF；账号工厂、
+state/部署身份、Route 53/ACM、静态 Web 的 CloudFront global WAF、可选 Shield Advanced/DRT 和组织级
+安全能力由公司落地区提供。仓库没有假装任何 AWS 账号已经执行这些源码。
 
 ```text
 AWS Organizations
@@ -61,14 +62,17 @@ AWS Organizations
         │   ├── Route 53 公共托管区与健康检查
         │   ├── AWS Certificate Manager 证书
         │   ├── CloudFront Web 分发
-        │   │   ├── AWS WAF Web ACL：托管规则、正文上限、IP/路径速率防护
+        │   │   ├── 企业 global AWS WAF：managed/rate 初始 Count，按证据分阶段 Block
         │   │   ├── OAC → 私有 S3 Web bucket
         │   │   ├── release router：把同一浏览器固定到不可变 release ID
         │   │   └── 访问日志 → 日志归档边界
-        │   └── API 域名 → AWS WAF → 公网 ALB
-        │       ├── 传输层/IP/路径速率防护与请求大小限制
-        │       ├── ACM TLS、仅 HTTPS listener、受控安全组
-        │       └── IP target → EKS RGS Pod:8080
+        │   └── API 域名 → 仓库自管 Regional AWS WAF → 公网 ALB
+        │       ├── body 8 KiB 直接 Block；header/managed/per-IP rate 初始 Count
+        │       ├── 公网 /healthz 精确 Block；ALB target health 直连 Pod:8081/healthz
+        │       ├── launch/spin 低阈值只计精确 POST；高阈值覆盖 GET/OPTIONS/POST，预检无旁路
+        │       ├── 429 返回浏览器可读 Retry-After:30 + RATE_LIMITED edge marker
+        │       ├── regional ACM + 固定 TLS 1.2/1.3 policy、仅 HTTPS listener、受控安全组
+        │       └── IP target → 业务 Pod:8080；健康检查 → 私有 operations Pod:8081
         │
         ├── 正式运营商控制面（公司外部服务，非本 Chart）
         │   ├── 企业 SSO/MFA → RBAC/ABAC → 管理操作审计
@@ -92,8 +96,8 @@ AWS Organizations
         │   │   │   └── CloudWatch Observability EKS add-on
         │   │   └── slots-production 命名空间
         │   │       ├── rgs-server API Deployment（默认 3 个暖副本，跨区）
-        │   │       │   ├── 公共 Service:8080，仅接受 ALB 控制器入口
-        │   │       │   ├── operations Service:8081，仅接受监控抓取
+        │   │       │   ├── 公共 Service:8080，仅接受 ALB 业务入口且不提供 /healthz
+        │   │       │   ├── operations Service:8081，接受受控 ALB target health 与监控抓取
         │   │       │   ├── HPA、PDB、拓扑分散、只读根、非 root
         │   │       │   ├── 精确 NetworkPolicy 与连接/并发硬上限
         │   │       │   └── 只允许数据库、钱包与共享限流存储出口，不访问审计接收端
@@ -333,7 +337,7 @@ RDS Proxy 是可选优化，不是默认依赖。应用初始化和事务中使�
 | 应用 | RGS API/Worker 独立部署边界、迁移器、Web、探针、结构化日志 | 正式钱包、运营商入口、审计 sink |
 | Kubernetes | Helm、HPA/PDB/NetworkPolicy，以及 Terraform VPC、EKS、节点组和核心 add-on 接口 | 落地区账号/身份/state、平台控制器安装，以及目标集群实时策略证据 |
 | 数据库与准入 | PostgreSQL schema，以及 Terraform RDS Multi-AZ、ElastiCache Valkey、KMS/安全组基线 | 保存 plan/apply、故障转移/容量演练，以及 Valkey 多 Pod 与故障闭合证据 |
-| 边缘 | HTTPS/CORS/CSP/Ingress 契约，以及 Terraform ALB 安全组和 CloudFront 边缘资源 | Route 53、ACM、WAF 的落地区配置与真实 TLS/WAF/ALB 验收 |
+| 边缘 | HTTPS/CORS/CSP/Ingress 契约、Terraform ALB 安全组/API Regional WAF、CloudFront 边缘资源及分阶段 WAF 合同 | Route 53、ACM、CloudFront global WAF、可选 Shield Advanced/DRT，以及真实 TLS/WAF/ALB 验收 |
 | Web | 经审批构建与清单，以及 Terraform 私有 S3、OAC、CloudFront、KVS release router | 目标账号应用、双 release 固定、放量与回退的浏览器证据 |
 | 秘密 | 文件隔离/轮换契约，以及 Terraform Secrets Manager 元数据、KMS、同步角色 | 受控秘密值、同步控制器，以及版本/权限/轮换实时验收 |
 | 监控 | `/metrics`、告警规则，以及 Terraform AMP、CloudWatch、SNS 基线 | Agent/ADOT/Operator/AMG 接入与最终告警、日志闭环 |

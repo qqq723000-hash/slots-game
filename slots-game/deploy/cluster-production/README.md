@@ -14,9 +14,11 @@ RGS 的业务状态不依赖 Pod 本地磁盘或内存会话，可以运行多�
 - 迁移器使用 PostgreSQL advisory lock；即使发布系统误触发两个 Job，也只会串行迁移。
 - API 收到 `SIGTERM` 后先摘流，再停止公网与运维监听器；Worker 先摘流、停止后台任务，再关闭唯一的运维监听器。两类角色都在超时后失败闭合。
 
-API 角色对“创建启动会话”和 Spin 两类新经济意图实施两层准入：先按已验证的运营商/会话身份经过 Pod 内有界限制器，再通过共享 Valkey 令牌桶实施跨副本限制。共享键使用独立 HMAC 密钥压缩为固定摘要，Valkey 脚本以服务端 `TIME` 原子更新，不接收玩家、会话或运营商明文；PostgreSQL 仍是会话、轮次、钱包和 `operationId` 幂等的唯一权威。边缘 WAF 仍负责未认证攻击面和粗粒度容量保护，但不得再冒充已验证身份的精确全局限流。
+API 角色对启动和 Spin 实施分层准入：Pod 内有界限制器之后，普通共享 Valkey 高水位按已验证 operator 聚合 launch 和全部 Spin 尝试（包括重放/冲突），防止多 session、多 IP 把请求配额乘开；PostgreSQL 在会话锁内确认是首次合法、可持久化 round，并完成本地钱包舱壁与确定性结果校验后，才执行 operator + canonical wallet route origin 双桶经济预算。经济脚本在单次 RTT 中使用服务端 `TIME` 和一条 `MSET` 同时写两份状态，任一桶不足零写；同 origin 的 HMAC 键同 slot、不同 origin 可分散，不接收玩家、会话、operator 或钱包 URL 明文。多个 DNS/CDN/租户 origin 是否共享供应商额度不能从 URL 推断；存在该合同时，签名 wallet profile 的显式 budget group 及其迁移是上线门禁。PostgreSQL 仍是会话、轮次、钱包和 `operationId` 幂等的唯一权威。边缘 WAF 负责未认证攻击面和粗粒度容量保护，但不得冒充已验证身份的精确全局限流。
 
-共享准入故障时，新启动和 Spin 返回 `503 ADMISSION_UNAVAILABLE` 及 `Retry-After`，绝不误报 429，也绝不回退到“只靠本机桶继续下注”。客户端禁用自动重试并把连接复用限制到每个已发现节点一条管线；首次后端错误会打开一秒进程级熔断，同一 Pod 在冷却期内不继续拨号，冷却后只允许一个探测请求，避免故障流量形成连接风暴。已经提交结果的状态查询、待交付结果读取/确认和令牌续期不调用 Valkey，仍受进程内硬容量保护。进程启动会实际 `PING` Valkey并失败闭合；运行期 `/readyz` 不把 Valkey列为整 Pod 就绪依赖，避免一次准入故障同时切断已提交结果恢复路径。`rgs_shared_admission_{allowed,limited,errors}_total` 提供无身份标签的低基数观测。
+共享准入故障时，新启动和 Spin 返回 `503 ADMISSION_UNAVAILABLE` 及 `Retry-After`，绝不误报 429，也绝不回退到“只靠本机桶继续下注”。客户端禁用自动重试和自动管线，业务命令只走每 Pod 四许可的应用闸门和四连接同步池；等待应用许可响应 context，连接读写另有 socket deadline，因此超时等待者不会进入依赖池或误触发无界建连。valkey-go 另保留一条不承载业务自动管线的基础 socket，所以真实连接上界是每 API Pod 五条；默认 HPA 稳态 12 Pod 与 `maxSurge=1` 滚动 13 Pod 的非终止上界分别至少为 60/65 条，还需另加终止重叠与平台保留。真实 TCP 黑洞超过 1,024 并发的回归会锁定超时、最多四条业务命令、五条 socket 和恢复边界。首次后端错误会打开一秒进程级熔断，同一 Pod 在冷却期内不继续拨号，冷却后只允许一个探测请求，避免故障流量形成连接风暴。committed/PREPARED/REJECTED 重放不会再次扣经济桶；状态查询、待交付结果读取/确认、令牌续期和 Worker 恢复明确旁路经济桶，仍受进程内硬容量保护。进程启动先 `PING`，再用无业务身份、约一秒 TTL 的双桶 canary 实际验证 `EVAL/GET/TIME/MSET/PEXPIRE` ACL 并失败闭合；运行期 `/readyz` 不把 Valkey列为整 Pod 就绪依赖，避免一次准入故障同时切断已提交结果恢复路径。`rgs_shared_admission_{allowed,limited,errors}_total` 与 `rgs_economic_admission_{allowed,limited,operator_limited,backend_limited,errors}_total` 均为无身份标签的低基数观测。
+
+`rgs.sharedAdmission.economic` 的默认 `operatorRatePerSecond/operatorRateBurst=20/40`、`backendRatePerSecond/backendRateBurst=100/200` 是保守平台上限，不是第三方钱包真实合同。所有共享/经济速率最多三位小数并精确转换为毫单位；schema、进程启动校验和 24 小时最大回填窗口共同失败关闭。发布审批必须用正常峰值、EDoS 攻击画像、单 backend 热 slot 和钱包合同校准四项值；不要按 bet 金额推测成本。`SlotsRGSEconomicAdmissionLimitedSustained` 触发时先区分 operator 与 backend 固定计数器，再核对钱包合同与 WAF 聚合；`SlotsRGSEconomicAdmissionErrors` 触发时冻结新放量，检查 Valkey ACL、超时、OOM、`NOSCRIPT` 与 parameter group，禁止提升额度掩盖后端故障。AWS 环境还必须由 live gate 证明 replication group 无 pending、全部节点 parameter group `in-sync` 且实际 `maxmemory-policy=noeviction`；仅 Terraform plan 或默认 `volatile-lru` 都不合格。
 
 原生滚动还有严格的兼容边界：只有新旧二进制使用完全相同的数据库模式清单和数学定义身份时才允许执行。当前旧二进制会拒绝带未来迁移的账本，新二进制会拒绝缺失迁移的账本；每个进程也只加载一个获批数学定义。因此，包含数据库迁移或数学定义变更的版本不能使用本 Chart 做普通无停机升级。必须先进入维护窗口完成协调切换，或另行实现并验证“扩展—双版本兼容—收缩”、按定义分群排空或多定义注册表协议。
 
@@ -110,9 +112,13 @@ Secret 内容更新不会自动让已经启动的进程热加载。轮换时创�
 
 标准 Kubernetes NetworkPolicy 不能可靠按 DNS 名称限制外部流量，因此本 Chart 要求分别填写 PostgreSQL、钱包、共享 Valkey 和审计接收端的 IPv4 CIDR。每项只接受 `/24` 至 `/32`，拒绝空数组和 `0.0.0.0/0`。若供应商地址动态变化，应先通过公司 egress gateway 固定出口目标，再把 gateway 的专用网段写入 values；不要临时放宽到全网。
 
-`networkPolicy.ingressController` 和 `monitoring` 同时使用 namespaceSelector 与 podSelector，两者是 AND 关系。必须使用平台真实、不可由业务 namespace 自行伪造的标签。DNS selector 也必须匹配集群实际 CoreDNS 标签。
+`networkPolicy.ingressController` 和 `monitoring` 同时使用 namespaceSelector 与 podSelector，两者是 AND 关系。必须使用平台真实、不可由业务 namespace 自行伪造的标签。入口来源只可访问业务 8080 和 `ingress.apiHealthCheckPort=8081`；后者只承载私有 `/healthz`，不得为此把 operations Service 加入公网 Ingress。DNS selector 也必须匹配集群实际 CoreDNS 标签。
 
 `ingress.tlsRedirectAnnotationKey` 和 `tlsRedirectAnnotationValue` 会强制写入两个 Ingress；必须填写当前入口实现真实支持的重定向策略键值，并在 `externalControls.tlsEnforcementProvider` 记录平台策略名称。示例使用 ingress-nginx 的 `force-ssl-redirect=true`。变更审批必须确认该注解没有被控制器忽略，不能只因 TLS Secret 存在就宣称已禁用明文 HTTP。
+
+`ingress.apiHealthCheckPath=/healthz` 与 `apiHealthCheckPort=8081` 是失败闭合常量：公网 handler 不再
+提供 `/healthz`。使用 AWS ALB 时，provider 注解必须把 target health 精确映射到该数值端口；其他入口
+实现也必须在平台层给出等价私有探针证据，不能退回公网 8080 健康检查。
 
 ## 日志与告警责任
 
@@ -123,7 +129,7 @@ RGS 使用结构化 JSON 写 stdout/stderr；Web 由容器入口输出访问与�
 `rgs_access_logs_{emitted,dropped}_total` 观测，任何下游采集器都不得再次概率丢弃 WARN/ERROR 或
 经济与安全事件。
 
-Chart 内置二十七条 `PrometheusRule`，覆盖 API/Worker 指标目标消失或下线、两类角色未就绪、5xx 比例、进程并发容量拒绝、新经济意图数据库保留容量拒绝、HPA 无法计算扩缩容、共享准入故障、认证随机数重放、钱包未知结果/隔离拒绝/持续熔断/持续待定/响应认证失败/P99 高延迟/执行停滞、钱包恢复积压/最老到期年龄/循环与快照新鲜度、轮次人工审查、完整性隔离、审计 Outbox 延迟/租约冲突和数据库池饱和/等待。认证随机数重放对外仍统一返回通用 401；内部只增加无标签的 `rgs_auth_replays_total`，并输出固定 `security_event=nonce_replay` 的 WARN 日志，不记录随机数、运营商、密钥、玩家、会话或请求标识。恢复 backlog/age 是每个 Worker 错峰读取的同一数据库全局有界快照：查询按 partial index 最多读取 501 个持久调度行，`501` 是“至少 501”的饱和下界而非精确总数，最老逾期年龄仍对应全局最早持久调度行；会话失配也保留在 backlog 中交由领取完整性校验/隔离，不能被观测静默过滤。PromQL 只允许对同实例时间戳小于六十秒的新鲜样本取 `max`，不得按 Pod 求和或让陈旧高值制造假告警。循环新鲜度与快照新鲜度分开告警，避免数据库观测失败被误报为资金恢复 pass 失败，也避免陈旧 backlog 假绿。HPA 规则依赖平台固定交付的 metrics-server 与 kube-state-metrics；任一 API/Worker `ScalingActive` 丢失都会告警。规则通过两个 operations Service 分别固定 `slots-rgs` 与 `slots-rgs-worker` job；`monitoring.ruleLabels` 必须匹配公司 Prometheus 的规则选择器。阈值是仓库评审过的最低门禁，平台可以在上层增加更严格规则，但不得删除、静默改写或让该 `PrometheusRule` 未被任何 Prometheus 实例加载。上线证据必须包含规则发现状态、一次受控告警演练及 Alertmanager 最终路由，不得只证明 `/metrics` 可抓取。
+Chart 内置三十一条 `PrometheusRule`，覆盖 API/Worker 指标目标消失或下线、两类角色未就绪、5xx 比例、进程并发容量拒绝、新经济意图数据库保留容量拒绝、加密 CPU 闸门拒绝、HPA 无法计算扩缩容、普通共享准入故障、经济预算持续拒绝/准入后端错误、认证随机数重放、重复安全日志持续被有界抑制、钱包未知结果/隔离拒绝/持续熔断/持续待定/响应认证失败/P99 高延迟/执行停滞、钱包恢复积压/最老到期年龄/循环与快照新鲜度、轮次人工审查、完整性隔离、审计 Outbox 延迟/租约冲突和数据库池饱和/等待。认证前不存在可信的“恢复 path”，所以所有公网验签共享同一匿名 CPU 上限，Chart 不注入 method/path recovery reserve，也不伪造恢复专属验签告警；恢复风险由已认证 status/ACK 成功率、数据库新意图保留、钱包 lookup 和 recovery backlog 联合判断。认证随机数重放对外仍统一返回通用 401；无标签 `rgs_auth_replays_total` 始终完整计数，不记录随机数、运营商、密钥、玩家、会话或请求标识。重复的物理 `security_event=nonce_replay` WARN 使用独立固定预算和非阻塞写入 bulkhead 有界输出；被省略的重复记录累加到无标签 `rgs_security_logs_dropped_total`，持续五分钟耗尽预算由 `SlotsRGSSecurityLogDropsSustained` 告警。恢复 backlog/age 是每个 Worker 错峰读取的同一数据库全局有界快照：查询按 partial index 最多读取 501 个持久调度行，`501` 是“至少 501”的饱和下界而非精确总数，最老逾期年龄仍对应全局最早持久调度行；会话失配也保留在 backlog 中交由领取完整性校验/隔离，不能被观测静默过滤。PromQL 只允许对同实例时间戳小于六十秒的新鲜样本取 `max`，不得按 Pod 求和或让陈旧高值制造假告警。循环新鲜度与快照新鲜度分开告警，避免数据库观测失败被误报为资金恢复 pass 失败，也避免陈旧 backlog 假绿。HPA 规则依赖平台固定交付的 metrics-server 与 kube-state-metrics；任一 API/Worker `ScalingActive` 丢失都会告警。规则通过两个 operations Service 分别固定 `slots-rgs` 与 `slots-rgs-worker` job；`monitoring.ruleLabels` 必须匹配公司 Prometheus 的规则选择器。阈值是仓库评审过的最低门禁，平台可以在上层增加更严格规则，但不得删除、静默改写或让该 `PrometheusRule` 未被任何 Prometheus 实例加载。上线证据必须包含规则发现状态、一次受控告警演练及 Alertmanager 最终路由，不得只证明 `/metrics` 可抓取。
 
 数据库连接上限至少按下面的发布峰值公式审核：
 
@@ -221,7 +227,7 @@ make verify-cluster-image-contract
 
 第一个目标先运行红绿负向契约，再用 Kubernetes 1.30 schema 对普通安装、普通升级、HMAC-only 静默、数据库双组件静默和退出维护五份渲染执行 kubeconform strict 校验；kubeconform 二进制、归档 SHA-256 和 JSON schema 仓库 commit 都在 required CI 中固定。仓库没有复制 Prometheus Operator CRD schema，因此 kubeconform 只显式跳过 `ServiceMonitor` 与 `PrometheusRule`，不会使用会掩盖其他未知类型的 `--ignore-missing-schemas`；渲染契约仍解析监控选择器、固定 job、Bearer Secret、operations Service 和完整告警集合。上线前还必须在安装了目标版本 Prometheus Operator CRD 的集群执行 `kubectl apply --dry-run=server`。测试同时覆盖长 release/override 命名与引用一致性、install=`up`/upgrade=`verify`、HMAC-only 与数据库维护模式、维护恢复、Secret 隔离、linux/amd64、应用配置上限、终止预算、路径穿越、可变镜像、宽松 CIDR、PDB、mTLS、日志提供方和 Web 版本隔离等失败闭合变体。
 
-第二个目标使用与本机集成验收一致的固定摘要 Prometheus 3.13.1 `promtool`，解析 Helm 实际渲染出的二十七条 PromQL；required 部署 CI 与受保护标签发布都会执行，避免 CRD 结构合法但规则语法静默失效。静态契约还会分别删除认证重放规则、弱化其 `increase(...[5m]) > 0` 表达式、删除 HPA `ScalingActive` 规则并确认校验失败，再执行完整正向渲染，形成可重复的红绿证据。
+第二个目标使用与本机集成验收一致的固定摘要 Prometheus 3.13.1 `promtool`，解析 Helm 实际渲染出的三十一条 PromQL；required 部署 CI 与受保护标签发布都会执行，避免 CRD 结构合法但规则语法静默失效。静态契约还会分别删除认证重放规则、弱化其 `increase(...[5m]) > 0` 表达式、移除安全日志丢弃告警的持续窗口、删除 HPA `ScalingActive` 规则并确认校验失败，再执行完整正向渲染，形成可重复的红绿证据。
 
 第三个目标需要 Docker daemon，会真实构建受保护发布使用的 `rgs-runtime` 与 `rgs-migrator`，核对 `linux/amd64`、非 root 用户和精确入口，并执行 `/secret-env` 缺 Secret 拒绝、`0440` Secret 文件正向加载及 `/service-probe` 的 200/503 行为。受保护标签工作流会在签名候选构建前重新执行该动态契约；普通供应链 CI 扫描的也是这两个集群目标，而不是缺少 helper 的通用镜像。
 

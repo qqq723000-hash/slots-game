@@ -11,7 +11,8 @@ module ValkeyRotationPlanContract
   HMAC_SECRET_REPLACEMENT_ACTIONS = [["create", "delete"]].freeze
   HMAC_SECRET_VERSION_REPLACEMENT_ACTIONS = [["delete", "create"]].freeze
   LEGACY_SHARED_ADMISSION_ACL = "on ~rgs:shared-admission:v1:* -@all +evalsha +eval +time +hmget +hset +pexpire +ping +hello +auth +client|setname +client|setinfo".freeze
-  CURRENT_SHARED_ADMISSION_ACL = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +ping +hello +auth +client|setname +client|setinfo".freeze
+  PRE_ECONOMIC_SHARED_ADMISSION_ACL = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +ping +hello +auth +client|setname +client|setinfo".freeze
+  CURRENT_SHARED_ADMISSION_ACL = "on ~rgs:shared-admission:v2:* -@all +evalsha +eval +get +pttl +set +time +mset +pexpire +ping +hello +auth +client|setname +client|setinfo".freeze
   SHARED_ADMISSION_SECRET_ATTRIBUTE_KEYS = %w[
     arn description force_overwrite_replica_secret id kms_key_id name name_prefix policy
     recovery_window_in_days region tags tags_all type
@@ -422,10 +423,21 @@ module ValkeyRotationPlanContract
     end
     return if changes.empty?
 
-    assert(transition == :hmac_entry, "Valkey ACL schema 迁移只能进入有静默证据的 HMAC 维护计划")
     addresses = changes.map { |resource| resource.fetch("address") }
     assert(addresses.sort == expected.keys.sort, "Valkey ACL schema 迁移必须在同一计划精确更新 A/B 两个用户")
     assert(addresses.uniq.length == addresses.length, "Valkey ACL schema 迁移包含重复资源地址")
+
+    before_accesses = changes.map { |resource| resource.fetch("change").fetch("before").fetch("access_string", nil) }
+    if before_accesses.all? { |access| access == PRE_ECONOMIC_SHARED_ADMISSION_ACL }
+      # v2 keyspace/HMAC 均不变，只追加新脚本所需命令；旧 runtime 使用的权限是严格子集。
+      # 该扩权必须作为独立 steady 状态迁移先于应用发布，不能伪装成密码或 HMAC 轮换。
+      assert(transition == :steady, "Valkey v2 economic ACL 追加只能在 steady 计划中先于新 runtime 应用")
+      expected_before = PRE_ECONOMIC_SHARED_ADMISSION_ACL
+    else
+      assert(before_accesses.all? { |access| access == LEGACY_SHARED_ADMISSION_ACL }, "Valkey ACL schema 迁移前态不是唯一受支持的 v1 或 v2-basic 契约")
+      assert(transition == :hmac_entry, "Valkey v1 keyspace 迁移只能进入有静默证据的 HMAC 维护计划")
+      expected_before = LEGACY_SHARED_ADMISSION_ACL
+    end
     changes.each do |resource|
       address = resource.fetch("address")
       validate_resource_identity(
@@ -436,7 +448,7 @@ module ValkeyRotationPlanContract
       before = change.fetch("before")
       after = change.fetch("after")
       assert(before.is_a?(Hash) && after.is_a?(Hash), "Valkey ACL schema 迁移缺少完整前后态")
-      assert(before.fetch("access_string", nil) == LEGACY_SHARED_ADMISSION_ACL, "Valkey ACL schema 迁移前态不是唯一受支持的 v1 契约")
+      assert(before.fetch("access_string", nil) == expected_before, "Valkey ACL schema 迁移 A/B 前态不一致")
       assert(after.fetch("access_string", nil) == CURRENT_SHARED_ADMISSION_ACL, "Valkey ACL schema 迁移后态不是唯一受支持的 v2 契约")
       assert(changed_keys(before, after) == ["access_string"], "Valkey ACL schema 迁移禁止夹带密码、身份、标签或其他资源变化")
       after_unknown = change.fetch("after_unknown", {})

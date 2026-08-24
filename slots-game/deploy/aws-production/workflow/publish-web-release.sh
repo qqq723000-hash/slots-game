@@ -139,9 +139,17 @@ distribution_before=$(aws cloudfront get-distribution-config \
 distribution_etag_before=$(printf '%s\n' "$distribution_before" | \
   jq -er '.ETag | select(test("^[A-Za-z0-9_-]+$"))') || fail '无法取得 CloudFront distribution ETag'
 router_function_arn="arn:aws:cloudfront::${AWS_ACCOUNT_ID}:function/${AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME}"
+case "$AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME" in
+  *-release-request)
+    response_function_name=${AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME%-release-request}-release-response
+    ;;
+  *) fail 'viewer-request function 名称不能确定唯一 viewer-response 身份' ;;
+esac
+response_function_arn="arn:aws:cloudfront::${AWS_ACCOUNT_ID}:function/${response_function_name}"
 expected_origin="${AWS_WEB_BUCKET}.s3.${AWS_REGION}.amazonaws.com"
 printf '%s\n' "$distribution_before" | jq -e \
   --arg policy "$AWS_CLOUDFRONT_RESPONSE_HEADERS_POLICY_ID" --arg router "$router_function_arn" \
+  --arg response "$response_function_arn" \
   --arg origin "$expected_origin" '
     .DistributionConfig.Enabled == true and
     .DistributionConfig.DefaultRootObject == "index.html" and
@@ -151,12 +159,37 @@ printf '%s\n' "$distribution_before" | jq -e \
     .DistributionConfig.Origins.Items[0].OriginPath == "" and
     (.DistributionConfig.Origins.Items[0].OriginAccessControlId | type == "string" and length > 0) and
     .DistributionConfig.DefaultCacheBehavior.TargetOriginId == "private-web-s3" and
+    .DistributionConfig.DefaultCacheBehavior.ViewerProtocolPolicy == "redirect-to-https" and
+    .DistributionConfig.DefaultCacheBehavior.AllowedMethods.Quantity == 3 and
+    (.DistributionConfig.DefaultCacheBehavior.AllowedMethods.Items | sort) == ["GET", "HEAD", "OPTIONS"] and
+    .DistributionConfig.DefaultCacheBehavior.AllowedMethods.CachedMethods.Quantity == 2 and
+    (.DistributionConfig.DefaultCacheBehavior.AllowedMethods.CachedMethods.Items | sort) == ["GET", "HEAD"] and
+    .DistributionConfig.DefaultCacheBehavior.Compress == true and
+    (.DistributionConfig.DefaultCacheBehavior.CachePolicyId | type == "string" and length > 0) and
     .DistributionConfig.DefaultCacheBehavior.ResponseHeadersPolicyId == $policy and
-    ([.DistributionConfig.DefaultCacheBehavior.FunctionAssociations.Items[]? |
-      select(.EventType == "viewer-request" and .FunctionARN == $router)] | length) == 1 and
-    ([.DistributionConfig.CacheBehaviors.Items[]? |
-      select(.PathPattern == "releases/*" and .TargetOriginId == "private-web-s3" and
-        .ResponseHeadersPolicyId == $policy)] | length) == 1
+    .DistributionConfig.DefaultCacheBehavior.FunctionAssociations.Quantity == 2 and
+    (.DistributionConfig.DefaultCacheBehavior.FunctionAssociations.Items | sort_by(.EventType)) == [
+      {EventType: "viewer-request", FunctionARN: $router},
+      {EventType: "viewer-response", FunctionARN: $response}
+    ] and
+    .DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations.Quantity == 0 and
+    ((.DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations.Items // []) | length) == 0 and
+    .DistributionConfig.CacheBehaviors.Quantity == 1 and
+    (.DistributionConfig.CacheBehaviors.Items | length) == 1 and
+    .DistributionConfig.CacheBehaviors.Items[0].PathPattern == "releases/*" and
+    .DistributionConfig.CacheBehaviors.Items[0].TargetOriginId == "private-web-s3" and
+    .DistributionConfig.CacheBehaviors.Items[0].ViewerProtocolPolicy == "redirect-to-https" and
+    .DistributionConfig.CacheBehaviors.Items[0].AllowedMethods.Quantity == 3 and
+    (.DistributionConfig.CacheBehaviors.Items[0].AllowedMethods.Items | sort) == ["GET", "HEAD", "OPTIONS"] and
+    .DistributionConfig.CacheBehaviors.Items[0].AllowedMethods.CachedMethods.Quantity == 2 and
+    (.DistributionConfig.CacheBehaviors.Items[0].AllowedMethods.CachedMethods.Items | sort) == ["GET", "HEAD"] and
+    .DistributionConfig.CacheBehaviors.Items[0].Compress == true and
+    .DistributionConfig.CacheBehaviors.Items[0].CachePolicyId == .DistributionConfig.DefaultCacheBehavior.CachePolicyId and
+    .DistributionConfig.CacheBehaviors.Items[0].ResponseHeadersPolicyId == $policy and
+    .DistributionConfig.CacheBehaviors.Items[0].FunctionAssociations.Quantity == 0 and
+    ((.DistributionConfig.CacheBehaviors.Items[0].FunctionAssociations.Items // []) | length) == 0 and
+    .DistributionConfig.CacheBehaviors.Items[0].LambdaFunctionAssociations.Quantity == 0 and
+    ((.DistributionConfig.CacheBehaviors.Items[0].LambdaFunctionAssociations.Items // []) | length) == 0
   ' >/dev/null || fail 'CloudFront distribution 未绑定固定私有 S3 origin、受控 CSP 或 viewer-request router'
 
 distribution_json=$(aws cloudfront get-distribution --id "$AWS_CLOUDFRONT_DISTRIBUTION_ID" --output json)

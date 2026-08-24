@@ -21,3 +21,23 @@ func TestLimiterRefillsAndBoundsKeys(t *testing.T) {
 		t.Fatal("idle keys were not evicted")
 	}
 }
+
+func TestLimiterIncrementallyCleansRotatingKeysWithoutEvictingActiveKey(t *testing.T) {
+	const keys = 1_000
+	limiter := NewLimiter(10, 10, keys, time.Minute)
+	now := time.Unix(1_000, 0)
+	for index := 0; index < keys; index++ {
+		if !limiter.Allow(string(rune(index+1)), now) {
+			t.Fatalf("key %d unexpectedly rejected", index)
+		}
+	}
+	if limiter.Allow("new-before-expiry", now.Add(30*time.Second)) {
+		t.Fatal("rotating keys bypassed the hard key bound")
+	}
+	if !limiter.Allow("new-after-expiry", now.Add(2*time.Minute)) {
+		t.Fatal("incremental cleanup did not make bounded progress")
+	}
+	if len(limiter.buckets) >= keys {
+		t.Fatalf("expired key cleanup made no bounded progress: %d", len(limiter.buckets))
+	}
+}

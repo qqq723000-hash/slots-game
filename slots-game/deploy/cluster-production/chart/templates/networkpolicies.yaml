@@ -47,7 +47,8 @@ spec:
           protocol: TCP
 ---
 {{- end }}
-# RGS 公网面仅允许入口控制器，运维面仅允许受标记的 Prometheus。
+# RGS 公网面仅允许入口；同一受控来源可在私有 operations 端口执行负载均衡健康检查，
+# 其余运维面仅允许受标记的 Prometheus。
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -76,6 +77,8 @@ spec:
         {{- end }}
       ports:
         - port: 8080
+          protocol: TCP
+        - port: {{ .Values.ingress.apiHealthCheckPort }}
           protocol: TCP
     - from:
         - namespaceSelector:

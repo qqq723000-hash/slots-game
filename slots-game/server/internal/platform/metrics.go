@@ -55,14 +55,26 @@ type Metrics struct {
 	RateLimited            atomic.Uint64
 	AccessLogsEmitted      atomic.Uint64
 	AccessLogsDropped      atomic.Uint64
+	SecurityLogsDropped    atomic.Uint64
 	SharedAdmissionAllowed atomic.Uint64
 	SharedAdmissionLimited atomic.Uint64
 	SharedAdmissionErrors  atomic.Uint64
+	// EconomicAdmission* 使用固定无标签计数器区分平台成本预算结果。运营商和
+	// 钱包后端身份只存在于 HMAC 化 Valkey key，绝不能成为 Prometheus 标签。
+	EconomicAdmissionAllowed         atomic.Uint64
+	EconomicAdmissionLimited         atomic.Uint64
+	EconomicAdmissionOperatorLimited atomic.Uint64
+	EconomicAdmissionBackendLimited  atomic.Uint64
+	EconomicAdmissionErrors          atomic.Uint64
 	// CapacityRejected 只计进程级公网并发硬闸门拒绝；不得与租户/速率限流混用，
 	// 以便值班人员区分资源饱和与攻击或调用方超额。
 	CapacityRejected atomic.Uint64
+	// PreAuthCapacityRejected 记录固定进程桶在任何身份/签名解析前的高水位拒绝。
+	PreAuthCapacityRejected atomic.Uint64
+	// CryptographicCapacityRejected 记录验签、令牌验证或响应签名 CPU bulkhead 拒绝。
+	CryptographicCapacityRejected atomic.Uint64
 	// NewIntentCapacityRejected 只计为 PostgreSQL 关键读取、结果恢复和 ACK 预留连接
-	// 而被非阻塞拒绝的新 launch/spin；不能与公网总 in-flight 闸门混用。
+	// 而被非阻塞拒绝的新 session/launch/spin；不能与公网总 in-flight 闸门混用。
 	NewIntentCapacityRejected atomic.Uint64
 	HTTPActiveRequests        atomic.Int64
 	// HTTPActiveConnections 覆盖公网监听器从 Accept 到 Close 或 Hijack 的完整生命周期，
@@ -122,12 +134,20 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 		{"rgs_auth_replays_total", "Rejected operator authentication nonce replays.", m.AuthReplays.Load()},
 		{"rgs_rate_limited_total", "Requests rejected by local admission control.", m.RateLimited.Load()},
 		{"rgs_access_logs_emitted_total", "Access log records emitted after severity and sampling decisions.", m.AccessLogsEmitted.Load()},
-		{"rgs_access_logs_dropped_total", "Successful access log records omitted by deterministic sampling.", m.AccessLogsDropped.Load()},
+		{"rgs_access_logs_dropped_total", "Access log records omitted by deterministic success sampling or bounded success/failure log budgets.", m.AccessLogsDropped.Load()},
+		{"rgs_security_logs_dropped_total", "Repeated physical security log records omitted by a fixed write budget; security event counters remain complete.", m.SecurityLogsDropped.Load()},
 		{"rgs_shared_admission_allowed_total", "Verified-identity requests allowed by shared admission control.", m.SharedAdmissionAllowed.Load()},
 		{"rgs_shared_admission_limited_total", "Verified-identity requests rejected by shared admission control.", m.SharedAdmissionLimited.Load()},
 		{"rgs_shared_admission_errors_total", "Shared admission backend or protocol failures.", m.SharedAdmissionErrors.Load()},
+		{"rgs_economic_admission_allowed_total", "Verified Spin intent attempts atomically allowed by both operator and wallet-backend cost budgets.", m.EconomicAdmissionAllowed.Load()},
+		{"rgs_economic_admission_limited_total", "Verified Spin intent attempts rejected by at least one economic cost budget.", m.EconomicAdmissionLimited.Load()},
+		{"rgs_economic_admission_operator_limited_total", "Verified Spin intent attempts rejected by the operator cost budget.", m.EconomicAdmissionOperatorLimited.Load()},
+		{"rgs_economic_admission_backend_limited_total", "Verified Spin intent attempts rejected by the shared wallet-backend cost budget.", m.EconomicAdmissionBackendLimited.Load()},
+		{"rgs_economic_admission_errors_total", "Economic admission backend, route-binding, or protocol failures.", m.EconomicAdmissionErrors.Load()},
 		{"rgs_capacity_rejected_total", "Public requests rejected by the process-wide in-flight capacity gate.", m.CapacityRejected.Load()},
-		{"rgs_new_intent_capacity_rejected_total", "New launch or spin intents rejected to preserve PostgreSQL critical result capacity.", m.NewIntentCapacityRejected.Load()},
+		{"rgs_preauth_capacity_rejected_total", "Public requests rejected by the fixed process-wide pre-authentication high-water gate.", m.PreAuthCapacityRejected.Load()},
+		{"rgs_cryptographic_capacity_rejected_total", "Requests rejected by the bounded cryptographic CPU capacity gate.", m.CryptographicCapacityRejected.Load()},
+		{"rgs_new_intent_capacity_rejected_total", "New session or economic intents rejected to preserve PostgreSQL critical result capacity.", m.NewIntentCapacityRejected.Load()},
 		{"rgs_rounds_prepared_total", "Durably prepared game rounds.", m.RoundsPrepared.Load()},
 		{"rgs_rounds_committed_total", "Wallet-confirmed committed rounds.", m.RoundsCommitted.Load()},
 		{"rgs_round_replays_total", "Idempotent committed round replays.", m.RoundReplays.Load()},
@@ -433,6 +453,14 @@ func (m *Metrics) AccessLogEmitted() {
 func (m *Metrics) AccessLogDropped() {
 	if m != nil {
 		m.AccessLogsDropped.Add(1)
+	}
+}
+
+// SecurityLogDropped 只累计固定无标签总量；安全事件的权威计数必须在物理日志
+// 限流前单独增加，不能因为日志管道背压而丢失检测信号。
+func (m *Metrics) SecurityLogDropped() {
+	if m != nil {
+		m.SecurityLogsDropped.Add(1)
 	}
 }
 

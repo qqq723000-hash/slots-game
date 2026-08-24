@@ -3,6 +3,7 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -79,9 +80,12 @@ type Config struct {
 	AccessTokenTTL                   time.Duration
 	MaxRequestBytes                  int64
 	MaxInFlightRequests              int
+	MaxCryptoInFlight                int
 	MaxConnectionsPerListener        int
 	RatePerSecond                    float64
 	RateBurst                        int
+	PreAuthRatePerSecond             float64
+	PreAuthRateBurst                 int
 	SuccessAccessLogSamplePerMillion int
 	SharedAdmissionURL               string
 	SharedAdmissionUsername          string
@@ -91,6 +95,10 @@ type Config struct {
 	SharedAdmissionTimeout           time.Duration
 	SharedAdmissionRatePerSecond     float64
 	SharedAdmissionRateBurst         int
+	EconomicOperatorRatePerSecond    float64
+	EconomicOperatorRateBurst        int
+	EconomicBackendRatePerSecond     float64
+	EconomicBackendRateBurst         int
 	OutboxEndpointURL                string
 	OutboxHMACKeyID                  string
 	OutboxHMACKeyFile                string
@@ -118,45 +126,66 @@ func LoadConfig() (Config, error) {
 
 func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 	config := Config{
-		Environment:                      Development,
-		RuntimeRole:                      RuntimeRoleCombined,
-		HTTPAddress:                      ":8080",
-		OperationsHTTPAddress:            "127.0.0.1:8081",
-		PublicBaseURL:                    "http://localhost:8080",
-		ReadHeaderTimeout:                5 * time.Second,
-		ReadTimeout:                      15 * time.Second,
-		RequestTimeout:                   15 * time.Second,
-		WriteTimeout:                     20 * time.Second,
-		IdleTimeout:                      60 * time.Second,
-		ShutdownTimeout:                  20 * time.Second,
-		DatabaseStatementTimeout:         10 * time.Second,
-		DatabaseLockTimeout:              2 * time.Second,
-		DatabaseMaxOpenConns:             40,
-		DatabaseMaxIdleConns:             10,
-		DatabaseCriticalReserveConns:     5,
-		WalletTimeout:                    4 * time.Second,
-		WalletFastPathTimeout:            time.Second,
-		WalletMaxAttempts:                100,
-		LaunchTTL:                        2 * time.Minute,
-		AccessTokenTTL:                   15 * time.Minute,
-		MaxRequestBytes:                  64 << 10,
+		Environment:                  Development,
+		RuntimeRole:                  RuntimeRoleCombined,
+		HTTPAddress:                  ":8080",
+		OperationsHTTPAddress:        "127.0.0.1:8081",
+		PublicBaseURL:                "http://localhost:8080",
+		ReadHeaderTimeout:            5 * time.Second,
+		ReadTimeout:                  15 * time.Second,
+		RequestTimeout:               15 * time.Second,
+		WriteTimeout:                 20 * time.Second,
+		IdleTimeout:                  60 * time.Second,
+		ShutdownTimeout:              20 * time.Second,
+		DatabaseStatementTimeout:     10 * time.Second,
+		DatabaseLockTimeout:          2 * time.Second,
+		DatabaseMaxOpenConns:         40,
+		DatabaseMaxIdleConns:         10,
+		DatabaseCriticalReserveConns: 5,
+		WalletTimeout:                4 * time.Second,
+		WalletFastPathTimeout:        time.Second,
+		WalletMaxAttempts:            100,
+		LaunchTTL:                    2 * time.Minute,
+		AccessTokenTTL:               15 * time.Minute,
+		// AWS WAF/ALB 的受检正文窗口为 8 KiB。RGS 公网请求的最大合法字段即使采用
+		// 最坏的 JSON Unicode 转义也小于该值，因此应用边界不得接受 WAF 未完整检查的尾部。
+		MaxRequestBytes:                  8 << 10,
 		MaxInFlightRequests:              256,
+		MaxCryptoInFlight:                64,
 		MaxConnectionsPerListener:        1_024,
 		RatePerSecond:                    20,
 		RateBurst:                        40,
+		PreAuthRatePerSecond:             5_000,
+		PreAuthRateBurst:                 10_000,
 		SuccessAccessLogSamplePerMillion: 1_000_000,
 		SharedAdmissionTimeout:           100 * time.Millisecond,
 		SharedAdmissionRatePerSecond:     20,
 		SharedAdmissionRateBurst:         40,
-		OutboxInterval:                   time.Second,
-		OutboxLeaseDuration:              3 * time.Minute,
-		OutboxPublishTimeout:             10 * time.Second,
-		OutboxWorkerMaxStaleness:         4 * time.Minute,
-		OutboxBacklogMaxAge:              5 * time.Minute,
-		OutboxInitialBackoff:             time.Second,
-		OutboxMaximumBackoff:             5 * time.Minute,
-		OutboxBatchSize:                  100,
-		OutboxMaxParallel:                8,
+		// EDoS 默认值是 RGS 自身的保守成本护栏，不代表任何第三方钱包合同配额。
+		// 生产部署必须按供应商容量证据审定 Chart 中的显式值。
+		EconomicOperatorRatePerSecond: 20,
+		EconomicOperatorRateBurst:     40,
+		EconomicBackendRatePerSecond:  100,
+		EconomicBackendRateBurst:      200,
+		OutboxInterval:                time.Second,
+		OutboxLeaseDuration:           3 * time.Minute,
+		OutboxPublishTimeout:          10 * time.Second,
+		OutboxWorkerMaxStaleness:      4 * time.Minute,
+		OutboxBacklogMaxAge:           5 * time.Minute,
+		OutboxInitialBackoff:          time.Second,
+		OutboxMaximumBackoff:          5 * time.Minute,
+		OutboxBatchSize:               100,
+		OutboxMaxParallel:             8,
+	}
+	// 这些旧变量按未认证 method/path 分配公网或密码学恢复预留。path 可被任意
+	// 调用方伪造，静默忽略会让运维人员误以为合法恢复仍受保护，因此显式失败启动。
+	for _, deprecated := range []string{
+		"RGS_RECOVERY_IN_FLIGHT_RESERVE",
+		"RGS_CRYPTO_RECOVERY_RESERVE",
+	} {
+		if _, configured := lookup(deprecated); configured {
+			return Config{}, fmt.Errorf("%s is removed: unauthenticated paths cannot authorize recovery capacity", deprecated)
+		}
 	}
 	if value, ok := lookup("RGS_ENVIRONMENT"); ok {
 		config.Environment = Environment(strings.ToLower(strings.TrimSpace(value)))
@@ -238,16 +267,37 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 	if err := intValue(lookup, "RGS_MAX_IN_FLIGHT_REQUESTS", &config.MaxInFlightRequests); err != nil {
 		return Config{}, err
 	}
+	if err := intValue(lookup, "RGS_MAX_CRYPTO_IN_FLIGHT", &config.MaxCryptoInFlight); err != nil {
+		return Config{}, err
+	}
 	if err := intValue(lookup, "RGS_MAX_CONNECTIONS_PER_LISTENER", &config.MaxConnectionsPerListener); err != nil {
 		return Config{}, err
 	}
 	if err := floatValue(lookup, "RGS_RATE_PER_SECOND", &config.RatePerSecond); err != nil {
 		return Config{}, err
 	}
+	if err := floatValue(lookup, "RGS_PREAUTH_RATE_PER_SECOND", &config.PreAuthRatePerSecond); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_PREAUTH_RATE_BURST", &config.PreAuthRateBurst); err != nil {
+		return Config{}, err
+	}
 	if err := floatValue(lookup, "RGS_SHARED_ADMISSION_RATE_PER_SECOND", &config.SharedAdmissionRatePerSecond); err != nil {
 		return Config{}, err
 	}
 	if err := intValue(lookup, "RGS_SHARED_ADMISSION_RATE_BURST", &config.SharedAdmissionRateBurst); err != nil {
+		return Config{}, err
+	}
+	if err := floatValue(lookup, "RGS_ECONOMIC_OPERATOR_RATE_PER_SECOND", &config.EconomicOperatorRatePerSecond); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_ECONOMIC_OPERATOR_RATE_BURST", &config.EconomicOperatorRateBurst); err != nil {
+		return Config{}, err
+	}
+	if err := floatValue(lookup, "RGS_ECONOMIC_BACKEND_RATE_PER_SECOND", &config.EconomicBackendRatePerSecond); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_ECONOMIC_BACKEND_RATE_BURST", &config.EconomicBackendRateBurst); err != nil {
 		return Config{}, err
 	}
 	if err := intValue(lookup, "RGS_RATE_BURST", &config.RateBurst); err != nil {
@@ -415,6 +465,24 @@ func (c Config) Validate() error {
 	if c.ReadHeaderTimeout > c.ReadTimeout {
 		return errors.New("RGS_READ_HEADER_TIMEOUT must not exceed RGS_READ_TIMEOUT")
 	}
+	if c.ReadHeaderTimeout < 100*time.Millisecond || c.ReadHeaderTimeout > 10*time.Second {
+		return errors.New("RGS_READ_HEADER_TIMEOUT must be between 100ms and 10s")
+	}
+	if c.ReadTimeout < time.Second || c.ReadTimeout > 30*time.Second {
+		return errors.New("RGS_READ_TIMEOUT must be between 1s and 30s")
+	}
+	if c.RequestTimeout < time.Second || c.RequestTimeout > time.Minute {
+		return errors.New("RGS_REQUEST_TIMEOUT must be between 1s and 1m")
+	}
+	if c.WriteTimeout < time.Second || c.WriteTimeout > 90*time.Second {
+		return errors.New("RGS_WRITE_TIMEOUT must be between 1s and 1m30s")
+	}
+	if c.IdleTimeout < time.Second || c.IdleTimeout > 5*time.Minute {
+		return errors.New("RGS_IDLE_TIMEOUT must be between 1s and 5m")
+	}
+	if c.ShutdownTimeout < time.Second || c.ShutdownTimeout > 5*time.Minute {
+		return errors.New("RGS_SHUTDOWN_TIMEOUT must be between 1s and 5m")
+	}
 	if c.ReadTimeout > c.RequestTimeout {
 		return errors.New("RGS_READ_TIMEOUT must not exceed RGS_REQUEST_TIMEOUT")
 	}
@@ -440,21 +508,33 @@ func (c Config) Validate() error {
 	if c.LaunchTTL > 5*time.Minute || c.AccessTokenTTL > time.Hour {
 		return errors.New("launch/access credentials exceed maximum TTL")
 	}
-	if c.MaxRequestBytes < 1_024 || c.MaxRequestBytes > 1<<20 {
-		return errors.New("RGS_MAX_REQUEST_BYTES must be between 1024 and 1048576")
+	if c.MaxRequestBytes != 8<<10 {
+		return errors.New("RGS_MAX_REQUEST_BYTES must be exactly 8192 to match the complete edge inspection window")
 	}
 	// 这是每个 RGS 副本在签名验证和数据库访问之前的硬资源预算；必须有界，
 	// 避免配置错误把非阻塞闸门退化为无效保护或制造过量内存占用。
 	if c.MaxInFlightRequests < 1 || c.MaxInFlightRequests > 4_096 {
 		return errors.New("RGS_MAX_IN_FLIGHT_REQUESTS must be between 1 and 4096")
 	}
+	// 未认证 path 不能取得恢复优先级；公网和密码学 gate 都是单一匿名硬上限。
+	// 只有身份验证后的 DB 新意图预留与钱包 lookup 预留负责恢复进展。
+	if c.MaxCryptoInFlight < 1 || c.MaxCryptoInFlight > 1_024 {
+		return errors.New("RGS_MAX_CRYPTO_IN_FLIGHT must be between 1 and 1024")
+	}
 	// 请求闸门无法覆盖慢请求头、未读正文回收和空闲长连接；监听器还必须
 	// 独立限制已接受连接总数，才能给文件描述符、TLS 状态和协程设置硬预算。
 	if c.MaxConnectionsPerListener < 1 || c.MaxConnectionsPerListener > 16_384 {
 		return errors.New("RGS_MAX_CONNECTIONS_PER_LISTENER must be between 1 and 16384")
 	}
-	if c.RatePerSecond <= 0 || c.RatePerSecond > 100_000 || c.RateBurst < 1 || c.RateBurst > 1_000_000 {
+	if !finiteRate(c.RatePerSecond) || c.RatePerSecond <= 0 || c.RatePerSecond > 100_000 ||
+		c.RateBurst < 1 || c.RateBurst > 1_000_000 {
 		return errors.New("invalid rate limit configuration")
+	}
+	// 公网预认证速率只使用一个进程级桶，不按 IP、转发头或声明租户建键。
+	// 它是边缘设施失效时的高水位背压，应显著高于认证后业务配额但仍保持硬上限。
+	if !finiteRate(c.PreAuthRatePerSecond) || c.PreAuthRatePerSecond < 1 || c.PreAuthRatePerSecond > 1_000_000 ||
+		c.PreAuthRateBurst < 1 || c.PreAuthRateBurst > 2_000_000 {
+		return errors.New("invalid pre-authentication rate limit configuration")
 	}
 	if c.SuccessAccessLogSamplePerMillion < 0 || c.SuccessAccessLogSamplePerMillion > 1_000_000 {
 		return errors.New("RGS_SUCCESS_ACCESS_LOG_SAMPLE_PER_MILLION must be between 0 and 1000000")
@@ -494,8 +574,8 @@ func (c Config) validateSharedAdmission() error {
 	if c.RuntimeRole == RuntimeRoleWorker && enabled {
 		return errors.New("shared admission configuration is not allowed for the worker runtime role")
 	}
-	if c.Environment == Production && c.RuntimeRole == RuntimeRoleAPI && !enabled {
-		return errors.New("RGS_SHARED_ADMISSION_URL is required for the production api runtime role")
+	if c.Environment == Production && c.RuntimeRole.ServesPublicAPI() && !enabled {
+		return errors.New("RGS_SHARED_ADMISSION_URL is required for every production public API runtime role")
 	}
 	if !enabled {
 		return nil
@@ -525,14 +605,57 @@ func (c Config) validateSharedAdmission() error {
 		c.SharedAdmissionTimeout >= c.RequestTimeout {
 		return errors.New("RGS_SHARED_ADMISSION_TIMEOUT must be between 10ms and 500ms and shorter than the request timeout")
 	}
-	if c.SharedAdmissionRatePerSecond < 0.001 || c.SharedAdmissionRatePerSecond > 100_000 ||
+	if !finiteRate(c.SharedAdmissionRatePerSecond) ||
+		c.SharedAdmissionRatePerSecond < 0.001 || c.SharedAdmissionRatePerSecond > 100_000 ||
 		c.SharedAdmissionRateBurst < 1 || c.SharedAdmissionRateBurst > 1_000_000 {
 		return errors.New("invalid shared admission rate limit configuration")
+	}
+	if !rateHasMilliPrecision(c.SharedAdmissionRatePerSecond) {
+		return errors.New("shared admission rate must have at most three decimal places")
 	}
 	if float64(c.SharedAdmissionRateBurst)/c.SharedAdmissionRatePerSecond > (24*time.Hour - time.Second).Seconds() {
 		return errors.New("shared admission full-refill TTL must not exceed 24 hours")
 	}
+	if err := validateEconomicPolicy(
+		"operator",
+		c.EconomicOperatorRatePerSecond,
+		c.EconomicOperatorRateBurst,
+	); err != nil {
+		return err
+	}
+	if err := validateEconomicPolicy(
+		"backend",
+		c.EconomicBackendRatePerSecond,
+		c.EconomicBackendRateBurst,
+	); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateEconomicPolicy(scope string, rate float64, burst int) error {
+	if !finiteRate(rate) || rate < 0.001 || rate > 100_000 ||
+		burst < 1 || burst > 1_000_000 {
+		return fmt.Errorf("invalid %s economic admission policy", scope)
+	}
+	if !rateHasMilliPrecision(rate) {
+		return fmt.Errorf("%s economic admission rate must have at most three decimal places", scope)
+	}
+	if float64(burst)/rate > (24*time.Hour - time.Second).Seconds() {
+		return fmt.Errorf("%s economic admission full-refill TTL must not exceed 24 hours", scope)
+	}
+	return nil
+}
+
+func finiteRate(rate float64) bool {
+	return !math.IsNaN(rate) && !math.IsInf(rate, 0)
+}
+
+func rateHasMilliPrecision(rate float64) bool {
+	scaled := rate * 1_000
+	rounded := math.Round(scaled)
+	tolerance := 4 * math.Abs(math.Nextafter(scaled, math.Inf(1))-scaled)
+	return math.Abs(scaled-rounded) <= tolerance
 }
 
 func pathClean(path string) string {

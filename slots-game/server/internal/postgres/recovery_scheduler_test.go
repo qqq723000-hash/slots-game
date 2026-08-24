@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 
 	"slots-game/server/internal/game"
+	"slots-game/server/internal/recovery"
 	"slots-game/server/internal/rgs"
 )
 
@@ -30,6 +32,27 @@ func TestRecoverableRoundClaimUsesDueIndexFairRankingAndSkipLocked(t *testing.T)
 	} {
 		if !strings.Contains(recoverableRoundClaimSQL, required) {
 			t.Fatalf("recoverable claim SQL is missing %q", required)
+		}
+	}
+	if strings.Contains(recoverableRoundClaimSQL, "SELECT DISTINCT") ||
+		strings.Contains(recoverableRoundClaimSQL, "INSERT INTO rgs_wallet_recovery_operators") {
+		t.Fatal("recoverable claim SQL reintroduced an unbounded operator-registry scan or write")
+	}
+}
+
+func TestPrepareRoundKeepsRecoveryRegistryDriftWindowFallback(t *testing.T) {
+	for _, required := range []string{
+		"inserted_round AS",
+		"inserted_wallet AS",
+		"updated_session AS",
+		"registered_recovery_operator AS",
+		"INSERT INTO rgs_wallet_recovery_operators (operator_id)",
+		"SELECT operator_id FROM updated_session",
+		"ON CONFLICT (operator_id) DO NOTHING",
+		"inserted_outbox AS",
+	} {
+		if !strings.Contains(prepareRoundWriteSQL, required) {
+			t.Fatalf("prepare bundle SQL is missing atomic write stage %q", required)
 		}
 	}
 }
@@ -128,6 +151,9 @@ func TestPostgresRecoveryFairnessPersistsAcrossClaimWaves(t *testing.T) {
 	profile := rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
 		"https://wallet.test.invalid/fairness-ledger",
 	))
+	assertFailedPrepareDoesNotRegisterRecoveryOperator(
+		t, ctx, database, migrator, repository, profile,
+	)
 	const operatorCount = 8
 	for operatorIndex := range operatorCount {
 		for sessionIndex := range 2 {
@@ -136,6 +162,19 @@ func TestPostgresRecoveryFairnessPersistsAcrossClaimWaves(t *testing.T) {
 			roundID := fmt.Sprintf("round-fair-%02d-%d", operatorIndex, sessionIndex)
 			preparePostgresRecoveryFixture(t, ctx, repository, profile, operatorID, sessionID, roundID)
 		}
+	}
+	var registeredOperators, untouchedCursors int
+	if err := database.QueryRowContext(ctx, `
+		SELECT count(*), count(*) FILTER (
+			WHERE last_claimed_at='-infinity'::timestamptz
+		)
+		FROM rgs_wallet_recovery_operators`,
+	).Scan(&registeredOperators, &untouchedCursors); err != nil {
+		t.Fatal(err)
+	}
+	if registeredOperators != operatorCount || untouchedCursors != operatorCount {
+		t.Fatalf("PREPARE recovery registry = operators:%d untouched:%d, want %d/%d",
+			registeredOperators, untouchedCursors, operatorCount, operatorCount)
 	}
 	snapshot, err := repository.RecoverySnapshot(ctx)
 	if err != nil {
@@ -150,11 +189,37 @@ func TestPostgresRecoveryFairnessPersistsAcrossClaimWaves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(first) != 4 {
+		t.Fatalf("first claim wave size = %d, want 4", len(first))
+	}
+	firstOperator := first[0].Record.Key.OperatorID
+	var cursorBeforeRepeat time.Time
+	if err := database.QueryRowContext(ctx, `
+		SELECT last_claimed_at FROM rgs_wallet_recovery_operators WHERE operator_id=$1`,
+		firstOperator,
+	).Scan(&cursorBeforeRepeat); err != nil {
+		t.Fatal(err)
+	}
+	preparePostgresRecoveryFixture(
+		t, ctx, repository, profile, firstOperator,
+		"session-fair-repeat", "round-fair-repeat",
+	)
+	var cursorAfterRepeat time.Time
+	if err := database.QueryRowContext(ctx, `
+		SELECT last_claimed_at FROM rgs_wallet_recovery_operators WHERE operator_id=$1`,
+		firstOperator,
+	).Scan(&cursorAfterRepeat); err != nil {
+		t.Fatal(err)
+	}
+	if !cursorAfterRepeat.Equal(cursorBeforeRepeat) {
+		t.Fatalf("repeat PREPARE reset fairness cursor: before=%s after=%s",
+			cursorBeforeRepeat, cursorAfterRepeat)
+	}
 	second, err := repository.ClaimRecoverableRounds(ctx, 4, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) != 4 || len(second) != 4 {
+	if len(second) != 4 {
 		t.Fatalf("claim wave sizes = first:%d second:%d", len(first), len(second))
 	}
 	firstOperators := make(map[string]struct{}, len(first))
@@ -167,6 +232,552 @@ func TestPostgresRecoveryFairnessPersistsAcrossClaimWaves(t *testing.T) {
 				claim.Record.Key.OperatorID, first, second)
 		}
 	}
+	var advancedCursors int
+	if err := database.QueryRowContext(ctx, `
+		SELECT count(*) FROM rgs_wallet_recovery_operators
+		WHERE last_claimed_at > '-infinity'::timestamptz`,
+	).Scan(&advancedCursors); err != nil {
+		t.Fatal(err)
+	}
+	if advancedCursors != operatorCount {
+		t.Fatalf("advanced fairness cursors = %d, want %d", advancedCursors, operatorCount)
+	}
+}
+
+func TestPostgresRollingOldPrepareIsRecoverableByNewWorker(t *testing.T) {
+	databaseURLs := requirePostgresTestURLs(t)
+	database, err := sql.Open("pgx", databaseURLs.runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	migrator, err := sql.Open("pgx", databaseURLs.migrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrator.Close()
+	truncateIntegrationTables(t, migrator)
+	defer truncateIntegrationTables(t, migrator)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	repository, err := NewRepository(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runtimeRole string
+	if err := database.QueryRowContext(ctx, `SELECT current_user`).Scan(&runtimeRole); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeRole != CanonicalRuntimeRole {
+		t.Fatalf("rolling writer role = %q, want %q", runtimeRole, CanonicalRuntimeRole)
+	}
+	const (
+		operatorID = "operator-rolling-old-api"
+		sessionID  = "session-rolling-old-api"
+		roundID    = "round-rolling-old-api"
+	)
+	hash := strings.Repeat("a", 64)
+	session := rgs.Session{
+		OperatorID: operatorID, SessionID: sessionID,
+		PlayerID: "player-rolling-old-api", WalletAccountID: "wallet-rolling-old-api",
+		WalletSessionID: "wallet-session-rolling-old-api",
+		GameID:          "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
+		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
+		Status: rgs.SessionActive, BalanceMinor: 10_000,
+		Feature:   game.EmptyFeatureState(),
+		ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}
+	if err := repository.CreateSession(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	var registered int
+	if err := database.QueryRowContext(ctx, `
+		SELECT count(*) FROM rgs_wallet_recovery_operators WHERE operator_id=$1`,
+		operatorID,
+	).Scan(&registered); err != nil {
+		t.Fatal(err)
+	}
+	if registered != 0 {
+		t.Fatalf("new operator was registered before a recoverable round: %d", registered)
+	}
+
+	request := rgs.SpinRequest{
+		OperatorID: operatorID, SessionID: sessionID, RoundID: roundID,
+		GameID: session.GameID, DefinitionVersion: session.DefinitionVersion,
+		DefinitionHash: hash, Currency: session.Currency,
+		RoundKind: rgs.RoundKindBase, BetMinor: 100,
+	}
+	result := validPreparedSessionIntegrityResult(request, 1)
+	result.ServerTransactionID = "rgs-op-v1:" + roundID
+	profile := rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
+		"https://wallet.test.invalid/rolling-old-api-ledger",
+	))
+	// 该 helper 保留旧 API 的多语句 PREPARE，不包含新版本的 registry CTE。
+	if _, prepared, err := prepareRoundLegacyForLoad(
+		ctx, repository, request, rgs.FingerprintFor(request), profile, func(rgs.Session) (rgs.SpinResult, error) {
+			return result, nil
+		},
+	); err != nil || !prepared {
+		t.Fatalf("legacy PrepareRound() = prepared:%v error:%v", prepared, err)
+	}
+	if err := database.QueryRowContext(ctx, `
+		SELECT count(*) FROM rgs_wallet_recovery_operators WHERE operator_id=$1`,
+		operatorID,
+	).Scan(&registered); err != nil {
+		t.Fatal(err)
+	}
+	if registered != 1 {
+		t.Fatalf("legacy PREPARE trigger registration = %d, want 1", registered)
+	}
+	// backfill 只扫描可领取 phase；若旧数据稍后从不可领取 phase 修复为 APPLY，
+	// UPDATE 触发器必须补注册，避免为了走部分索引引入永久假阴性。
+	if _, err := migrator.ExecContext(ctx,
+		`DELETE FROM rgs_wallet_recovery_operators WHERE operator_id=$1`, operatorID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		UPDATE rgs_rounds SET wallet_phase=''
+		WHERE operator_id=$1 AND session_id=$2 AND round_id=$3`,
+		operatorID, sessionID, roundID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		UPDATE rgs_rounds SET wallet_phase='APPLY'
+		WHERE operator_id=$1 AND session_id=$2 AND round_id=$3`,
+		operatorID, sessionID, roundID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, `
+		SELECT count(*) FROM rgs_wallet_recovery_operators WHERE operator_id=$1`,
+		operatorID,
+	).Scan(&registered); err != nil {
+		t.Fatal(err)
+	}
+	if registered != 1 {
+		t.Fatalf("recovery phase transition trigger registration = %d, want 1", registered)
+	}
+
+	claims, err := repository.ClaimRecoverableRounds(ctx, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims) != 1 || claims[0].Record.Key != request.Key() ||
+		claims[0].Action != rgs.WalletRecoveryApply {
+		t.Fatalf("new worker claim after legacy PREPARE = %+v", claims)
+	}
+}
+
+const testRecoveryRegistryTriggerInstallSQL = `
+	CREATE TRIGGER rgs_register_wallet_recovery_operator_insert
+	AFTER INSERT ON rgs_rounds
+	FOR EACH ROW
+	WHEN (
+		NEW.status IN ('PREPARED', 'WALLET_PENDING')
+		AND NEW.wallet_phase IN ('APPLY', 'LOOKUP')
+	)
+	EXECUTE FUNCTION rgs_register_wallet_recovery_operator();
+
+	CREATE TRIGGER rgs_register_wallet_recovery_operator_recovery_update
+	AFTER UPDATE OF status, wallet_phase ON rgs_rounds
+	FOR EACH ROW
+	WHEN (
+		NEW.status IN ('PREPARED', 'WALLET_PENDING')
+		AND NEW.wallet_phase IN ('APPLY', 'LOOKUP')
+		AND (
+			OLD.status NOT IN ('PREPARED', 'WALLET_PENDING')
+			OR OLD.wallet_phase NOT IN ('APPLY', 'LOOKUP')
+		)
+	)
+	EXECUTE FUNCTION rgs_register_wallet_recovery_operator()`
+
+func TestPostgresWalletRecoveryRegistryMigrationFencesRollingWriters(t *testing.T) {
+	databaseURLs := requirePostgresTestURLs(t)
+	database, err := sql.Open("pgx", databaseURLs.runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	migrator, err := sql.Open("pgx", databaseURLs.migrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrator.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	repository, err := NewRepository(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restoreRecoveryRegistryTriggers(t, migrator)
+
+	t.Run("writer committed before migration lock is backfilled", func(t *testing.T) {
+		truncateIntegrationTables(t, migrator)
+		dropRecoveryRegistryTriggers(t, ctx, migrator)
+		request, profile, outcome := createRollingLegacyPrepareFixture(
+			t, ctx, repository, "before-lock",
+		)
+
+		writerAtCommit := make(chan struct{})
+		releaseWriter := make(chan struct{})
+		writerDone := startRollingLegacyPrepare(
+			ctx, repository, request, profile, outcome, writerAtCommit, releaseWriter,
+		)
+		waitForSignal(t, ctx, writerAtCommit, "old writer before migration lock")
+
+		migrationStarted := make(chan struct{})
+		migrationDone := make(chan error, 1)
+		go func() {
+			tx, beginErr := migrator.BeginTx(ctx, nil)
+			if beginErr != nil {
+				migrationDone <- beginErr
+				return
+			}
+			defer tx.Rollback()
+			close(migrationStarted)
+			if _, lockErr := tx.ExecContext(ctx,
+				`LOCK TABLE rgs_rounds IN SHARE ROW EXCLUSIVE MODE`); lockErr != nil {
+				migrationDone <- lockErr
+				return
+			}
+			if backfillErr := backfillAndInstallRecoveryRegistryTriggers(ctx, tx); backfillErr != nil {
+				migrationDone <- backfillErr
+				return
+			}
+			migrationDone <- tx.Commit()
+		}()
+		waitForSignal(t, ctx, migrationStarted, "migration lock attempt")
+		assertStillBlocked(t, migrationDone, "migration lock passed an uncommitted old writer")
+
+		close(releaseWriter)
+		if err := waitForResult(t, ctx, writerDone, "old writer commit"); err != nil {
+			t.Fatal(err)
+		}
+		if err := waitForResult(t, ctx, migrationDone, "migration after old writer"); err != nil {
+			t.Fatal(err)
+		}
+		assertRecoveryOperatorRegisteredAndClaimable(t, ctx, database, repository, request)
+	})
+
+	t.Run("writer blocked after migration lock uses committed trigger", func(t *testing.T) {
+		truncateIntegrationTables(t, migrator)
+		dropRecoveryRegistryTriggers(t, ctx, migrator)
+		request, profile, outcome := createRollingLegacyPrepareFixture(
+			t, ctx, repository, "after-lock",
+		)
+
+		migration, err := migrator.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer migration.Rollback()
+		if _, err := migration.ExecContext(ctx,
+			`LOCK TABLE rgs_rounds IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+			t.Fatal(err)
+		}
+		if err := backfillAndInstallRecoveryRegistryTriggers(ctx, migration); err != nil {
+			t.Fatal(err)
+		}
+
+		writerAtCommit := make(chan struct{})
+		releaseWriter := make(chan struct{})
+		writerDone := startRollingLegacyPrepare(
+			ctx, repository, request, profile, outcome, writerAtCommit, releaseWriter,
+		)
+		assertStillBlocked(t, writerDone, "old writer bypassed the migration table lock")
+		select {
+		case <-writerAtCommit:
+			t.Fatal("old writer reached commit before migration published its trigger")
+		default:
+		}
+
+		if err := migration.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		waitForSignal(t, ctx, writerAtCommit, "old writer after migration commit")
+		close(releaseWriter)
+		if err := waitForResult(t, ctx, writerDone, "old writer after migration lock"); err != nil {
+			t.Fatal(err)
+		}
+		assertRecoveryOperatorRegisteredAndClaimable(t, ctx, database, repository, request)
+	})
+}
+
+func dropRecoveryRegistryTriggers(t *testing.T, ctx context.Context, migrator *sql.DB) {
+	t.Helper()
+	if _, err := migrator.ExecContext(ctx, `
+		DROP TRIGGER IF EXISTS rgs_register_wallet_recovery_operator_insert ON rgs_rounds;
+		DROP TRIGGER IF EXISTS rgs_register_wallet_recovery_operator_recovery_update ON rgs_rounds`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func restoreRecoveryRegistryTriggers(t *testing.T, migrator *sql.DB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := migrator.ExecContext(ctx, `
+		DROP TRIGGER IF EXISTS rgs_register_wallet_recovery_operator_insert ON rgs_rounds;
+		DROP TRIGGER IF EXISTS rgs_register_wallet_recovery_operator_recovery_update ON rgs_rounds`); err != nil {
+		t.Errorf("drop recovery registry test triggers: %v", err)
+		return
+	}
+	if _, err := migrator.ExecContext(ctx, testRecoveryRegistryTriggerInstallSQL); err != nil {
+		t.Errorf("restore recovery registry triggers: %v", err)
+	}
+}
+
+func backfillAndInstallRecoveryRegistryTriggers(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO rgs_wallet_recovery_operators (operator_id)
+		SELECT DISTINCT operator_id
+		FROM rgs_rounds
+		WHERE status IN ('PREPARED', 'WALLET_PENDING')
+		  AND wallet_phase IN ('APPLY', 'LOOKUP')
+		ON CONFLICT (operator_id) DO NOTHING`); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, testRecoveryRegistryTriggerInstallSQL)
+	return err
+}
+
+func createRollingLegacyPrepareFixture(
+	t *testing.T,
+	ctx context.Context,
+	repository *Repository,
+	suffix string,
+) (rgs.SpinRequest, rgs.Profile, rgs.SpinResult) {
+	t.Helper()
+	hash := strings.Repeat("a", 64)
+	session := rgs.Session{
+		OperatorID: "operator-rolling-" + suffix, SessionID: "session-rolling-" + suffix,
+		PlayerID: "player-rolling-" + suffix, WalletAccountID: "wallet-rolling-" + suffix,
+		WalletSessionID: "wallet-session-rolling-" + suffix,
+		GameID:          "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
+		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
+		Status: rgs.SessionActive, BalanceMinor: 10_000,
+		Feature: game.EmptyFeatureState(), ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}
+	if err := repository.CreateSession(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	request := rgs.SpinRequest{
+		OperatorID: session.OperatorID, SessionID: session.SessionID,
+		RoundID: "round-rolling-" + suffix,
+		GameID:  session.GameID, DefinitionVersion: session.DefinitionVersion,
+		DefinitionHash: hash, Currency: session.Currency,
+		RoundKind: rgs.RoundKindBase, BetMinor: 100,
+	}
+	outcome := validPreparedSessionIntegrityResult(request, 1)
+	outcome.ServerTransactionID = "rgs-op-v1:" + request.RoundID
+	profile := rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
+		"https://wallet.test.invalid/rolling-" + suffix,
+	))
+	return request, profile, outcome
+}
+
+func startRollingLegacyPrepare(
+	ctx context.Context,
+	repository *Repository,
+	request rgs.SpinRequest,
+	profile rgs.Profile,
+	outcome rgs.SpinResult,
+	atCommit chan<- struct{},
+	release <-chan struct{},
+) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		_, prepared, err := prepareRoundLegacyForLoadWithCommitHook(
+			ctx, repository, request, rgs.FingerprintFor(request), profile,
+			func(rgs.Session) (rgs.SpinResult, error) { return outcome, nil },
+			func() error {
+				close(atCommit)
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+		)
+		if err == nil && !prepared {
+			err = errors.New("legacy rolling writer did not prepare a new round")
+		}
+		done <- err
+	}()
+	return done
+}
+
+func assertRecoveryOperatorRegisteredAndClaimable(
+	t *testing.T,
+	ctx context.Context,
+	database *sql.DB,
+	repository *Repository,
+	request rgs.SpinRequest,
+) {
+	t.Helper()
+	var registered int
+	if err := database.QueryRowContext(ctx, `
+		SELECT count(*) FROM rgs_wallet_recovery_operators WHERE operator_id=$1`,
+		request.OperatorID,
+	).Scan(&registered); err != nil {
+		t.Fatal(err)
+	}
+	if registered != 1 {
+		t.Fatalf("rolling registry count = %d, want 1", registered)
+	}
+	claims, err := repository.ClaimRecoverableRounds(ctx, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims) != 1 || claims[0].Record.Key != request.Key() {
+		t.Fatalf("rolling recovery claims = %+v", claims)
+	}
+}
+
+func assertStillBlocked(t *testing.T, result <-chan error, reason string) {
+	t.Helper()
+	select {
+	case err := <-result:
+		t.Fatalf("%s: completed early with %v", reason, err)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func waitForSignal(t *testing.T, ctx context.Context, signal <-chan struct{}, operation string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-ctx.Done():
+		t.Fatalf("%s: %v", operation, ctx.Err())
+	}
+}
+
+func waitForResult(t *testing.T, ctx context.Context, result <-chan error, operation string) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		if err != nil {
+			return fmt.Errorf("%s: %w", operation, err)
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("%s: %w", operation, ctx.Err())
+	}
+}
+
+func assertFailedPrepareDoesNotRegisterRecoveryOperator(
+	t *testing.T,
+	ctx context.Context,
+	database *sql.DB,
+	migrator *sql.DB,
+	repository *Repository,
+	profile rgs.Profile,
+) {
+	t.Helper()
+	const (
+		operatorID   = "operator-fair-rollback"
+		sessionID    = "session-fair-rollback"
+		roundID      = "round-fair-rollback"
+		triggerName  = "rgs_test_fail_recovery_registration"
+		functionName = "rgs_test_fail_recovery_registration"
+	)
+	if _, err := migrator.ExecContext(ctx, `
+		CREATE OR REPLACE FUNCTION rgs_test_fail_recovery_registration()
+		RETURNS trigger LANGUAGE plpgsql AS $function$
+		BEGIN
+			IF NEW.operator_id = 'operator-fair-rollback'
+			   AND NEW.event_type = 'ROUND_PREPARED' THEN
+				RAISE EXCEPTION 'forced PREPARE rollback';
+			END IF;
+			RETURN NEW;
+		END
+		$function$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrator.ExecContext(ctx, `
+		DROP TRIGGER IF EXISTS rgs_test_fail_recovery_registration ON rgs_outbox`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrator.ExecContext(ctx, `
+		CREATE TRIGGER rgs_test_fail_recovery_registration
+		BEFORE INSERT ON rgs_outbox
+		FOR EACH ROW EXECUTE FUNCTION rgs_test_fail_recovery_registration()`); err != nil {
+		t.Fatal(err)
+	}
+	triggerInstalled := true
+	cleanup := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := migrator.ExecContext(cleanupCtx,
+			`DROP TRIGGER IF EXISTS `+triggerName+` ON rgs_outbox`); err != nil {
+			t.Errorf("drop rollback trigger: %v", err)
+		}
+		if _, err := migrator.ExecContext(cleanupCtx,
+			`DROP FUNCTION IF EXISTS `+functionName+`()`); err != nil {
+			t.Errorf("drop rollback function: %v", err)
+		}
+	}
+	defer func() {
+		if triggerInstalled {
+			cleanup()
+		}
+	}()
+
+	hash := strings.Repeat("a", 64)
+	session := rgs.Session{
+		OperatorID: operatorID, SessionID: sessionID,
+		PlayerID: "player-fair-rollback", WalletAccountID: "wallet-fair-rollback",
+		WalletSessionID: "wallet-session-fair-rollback",
+		GameID:          "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
+		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
+		Status: rgs.SessionActive, BalanceMinor: 10_000,
+		Feature:   game.EmptyFeatureState(),
+		ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}
+	if err := repository.CreateSession(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	request := rgs.SpinRequest{
+		OperatorID: operatorID, SessionID: sessionID, RoundID: roundID,
+		GameID: session.GameID, DefinitionVersion: session.DefinitionVersion,
+		DefinitionHash: hash, Currency: session.Currency,
+		RoundKind: rgs.RoundKindBase, BetMinor: 100,
+	}
+	result := validPreparedSessionIntegrityResult(request, 1)
+	result.ServerTransactionID = "rgs-op-v1:" + roundID
+	if _, prepared, err := repository.PrepareRound(
+		ctx, request, rgs.FingerprintFor(request), profile,
+		func(rgs.Session) (rgs.SpinResult, error) { return result, nil },
+	); err == nil || prepared {
+		t.Fatalf("forced PREPARE rollback = prepared:%v error:%v", prepared, err)
+	}
+
+	var registered, rounds, walletRows, preparedEvents int
+	var sessionCursorClean bool
+	if err := database.QueryRowContext(ctx, `
+		SELECT
+			(SELECT count(*) FROM rgs_wallet_recovery_operators WHERE operator_id=$1),
+			(SELECT count(*) FROM rgs_rounds WHERE operator_id=$1),
+			(SELECT count(*) FROM rgs_wallet_transactions WHERE operator_id=$1),
+			(SELECT count(*) FROM rgs_outbox
+			 WHERE operator_id=$1 AND event_type='ROUND_PREPARED'),
+			(SELECT pending_round_id IS NULL FROM rgs_sessions
+			 WHERE operator_id=$1 AND session_id=$2)`,
+		operatorID, sessionID,
+	).Scan(&registered, &rounds, &walletRows, &preparedEvents, &sessionCursorClean); err != nil {
+		t.Fatal(err)
+	}
+	if registered != 0 || rounds != 0 || walletRows != 0 || preparedEvents != 0 || !sessionCursorClean {
+		t.Fatalf("failed PREPARE leaked state = registry:%d rounds:%d wallet:%d events:%d clean_cursor:%v",
+			registered, rounds, walletRows, preparedEvents, sessionCursorClean)
+	}
+	cleanup()
+	triggerInstalled = false
 }
 
 func TestPostgresRecoveryQuarantinesPoisonBeforeNextClaim(t *testing.T) {
@@ -549,6 +1160,154 @@ func TestPostgresNotSentApplyReturnsReservedAttemptBudget(t *testing.T) {
 	}
 }
 
+func TestPostgresWorkerLookupLimitFencesAcrossPasses(t *testing.T) {
+	databaseURLs := requirePostgresTestURLs(t)
+	database, err := sql.Open("pgx", databaseURLs.runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	migrator, err := sql.Open("pgx", databaseURLs.migrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrator.Close()
+	truncateIntegrationTables(t, migrator)
+	defer truncateIntegrationTables(t, migrator)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	claimRepository, err := NewRepository(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transitionRepository, err := NewRepository(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
+		"https://wallet.test.invalid/lookup-limit-ledger",
+	))
+	preparePostgresRecoveryFixture(
+		t, ctx, claimRepository, profile,
+		"operator-lookup-limit", "session-lookup-limit", "round-lookup-limit",
+	)
+	key := rgs.RoundKey{
+		OperatorID: "operator-lookup-limit", SessionID: "session-lookup-limit",
+		RoundID: "round-lookup-limit",
+	}
+	applyClaim, claimed, err := claimRepository.ClaimWallet(ctx, key, time.Second)
+	if err != nil || !claimed || applyClaim.Action != rgs.WalletRecoveryApply {
+		t.Fatalf("initial apply claim = claim:%+v claimed:%v error:%v", applyClaim, claimed, err)
+	}
+	if scheduled, scheduleErr := claimRepository.ScheduleWalletRecovery(
+		ctx,
+		applyClaim,
+		rgs.WalletRecoveryDisposition{NextAction: rgs.WalletRecoveryLookup},
+		0,
+	); scheduleErr != nil || !scheduled {
+		t.Fatalf("initial unknown apply schedule = scheduled:%v error:%v", scheduled, scheduleErr)
+	}
+
+	wallet := &permanentlyPendingLookupWallet{profile: profile}
+	definitions := rgs.DefinitionResolverFunc(func(
+		context.Context, string, string, string,
+	) (game.Spinner, error) {
+		return &integrationSpinner{}, nil
+	})
+	coordinator, err := rgs.NewCoordinator(rgs.CoordinatorConfig{
+		WalletLease: time.Second, WalletFastPathTimeout: 100 * time.Millisecond,
+		PendingWait: 100 * time.Millisecond, PollInterval: time.Millisecond,
+		MaxWalletAttempts: 1,
+	}, transitionRepository, wallet, definitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := recovery.New(recovery.Config{
+		Interval: 100 * time.Millisecond, AttemptTimeout: 500 * time.Millisecond,
+		LeaseDuration: time.Second, InitialBackoff: time.Millisecond,
+		MaximumBackoff: time.Millisecond, BatchSize: 1, MaxParallel: 1,
+		FullJitter: func(time.Duration) time.Duration { return 0 },
+	}, claimRepository, coordinator, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 第一个 Worker pass 是配置允许的最后一次查询。
+	if err := worker.RunOnce(ctx); err != nil {
+		t.Fatalf("last allowed lookup pass: %v", err)
+	}
+	if wallet.resolveCalls.Load() != 1 {
+		t.Fatalf("wallet lookups after first pass = %d, want 1", wallet.resolveCalls.Load())
+	}
+	// 第二个 pass 由另一 Repository 实例执行 fenced 状态转换；达到上限后只能
+	// 隔离，不能再次访问第三方钱包。
+	if err := worker.RunOnce(ctx); err != nil {
+		t.Fatalf("lookup limit pass: %v", err)
+	}
+	if wallet.resolveCalls.Load() != 1 {
+		t.Fatalf("wallet lookups after limit = %d, want 1", wallet.resolveCalls.Load())
+	}
+	var roundStatus, sessionStatus, failureCode string
+	var lookupAttempts int
+	if err := database.QueryRowContext(ctx, `
+		SELECT r.status, r.lookup_attempts, r.failure_code, s.status
+		FROM rgs_rounds r
+		JOIN rgs_sessions s
+		  ON s.operator_id=r.operator_id AND s.session_id=r.session_id
+		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3`,
+		key.OperatorID, key.SessionID, key.RoundID,
+	).Scan(&roundStatus, &lookupAttempts, &failureCode, &sessionStatus); err != nil {
+		t.Fatal(err)
+	}
+	if roundStatus != string(rgs.RoundManualReview) || lookupAttempts != 2 ||
+		failureCode != "wallet lookup attempt limit exceeded" ||
+		sessionStatus != string(rgs.SessionBlocked) {
+		t.Fatalf("lookup limit persisted state = round:%q attempts:%d failure:%q session:%q",
+			roundStatus, lookupAttempts, failureCode, sessionStatus)
+	}
+}
+
+type permanentlyPendingLookupWallet struct {
+	profile      rgs.Profile
+	resolveCalls atomic.Int64
+}
+
+func (wallet *permanentlyPendingLookupWallet) ProfileFor(string) (rgs.Profile, error) {
+	return wallet.profile, nil
+}
+
+func (*permanentlyPendingLookupWallet) SubmitRound(context.Context, rgs.WalletRound) rgs.Resolution {
+	return rgs.Resolution{Status: rgs.ResolutionNotSent, Cause: rgs.ErrWalletUnavailable}
+}
+
+func (wallet *permanentlyPendingLookupWallet) Resolve(context.Context, rgs.OperationRef) rgs.Resolution {
+	wallet.resolveCalls.Add(1)
+	return rgs.Resolution{Status: rgs.ResolutionPending, Cause: rgs.ErrWalletPending}
+}
+
+func (*permanentlyPendingLookupWallet) ApplyRound(
+	context.Context,
+	rgs.WalletRound,
+) (rgs.WalletReceipt, error) {
+	return rgs.WalletReceipt{}, rgs.ErrWalletUnavailable
+}
+
+func (*permanentlyPendingLookupWallet) Lookup(
+	context.Context,
+	string,
+	string,
+) (rgs.WalletReceipt, bool, error) {
+	return rgs.WalletReceipt{}, false, rgs.ErrWalletPending
+}
+
+func (*permanentlyPendingLookupWallet) Rollback(
+	context.Context,
+	rgs.WalletRollback,
+) (rgs.WalletReceipt, error) {
+	return rgs.WalletReceipt{}, rgs.ErrWalletUnavailable
+}
+
 func TestPostgresIntegrityQuarantinePreservesSucceededWalletEvidence(t *testing.T) {
 	databaseURLs := requirePostgresTestURLs(t)
 	database, err := sql.Open("pgx", databaseURLs.runtime)
@@ -648,8 +1407,6 @@ func TestClaimRecoverableRoundsAtomicallyReturnsPreswitchedAction(t *testing.T) 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(walletLeaseClockSQL)).
 		WillReturnRows(sqlmock.NewRows([]string{"clock_timestamp"}).AddRow(databaseNow))
-	mock.ExpectExec(regexp.QuoteMeta(ensureRecoveryOperatorsSQL)).
-		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(regexp.QuoteMeta(recoverableRoundClaimSQL)).
 		WithArgs(databaseNow, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"operator_id", "session_id", "round_id"}).
@@ -740,7 +1497,7 @@ func TestPrepareRoundUsesDatabaseClockForInitialRecoverySchedule(t *testing.T) {
 		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3`)).
 		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
 		WillReturnRows(sqlmock.NewRows(roundRowColumns))
-	mock.ExpectQuery(`(?s)WITH inserted_round AS .*INSERT INTO rgs_rounds.*inserted_wallet AS .*INSERT INTO rgs_wallet_transactions.*updated_session AS .*UPDATE rgs_sessions.*inserted_outbox AS .*INSERT INTO rgs_outbox.*SELECT`).
+	mock.ExpectQuery(`(?s)WITH inserted_round AS .*INSERT INTO rgs_rounds.*inserted_wallet AS .*INSERT INTO rgs_wallet_transactions.*updated_session AS .*UPDATE rgs_sessions.*registered_recovery_operator AS .*INSERT INTO rgs_wallet_recovery_operators.*SELECT operator_id FROM updated_session.*ON CONFLICT \(operator_id\) DO NOTHING.*inserted_outbox AS .*INSERT INTO rgs_outbox.*SELECT`).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"round_count", "wallet_count", "session_count", "outbox_count",
 		}).AddRow(1, 1, 1, 1))

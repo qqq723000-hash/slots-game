@@ -329,6 +329,20 @@ func TestLimiterRejectsUnboundedKeyTTLConfiguration(t *testing.T) {
 	}
 }
 
+func TestLimiterRejectsSilentlyRoundedSharedRate(t *testing.T) {
+	key := []byte("01234567890123456789012345678901")
+	if _, err := newLimiter(&fakeExecutor{}, Config{
+		Timeout: 50 * time.Millisecond, Rate: 125.5, Burst: 300,
+	}, key, nil); err != nil {
+		t.Fatalf("exact millitoken rate rejected: %v", err)
+	}
+	if _, err := newLimiter(&fakeExecutor{}, Config{
+		Timeout: 50 * time.Millisecond, Rate: 125.5001, Burst: 300,
+	}, key, nil); err == nil || !strings.Contains(err.Error(), "millitokens") {
+		t.Fatalf("fractional millitoken rate error = %v", err)
+	}
+}
+
 func TestLimiterUsesIndependentSharedRateArguments(t *testing.T) {
 	fake := &fakeExecutor{result: []int64{1, 0}}
 	limiter, err := newLimiter(fake, Config{Timeout: 50 * time.Millisecond, Rate: 500, Burst: 1000}, []byte("01234567890123456789012345678901"), nil)
@@ -341,9 +355,18 @@ func TestLimiterUsesIndependentSharedRateArguments(t *testing.T) {
 	}
 }
 
-func TestSharedAdmissionSourcePinsSinglePipelineConnection(t *testing.T) {
+func TestSharedAdmissionSourcePinsBoundedSynchronousPool(t *testing.T) {
 	if singlePipelineConnectionMultiplex != -1 {
 		t.Fatal("shared admission client no longer pins one pipeline connection per discovered node")
+	}
+	options := boundedValkeyClientOptions(50 * time.Millisecond)
+	if !options.DisableAutoPipelining || options.BlockingPoolSize != synchronousValkeyPoolSize ||
+		synchronousValkeyPoolSize != 4 || maximumValkeyConnectionsPerPod != 5 ||
+		options.ConnWriteTimeout != 50*time.Millisecond {
+		t.Fatalf("shared admission bounded synchronous transport regressed: %+v", options)
+	}
+	if permits := newValkeyExecutor(nil).transportPermits; cap(permits) != synchronousValkeyPoolSize {
+		t.Fatalf("shared admission application transport permits = %d, want %d", cap(permits), synchronousValkeyPoolSize)
 	}
 	if !forceSingleValkeyClient {
 		t.Fatal("shared admission client must not probe cluster commands on a non-cluster endpoint")

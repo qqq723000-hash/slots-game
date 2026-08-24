@@ -1337,7 +1337,6 @@ export class ReelView extends Container {
   }
 
   private applySpinFrame(): void {
-    const cellHeight = Math.max(1, this.layoutCellHeight);
     const velocityRowsPerMs = reelStartVelocityRowsAt(this.spinElapsedMs, this.spinProfile);
     const speedRatio = Math.min(1, velocityRowsPerMs / 0.02);
     const totalRows = this.spinProfile.phaseOffsetRows
