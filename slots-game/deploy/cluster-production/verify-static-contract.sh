@@ -108,6 +108,14 @@ grep -F 'API HPA 重复抓取不得填补 Worker 缺口' "$script_directory/prom
   fail 'HPA 告警没有覆盖高可用 kube-state-metrics 重复抓取'
 grep -F '新经济意图触发数据库保留容量时必须告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
   fail '新经济意图数据库保留容量告警缺少行为测试'
+grep -F 'API 追踪导出失败必须告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail 'API 追踪导出失败告警缺少行为测试'
+grep -F 'Worker 追踪导出失败必须告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail 'Worker 追踪导出失败告警缺少行为测试'
+grep -F 'API 仍就绪但经济准入不可用时必须告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '经济准入独立健康告警缺少恢复 API 仍就绪行为测试'
+grep -F '经济准入组合成功证据陈旧时必须告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
+  fail '经济准入组合成功年龄告警缺少行为测试'
 grep -F '钱包隔离拒绝必须触发告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
   fail '钱包隔离拒绝告警缺少行为测试'
 grep -F '钱包待定结果持续出现必须触发告警' "$script_directory/prometheus-rule-tests.yaml" >/dev/null ||
@@ -129,7 +137,7 @@ grep -F 'var productionTargets = []string{"./cmd/rgs-server", "./cmd/rgs-migrato
   fail 'Go 第三方许可生成器没有固定两个生产二进制入口'
 grep -F '"name": "NOTICE"' "$backend_notice_policy" >/dev/null ||
   fail 'Go 第三方许可审批清单没有保留上游 NOTICE'
-grep -F '生产第三方模块数量：8' "$backend_notice" >/dev/null ||
+grep -F '生产第三方模块数量：27' "$backend_notice" >/dev/null ||
   fail 'Go 第三方许可权威声明缺少完整生产依赖集合'
 if grep -F 'github.com/DATA-DOG/go-sqlmock' "$backend_notice" >/dev/null; then
   fail '仅测试依赖被错误列入 Go 生产许可声明'
@@ -160,6 +168,13 @@ fi
   --namespace slots-production \
   -f "$example_values" \
   --output-dir "$rendered_directory" >/dev/null
+"$helm_binary" template slots "$chart_directory" \
+  --namespace slots-production \
+  -f "$example_values" \
+  --set observability.tracing.enabled=false \
+  --set-string observability.tracing.endpointURL= \
+  --set-json 'networkPolicy.egress.tracing.cidrs=[]' \
+  --output-dir "$rendered_directory/tracing-disabled" >/dev/null
 "$helm_binary" template slots "$chart_directory" \
   --namespace slots-production \
   --is-upgrade \
@@ -203,12 +218,54 @@ if "$helm_binary" template slots "$chart_directory" --namespace slots-production
   fail 'Worker 被错误允许在 API 仍运行时单独进入数据库维护静默'
 fi
 if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set-json 'networkPolicy.egress.tracing.cidrs=[]' >/dev/null 2>&1; then
+  fail '启用 tracing 时错误接受空 collector 出口 CIDR'
+fi
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set networkPolicy.egress.tracing.port=443 >/dev/null 2>&1; then
+  fail 'tracing endpoint 与出口端口不一致时被错误接受'
+fi
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set observability.tracing.enabled=false >/dev/null 2>&1; then
+  fail '关闭 tracing 时错误接受残留 endpoint/CIDR'
+fi
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set observability.tracing.maxQueueSize=64 \
+  --set observability.tracing.maxExportBatchSize=65 >/dev/null 2>&1; then
+  fail 'tracing 单批导出上限超过队列时被错误接受'
+fi
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set rgs.terminationGracePeriodSeconds=44 >/dev/null 2>&1; then
+  fail 'API 终止宽限未覆盖向上取整后的 tracing flush 预算'
+fi
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set worker.terminationGracePeriodSeconds=44 >/dev/null 2>&1; then
+  fail 'Worker 终止宽限未覆盖向上取整后的 tracing flush 预算'
+fi
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" --set observability.tracing.shutdownTimeoutMilliseconds=5001 >/dev/null 2>&1; then
+  fail 'tracing flush 毫秒预算没有向上取整到完整终止秒'
+fi
+"$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" \
+  --set observability.tracing.shutdownTimeoutMilliseconds=5001 \
+  --set rgs.terminationGracePeriodSeconds=46 \
+  --set worker.terminationGracePeriodSeconds=46 >/dev/null
+"$helm_binary" template slots "$chart_directory" --namespace slots-production \
+  -f "$example_values" \
+  --set observability.tracing.enabled=false \
+  --set-string observability.tracing.endpointURL= \
+  --set-json 'networkPolicy.egress.tracing.cidrs=[]' \
+  --set rgs.terminationGracePeriodSeconds=40 \
+  --set worker.terminationGracePeriodSeconds=40 >/dev/null
+if "$helm_binary" template slots "$chart_directory" --namespace slots-production \
   -f "$example_values" --set rgs.runtime.walletFastPathTimeoutSeconds=4 \
   --set rgs.runtime.walletTimeoutSeconds=4 >/dev/null 2>&1; then
   fail '钱包快速路径预算达到故障截止时被错误接受'
 fi
 
 rendered_root="$rendered_directory/slots-cluster-production/templates"
+tracing_disabled_root="$rendered_directory/tracing-disabled/slots-cluster-production/templates"
 upgrade_rendered_root="$rendered_directory/upgrade/slots-cluster-production/templates"
 long_release_root="$rendered_directory/long-release/slots-cluster-production/templates"
 long_override_root="$rendered_directory/long-override/slots-cluster-production/templates"
@@ -219,6 +276,7 @@ shared_rotated_root="$rendered_directory/shared-admission-rotated/slots-cluster-
 test -d "$rendered_root" || fail 'Helm 未生成模板目录'
 test -d "$upgrade_rendered_root" || fail 'Helm 未生成升级模板目录'
 ruby "$script_directory/verify-rendered-contract.rb" "$rendered_root" up
+ruby "$script_directory/verify-rendered-contract.rb" "$tracing_disabled_root" up disabled
 ruby "$script_directory/verify-rendered-contract.rb" "$upgrade_rendered_root" verify
 ruby "$script_directory/verify-rendered-contract.rb" "$long_release_root" up
 ruby "$script_directory/verify-rendered-contract.rb" "$long_override_root" up
@@ -349,6 +407,11 @@ require_rendered 'maxUnavailable: 0' "$rendered_root/rgs-deployment.yaml"
 require_rendered 'preStop:' "$rendered_root/rgs-deployment.yaml"
 require_rendered 'value: api' "$rendered_root/rgs-deployment.yaml"
 require_rendered 'slots-game.io/release-compatibility-class: "same-schema-and-definition"' "$rendered_root/rgs-deployment.yaml"
+require_rendered 'slots-game.io/access-token-protocol: "RGS-ACCESS-v3"' "$rendered_root/rgs-deployment.yaml"
+grep -F 'RGS-ACCESS v2/v3 禁止普通 RollingUpdate' "$chart_directory/templates/validate.yaml" >/dev/null || {
+  printf '%s\n' 'Chart 缺少访问令牌协议变更的维护排空门禁。' >&2
+  exit 1
+}
 require_rendered 'slots-game.io/hmac-maintenance-quiesced: "false"' "$rendered_root/rgs-deployment.yaml"
 if grep -E '^  replicas:' "$rendered_root/rgs-deployment.yaml" >/dev/null; then
   fail '普通发布的 API Deployment 不得抢占 HPA 的 replicas 所有权'
@@ -357,6 +420,9 @@ require_rendered 'maxUnavailable: 0' "$rendered_root/worker-deployment.yaml"
 require_rendered 'preStop:' "$rendered_root/worker-deployment.yaml"
 require_rendered 'value: worker' "$rendered_root/worker-deployment.yaml"
 require_rendered 'fieldPath: metadata.name' "$rendered_root/worker-deployment.yaml"
+require_rendered 'startupProbe:' "$rendered_root/worker-deployment.yaml"
+require_rendered 'readinessProbe:' "$rendered_root/worker-deployment.yaml"
+require_rendered 'failureThreshold: 36' "$rendered_root/worker-deployment.yaml"
 if grep -E '^  replicas:' "$rendered_root/worker-deployment.yaml" >/dev/null; then
   fail '普通发布的 Worker Deployment 不得抢占 HPA 的 replicas 所有权'
 fi
@@ -373,8 +439,11 @@ require_rendered 'alert: SlotsRGSWorkerTargetUnavailable' "$rendered_root/promet
 require_rendered 'alert: SlotsRGSIntegrityQuarantine' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSAuthReplay' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSSecurityLogDropsSustained' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSTraceExportFailures' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSHPAUnableToScale' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSNewIntentCapacityRejected' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSEconomicAdmissionUnavailable' "$rendered_root/prometheusrule.yaml"
+require_rendered 'alert: SlotsRGSEconomicAdmissionObservationStale' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSWalletResponseAuthenticationInvalid' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSWalletLatencyHigh' "$rendered_root/prometheusrule.yaml"
 require_rendered 'alert: SlotsRGSWalletRequestsStalled' "$rendered_root/prometheusrule.yaml"
@@ -384,7 +453,10 @@ require_rendered 'alert: SlotsRGSRecoveryLoopStale' "$rendered_root/prometheusru
 require_rendered 'alert: SlotsRGSRecoverySnapshotStale' "$rendered_root/prometheusrule.yaml"
 require_rendered 'sum(increase(rgs_new_intent_capacity_rejected_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
 require_rendered 'sum(increase(rgs_auth_replays_total{job="slots-rgs",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
+require_rendered 'rgs_economic_admission_ready{job="slots-rgs",namespace="slots-production"} == 0' "$rendered_root/prometheusrule.yaml"
+require_rendered 'rgs_economic_admission_last_success_age_seconds{job="slots-rgs",namespace="slots-production"} > 900' "$rendered_root/prometheusrule.yaml"
 require_rendered 'sum(increase(rgs_security_logs_dropped_total{job=~"slots-rgs|slots-rgs-worker",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
+require_rendered 'sum(increase(rgs_trace_export_failures_total{job=~"slots-rgs|slots-rgs-worker",namespace="slots-production"}[5m])) > 0' "$rendered_root/prometheusrule.yaml"
 require_rendered 'kube_horizontalpodautoscaler_status_condition{job="kube-state-metrics",namespace="slots-production",condition="ScalingActive",status="true"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'horizontalpodautoscaler=~"slots-slots-cluster-production-rgs|slots-slots-cluster-production-rgs-worker"' "$rendered_root/prometheusrule.yaml"
 require_rendered 'count(max by (horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_condition' "$rendered_root/prometheusrule.yaml"
@@ -396,6 +468,10 @@ require_rendered 'or absent(rgs_ready{job="slots-rgs-worker",namespace="slots-pr
 require_rendered 'kind: NetworkPolicy' "$rendered_root/networkpolicies.yaml"
 require_rendered 'name: RGS_WALLET_FAST_PATH_TIMEOUT' "$rendered_root/rgs-deployment.yaml"
 require_rendered 'value: "1s"' "$rendered_root/rgs-deployment.yaml"
+require_rendered 'name: RGS_SESSION_IDLE_DISCONNECT_MIN' "$rendered_root/rgs-deployment.yaml"
+require_rendered 'value: "60s"' "$rendered_root/rgs-deployment.yaml"
+require_rendered 'name: RGS_SESSION_IDLE_DISCONNECT_MAX' "$rendered_root/rgs-deployment.yaml"
+require_rendered 'value: "86400s"' "$rendered_root/rgs-deployment.yaml"
 require_rendered 'name: RGS_DB_CRITICAL_RESERVE_CONNS' "$rendered_root/rgs-deployment.yaml"
 require_rendered 'value: "5"' "$rendered_root/rgs-deployment.yaml"
 if grep -F 'RGS_DB_CRITICAL_RESERVE_CONNS' "$rendered_root/worker-deployment.yaml" >/dev/null; then

@@ -32,7 +32,7 @@ fixture="$test_root/repository"
 
 reset_fixture() {
   rm -rf "$fixture"
-  mkdir -p "$fixture/deploy/cluster-production" "$fixture/.github" "$fixture/web" "$fixture/docs"
+  mkdir -p "$fixture/deploy/cluster-production" "$fixture/deploy/observability" "$fixture/.github" "$fixture/web" "$fixture/docs"
   cp "$repository_root/Makefile" "$fixture/Makefile"
   cp "$repository_root/web/package.json" "$fixture/web/package.json"
   cp "$repository_root/docs/aws-production-deployment.md" "$fixture/docs/aws-production-deployment.md"
@@ -42,6 +42,8 @@ reset_fixture() {
   cp "$repository_root/deploy/cluster-production/verify-kubeconform.sh" "$fixture/deploy/cluster-production/verify-kubeconform.sh"
   cp "$repository_root/deploy/cluster-production/verify-image-runtime-contract.sh" "$fixture/deploy/cluster-production/verify-image-runtime-contract.sh"
   cp "$repository_root/deploy/cluster-production/verify-prometheus-rule-contract.sh" "$fixture/deploy/cluster-production/verify-prometheus-rule-contract.sh"
+  cp "$repository_root/deploy/observability/verify-release-workflow.sh" "$fixture/deploy/observability/verify-release-workflow.sh"
+  chmod 0755 "$fixture/deploy/observability/verify-release-workflow.sh"
   cp -R "$workflows_root" "$fixture/.github/workflows"
 }
 
@@ -61,6 +63,27 @@ replace_once() {
     { print }
   ' "$file" > "$file.tmp"
   mv "$file.tmp" "$file"
+}
+
+# awk -v 会解释反斜杠转义；内嵌 JavaScript 的 \u0027 必须按原始字节替换，
+# 否则负向夹具可能没有真正改变目标行却继续执行。
+replace_literal_once() {
+  old=$1
+  new=$2
+  file=$3
+  REPLACE_OLD="$old" REPLACE_NEW="$new" REPLACE_FILE="$file" node <<'NODE'
+const { readFileSync, writeFileSync } = require("node:fs");
+const source = readFileSync(process.env.REPLACE_FILE, "utf8");
+const oldValue = process.env.REPLACE_OLD;
+const newValue = process.env.REPLACE_NEW;
+const first = source.indexOf(oldValue);
+if (first < 0 || source.indexOf(oldValue, first + oldValue.length) >= 0) process.exit(1);
+writeFileSync(
+  process.env.REPLACE_FILE,
+  `${source.slice(0, first)}${newValue}${source.slice(first + oldValue.length)}`,
+  "utf8",
+);
+NODE
 }
 
 insert_job_permission() {
@@ -617,8 +640,16 @@ replace_once '        run: make verify' '        run: make verify-supply-chain-c
 expect_rejected 'release skipped complete source conformance'
 
 reset_fixture
-replace_once 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments test test-race vet build' 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments test vet build' "$fixture/Makefile"
+replace_once 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test test-race vet build' 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test vet build' "$fixture/Makefile"
 expect_rejected 'release verify closure omitted race tests'
+
+reset_fixture
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' 'verify-supply-chain-contract: verify-hardening-stability-contract' "$fixture/Makefile"
+expect_rejected 'ordinary supply-chain CI skipped the hardening checklist gate'
+
+reset_fixture
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' 'verify-supply-chain-contract: verify-hardening-checklist' "$fixture/Makefile"
+expect_rejected 'ordinary supply-chain CI skipped the hardening stability contract gate'
 
 reset_fixture
 replace_once '        run: ./deploy/supply-chain/scan.sh source "$SUPPLY_CHAIN_REPORT_DIR/source"' '        run: true # source security scan removed' "$fixture/.github/workflows/supply-chain-release.yml"
@@ -669,6 +700,73 @@ expect_rejected 'protected release skipped deployment contracts'
 reset_fixture
 replace_once '        run: make verify-cluster-prometheus-rules' '        run: true # promtool rule parsing removed' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'protected release skipped PromQL parsing'
+
+reset_fixture
+replace_once '        run: ./deploy/observability/verify-release-workflow.sh' '        run: true # rendered observability release validation removed' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected release skipped fixed-image rendered observability validation'
+
+reset_fixture
+replace_once '        run: ./deploy/observability/verify-release-workflow.sh' "        run: '# ./deploy/observability/verify-release-workflow.sh'" "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected release commented out rendered observability validation'
+
+reset_fixture
+ruby -e '
+  path = ARGV.fetch(0)
+  source = File.read(path)
+  marker = "      - name: Validate rendered observability release with fixed images\n        shell: bash\n"
+  replacement = "      - name: Validate rendered observability release with fixed images\n        if: ${{ false }}\n        shell: bash\n"
+  changed = source.sub(marker, replacement)
+  abort "observability step if:false mutation did not apply" if changed == source
+  File.write(path, changed)
+' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected release observability validation step became skippable'
+
+reset_fixture
+ruby -ryaml -e '
+  path = ARGV.fetch(0)
+  workflow = YAML.safe_load(File.read(path), aliases: false)
+  step = workflow.dig("jobs", "verify-source-conformance", "steps").find do |candidate|
+    candidate["name"] == "Re-run complete source conformance on this protected tag"
+  end
+  abort "make verify step missing" unless step
+  step["if"] = "${{ false }}"
+  File.write(path, YAML.dump(workflow))
+' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected release source conformance step became skippable'
+
+reset_fixture
+replace_once 'node deploy/local-production/render-observability.mjs "$observability_rendered_dir"' 'true # controlled observability rendering removed' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected release skipped controlled observability rendering'
+
+reset_fixture
+ruby -e '
+  path = ARGV.fetch(0)
+  source = File.read(path)
+  changed = source.sub("umask 077\n", "umask 077\nexit 0\n")
+  abort "observability workflow early-exit mutation did not apply" if changed == source
+  File.write(path, changed)
+' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected release observability entrypoint gained an early success bypass'
+
+reset_fixture
+replace_once 'timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39' 'timberio/vector:0.57.0-debian' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected observability validation lost the reviewed Vector digest'
+
+reset_fixture
+replace_once 'RGS_CONTAINER_LOG_GLOB: /var/log/containers/rgs-server-*.log' 'RGS_CONTAINER_LOG_GLOB: /var/log/containers/*.log' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected observability validation accepted a broad container log glob'
+
+reset_fixture
+replace_once 'PROMETHEUS_RENDER_PROFILE: local-production' 'PROMETHEUS_RENDER_PROFILE: central' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected local observability validation selected the central render profile'
+
+reset_fixture
+replace_once 'ALERTMANAGER_SERVER_NAME: alert-proxy' 'ALERTMANAGER_SERVER_NAME: attacker.invalid' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected observability validation lost the approved Alertmanager TLS identity'
+
+reset_fixture
+replace_once 'ALERTMANAGER_ROOT_CA_FILE="$observability_rendered_dir/alertmanager-root-ca.pem"' 'ALERTMANAGER_ROOT_CA_FILE=/dev/null' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected observability validation stopped binding its generated Alertmanager root CA'
 
 reset_fixture
 replace_once 'postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193' 'postgres:17-alpine' "$fixture/.github/workflows/supply-chain-release.yml"
@@ -826,6 +924,18 @@ expect_rejected 'Registry push stopped comparing approval expiry with its curren
 reset_fixture
 replace_once 'extracted Web root contains a file outside release-manifest' 'unexpected files are tolerated' "$fixture/deploy/supply-chain/verify-web-static-root.mjs"
 expect_rejected 'AWS static-root verifier no longer failed on extra files'
+
+reset_fixture
+replace_once '["trusted-types", "slots-game-static-html"],' \
+  '["trusted-types", "*"],' \
+  "$fixture/deploy/supply-chain/extract-aws-web-static-root.sh"
+expect_rejected 'AWS CloudFront CSP extraction allowed an unreviewed Trusted Types policy'
+
+reset_fixture
+replace_literal_once '["require-trusted-types-for", "\u0027script\u0027"],' \
+  '["require-trusted-types-for", "*"],' \
+  "$fixture/deploy/supply-chain/extract-aws-web-static-root.sh"
+expect_rejected 'AWS CloudFront CSP extraction lost the exact Trusted Types sink enforcement'
 
 reset_fixture
 replace_once 'aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/"' 'aws s3 sync web/dist/' "$fixture/docs/aws-production-deployment.md"

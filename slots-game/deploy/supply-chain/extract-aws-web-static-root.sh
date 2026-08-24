@@ -69,7 +69,7 @@ CSP_CONFIG="$evidence_dir/release-nginx.conf" CSP_OUTPUT="$evidence_dir/cloudfro
       if (fields.length < 2 || directives.has(fields[0])) process.exit(1);
       directives.set(fields[0], fields.slice(1));
     }
-    const required = ["default-src", "script-src", "style-src", "img-src", "font-src", "media-src", "connect-src", "worker-src", "object-src", "base-uri", "form-action", "frame-ancestors"];
+    const required = ["default-src", "script-src", "style-src", "img-src", "font-src", "media-src", "connect-src", "worker-src", "object-src", "base-uri", "form-action", "trusted-types", "require-trusted-types-for", "frame-ancestors"];
     if (directives.size !== required.length || required.some((name) => !directives.has(name))) process.exit(1);
     const exact = new Map([
       ["default-src", "\u0027self\u0027"],
@@ -82,6 +82,8 @@ CSP_CONFIG="$evidence_dir/release-nginx.conf" CSP_OUTPUT="$evidence_dir/cloudfro
       ["object-src", "\u0027none\u0027"],
       ["base-uri", "\u0027self\u0027"],
       ["form-action", "\u0027none\u0027"],
+      ["trusted-types", "slots-game-static-html"],
+      ["require-trusted-types-for", "\u0027script\u0027"],
     ]);
     if ([...exact].some(([name, value]) => directives.get(name).join(" ") !== value)) process.exit(1);
     const exactHttpsOrigin = (value) => {

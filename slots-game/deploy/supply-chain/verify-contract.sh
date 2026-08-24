@@ -32,6 +32,7 @@ trivy_source_report_verifier="$repository_root/deploy/supply-chain/verify-trivy-
 trivy_report_sanitizer="$repository_root/deploy/supply-chain/sanitize-trivy-report.mjs"
 release_script="$repository_root/deploy/supply-chain/release-sign.sh"
 release_bundle_script="$repository_root/deploy/supply-chain/release-bundle.sh"
+observability_release_workflow_script="$repository_root/deploy/observability/verify-release-workflow.sh"
 web_static_verifier="$repository_root/deploy/supply-chain/verify-web-static-root.mjs"
 aws_web_extractor="$repository_root/deploy/supply-chain/extract-aws-web-static-root.sh"
 exception_file="$repository_root/deploy/supply-chain/vulnerability-exceptions.json"
@@ -87,6 +88,7 @@ for required_file in \
   "$trivy_report_sanitizer" \
   "$release_script" \
   "$release_bundle_script" \
+  "$observability_release_workflow_script" \
   "$web_static_verifier" \
   "$aws_web_extractor" \
   "$exception_file" \
@@ -400,6 +402,8 @@ require_fixed 'docker cp "$container_id:/usr/share/nginx/html/." "$static_root"'
 require_fixed 'node "$static_verifier" "$static_root"' "$aws_web_extractor"
 require_fixed 'CONFIGURATION_SHA256=%s' "$aws_web_extractor"
 require_fixed 'cloudfront-content-security-policy.txt' "$aws_web_extractor"
+require_fixed '["trusted-types", "slots-game-static-html"],' "$aws_web_extractor"
+require_fixed '["require-trusted-types-for", "\u0027script\u0027"],' "$aws_web_extractor"
 reject_fixed 'docker pull' "$aws_web_extractor"
 reject_fixed 'web/dist/' "$aws_web_extractor"
 require_fixed 'extract-aws-web-static-root.sh' "$aws_deployment_guide"
@@ -594,6 +598,7 @@ for required_control in \
   'run: npm run assets:check-streaming-packages' \
   'run: make verify-deployment-contracts' \
   'run: make verify-cluster-prometheus-rules' \
+  'run: ./deploy/observability/verify-release-workflow.sh' \
   'run: make verify' \
   'run: npm run build:determinism-check' \
   'run: make test-postgres' \
@@ -602,13 +607,74 @@ for required_control in \
 do
   printf '%s\n' "$conformance_job" | grep -F -- "$required_control" >/dev/null || fail "conformance job missing $required_control"
 done
+for observability_release_binding in \
+  'PROMETHEUS_IMAGE: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893' \
+  'VECTOR_IMAGE: timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39' \
+  'GRAFANA_IMAGE: grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63' \
+  'RGS_LOG_SINK_URI: https://logs.release.invalid/v1/ingest' \
+  'RGS_CONTAINER_LOG_GLOB: /var/log/containers/rgs-server-*.log' \
+  'PROMETHEUS_RENDER_PROFILE: local-production' \
+  'RGS_OPERATIONS_TARGET: rgs-server:8081' \
+  'ALERTMANAGER_TARGET: alert-proxy:8443' \
+  'ALERTMANAGER_CA_FILE: /run/secrets/alertmanager_root_ca.pem' \
+  'ALERTMANAGER_SERVER_NAME: alert-proxy'
+do
+  printf '%s\n' "$conformance_job" | grep -F -- "$observability_release_binding" >/dev/null ||
+    fail "release observability validation missing $observability_release_binding"
+done
+test -x "$observability_release_workflow_script" ||
+  fail 'rendered observability release workflow entrypoint must be executable'
+observability_release_workflow_sha=$(ruby -rdigest -e \
+  'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$observability_release_workflow_script")
+test "$observability_release_workflow_sha" = '0c373fababf4bf808107da025eee5e807cf616e8bcd0f6f60296d9d5e904a871' ||
+  fail 'rendered observability release workflow entrypoint drifted from the reviewed implementation'
+ruby -ryaml -rjson -rdigest -e '
+  workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  steps = workflow.dig("jobs", "verify-source-conformance", "steps")
+  abort "release conformance steps missing" unless steps.is_a?(Array)
+  canonicalize = lambda do |value|
+    case value
+    when Hash
+      value.keys.sort.to_h { |key| [key, canonicalize.call(value.fetch(key))] }
+    when Array
+      value.map { |item| canonicalize.call(item) }
+    else
+      value
+    end
+  end
+  semantic_digest = Digest::SHA256.hexdigest(JSON.generate(canonicalize.call(steps)))
+  abort "release conformance step graph drifted" unless
+    semantic_digest == "4b4e416c25803864b7bb1469544e9531fcbbc60204ddb0886c041cd252270d99"
+  matches = steps.select { |step| step.is_a?(Hash) && step["name"] == "Validate rendered observability release with fixed images" }
+  abort "rendered observability release step must exist exactly once" unless matches.length == 1
+  step = matches.first
+  abort "rendered observability release step keys drifted" unless step.keys.sort == %w[env name run shell]
+  abort "rendered observability release step must use bash" unless step["shell"] == "bash"
+  expected_env = {
+    "PROMETHEUS_IMAGE" => "prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893",
+    "VECTOR_IMAGE" => "timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39",
+    "GRAFANA_IMAGE" => "grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63",
+    "RGS_LOG_SINK_URI" => "https://logs.release.invalid/v1/ingest",
+    "RGS_CONTAINER_LOG_GLOB" => "/var/log/containers/rgs-server-*.log",
+    "PROMETHEUS_RENDER_PROFILE" => "local-production",
+    "RGS_OPERATIONS_TARGET" => "rgs-server:8081",
+    "ALERTMANAGER_TARGET" => "alert-proxy:8443",
+    "ALERTMANAGER_CA_FILE" => "/run/secrets/alertmanager_root_ca.pem",
+    "ALERTMANAGER_SERVER_NAME" => "alert-proxy"
+  }
+  abort "rendered observability release environment drifted" unless step["env"] == expected_env
+  abort "rendered observability release run command drifted" unless
+    step["run"] == "./deploy/observability/verify-release-workflow.sh"
+' "$release_workflow" || fail 'rendered observability release workflow semantic contract failed'
 printf '%s\n' "$conformance_job" | grep -F 'HELM_ARCHIVE_SHA256: 3f43c0aa57243852dd542493a0f54f1396c0bc8ec7296bbb2c01e802010819ce' >/dev/null || fail 'release Helm archive checksum is not fixed'
 printf '%s\n' "$conformance_job" | grep -F 'KUBECONFORM_ARCHIVE_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3' >/dev/null || fail 'release kubeconform archive checksum is not fixed'
 deployment_contract_line=$(printf '%s\n' "$conformance_job" | grep -n -F 'run: make verify-deployment-contracts' | head -n 1 | cut -d: -f1)
 prometheus_rule_contract_line=$(printf '%s\n' "$conformance_job" | grep -n -F 'run: make verify-cluster-prometheus-rules' | head -n 1 | cut -d: -f1)
+observability_release_line=$(printf '%s\n' "$conformance_job" | grep -n -F 'run: ./deploy/observability/verify-release-workflow.sh' | head -n 1 | cut -d: -f1)
 npm_install_line=$(printf '%s\n' "$conformance_job" | grep -n -F 'run: npm ci' | head -n 1 | cut -d: -f1)
 test -n "$deployment_contract_line" && test -n "$npm_install_line" && test "$deployment_contract_line" -lt "$npm_install_line" || fail 'deployment contracts must run before dependency installation and release builds'
 test -n "$prometheus_rule_contract_line" && test "$prometheus_rule_contract_line" -lt "$npm_install_line" || fail 'promtool must parse rendered cluster rules before dependency installation and release builds'
+test -n "$observability_release_line" && test "$observability_release_line" -lt "$npm_install_line" || fail 'fixed-image rendered observability validation must run before dependency installation and release builds'
 source_verify_line=$(printf '%s\n' "$conformance_job" | grep -n -F 'run: make verify' | head -n 1 | cut -d: -f1)
 determinism_line=$(printf '%s\n' "$conformance_job" | grep -n -F 'run: npm run build:determinism-check' | head -n 1 | cut -d: -f1)
 test -n "$source_verify_line" && test -n "$determinism_line" && test "$source_verify_line" -lt "$determinism_line" || fail 'frontend determinism check must rebuild the output produced by complete source conformance'
@@ -900,12 +966,15 @@ reject_fixed 'pull_request_target:' "$source_workflow"
 reject_fixed 'pull_request_target:' "$release_workflow"
 
 make_tab=$(printf '\t')
-require_line 'verify-supply-chain-contract:' "$makefile"
+require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' "$makefile"
+require_line 'verify-hardening-checklist:' "$makefile"
+require_line "${make_tab}node --test scripts/verify-hardening-checklist.test.mjs" "$makefile"
+require_line "${make_tab}node scripts/verify-hardening-checklist.mjs" "$makefile"
 require_line "${make_tab}./deploy/supply-chain/verify-contract.sh" "$makefile"
 require_line "${make_tab}./deploy/supply-chain/test-contract.sh" "$makefile"
 
 # `make verify` 的传递闭包是发布源码门禁的一部分；移除全量测试或任一后端检查均拒绝。
-require_line 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments test test-race vet build' "$makefile"
+require_line 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test test-race vet build' "$makefile"
 require_line "${make_tab}cd server && go test ./..." "$makefile"
 require_line "${make_tab}cd web && npm test -- --run --fileParallelism=false" "$makefile"
 require_line "${make_tab}cd server && go test -race ./..." "$makefile"

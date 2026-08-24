@@ -17,6 +17,11 @@ alerting:
         type: Bearer
         # 值只能由编排器以只读 secret 提供；禁止把凭据写入目标 URL 或规则 annotation。
         credentials_file: /run/secrets/alertmanager_bearer_token
+      tls_config:
+        ca_file: /run/secrets/alertmanager_root_ca.pem
+        server_name: "__ALERTMANAGER_SERVER_NAME__"
+        min_version: TLS12
+        insecure_skip_verify: false
       static_configs:
         - targets:
             # 发布渲染必须替换为 host:port；未替换时不得宣称值班已接通。

@@ -4,6 +4,7 @@ require "yaml"
 
 root = ARGV.fetch(0)
 expected_migrator_command = ARGV.fetch(1)
+expected_tracing = ARGV.fetch(2, "enabled")
 documents = Dir.glob(File.join(root, "**", "*.yaml")).sort.flat_map do |path|
   YAML.load_stream(File.read(path)).compact
 end
@@ -31,6 +32,47 @@ deployments.each do |deployment|
   selector = pod.fetch("nodeSelector")
   abort "Deployment 未固定 linux/amd64" unless selector["kubernetes.io/os"] == "linux" &&
     selector["kubernetes.io/arch"] == "amd64"
+end
+
+tracing_environment = {
+  "RGS_OTEL_TRACES_ENDPOINT" => "https://otel-collector.example.internal:4318/v1/traces",
+  "RGS_OTEL_TRACE_SAMPLE_RATIO" => "0.01",
+  "RGS_OTEL_BATCH_TIMEOUT" => "1000ms",
+  "RGS_OTEL_EXPORT_TIMEOUT" => "3000ms",
+  "RGS_OTEL_SHUTDOWN_TIMEOUT" => "5000ms",
+  "RGS_OTEL_MAX_QUEUE_SIZE" => "1024",
+  "RGS_OTEL_MAX_EXPORT_BATCH_SIZE" => "256"
+}
+runtime_deployments = deployments.select do |deployment|
+  %w[rgs rgs-worker].include?(deployment.dig("metadata", "labels", "app.kubernetes.io/component"))
+end
+runtime_deployments.each do |deployment|
+  environment = deployment.dig("spec", "template", "spec", "containers", 0, "env").to_h do |item|
+    [item.fetch("name"), item["value"]]
+  end
+  if expected_tracing == "enabled"
+    actual = environment.slice(*tracing_environment.keys).transform_values(&:to_s)
+    abort "API/Worker tracing 环境变量不完整或不一致" unless actual == tracing_environment
+  else
+    abort "关闭 tracing 后仍向 API/Worker 注入 RGS_OTEL_*" if
+      environment.keys.any? { |name| name.start_with?("RGS_OTEL_") }
+  end
+end
+
+tracing_rules = resources.fetch("NetworkPolicy", []).flat_map do |policy|
+  policy.dig("spec", "egress") || []
+end.select do |rule|
+  cidrs = (rule["to"] || []).map { |peer| peer.dig("ipBlock", "cidr") }.compact
+  ports = (rule["ports"] || []).map { |port| port["port"] }
+  cidrs.include?("10.60.0.0/24") || ports.include?(4318)
+end
+if expected_tracing == "enabled"
+  abort "启用 tracing 后缺少唯一 collector CIDR/端口出口" unless
+    tracing_rules.length == 1 &&
+      tracing_rules[0].fetch("to").map { |peer| peer.dig("ipBlock", "cidr") } == ["10.60.0.0/24"] &&
+      tracing_rules[0].fetch("ports") == [{"port" => 4318, "protocol" => "TCP"}]
+else
+  abort "关闭 tracing 后仍渲染 collector 出口" unless tracing_rules.empty?
 end
 
 pod_templates = deployments.map { |item| item.dig("spec", "template", "metadata", "labels") }
@@ -117,8 +159,11 @@ expected_alerts = %w[
   SlotsRGSSharedAdmissionErrors
   SlotsRGSEconomicAdmissionLimitedSustained
   SlotsRGSEconomicAdmissionErrors
+  SlotsRGSEconomicAdmissionUnavailable
+  SlotsRGSEconomicAdmissionObservationStale
   SlotsRGSAuthReplay
   SlotsRGSSecurityLogDropsSustained
+  SlotsRGSTraceExportFailures
   SlotsRGSWalletUnknownOutcome
   SlotsRGSWalletIsolationRejected
   SlotsRGSWalletCircuitOpen
@@ -182,6 +227,23 @@ abort "安全日志丢弃告警必须使用五分钟 increase 且持续五分钟
     security_log_drop_rule.fetch("for") == "5m"
 abort "安全日志丢弃告警必须保持 warning 级别" unless
   security_log_drop_rule.dig("labels", "severity") == "warning"
+trace_export_rule = rules.find { |rule| rule.fetch("alert") == "SlotsRGSTraceExportFailures" }
+abort "追踪导出失败告警必须覆盖 API/Worker、使用五分钟 increase 且保持 warning" unless
+  trace_export_rule.fetch("expr").strip ==
+    'sum(increase(rgs_trace_export_failures_total{job=~"slots-rgs|slots-rgs-worker",namespace="slots-production"}[5m])) > 0' &&
+    trace_export_rule.dig("labels", "severity") == "warning"
+economic_unavailable_rule = rules.find { |rule| rule.fetch("alert") == "SlotsRGSEconomicAdmissionUnavailable" }
+abort "经济准入不可用告警必须只在基础 API 仍就绪时触发并覆盖指标缺失" unless
+  economic_unavailable_rule.fetch("expr").include?('rgs_economic_admission_ready{job="slots-rgs",namespace="slots-production"} == 0') &&
+    economic_unavailable_rule.fetch("expr").scan('rgs_ready{job="slots-rgs",namespace="slots-production"} == 1').length == 2 &&
+    economic_unavailable_rule.fetch("expr").include?('unless on (job, namespace, instance)') &&
+    economic_unavailable_rule.fetch("for") == "2m"
+economic_stale_rule = rules.find { |rule| rule.fetch("alert") == "SlotsRGSEconomicAdmissionObservationStale" }
+abort "经济准入新鲜度告警必须使用保守 age 并覆盖从未验证或指标缺失" unless
+  economic_stale_rule.fetch("expr").include?('rgs_economic_admission_last_success_age_seconds{job="slots-rgs",namespace="slots-production"} < 0') &&
+    economic_stale_rule.fetch("expr").include?('rgs_economic_admission_last_success_age_seconds{job="slots-rgs",namespace="slots-production"} > 900') &&
+    economic_stale_rule.fetch("expr").include?('unless on (job, namespace, instance)') &&
+    economic_stale_rule.fetch("for") == "5m"
 {
   "SlotsRGSRecoveryBacklogHigh" => ["rgs_recovery_backlog", ">= 501"],
   "SlotsRGSRecoveryOldestDue" => ["rgs_recovery_oldest_due_age_seconds", "> 120"],
@@ -201,6 +263,8 @@ required_metrics = %w[
   rgs_new_intent_capacity_rejected_total
   rgs_cryptographic_capacity_rejected_total
   rgs_shared_admission_errors_total
+  rgs_economic_admission_ready
+  rgs_economic_admission_last_success_age_seconds
   rgs_auth_replays_total
   rgs_security_logs_dropped_total
   rgs_wallet_unknown_outcomes_total
@@ -243,6 +307,15 @@ abort "RGS liveness 必须使用私有 operations 8081 /healthz" unless
 abort "RGS readiness 必须通过携带 operations Bearer 的私有 /service-probe" unless
   api_container.dig("readinessProbe", "exec", "command") == ["/service-probe"] &&
     api_container.dig("startupProbe", "exec", "command") == ["/service-probe"]
+abort "Worker rollout 必须由携带 operations Bearer 的恢复首轮 readyz 门禁驱动" unless
+  worker_container.dig("readinessProbe", "exec", "command") == ["/service-probe"] &&
+    worker_container.dig("startupProbe", "exec", "command") == ["/service-probe"] &&
+    worker_container.dig("startupProbe", "successThreshold") == 1 &&
+    worker.dig("spec", "strategy", "rollingUpdate", "maxUnavailable") == 0
+worker_startup_budget = worker_container.dig("startupProbe", "periodSeconds") *
+  worker_container.dig("startupProbe", "failureThreshold")
+abort "Worker startup probe 预算必须小于 rollout progress deadline" unless
+  worker_startup_budget < worker.dig("spec", "progressDeadlineSeconds")
 api_environment = api_container.fetch("env").to_h { |item| [item.fetch("name"), item["value"]] }
 worker_environment = worker_container.fetch("env").to_h { |item| [item.fetch("name"), item["value"]] }
 api_environment_items = api_container.fetch("env").to_h { |item| [item.fetch("name"), item] }
@@ -262,6 +335,8 @@ abort "Worker 没有绑定候选数学定义身份" unless worker_environment.sl
       annotations["slots-game.io/definition-version"] == expected_definition_identity["RGS_EXPECTED_DEFINITION_VERSION"] &&
       annotations["slots-game.io/definition-sha256"] == expected_definition_identity["RGS_EXPECTED_DEFINITION_SHA256"]
 end
+abort "RGS API 访问令牌协议未固定为 v3" unless
+  rgs.dig("spec", "template", "metadata", "annotations", "slots-game.io/access-token-protocol") == "RGS-ACCESS-v3"
 abort "RGS API 没有显式固定 api 角色" unless api_environment["RGS_RUNTIME_ROLE"] == "api"
 abort "RGS API 请求体硬上限没有与 ALB WAF 8 KiB 检查窗口对齐" unless
   api_environment["RGS_MAX_REQUEST_BYTES"] == "8192"

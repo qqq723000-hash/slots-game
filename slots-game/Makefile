@@ -1,4 +1,4 @@
-.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
+.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract verify-hardening-stability-50 verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
 
 BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid
 
@@ -85,7 +85,7 @@ verify-observability-release:
 	test -n "$${OBSERVABILITY_RENDERED_DIR:-}" || { echo "OBSERVABILITY_RENDERED_DIR is required" >&2; exit 2; }
 	./deploy/observability/verify-static-contract.sh --rendered-dir "$${OBSERVABILITY_RENDERED_DIR}"
 
-verify-supply-chain-contract:
+verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract
 	./deploy/supply-chain/verify-contract.sh
 	./deploy/supply-chain/test-contract.sh
 	sh ./deploy/verify-supply-chain-contract.sh
@@ -97,6 +97,18 @@ verify-backend-licenses:
 
 verify-chinese-comments:
 	node scripts/verify-chinese-comments.mjs
+
+verify-hardening-checklist:
+	node --test scripts/verify-hardening-checklist.test.mjs
+	node scripts/verify-hardening-checklist.mjs
+
+verify-hardening-stability-contract:
+	sh -n scripts/verify-hardening-stability-50.sh
+	node --test scripts/summarize-go-test-json.test.mjs
+
+# 修改关键资金、恢复、资源租约或平台契约后手动执行；失败修复后必须重新从第 1 轮计数。
+verify-hardening-stability-50: verify-hardening-stability-contract
+	HARDENING_STABILITY_ROUNDS=50 ./scripts/verify-hardening-stability-50.sh
 
 verify-cluster-production:
 	HELM_BIN="$${HELM_BIN:-helm}" ./deploy/cluster-production/verify-static-contract.sh
@@ -136,6 +148,6 @@ verify-backend: verify-supply-chain-contract verify-backend-licenses
 	cd server && go vet ./...
 	cd server && go build ./...
 
-verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments test test-race vet build
+verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test test-race vet build
 	# Node 模拟测试无法发现跨生产分块的浏览器求值错误，必须再执行真实 Chrome 门禁。
 	$(MAKE) verify-web-browser-bootstrap

@@ -21,6 +21,8 @@ third_party_override_manifest="$repo_root/web/third-party-licenses/overrides.jso
 spine_license="$repo_root/web/third-party-licenses/SPINE-LICENSE"
 replica_verifier="$script_dir/verify-replica-consistency.mjs"
 replica_verifier_test="$script_dir/verify-replica-consistency.test.mjs"
+browser_smoke="$repo_root/web/scripts/verify-production-browser-bootstrap.mjs"
+browser_smoke_contract_test="$repo_root/web/tests/production-browser-bootstrap-contract.test.ts"
 operations_readme="$script_dir/README.md"
 frontend_workflow="$repo_root/../.github/workflows/frontend-conformance.yml"
 
@@ -64,6 +66,8 @@ for required_file in \
   "$spine_license" \
   "$replica_verifier" \
   "$replica_verifier_test" \
+  "$browser_smoke" \
+  "$browser_smoke_contract_test" \
   "$operations_readme" \
   "$frontend_workflow"
 do
@@ -384,6 +388,38 @@ require_fixed 'add_header Content-Security-Policy ' "$nginx_conf"
 require_fixed "script-src 'self';" "$nginx_conf"
 require_fixed "connect-src 'self';" "$nginx_conf"
 require_fixed "form-action 'none';" "$nginx_conf"
+require_fixed 'trusted-types slots-game-static-html;' "$nginx_conf"
+require_fixed "require-trusted-types-for 'script';" "$nginx_conf"
+require_fixed 'result.trustedTypesEvidence?.enforcementSupported !== true' "$browser_smoke"
+require_fixed 'source: TRUSTED_TYPES_POLICY_OBSERVATION_PROBE_SOURCE' "$browser_smoke"
+require_fixed 'result.trustedTypesEvidence?.observerInstalled !== true' "$browser_smoke"
+require_fixed 'result.trustedTypesEvidence?.staticHtmlPolicyNameObserved !== true' "$browser_smoke"
+require_fixed 'result.trustedTypesEvidence?.staticHtmlPolicyCreateCount !== 1' "$browser_smoke"
+require_fixed 'result.trustedTypesEvidence?.unexpectedPolicyCreateCount !== 0' "$browser_smoke"
+require_fixed 'result.trustedTypesEvidence?.policyObservationCapabilityFree !== true' "$browser_smoke"
+require_fixed 'result.trustedTypesEvidence?.policyObservationGlobalLocked !== true' "$browser_smoke"
+require_fixed "!Reflect.has(policyObservation, 'policy')" "$browser_smoke"
+require_fixed "!Reflect.has(policyObservation, 'factory')" "$browser_smoke"
+require_fixed "!Reflect.has(policyObservation, 'createPolicy')" "$browser_smoke"
+require_fixed "!Reflect.has(policyObservation, 'createHTML')" "$browser_smoke"
+if grep -F 'slots-game.static-html-policy.v1' "$browser_smoke" >/dev/null \
+    || grep -F 'staticHtmlMarker' "$browser_smoke" >/dev/null; then
+  fail 'browser smoke must not depend on the removed global Trusted Types marker'
+fi
+if grep -F '?.policy?.createHTML' "$browser_smoke" >/dev/null; then
+  fail 'browser smoke must not require or expose the Trusted Types policy capability'
+fi
+trusted_types_probe_line=$(grep -n -F 'source: TRUSTED_TYPES_POLICY_OBSERVATION_PROBE_SOURCE' "$browser_smoke" | head -n 1 | cut -d: -f1)
+csp_probe_line=$(grep -n -F 'source: CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE' "$browser_smoke" | head -n 1 | cut -d: -f1)
+test "$trusted_types_probe_line" -lt "$csp_probe_line" ||
+  fail 'Trusted Types policy observation must be installed before the document CSP probe'
+require_fixed 'cspViolationCount: result.cspViolations.length' "$browser_smoke"
+require_fixed 'policyCreateCount: result.trustedTypesEvidence.staticHtmlPolicyCreateCount' "$browser_smoke"
+require_fixed 'acknowledgementCount: transactionEvidence.acknowledgementCount' "$browser_smoke"
+require_fixed 'result.cspViolations.length > 0' "$browser_smoke"
+require_fixed 'trustedTypesSink' "$browser_smoke"
+require_fixed 'safeTrustedTypesSink' "$policy_verifier"
+require_fixed 'safeSourceFile' "$policy_verifier"
 require_fixed 'server_tokens off;' "$nginx_conf"
 
 if grep -F 'location ^~ /assets/' "$nginx_conf" >/dev/null; then
@@ -394,6 +430,9 @@ if grep -E "connect-src[^;]*(ws:|wss:|\*)" "$nginx_conf" >/dev/null; then
 fi
 if grep -E "script-src[^;]*('unsafe-eval'|'unsafe-inline'|\*|data:|blob:)" "$nginx_conf" >/dev/null; then
   fail "CSP script-src must allow only self"
+fi
+if grep -E "trusted-types[^;]*(\*|'allow-duplicates')" "$nginx_conf" >/dev/null; then
+  fail "CSP trusted-types must allow only the reviewed static HTML policy"
 fi
 
 # Nginx 的 location 级 add_header 会取消继承的 server header，因此 Cache-Control

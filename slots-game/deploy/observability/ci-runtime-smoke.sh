@@ -3,6 +3,7 @@
 # 该动态 smoke 仅供 CI：它在隔离 PostgreSQL 上运行 migrator/runtime，再探测两个监听器。
 # 信任材料由入库且显式受控的 CI-only 命令临时生成，不上传，也绝不代表生产审批。
 set -euo pipefail
+umask 077
 
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 repository_root="$(CDPATH='' cd -- "$script_dir/../.." && pwd)"

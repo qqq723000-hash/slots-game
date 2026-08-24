@@ -89,6 +89,9 @@ test("即使所有副本一致也拒绝宽松或缺失指令的策略", async ()
     releasePolicy.replace("script-src 'self'", "script-src 'self' 'unsafe-eval'"),
     releasePolicy.replace("form-action 'none'; ", ""),
     releasePolicy.replace("object-src 'none'", "object-src *"),
+    releasePolicy.replace("trusted-types slots-game-static-html", "trusted-types *"),
+    releasePolicy.replace("trusted-types slots-game-static-html; ", ""),
+    releasePolicy.replace("require-trusted-types-for 'script'; ", ""),
   ]) {
     const urls = await Promise.all([
       jsonReplica(manifest(), { contentSecurityPolicy }),

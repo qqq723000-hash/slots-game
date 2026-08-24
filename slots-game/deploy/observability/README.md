@@ -19,7 +19,10 @@ Prometheus Agent 或 ADOT、AMP、CloudWatch Logs、AMG、公司告警路由及�
 - 仓库不包含任何可变镜像 tag。`PROMETHEUS_IMAGE`、`GRAFANA_IMAGE`、`VECTOR_IMAGE`
   必须由发布系统提供已评审的 `name@sha256:<64 hex>` 引用并保存 SBOM/来源证明。
 - Vector 不读取 `docker.sock`，仅只读挂载精确的 RGS stdout 日志目录。日志通配符不得
-  扩大到整台节点；接收端 URI 不得携带用户名、令牌或 query secret。认证应由受控 mTLS
+  扩大到整台节点；发布 glob 必须位于 `/var/log/containers/`、只有一个 `*`、
+  basename 含独立 `rgs-server` 身份段并以 `.log` 结尾，`*.log` 等全节点模式会被拒绝。
+  这个语法门禁不能代替平台对实际 Pod/容器 identity 的审批。接收端 URI 不得携带
+  用户名、令牌或 query secret。认证应由受控 mTLS
   egress proxy 或平台工作负载身份提供。Vector 额外连接一个外部提供的受限 egress
   网络；平台防火墙和 DNS policy 必须只允许审批日志接收端的精确地址/端口，禁止入站。
   宿主需用专用只读 GID/ACL 授权日志目录，并预创建仅 UID 65534 可写的 Vector state
@@ -39,7 +42,10 @@ Prometheus Agent 或 ADOT、AMP、CloudWatch Logs、AMG、公司告警路由及�
 - nonce replay 等权威安全事件计数不得采样；重复物理 WARN 可以用固定非阻塞预算有界输出。
   无标签 `rgs_security_logs_dropped_total` 只表示重复安全日志被省略，不表示安全事件丢失；
   `RGSSecurityLogDropsSustained` 会对连续五分钟的预算耗尽告警，并要求联合权威事件计数、WAF
-  与认证失败排查，禁止为追求重复日志完整而阻塞业务请求线程。
+  与认证失败排查，禁止为追求重复日志完整而阻塞业务请求线程。权威
+  `rgs_auth_replays_total` 由 `RGSAuthenticationReplayDetected` 独立告警，不能依赖物理 WARN
+  是否成功写出。共享准入错误和数据库保留容量拒绝分别由 `RGSSharedAdmissionErrors` 与
+  `RGSNewIntentCapacityRejected` 告警，避免失败闭合只在客户端表现为 503 却没有值班信号。
 - Prometheus 指标/记录规则只有固定标签；禁止新增 operator、player、session、round、
   request、transaction ID 等高基数标签。可用性比例只使用 `rgs_http_server_failures_total`
   （5xx）；`rgs_http_failures_total` 保留全部 4xx/5xx 作为诊断信号，认证攻击或限流不会
@@ -54,7 +60,9 @@ Prometheus Agent 或 ADOT、AMP、CloudWatch Logs、AMG、公司告警路由及�
   占位符当作批准。
 - 告警必须送到外部审批 Alertmanager：使用独立受限 egress 网络和只读 Bearer secret
   文件。仓库中的 `__ALERTMANAGER_TARGET__` 未解析时不构成值班接通证据；发布必须替换
-  并完成合成告警演练，不能只证明规则成功计算。
+  并完成合成告警演练，不能只证明规则成功计算。渲染产物只允许单一审批 target，
+  TLS 必须精确绑定 `ca_file`、`server_name`、`min_version: TLS12` 和
+  `insecure_skip_verify: false`。
 - Prometheus 会自抓取并监控规则计算/通知错误，同时抓取 Vector 内部指标；Vector 不可
   抓取、日志组件错误、非预期丢弃、约 256 MiB 最小磁盘缓冲超过 80% 以及 sink 有输入无发送都会告警。
   `RGSObservabilityWatchdog` 必须由外部
@@ -90,9 +98,20 @@ export RGS_ALERT_EGRESS_NETWORK='<restricted-alert-egress-compose-network>'
 export RGS_CONTAINER_LOG_ROOT='<host-or-node-path-exposing-only-rgs-stdout>'
 export RGS_CONTAINER_LOG_GID='<dedicated-read-only-numeric-gid>'
 export RGS_VECTOR_DATA_DIR='<pre-provisioned-uid-65534-writable-state-dir>'
-export RGS_CONTAINER_LOG_GLOB='/var/log/containers/<exact-rgs-glob>.log'
+export RGS_CONTAINER_LOG_GLOB='/var/log/containers/<approved>-rgs-server-*.log'
 export RGS_LOG_SINK_URI='https://<approved-log-egress>/v1/logs'
+export RGS_OPERATIONS_TARGET='<approved-private-rgs-host>:<port>'
+export ALERTMANAGER_TARGET='<approved-alertmanager-host>:<port>'
+export ALERTMANAGER_ROOT_CA_FILE='/host/secret-store/<approved-alertmanager-root-ca>.pem'
+export ALERTMANAGER_CA_FILE='/run/secrets/alertmanager_root_ca.pem'
+export ALERTMANAGER_SERVER_NAME='<approved-alertmanager-host>'
+export PROMETHEUS_RENDER_PROFILE='central'
 ```
+
+`ALERTMANAGER_ROOT_CA_FILE` 是 Compose 宿主侧只读 secret 源文件，必须是真实可读的审批 CA；
+`ALERTMANAGER_CA_FILE` 是渲染配置中的固定容器路径，必须保持
+`/run/secrets/alertmanager_root_ca.pem`，不能把宿主路径写进容器配置。发布门禁使用
+`central` 或 `local-production` 的显式 profile，不接受隐式推断。
 
 镜像引用中的 `<...>` 只是说明文字，不可直接运行。确认 release bundle 已无未解析的
 `__PLACEHOLDER__`，镜像均为 digest 引用，密码文件权限收紧，然后执行：
@@ -141,6 +160,13 @@ secret-file、Alertmanager、必需记录规则/告警和 dashboard 信号均未
 非 HTTPS 目标、内嵌认证及 mutable 镜像引用：
 
 ```bash
+RGS_OPERATIONS_TARGET='<approved-private-rgs-host>:<port>' \
+ALERTMANAGER_TARGET='<approved-alertmanager-host>:<port>' \
+ALERTMANAGER_ROOT_CA_FILE='/secure/host-secrets/<approved-alertmanager-root-ca>.pem' \
+ALERTMANAGER_CA_FILE='/run/secrets/alertmanager_root_ca.pem' \
+ALERTMANAGER_SERVER_NAME='<approved-alertmanager-host>' \
+PROMETHEUS_RENDER_PROFILE='central' \
+RGS_CONTAINER_LOG_GLOB='/var/log/containers/<approved>-rgs-server-*.log' \
 OBSERVABILITY_RENDERED_DIR=/secure/rendered/observability \
   make verify-observability-release
 ```
@@ -148,9 +174,12 @@ OBSERVABILITY_RENDERED_DIR=/secure/rendered/observability \
 该生产门禁不会信任宿主 `PATH` 中来源不明的 `promtool` 或 `vector`。发布系统必须提供并
 预加载已经评审的 `PROMETHEUS_IMAGE=name@sha256:<digest>` 与 `VECTOR_IMAGE=name@sha256:<digest>`；
 门禁以 `--pull never --network none --read-only` 启动前者执行 `check config`/`check rules`，再用
-后者解析实际 Vector topology。镜像未预加载、Docker daemon 不可用或任一校验失败都会拒绝
-发布，校验过程不会联网拉取替代镜像。Vector 的 `--no-environment` 只用于离线类型/拓扑检查；
-部署后仍必须完成下述 exporter、sink 与合成日志探针。
+后者解析实际 Vector topology，并分别执行中央归档四组和 local-production 五组
+`vector test`：嵌套秘密、未知结构化日志、跨消息字段注入、启动字段保留，以及真实 Docker Fluent
+`log` record 的已知 msg/route 语义与容器元数据丢弃。镜像未预加载、
+Docker daemon 不可用、任一 transform 断言或任一校验失败都会拒绝发布，校验过程不会联网
+拉取替代镜像。Vector 的 `--no-environment` 只用于离线类型/拓扑检查；内置 test 也不能替代
+部署后的 exporter、sink 与合成日志探针。
 
 Backend CI 在镜像构建后先运行 `make smoke-runtime-operations` 保留快速 development 检查，
 再运行 `make smoke-runtime-production`。两者要求 Linux Docker host networking 及隔离的

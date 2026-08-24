@@ -273,6 +273,86 @@ if [ "$valkey_ready" != 1 ]; then
   exit 1
 fi
 
+# PING 只证明 TLS/ACL 认证可用。这里用独立、无业务身份且同 slot 的 CI-only key，
+# 通过 EVAL 和缓存后的 EVALSHA 各执行一次生产两类 Lua 所需命令的并集；不发 HTTP
+# 业务请求，也不复用匿名 20rps 桶。写入先受 1 秒 TTL 约束，再确认已经自然清理。
+shared_admission_lua_probe_key_a='rgs:shared-admission:v2:{ci-only-acl-lua}:state-a'
+shared_admission_lua_probe_key_b='rgs:shared-admission:v2:{ci-only-acl-lua}:state-b'
+shared_admission_lua_probe="$(printf '%s\n' \
+  "local server_time = redis.call('TIME')" \
+  'local seconds = tonumber(server_time[1])' \
+  'local microseconds = tonumber(server_time[2])' \
+  'if not seconds or not microseconds or seconds < 0 or microseconds < 0 or microseconds >= 1000000 then' \
+  "  return redis.error_reply('ci-only invalid server time')" \
+  'end' \
+  'local ttl_ms = tonumber(ARGV[4])' \
+  'if not ttl_ms or ttl_ms ~= math.floor(ttl_ms) or ttl_ms < 1 or ttl_ms > 1000 then' \
+  "  return redis.error_reply('ci-only invalid ttl')" \
+  'end' \
+  "redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl_ms)" \
+  "local first_value = redis.call('GET', KEYS[1])" \
+  "local first_ttl = redis.call('PTTL', KEYS[1])" \
+  'if first_value ~= ARGV[1] or first_ttl < 1 or first_ttl > ttl_ms then' \
+  "  return redis.error_reply('ci-only basic command probe failed')" \
+  'end' \
+  "redis.call('MSET', KEYS[1], ARGV[2], KEYS[2], ARGV[3])" \
+  "local expiry_a = redis.call('PEXPIRE', KEYS[1], ttl_ms)" \
+  "local expiry_b = redis.call('PEXPIRE', KEYS[2], ttl_ms)" \
+  'if expiry_a ~= 1 or expiry_b ~= 1 then' \
+  "  return redis.error_reply('ci-only expiry probe failed')" \
+  'end' \
+  "return 'shared-admission-tls-acl-lua-ok'" \
+)"
+# SHA-1 在这里仅是 Valkey SCRIPT 的公开内容地址。常量由上述固定 Lua 字节预计算，
+# 避免 FIPS-only runner 现场调用 SHA-1；任何脚本文本漂移都会让后续 EVALSHA 以
+# NOSCRIPT 失败，不能把错误常量判绿。
+shared_admission_lua_probe_sha='ff334ac492bc06b8421d59494098b485d59dd00d'
+
+shared_admission_lua_eval_result="$(
+  docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
+    valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
+      --user rgs-api -h 127.0.0.1 -p 18445 --raw \
+      EVAL "$shared_admission_lua_probe" 2 \
+      "$shared_admission_lua_probe_key_a" "$shared_admission_lua_probe_key_b" \
+      ci-only-before ci-only-after-a ci-only-after-b 1000 \
+      2>"$fixture_root/valkey-lua-probe.raw.log"
+)"
+test "$shared_admission_lua_eval_result" = 'shared-admission-tls-acl-lua-ok' || {
+  printf '%s\n' 'production smoke: CI-only Valkey EVAL command probe failed' >&2
+  exit 1
+}
+
+shared_admission_lua_evalsha_result="$(
+  docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
+    valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
+      --user rgs-api -h 127.0.0.1 -p 18445 --raw \
+      EVALSHA "$shared_admission_lua_probe_sha" 2 \
+      "$shared_admission_lua_probe_key_a" "$shared_admission_lua_probe_key_b" \
+      ci-only-before ci-only-after-a ci-only-after-b 1000 \
+      2>>"$fixture_root/valkey-lua-probe.raw.log"
+)"
+test "$shared_admission_lua_evalsha_result" = 'shared-admission-tls-acl-lua-ok' || {
+  printf '%s\n' 'production smoke: CI-only Valkey EVALSHA command probe failed' >&2
+  exit 1
+}
+
+sleep 2
+for shared_admission_lua_probe_key in \
+  "$shared_admission_lua_probe_key_a" "$shared_admission_lua_probe_key_b"; do
+  shared_admission_lua_probe_residue="$(
+    docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
+      valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
+        --user rgs-api -h 127.0.0.1 -p 18445 --raw \
+        GET "$shared_admission_lua_probe_key" \
+        2>>"$fixture_root/valkey-lua-probe.raw.log"
+  )"
+  test -z "$shared_admission_lua_probe_residue" || {
+    printf '%s\n' 'production smoke: CI-only Valkey Lua probe key was not cleaned by TTL' >&2
+    exit 1
+  }
+done
+shared_admission_tls_acl_and_lua=true
+
 runtime_image="${RGS_RUNTIME_SMOKE_RUNTIME_IMAGE:-slots-rgs-runtime:conformance}"
 migrator_image="${RGS_RUNTIME_SMOKE_MIGRATOR_IMAGE:-slots-rgs-migrator:conformance}"
 mkdir -p "$artifact_dir"
@@ -497,13 +577,16 @@ grep -F -x 'rgs_ready 1' "$artifact_dir/metrics-production-ci-only.prom" >/dev/n
 grep -F '# TYPE rgs_outbox_claimed_total counter' "$artifact_dir/metrics-production-ci-only.prom" >/dev/null
 
 runtime_image_id="$(docker image inspect --format '{{.Id}}' "$runtime_image")"
-python3 - "$artifact_dir/result-production-ci-only.json" "$runtime_image_id" <<'PYEOF'
+python3 - "$artifact_dir/result-production-ci-only.json" "$runtime_image_id" \
+  "$shared_admission_tls_acl_and_lua" <<'PYEOF'
 import datetime
 import json
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
+if sys.argv[3] != "true":
+    raise SystemExit("shared admission TLS/ACL/Lua probe did not pass")
 result = {
     "schemaVersion": 1,
     "status": "passed",
@@ -514,6 +597,7 @@ result = {
         "missingOperationsTokenRejected": True,
         "developmentApprovalRejected": True,
         "databaseTLSVerifyFull": True,
+        "sharedAdmissionTLSACLAndLua": True,
         "localHTTPSAuditSinkConfigured": True,
         "outboxReadiness": True,
         "rgsReady": 1,
@@ -522,5 +606,7 @@ result = {
 }
 path.write_text(json.dumps(result, separators=(",", ":")) + "\n", encoding="utf-8")
 PYEOF
+grep -F '"sharedAdmissionTLSACLAndLua":true' \
+  "$artifact_dir/result-production-ci-only.json" >/dev/null
 
-printf '%s\n' 'production smoke: CI-only v2 startup, TLS DB, outbox readiness and negative gates ok'
+printf '%s\n' 'production smoke: CI-only v2 startup, TLS DB, shared-admission TLS/ACL/Lua, outbox readiness and negative gates ok'

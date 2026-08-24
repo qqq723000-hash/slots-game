@@ -20,10 +20,12 @@ const releaseOptions = {
 
 test("基础与发布策略只接受审核过的完整语义集合", () => {
   assert.equal(verifyBaseContentSecurityPolicy(BASE_CONTENT_SECURITY_POLICY), BASE_CONTENT_SECURITY_POLICY);
-  assert.equal(parseContentSecurityPolicy(BASE_CONTENT_SECURITY_POLICY).size, 12);
+  assert.equal(parseContentSecurityPolicy(BASE_CONTENT_SECURITY_POLICY).size, 14);
   const releasePolicy = createReleaseContentSecurityPolicy(releaseOptions);
   assert.equal(verifyReleaseContentSecurityPolicy(releasePolicy, releaseOptions), releasePolicy);
   assert.match(releasePolicy, /form-action 'none'/u);
+  assert.match(releasePolicy, /trusted-types slots-game-static-html/u);
+  assert.match(releasePolicy, /require-trusted-types-for 'script'/u);
   assert.match(releasePolicy, /connect-src 'self' https:\/\/rgs\.example/u);
   assert.match(releasePolicy, /frame-ancestors https:\/\/operator\.example/u);
 });
@@ -44,6 +46,10 @@ test("共享浏览器探针记录 CSP 违规且不保留敏感 URL 细节", () =
     violatedDirective: "script-src-elem",
     disposition: "enforce",
     blockedURI: "https://invalid.example/private.js?accessToken=secret#launch",
+    sourceFile: "https://slots.example/private/game-ui-ABC123.js?token=secret#launch",
+    lineNumber: 435,
+    columnNumber: 42,
+    sample: "Element innerHTML|<img src=x data-token=secret>",
   });
   const violations = JSON.parse(JSON.stringify(
     context.__slotsContentSecurityPolicyProbe.violations,
@@ -53,6 +59,10 @@ test("共享浏览器探针记录 CSP 违规且不保留敏感 URL 细节", () =
     violatedDirective: "script-src-elem",
     disposition: "enforce",
     blockedTarget: "https://invalid.example",
+    sourceFile: "game-ui-ABC123.js",
+    lineNumber: 435,
+    columnNumber: 42,
+    trustedTypesSink: "Element innerHTML",
   }]);
   assert.doesNotMatch(JSON.stringify(violations), /private|accessToken|secret|launch/u);
 });
@@ -69,6 +79,10 @@ for (const drift of [
   BASE_CONTENT_SECURITY_POLICY.replace("object-src 'none'", "object-src 'self'"),
   BASE_CONTENT_SECURITY_POLICY.replace("base-uri 'self'", "base-uri *"),
   BASE_CONTENT_SECURITY_POLICY.replace("form-action 'none'; ", ""),
+  BASE_CONTENT_SECURITY_POLICY.replace("trusted-types slots-game-static-html", "trusted-types *"),
+  BASE_CONTENT_SECURITY_POLICY.replace("trusted-types slots-game-static-html; ", ""),
+  BASE_CONTENT_SECURITY_POLICY.replace("require-trusted-types-for 'script'; ", ""),
+  BASE_CONTENT_SECURITY_POLICY.replace("require-trusted-types-for 'script'", "require-trusted-types-for *"),
   `${BASE_CONTENT_SECURITY_POLICY}; upgrade-insecure-requests 'self'`,
   `${BASE_CONTENT_SECURITY_POLICY}; script-src 'self'`,
 ]) {

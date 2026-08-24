@@ -63,6 +63,8 @@ rgs:
     ratePerSecondPerPod: 50
     rateBurstPerPod: 100
     successAccessLogSamplePerMillion: 10000
+    sessionIdleDisconnectMinSeconds: 60
+    sessionIdleDisconnectMaxSeconds: 86400
     walletFastPathTimeoutSeconds: 1
     walletTimeoutSeconds: 4
     walletMaxAttempts: 100
@@ -221,6 +223,18 @@ monitoring:
     matchLabels: {}
   ruleLabels: {}
 
+observability:
+  tracing:
+    # 默认关闭且 endpoint 为空；只有发布审批显式启用后才创建 exporter 与出口规则。
+    enabled: false
+    endpointURL: ""
+    sampleRatio: 0.01
+    batchTimeoutMilliseconds: 1000
+    exportTimeoutMilliseconds: 3000
+    shutdownTimeoutMilliseconds: 5000
+    maxQueueSize: 1024
+    maxExportBatchSize: 256
+
 networkPolicy:
   ingressController:
     mode: selectors
@@ -247,6 +261,9 @@ networkPolicy:
     sharedAdmission:
       cidrs: []
       port: 6379
+    tracing:
+      cidrs: []
+      port: 4318
 
 scheduling:
   zoneTopologyKey: topology.kubernetes.io/zone

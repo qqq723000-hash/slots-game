@@ -28,6 +28,9 @@ services:
       - rgs_operations_bearer_token
       # 告警路由凭据只能来自 secret 文件，不能写入规则或环境变量。
       - alertmanager_bearer_token
+      # 私有 Alertmanager CA 必须以固定容器路径挂载，不得依赖镜像系统 trust store。
+      - source: alertmanager_root_ca
+        target: alertmanager_root_ca.pem
     ports:
       # 安全不变量：默认只绑定回环地址；公网入口不得转发 Prometheus。
       - "${OBSERVABILITY_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
@@ -121,6 +124,8 @@ secrets:
     file: "${RGS_OPERATIONS_BEARER_TOKEN_FILE:?set the RGS operations bearer token file}"
   alertmanager_bearer_token:
     file: "${ALERTMANAGER_BEARER_TOKEN_FILE:?set the Alertmanager bearer token file}"
+  alertmanager_root_ca:
+    file: "${ALERTMANAGER_ROOT_CA_FILE:?set the approved Alertmanager root CA file}"
 
 networks:
   observability:

@@ -103,7 +103,7 @@ test "$(grep -F -x -c "$backend_notice_copy" "$server_dockerfile" || true)" -eq 
 require_fixed 'var productionTargets = []string{"./cmd/rgs-server", "./cmd/rgs-migrator"}' "$backend_notice_generator"
 require_fixed 'TestCollectProductionModulesExcludesTestOnlyDependencies' "$backend_notice_test"
 require_fixed '"name": "NOTICE"' "$backend_notice_policy"
-require_fixed '生产第三方模块数量：8' "$backend_notice"
+require_fixed '生产第三方模块数量：27' "$backend_notice"
 if grep -F 'github.com/DATA-DOG/go-sqlmock' "$backend_notice" >/dev/null; then
   fail 'test-only Go dependency leaked into production third-party notice'
 fi
@@ -176,7 +176,10 @@ require_line 'RUN --network=none nginx -t' "$web_dockerfile"
 last_web_stage=$(awk '/^FROM[[:space:]]+/ { stage = $NF } END { print stage }' "$web_dockerfile")
 test "$last_web_stage" = runtime || fail 'web runtime must remain the default final Docker target'
 require_line '    "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",' "$web_package_json"
-require_line 'verify-supply-chain-contract:' "$makefile"
+require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' "$makefile"
+require_line 'verify-hardening-checklist:' "$makefile"
+require_regex '^[[:space:]]+node --test scripts/verify-hardening-checklist\.test\.mjs$' "$makefile"
+require_regex '^[[:space:]]+node scripts/verify-hardening-checklist\.mjs$' "$makefile"
 require_regex '^[[:space:]]+sh \./deploy/verify-supply-chain-contract\.sh$' "$makefile"
 require_line 'verify-backend-licenses:' "$makefile"
 require_regex '^[[:space:]]+cd server && go run \./scripts/third-party-notices --check$' "$makefile"

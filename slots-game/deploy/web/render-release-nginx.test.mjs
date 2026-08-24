@@ -21,9 +21,13 @@ test("renders exact operator frame and RGS connect origins without X-Frame-Optio
   assert.match(rendered, /frame-ancestors https:\/\/operator\.example/);
   assert.match(rendered, /script-src 'self';/);
   assert.match(rendered, /form-action 'none';/);
+  assert.match(rendered, /trusted-types slots-game-static-html;/);
+  assert.match(rendered, /require-trusted-types-for 'script';/);
   assert.doesNotMatch(rendered, /X-Frame-Options|frame-ancestors \*|connect-src \*|'unsafe-eval'/);
   assert.equal((rendered.match(/add_header Content-Security-Policy/g) ?? []).length, 1);
   assert.equal((rendered.match(/connect-src/g) ?? []).length, 1);
+  assert.equal((rendered.match(/trusted-types slots-game-static-html/g) ?? []).length, 1);
+  assert.equal((rendered.match(/require-trusted-types-for 'script'/g) ?? []).length, 1);
   assert.equal((rendered.match(/frame-ancestors/g) ?? []).length, 1);
 });
 
@@ -99,6 +103,10 @@ for (const drift of [
   baseConfig.replace("base-uri 'self'", "base-uri *"),
   baseConfig.replace("form-action 'none'; ", ""),
   baseConfig.replace("font-src 'self'", "font-src 'self' https://fonts.invalid"),
+  baseConfig.replace("trusted-types slots-game-static-html", "trusted-types *"),
+  baseConfig.replace("trusted-types slots-game-static-html; ", ""),
+  baseConfig.replace("require-trusted-types-for 'script'; ", ""),
+  baseConfig.replace("require-trusted-types-for 'script'", "require-trusted-types-for *"),
 ]) {
   test("拒绝任一审核指令缺失或放宽", () => {
     assert.throws(() => renderReleaseNginxConfig(drift, {
