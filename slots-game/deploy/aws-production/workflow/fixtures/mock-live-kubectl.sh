@@ -306,8 +306,9 @@ if test "$#" -ge 1 && test "$1" = -n; then
           '
           ;;
         networkpolicy)
-          test "${3:-}" = -o && test "${4:-}" = json || \
+          if test "${3:-}" != -o || test "${4:-}" != json; then
             fail 'NetworkPolicy 必须回读 namespace 全量对象'
+          fi
           jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
             def default_deny: {
               metadata: {name: "slots-default-deny", labels: {

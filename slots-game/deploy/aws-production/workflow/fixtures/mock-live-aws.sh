@@ -89,7 +89,9 @@ if test "$1" = s3api; then
   if test "${MOCK_PLATFORM_MODE:-valid}" = waf-managed-block-evidence-tampered; then
     evidence_file=${MOCK_WAF_EVIDENCE_TAMPERED_FILE:-}
   fi
-  test -n "$evidence_file" && test -f "$evidence_file" || fail 'WAF evidence fixture 缺失'
+  if test -z "$evidence_file" || ! test -f "$evidence_file"; then
+    fail 'WAF evidence fixture 缺失'
+  fi
   content_length=$(wc -c <"$evidence_file" | tr -d ' ')
   case "$operation" in
     head-object)
