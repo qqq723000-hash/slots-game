@@ -344,6 +344,17 @@ require_fixed 'DNS:localhost, IP Address:127.0.0.1' "$production_smoke_file"
 require_fixed 'postgres_certificate_key_digest' "$production_smoke_file"
 require_fixed 'postgres_private_key_digest' "$production_smoke_file"
 require_fixed 'sslrootcert=/run/rgs-production-smoke/postgres-root-ca.pem' "$production_smoke_file"
+require_fixed "valkey_image='valkey/valkey:8.1-alpine@sha256:e0eb7c480958d32bdc4357a74bdd70653ae15f2f9b4c93c4a5a9fad1dc471c84'" "$production_smoke_file"
+require_fixed 'valkey-server-key.pem' "$production_smoke_file"
+require_fixed 'valkey_certificate_key_digest' "$production_smoke_file"
+require_fixed 'maxmemory-policy noeviction' "$production_smoke_file"
+require_fixed 'user default off' "$production_smoke_file"
+require_fixed '+evalsha +eval +get +pttl +set +time +mset +pexpire +ping +hello +auth +client|setname +client|setinfo' "$production_smoke_file"
+require_fixed 'RGS_SHARED_ADMISSION_URL=rediss://127.0.0.1:18445' "$production_smoke_file"
+require_fixed 'RGS_SHARED_ADMISSION_PASSWORD_FILE=/run/rgs-production-smoke/valkey-password' "$production_smoke_file"
+require_fixed 'RGS_SHARED_ADMISSION_HMAC_KEY_FILE=/run/rgs-production-smoke/admission-hmac.key' "$production_smoke_file"
+require_fixed 'RGS_SHARED_ADMISSION_ROOT_CA_FILE=/run/rgs-production-smoke/postgres-root-ca.pem' "$production_smoke_file"
+require_fixed 'TLS/ACL Valkey did not become ready' "$production_smoke_file"
 if grep -F 'channel_binding=disable' "$production_smoke_file" >/dev/null; then
   fail 'production smoke must not disable PostgreSQL channel binding'
 fi
@@ -360,6 +371,7 @@ require_fixed 'runtime-startup-failure.raw.log' "$runtime_smoke_file"
 require_fixed 'runtime-startup-failure.raw.log' "$production_smoke_file"
 require_fixed 'runtime.raw.log' "$runtime_smoke_file"
 require_fixed 'runtime-production-ci-only.raw.log' "$production_smoke_file"
+require_fixed 'valkey-production-ci-only.raw.log' "$production_smoke_file"
 # shellcheck disable=SC2016
 if grep -E 'docker logs.*\$artifact_dir' "$runtime_smoke_file" "$production_smoke_file" >/dev/null; then
   fail 'raw runtime logs must remain in the temporary fixture and never enter uploaded artifacts'
