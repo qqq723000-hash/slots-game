@@ -814,7 +814,11 @@ require_fixed "shared_admission_lua_probe_sha='ff334ac492bc06b8421d59494098b485d
 # shellcheck disable=SC2016
 require_fixed 'EVAL "$shared_admission_lua_probe" 2' "$production_smoke_file"
 # shellcheck disable=SC2016
+require_fixed 'if ! shared_admission_lua_eval_result="$(' "$production_smoke_file"
+# shellcheck disable=SC2016
 require_fixed 'EVALSHA "$shared_admission_lua_probe_sha" 2' "$production_smoke_file"
+# shellcheck disable=SC2016
+require_fixed 'if ! shared_admission_lua_evalsha_result="$(' "$production_smoke_file"
 # shellcheck disable=SC2016
 require_fixed 'docker exec -e REDISCLI_AUTH="$valkey_password"' "$production_smoke_file"
 if grep -F 'VALKEYCLI_AUTH' "$production_smoke_file" >/dev/null; then
@@ -827,6 +831,8 @@ require_fixed 'shared_admission_tls_acl_and_lua=true' "$production_smoke_file"
 require_fixed '"sharedAdmissionTLSACLAndLua": True' "$production_smoke_file"
 require_fixed '"sharedAdmissionTLSACLAndLua":true' "$production_smoke_file"
 require_fixed 'CI-only Valkey Lua probe key was not cleaned by TTL' "$production_smoke_file"
+# shellcheck disable=SC2016
+require_fixed 'if ! shared_admission_lua_probe_residue="$(' "$production_smoke_file"
 require_fixed 'RGS_SHARED_ADMISSION_URL=rediss://127.0.0.1:18445' "$production_smoke_file"
 require_fixed 'RGS_SHARED_ADMISSION_PASSWORD_FILE=/run/rgs-production-smoke/valkey-password' "$production_smoke_file"
 require_fixed 'RGS_SHARED_ADMISSION_HMAC_KEY_FILE=/run/rgs-production-smoke/admission-hmac.key' "$production_smoke_file"
@@ -839,8 +845,19 @@ require_fixed 'SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()' "$produ
 require_fixed 'PostgreSQL verify-full TLS barrier timed out' "$production_smoke_file"
 # shellcheck disable=SC2016
 require_fixed 'docker logs --tail 80 "$RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER"' "$production_smoke_file"
-require_fixed 'production requires rgs-definition-approval-v2' "$production_smoke_file"
-require_fixed 'RGS_OPERATIONS_BEARER_TOKEN_FILE is required in production' "$production_smoke_file"
+# shellcheck disable=SC2016
+require_fixed 'verify_safe_startup_failure "$missing_token_log"' "$production_smoke_file"
+# shellcheck disable=SC2016
+require_fixed 'verify_safe_startup_failure "$v1_log"' "$production_smoke_file"
+require_fixed 'allowed_keys = {"time", "level", "msg", "error_class"}' "$production_smoke_file"
+require_fixed 'safe-startup-envelope.raw.log' "$production_smoke_file"
+require_fixed 'unique safe startup failure envelope' "$production_smoke_file"
+if grep -F "grep -F 'RGS_OPERATIONS_BEARER_TOKEN_FILE is required in production'" \
+  "$production_smoke_file" >/dev/null || \
+  grep -F "grep -F 'production requires rgs-definition-approval-v2'" \
+    "$production_smoke_file" >/dev/null; then
+  fail 'production smoke must not restore raw startup errors for negative gates'
+fi
 require_fixed '"name":"outbox_delivery","ok":true' "$production_smoke_file"
 require_fixed "grep -F -x 'rgs_ready 1'" "$production_smoke_file"
 require_fixed 'openssl s_server -accept 18443' "$production_smoke_file"

@@ -1,6 +1,11 @@
 // @ts-nocheck -- 该测试直接验证 Node 侧 Chrome Fetch 夹具，不进入浏览器类型域。
 import { describe, expect, it } from "vitest";
-import { createControlledRgsTransactionFixture } from "../scripts/production-browser-transaction-fixture.mjs";
+import {
+  assertSessionStatusCadence,
+  createControlledRgsTransactionFixture,
+  economicTransactionStateEqual,
+  MIN_SESSION_STATUS_INTERVAL_MS,
+} from "../scripts/production-browser-transaction-fixture.mjs";
 
 const baseOptions = Object.freeze({
   baseUrl: "https://rgs.ci.invalid",
@@ -49,6 +54,44 @@ function paused(
 function decodedBody(response: { body?: string }): Record<string, unknown> {
   if (!response.body) throw new Error("夹具响应缺少 JSON 正文");
   return JSON.parse(response.body) as Record<string, unknown>;
+}
+
+function exchangeFixture(fixture: ReturnType<typeof createControlledRgsTransactionFixture>): string {
+  const response = fixture.responseForPausedRequest(paused(
+    "https://rgs.ci.invalid/client/v1/sessions/exchange",
+    "POST",
+    {
+      launchCode: baseOptions.launchCode,
+      operatorId: baseOptions.operatorId,
+      sessionId: baseOptions.sessionId,
+    },
+  ));
+  return (decodedBody(response).data as { accessToken: string }).accessToken;
+}
+
+function probeSessionStatus(
+  fixture: ReturnType<typeof createControlledRgsTransactionFixture>,
+  token: string,
+): void {
+  fixture.responseForPausedRequest(paused(
+    "https://rgs.ci.invalid/client/v1/sessions/status",
+    "POST",
+    binding,
+    `Bearer ${token}`,
+  ));
+}
+
+function cadenceSnapshot(timestamps: readonly number[]): Record<string, unknown> {
+  let index = 0;
+  const fixture = createControlledRgsTransactionFixture({
+    ...baseOptions,
+    now: () => timestamps[index++],
+  });
+  const token = exchangeFixture(fixture);
+  for (let probe = 1; probe < timestamps.length; probe += 1) {
+    probeSessionStatus(fixture, token);
+  }
+  return fixture.snapshot();
 }
 
 describe("production browser transaction fixture", () => {
@@ -156,5 +199,38 @@ describe("production browser transaction fixture", () => {
       "https://rgs.ci.invalid/client/v1/undeclared",
       "OPTIONS",
     ))).toThrow(/未声明路径/);
+  });
+
+  it("separates read-only status probes from the economic transaction state", () => {
+    let now = 1_000;
+    const fixture = createControlledRgsTransactionFixture({ ...baseOptions, now: () => now });
+    const token = exchangeFixture(fixture);
+    const before = fixture.snapshot();
+    now += MIN_SESSION_STATUS_INTERVAL_MS;
+    probeSessionStatus(fixture, token);
+    const after = fixture.snapshot();
+
+    expect(economicTransactionStateEqual(before, after)).toBe(true);
+    expect(() => assertSessionStatusCadence(after)).not.toThrow();
+    expect(economicTransactionStateEqual(before, { ...after, spinCount: 1 })).toBe(false);
+    expect(economicTransactionStateEqual(before, {
+      ...after,
+      order: ["session-exchange", "spin"],
+    })).toBe(false);
+    expect(economicTransactionStateEqual(before, {
+      ...after,
+      acknowledgementCount: 1,
+    })).toBe(false);
+  });
+
+  it("rejects first and subsequent status probes below the 25 second cadence", () => {
+    expect(() => assertSessionStatusCadence(cadenceSnapshot([1_000, 25_999])))
+      .toThrow(/短于 25 秒/);
+    expect(() => assertSessionStatusCadence(cadenceSnapshot([1_000, 26_000])))
+      .not.toThrow();
+    expect(() => assertSessionStatusCadence(cadenceSnapshot([1_000, 26_000, 50_999])))
+      .toThrow(/短于 25 秒/);
+    expect(() => assertSessionStatusCadence(cadenceSnapshot([1_000, 26_000, 51_000])))
+      .not.toThrow();
   });
 });

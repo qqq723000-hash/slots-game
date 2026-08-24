@@ -856,6 +856,42 @@ if "$stale_valkey_lua_digest_contract/deploy/observability/verify-static-contrac
   exit 1
 fi
 
+missing_safe_startup_gate_contract="$test_root/missing-safe-startup-gate-contract"
+cp -R "$source_contract" "$missing_safe_startup_gate_contract"
+# Ruby 必须匹配 smoke 中按字面量保存的 shell 变量引用。
+# shellcheck disable=SC2016
+ruby -e '
+  path = ARGV.fetch(0)
+  value = File.read(path)
+  changed = value.sub(
+    %q{verify_safe_startup_failure "$missing_token_log" '\''missing-operations-token'\''},
+    "true # safe startup envelope gate removed"
+  )
+  abort "safe startup gate mutation did not apply" if changed == value
+  File.write(path, changed)
+' "$missing_safe_startup_gate_contract/deploy/observability/ci-runtime-production-smoke.sh"
+if "$missing_safe_startup_gate_contract/deploy/observability/verify-static-contract.sh" >/dev/null 2>&1; then
+  printf '%s\n' 'rendered contract test: missing safe startup failure gate was accepted' >&2
+  exit 1
+fi
+
+permissive_safe_startup_envelope_contract="$test_root/permissive-safe-startup-envelope-contract"
+cp -R "$source_contract" "$permissive_safe_startup_envelope_contract"
+ruby -e '
+  path = ARGV.fetch(0)
+  value = File.read(path)
+  changed = value.sub(
+    %q{allowed_keys = {"time", "level", "msg", "error_class"}},
+    %q{allowed_keys = {"time", "level", "msg", "error_class", "error"}}
+  )
+  abort "safe startup allowlist mutation did not apply" if changed == value
+  File.write(path, changed)
+' "$permissive_safe_startup_envelope_contract/deploy/observability/ci-runtime-production-smoke.sh"
+if "$permissive_safe_startup_envelope_contract/deploy/observability/verify-static-contract.sh" >/dev/null 2>&1; then
+  printf '%s\n' 'rendered contract test: permissive safe startup log envelope was accepted' >&2
+  exit 1
+fi
+
 missing_central_allowlist_contract="$test_root/missing-central-allowlist-contract"
 cp -R "$source_contract" "$missing_central_allowlist_contract"
 ruby -e '

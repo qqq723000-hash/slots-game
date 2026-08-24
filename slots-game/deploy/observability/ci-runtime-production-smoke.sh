@@ -308,7 +308,7 @@ shared_admission_lua_probe="$(printf '%s\n' \
 # NOSCRIPT 失败，不能把错误常量判绿。
 shared_admission_lua_probe_sha='ff334ac492bc06b8421d59494098b485d59dd00d'
 
-shared_admission_lua_eval_result="$(
+if ! shared_admission_lua_eval_result="$(
   docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
     valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
       --user rgs-api -h 127.0.0.1 -p 18445 --raw \
@@ -316,13 +316,16 @@ shared_admission_lua_eval_result="$(
       "$shared_admission_lua_probe_key_a" "$shared_admission_lua_probe_key_b" \
       ci-only-before ci-only-after-a ci-only-after-b 1000 \
       2>"$fixture_root/valkey-lua-probe.raw.log"
-)"
+)"; then
+  printf '%s\n' 'production smoke: CI-only Valkey EVAL command execution failed' >&2
+  exit 1
+fi
 test "$shared_admission_lua_eval_result" = 'shared-admission-tls-acl-lua-ok' || {
   printf '%s\n' 'production smoke: CI-only Valkey EVAL command probe failed' >&2
   exit 1
 }
 
-shared_admission_lua_evalsha_result="$(
+if ! shared_admission_lua_evalsha_result="$(
   docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
     valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
       --user rgs-api -h 127.0.0.1 -p 18445 --raw \
@@ -330,7 +333,10 @@ shared_admission_lua_evalsha_result="$(
       "$shared_admission_lua_probe_key_a" "$shared_admission_lua_probe_key_b" \
       ci-only-before ci-only-after-a ci-only-after-b 1000 \
       2>>"$fixture_root/valkey-lua-probe.raw.log"
-)"
+)"; then
+  printf '%s\n' 'production smoke: CI-only Valkey EVALSHA command execution failed' >&2
+  exit 1
+fi
 test "$shared_admission_lua_evalsha_result" = 'shared-admission-tls-acl-lua-ok' || {
   printf '%s\n' 'production smoke: CI-only Valkey EVALSHA command probe failed' >&2
   exit 1
@@ -339,13 +345,16 @@ test "$shared_admission_lua_evalsha_result" = 'shared-admission-tls-acl-lua-ok' 
 sleep 2
 for shared_admission_lua_probe_key in \
   "$shared_admission_lua_probe_key_a" "$shared_admission_lua_probe_key_b"; do
-  shared_admission_lua_probe_residue="$(
+  if ! shared_admission_lua_probe_residue="$(
     docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
       valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
         --user rgs-api -h 127.0.0.1 -p 18445 --raw \
         GET "$shared_admission_lua_probe_key" \
         2>>"$fixture_root/valkey-lua-probe.raw.log"
-  )"
+  )"; then
+    printf '%s\n' 'production smoke: CI-only Valkey TTL cleanup command execution failed' >&2
+    exit 1
+  fi
   test -z "$shared_admission_lua_probe_residue" || {
     printf '%s\n' 'production smoke: CI-only Valkey Lua probe key was not cleaned by TTL' >&2
     exit 1
@@ -459,6 +468,47 @@ runtime_security=(
   --security-opt no-new-privileges:true --pids-limit 128 --memory 256m --cpus 1
 )
 
+# 生产启动日志只允许固定低基数信封。负向 gate 已由输入夹具精确限定，运行态既要退出，
+# 也不能为了测试重新暴露配置原文、文件路径或第三方错误。精确原因由同一工作流先前的
+# Go 配置/审批单测覆盖；这里验证真实进程边界的退出和脱敏合同。
+verify_safe_startup_failure() {
+  startup_log=$1
+  failure_case=$2
+  if ! python3 - "$startup_log" 2>"$fixture_root/safe-startup-envelope.raw.log" <<'PYEOF'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if path.stat().st_size > 16 * 1024:
+    raise SystemExit(1)
+lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+if len(lines) != 1:
+    raise SystemExit(1)
+event = json.loads(lines[0])
+allowed_keys = {"time", "level", "msg", "error_class"}
+if set(event) != allowed_keys:
+    raise SystemExit(1)
+if event.get("level") != "ERROR" or event.get("msg") != "rgs server stopped":
+    raise SystemExit(1)
+if event.get("error_class") != "internal":
+    raise SystemExit(1)
+for forbidden in (
+    "RGS_OPERATIONS_BEARER_TOKEN_FILE",
+    "rgs-definition-approval-v2",
+    "/run/rgs-production-smoke",
+    "postgres://",
+    "postgresql://",
+):
+    if forbidden in lines[0]:
+        raise SystemExit(1)
+PYEOF
+  then
+    printf '%s\n' "production smoke: $failure_case did not produce the unique safe startup failure envelope" >&2
+    exit 1
+  fi
+}
+
 # 负向 1：production 即使绑定 loopback，也不能缺少独立 operations token 文件。
 missing_token_log="$fixture_root/missing-token.log"
 if docker run --rm "${runtime_security[@]}" \
@@ -467,7 +517,7 @@ if docker run --rm "${runtime_security[@]}" \
   printf '%s\n' 'production smoke: runtime started without operations token' >&2
   exit 1
 fi
-grep -F 'RGS_OPERATIONS_BEARER_TOKEN_FILE is required in production' "$missing_token_log" >/dev/null
+verify_safe_startup_failure "$missing_token_log" 'missing-operations-token'
 
 # 负向 2：development v1/demo approval 即使被放进其余 production 配置，也必须拒绝启动。
 cp -R "$fixture_dir" "$negative_fixture_dir"
@@ -484,7 +534,7 @@ if docker run --rm "${runtime_security[@]}" \
   printf '%s\n' 'production smoke: runtime accepted v1/demo approval' >&2
   exit 1
 fi
-grep -F 'production requires rgs-definition-approval-v2' "$v1_log" >/dev/null
+verify_safe_startup_failure "$v1_log" 'development-definition-approval'
 
 # 本地 TLS sink 只验证 production HTTPS/CA 配置与 outbox readiness；没有事件时不会伪造审计记录。
 openssl s_server -accept 18443 -cert "$fixture_dir/audit-server.pem" \

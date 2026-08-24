@@ -20,6 +20,20 @@ require_text() {
   grep -F "$pattern" "$terraform_root/$file" >/dev/null || fail "$file 缺少契约: $pattern"
 }
 
+require_line_pattern() {
+  pattern=$1
+  file=$2
+  grep -E "$pattern" "$terraform_root/$file" >/dev/null || fail "$file 缺少行契约: $pattern"
+}
+
+require_line_pattern_count() {
+  expected=$1
+  pattern=$2
+  file=$3
+  actual=$(grep -E -c "$pattern" "$terraform_root/$file" || true)
+  test "$actual" -eq "$expected" || fail "${file} 中行契约数量错误: ${pattern}，预期 ${expected}，实际 ${actual}"
+}
+
 require_count() {
   expected=$1
   pattern=$2
@@ -292,7 +306,7 @@ require_text 'alarm_thresholds          = var.rds_alarm_thresholds' 'stacks/appl
 require_text 'read_replica              = var.rds_read_replica' 'stacks/application-platform/main.tf'
 require_text '(!var.rds_read_replica.enabled || var.rds_read_replica.multi_az)' 'stacks/application-platform/main.tf'
 require_text 'rds_alarm_thresholds                  = var.configuration.rds_alarm_thresholds' 'stacks/environment/main.tf'
-require_text 'rds_read_replica                      = try(var.configuration.rds_read_replica, {' 'stacks/environment/main.tf'
+require_line_pattern '^[[:space:]]*rds_read_replica[[:space:]]*=[[:space:]]*try[(]var[.]configuration[.]rds_read_replica,[[:space:]]*[{][[:space:]]*$' 'stacks/environment/main.tf'
 require_text 'output "alarm_contract"' 'modules/rds/outputs.tf'
 require_text 'database_topology      = "single-db-instance"' 'modules/rds/outputs.tf'
 require_text 'contract_version       = "2.0.0"' 'modules/rds/outputs.tf'
@@ -300,7 +314,7 @@ require_text 'TotalIOPS = {' 'modules/rds/outputs.tf'
 require_text 'TotalThroughput = {' 'modules/rds/outputs.tf'
 require_count 2 'expression  = "m1 + m2"' 'modules/rds/outputs.tf'
 require_count 2 'return_data = true' 'modules/rds/outputs.tf'
-require_count 4 'return_data    = false' 'modules/rds/outputs.tf'
+require_line_pattern_count 4 '^[[:space:]]*return_data[[:space:]]*=[[:space:]]*false[[:space:]]*$' 'modules/rds/outputs.tf'
 require_text 'deadlock_metric_filter = {' 'modules/rds/outputs.tf'
 require_text 'filter_name      = aws_cloudwatch_log_metric_filter.deadlocks.name' 'modules/rds/outputs.tf'
 require_text 'filter_pattern   = aws_cloudwatch_log_metric_filter.deadlocks.pattern' 'modules/rds/outputs.tf'

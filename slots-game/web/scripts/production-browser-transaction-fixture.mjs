@@ -1,12 +1,57 @@
+import { performance } from "node:perf_hooks";
+
 const DEFINITION_HASH = "a".repeat(64);
 const RESULT_HASH = "c".repeat(64);
 const ACCESS_TOKEN = "browser-gate-token".padEnd(80, "x");
+export const MIN_SESSION_STATUS_INTERVAL_MS = 25_000;
 
 const BASE_GRID = Object.freeze([
   Object.freeze([{ symbol: "ORBIT" }, { symbol: "PRISM" }, { symbol: "PULSE" }]),
   Object.freeze([{ symbol: "NOVA" }, { symbol: "CIRCUIT" }, { symbol: "TANK" }]),
   Object.freeze([{ symbol: "PRISM" }, { symbol: "PULSE" }, { symbol: "NOVA" }]),
 ]);
+
+function economicTransactionProjection(snapshot) {
+  return Object.freeze({
+    exchangeCount: snapshot?.exchangeCount,
+    spinCount: snapshot?.spinCount,
+    acknowledgementCount: snapshot?.acknowledgementCount,
+    order: Array.isArray(snapshot?.order) ? Object.freeze([...snapshot.order]) : snapshot?.order,
+    committedRoundObserved: snapshot?.committedRoundObserved,
+  });
+}
+
+export function economicTransactionStateEqual(expected, actual) {
+  return JSON.stringify(economicTransactionProjection(expected))
+    === JSON.stringify(economicTransactionProjection(actual));
+}
+
+export function assertSessionStatusCadence(snapshot) {
+  const count = snapshot?.sessionStatusCount;
+  const observed = snapshot?.sessionStatusObservedAtMs;
+  if (!Number.isSafeInteger(count) || count < 0 || !Array.isArray(observed)
+    || observed.length !== count) {
+    throw new Error("RGS 会话状态探测计数与单调时间证据不一致");
+  }
+  if (snapshot?.exchangeCount === 0) {
+    if (snapshot.exchangeObservedAtMs !== null || count !== 0) {
+      throw new Error("RGS 会话状态探测发生在会话交换之前");
+    }
+    return true;
+  }
+  if (snapshot?.exchangeCount !== 1 || !Number.isFinite(snapshot?.exchangeObservedAtMs)) {
+    throw new Error("RGS 会话交换缺少唯一单调时间证据");
+  }
+  let previous = snapshot.exchangeObservedAtMs;
+  for (const timestamp of observed) {
+    if (!Number.isFinite(timestamp)
+      || timestamp - previous < MIN_SESSION_STATUS_INTERVAL_MS) {
+      throw new Error("RGS 会话状态探测间隔短于 25 秒下界");
+    }
+    previous = timestamp;
+  }
+  return true;
+}
 
 function endpoint(baseUrl, path) {
   const result = new URL(baseUrl);
@@ -124,9 +169,12 @@ export function createControlledRgsTransactionFixture(options) {
   const spinUrl = endpoint(baseUrl, "/client/v1/spins");
   const acknowledgementUrl = endpoint(baseUrl, "/client/v1/results/acknowledgements");
   const expectedBinding = binding(options);
+  const now = typeof options.now === "function" ? options.now : () => performance.now();
   const order = [];
   let exchangeCount = 0;
+  let exchangeObservedAtMs = null;
   let sessionStatusCount = 0;
+  const sessionStatusObservedAtMs = [];
   let spinCount = 0;
   let acknowledgementCount = 0;
   let committedRound = null;
@@ -160,6 +208,7 @@ export function createControlledRgsTransactionFixture(options) {
     requireEqual(body.launchCode, options.launchCode, "RGS 一次性启动码");
     requireEqual(body.operatorId, options.operatorId, "RGS 运营方标识");
     requireEqual(body.sessionId, options.sessionId, "RGS 会话标识");
+    exchangeObservedAtMs = observedNow(now, "RGS 会话交换");
     exchangeCount += 1;
     order.push("session-exchange");
     return jsonFulfillment(pageOrigin, {
@@ -271,6 +320,7 @@ export function createControlledRgsTransactionFixture(options) {
     for (const [name, value] of Object.entries(expectedBinding)) {
       requireEqual(body[name], value, `RGS 会话状态 ${name}`);
     }
+    sessionStatusObservedAtMs.push(observedNow(now, "RGS 会话状态"));
     sessionStatusCount += 1;
     return jsonFulfillment(pageOrigin, {
       data: {
@@ -353,7 +403,9 @@ export function createControlledRgsTransactionFixture(options) {
   function snapshot() {
     return Object.freeze({
       exchangeCount,
+      exchangeObservedAtMs,
       sessionStatusCount,
+      sessionStatusObservedAtMs: Object.freeze([...sessionStatusObservedAtMs]),
       spinCount,
       acknowledgementCount,
       order: Object.freeze([...order]),
@@ -366,4 +418,12 @@ export function createControlledRgsTransactionFixture(options) {
     responseForPausedRequest,
     snapshot,
   });
+}
+
+function observedNow(now, label) {
+  const value = now();
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} 缺少有效单调时间`);
+  }
+  return value;
 }

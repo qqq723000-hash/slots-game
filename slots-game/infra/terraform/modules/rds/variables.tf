@@ -81,14 +81,14 @@ variable "max_allocated_storage_gib" {
 variable "alarm_thresholds" {
   description = "经容量测试批准的 RDS CloudWatch 告警阈值"
   type = object({
-    cpu_utilization_percent  = number
-    database_connections     = number
-    freeable_memory_bytes    = number
-    free_storage_space_bytes = number
-    read_latency_seconds     = number
-    write_latency_seconds    = number
-    disk_queue_depth         = number
-    deadlocks_per_minute     = number
+    cpu_utilization_percent           = number
+    database_connections              = number
+    freeable_memory_bytes             = number
+    free_storage_space_bytes          = number
+    read_latency_seconds              = number
+    write_latency_seconds             = number
+    disk_queue_depth                  = number
+    deadlocks_per_minute              = number
     total_iops_per_second             = number
     total_throughput_bytes_per_second = number
     swap_usage_bytes                  = number

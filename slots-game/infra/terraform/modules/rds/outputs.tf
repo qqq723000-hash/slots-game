@@ -176,26 +176,26 @@ output "alarm_contract" {
               return_data = true
             },
             {
-              id             = "m1"
-              metric_name    = "ReadIOPS"
-              namespace      = "AWS/RDS"
-              statistic      = "Average"
-              unit           = "Count/Second"
-              period_seconds = 60
-              dimension_name = "DBInstanceIdentifier"
+              id              = "m1"
+              metric_name     = "ReadIOPS"
+              namespace       = "AWS/RDS"
+              statistic       = "Average"
+              unit            = "Count/Second"
+              period_seconds  = 60
+              dimension_name  = "DBInstanceIdentifier"
               dimension_value = aws_db_instance.this.identifier
-              return_data    = false
+              return_data     = false
             },
             {
-              id             = "m2"
-              metric_name    = "WriteIOPS"
-              namespace      = "AWS/RDS"
-              statistic      = "Average"
-              unit           = "Count/Second"
-              period_seconds = 60
-              dimension_name = "DBInstanceIdentifier"
+              id              = "m2"
+              metric_name     = "WriteIOPS"
+              namespace       = "AWS/RDS"
+              statistic       = "Average"
+              unit            = "Count/Second"
+              period_seconds  = 60
+              dimension_name  = "DBInstanceIdentifier"
               dimension_value = aws_db_instance.this.identifier
-              return_data    = false
+              return_data     = false
             },
           ]
         }
@@ -216,26 +216,26 @@ output "alarm_contract" {
               return_data = true
             },
             {
-              id             = "m1"
-              metric_name    = "ReadThroughput"
-              namespace      = "AWS/RDS"
-              statistic      = "Average"
-              unit           = "Bytes/Second"
-              period_seconds = 60
-              dimension_name = "DBInstanceIdentifier"
+              id              = "m1"
+              metric_name     = "ReadThroughput"
+              namespace       = "AWS/RDS"
+              statistic       = "Average"
+              unit            = "Bytes/Second"
+              period_seconds  = 60
+              dimension_name  = "DBInstanceIdentifier"
               dimension_value = aws_db_instance.this.identifier
-              return_data    = false
+              return_data     = false
             },
             {
-              id             = "m2"
-              metric_name    = "WriteThroughput"
-              namespace      = "AWS/RDS"
-              statistic      = "Average"
-              unit           = "Bytes/Second"
-              period_seconds = 60
-              dimension_name = "DBInstanceIdentifier"
+              id              = "m2"
+              metric_name     = "WriteThroughput"
+              namespace       = "AWS/RDS"
+              statistic       = "Average"
+              unit            = "Bytes/Second"
+              period_seconds  = 60
+              dimension_name  = "DBInstanceIdentifier"
               dimension_value = aws_db_instance.this.identifier
-              return_data    = false
+              return_data     = false
             },
           ]
         }

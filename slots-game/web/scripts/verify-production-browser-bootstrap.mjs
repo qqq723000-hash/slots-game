@@ -12,7 +12,11 @@ import {
   createReleaseContentSecurityPolicy,
   verifyReleaseContentSecurityPolicy,
 } from "../../deploy/web/content-security-policy.mjs";
-import { createControlledRgsTransactionFixture } from "./production-browser-transaction-fixture.mjs";
+import {
+  assertSessionStatusCadence,
+  createControlledRgsTransactionFixture,
+  economicTransactionStateEqual,
+} from "./production-browser-transaction-fixture.mjs";
 import {
   BROWSER_RUNTIME_PHASES,
   BROWSER_TRANSACTION_PROBE_SOURCE,
@@ -331,6 +335,7 @@ try {
     );
   }
   const transactionEvidence = result.transactionEvidence;
+  assertSessionStatusCadence(transactionEvidence);
   if (transactionEvidence.exchangeCount !== 1
     || transactionEvidence.spinCount !== 1
     || transactionEvidence.acknowledgementCount !== 1
@@ -1078,8 +1083,10 @@ async function verifyBootstrap(
       && postTransitionLayout.documentIdentityToken === preTransitionDocumentIdentity,
     statePreserved: mobileViewportEvidence.steps.every((step) => step.statePreserved)
       && desktopViewportEvidence.steps.every((step) => step.statePreserved),
-    transactionStatePreserved: JSON.stringify(postTransitionTransaction)
-      === JSON.stringify(preTransitionTransaction),
+    transactionStatePreserved: economicTransactionStateEqual(
+      preTransitionTransaction,
+      postTransitionTransaction,
+    ),
   });
 
   await setBrowserProbePhase(send, "transaction-active");
@@ -2048,7 +2055,9 @@ function assertViewportStatePreserved(expected, actual, viewport, channel) {
 }
 
 function assertTransactionStatePreserved(expected, actual, viewport, channel) {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+  assertSessionStatusCadence(expected);
+  assertSessionStatusCadence(actual);
+  if (!economicTransactionStateEqual(expected, actual)) {
     throw new Error(`连续视口切换或界面点击改变了 RGS 事务：${JSON.stringify({
       channel,
       viewport,
