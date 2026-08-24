@@ -384,6 +384,7 @@ describe("presentationRules session binding", () => {
     const exchange: DecodedRgsExchange = {
       requestId: "request-rgs-help",
       accessToken: "token",
+      serverTime: "2029-12-31T23:00:00Z",
       session: {
         binding: {
           operatorId: "operator-help",
@@ -396,7 +397,8 @@ describe("presentationRules session binding", () => {
           jurisdiction: "GB",
         },
         status: "ACTIVE",
-        expiresAt: "2030-01-01T00:00:00Z",
+      expiresAt: "2030-01-01T00:00:00Z",
+      idleDisconnectAt: "2029-12-31T23:30:00Z",
         balanceMinor: "10000",
         revision: "0",
         sequence: 0,

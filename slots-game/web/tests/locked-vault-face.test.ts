@@ -67,6 +67,7 @@ function rgsResponse(grid: unknown = PROTOCOL_GRID): Record<string, unknown> {
       endRevision: "1",
       sequence: "1",
       resultHash: "b".repeat(64),
+      idleDisconnectAt: "2029-12-31T23:45:00Z",
       betMinor: "100",
       chargedBetMinor: "100",
       balanceMinor: "9900",

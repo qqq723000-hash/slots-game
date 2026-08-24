@@ -4,7 +4,7 @@
   "packages": [
     {
       "id": "mobile-startup-shell",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "startup-shell",
       "resources": [
         {
@@ -137,7 +137,7 @@
     },
     {
       "id": "mobile-spine-fps-shared",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "startup-shell",
       "resources": [
         {
@@ -165,7 +165,7 @@
     },
     {
       "id": "mobile-spine-fps-base",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "startup-shell",
       "dependsOn": [
         "mobile-spine-fps-shared"
@@ -182,7 +182,7 @@
     },
     {
       "id": "mobile-spine-background-shared",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "base-critical",
       "resources": [
         {
@@ -210,7 +210,7 @@
     },
     {
       "id": "mobile-spine-background-base",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "base-critical",
       "dependsOn": [
         "mobile-spine-background-shared"
@@ -234,7 +234,7 @@
     },
     {
       "id": "mobile-spine-symbols-shared",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "base-critical",
       "resources": [
         {
@@ -262,7 +262,7 @@
     },
     {
       "id": "mobile-spine-symbols-base",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "base-critical",
       "dependsOn": [
         "mobile-spine-symbols-shared"
@@ -363,7 +363,7 @@
     },
     {
       "id": "mobile-spine-ui-shared",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "base-critical",
       "resources": [
         {
@@ -391,7 +391,7 @@
     },
     {
       "id": "mobile-spine-ui-base",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "base-critical",
       "dependsOn": [
         "mobile-spine-ui-shared"
@@ -450,7 +450,7 @@
     },
     {
       "id": "mobile-interaction-visuals",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "interaction-ready",
       "dependsOn": [
         "mobile-spine-ui-shared"
@@ -488,7 +488,7 @@
     },
     {
       "id": "mobile-feature-wheel",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "feature-on-demand",
       "dependsOn": [
         "mobile-spine-ui-shared",
@@ -529,12 +529,33 @@
           "bytes": 28816,
           "sha256": "8dd30b68b78f1348dde562766ee1da8930390827e65b540dc04066a2e1196f57",
           "decoder": "binary"
+        },
+        {
+          "id": "mobile:wheel:reference:wheel-blue",
+          "url": "/assets/primal-reference/10023.png",
+          "bytes": 393867,
+          "sha256": "42dc1f981e2deb18b86c87dadc00b35edca67df859a1f129708ffc7216ea0966",
+          "decoder": "binary"
+        },
+        {
+          "id": "mobile:wheel:reference:wheel-red",
+          "url": "/assets/primal-reference/10026.png",
+          "bytes": 392804,
+          "sha256": "4d725fcd3fc4b11590af84d66c3ee15a884168b01b95fa078bda270277e0bf45",
+          "decoder": "binary"
+        },
+        {
+          "id": "mobile:wheel:reference:wheel-dual",
+          "url": "/assets/primal-reference/10027.png",
+          "bytes": 394360,
+          "sha256": "363d0d098306d4b7e787e3e4910d35fbbd1d60d428969e00ca15f8b1bc28956f",
+          "decoder": "binary"
         }
       ]
     },
     {
       "id": "mobile-feature-free-spins",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "feature-on-demand",
       "dependsOn": [
         "mobile-spine-ui-shared",
@@ -580,7 +601,7 @@
     },
     {
       "id": "mobile-feature-big-win",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "feature-on-demand",
       "dependsOn": [
         "mobile-spine-ui-shared"
@@ -618,7 +639,7 @@
     },
     {
       "id": "mobile-interaction-audio",
-      "version": "iron-colossus-runtime-2026.08+abfca6b66d4bc626",
+      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
       "stage": "interaction-ready",
       "resources": [
         {

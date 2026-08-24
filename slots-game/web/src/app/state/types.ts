@@ -248,6 +248,8 @@ export interface SessionOpened extends MoneyDisplayBinding {
   betOptionsMinor: MoneyMinor[];
   defaultBetMinor: MoneyMinor;
   featureState: FeatureState;
+  /** 生产 RGS 提供的服务端权威空闲断开绝对时间；测试网关可以省略。 */
+  idleDisconnectAt?: string;
 }
 
 export interface SpinResult {

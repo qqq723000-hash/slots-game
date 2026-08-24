@@ -13,6 +13,7 @@ import type {
 } from "../app/state/types";
 import { createSpineView, type Spine } from "./spine/SpineAdapter";
 import { loadPrimalSpineSet } from "./spine/PrimalSpineAssets";
+import type { VerifiedFreeSpinArtwork } from "./VerifiedFeatureArtwork";
 import {
   resolveResponsiveMinBound,
   type MobileHandMode,
@@ -304,6 +305,7 @@ export class FreeSpinHudView extends Container {
   private counterValue: Text | null = null;
   private retriggerValue: Text | null = null;
   private loadPromise: Promise<void> | null = null;
+  private artworkGeneration = 0;
   private desiredCounterPresentation: CounterPresentation = "hidden";
   private projectionValue: FreeSpinHudProjection = EMPTY_PROJECTION;
   private counterOperation = 0;
@@ -357,13 +359,34 @@ export class FreeSpinHudView extends Container {
     this.retriggerHost.scale.set(layout.retrigger.scale);
   }
 
-  loadArtwork(signal?: AbortSignal): Promise<void> {
+  loadArtwork(
+    signal?: AbortSignal,
+    verified?: VerifiedFreeSpinArtwork,
+  ): Promise<void> {
+    if (this.disposed || signal?.aborted) {
+      return Promise.reject(freeSpinArtworkAbortReason(signal));
+    }
+    if (this.artworkLoaded) return Promise.resolve();
     if (this.loadPromise) return this.loadPromise;
-    this.loadPromise = loadPrimalSpineSet(["freeSpinCounter", "freeSpinRetrigger"] as const)
+    const generation = this.artworkGeneration;
+    const source = verified
+      ? Promise.resolve({
+          freeSpinCounter: verified.spines.freeSpinCounter,
+          freeSpinRetrigger: verified.spines.freeSpinRetrigger,
+        })
+      : loadPrimalSpineSet(["freeSpinCounter", "freeSpinRetrigger"] as const);
+    const attempt = source
       .then((data) => {
-        if (this.disposed || signal?.aborted) return;
+        if (this.disposed || signal?.aborted || generation !== this.artworkGeneration) {
+          throw freeSpinArtworkAbortReason(signal);
+        }
         const counter = createSpineView(data.freeSpinCounter);
         const retrigger = createSpineView(data.freeSpinRetrigger);
+        if (this.disposed || signal?.aborted || generation !== this.artworkGeneration) {
+          counter.destroy({ children: true });
+          retrigger.destroy({ children: true });
+          throw freeSpinArtworkAbortReason(signal);
+        }
         prepareAuthoredView(counter);
         prepareAuthoredView(retrigger);
 
@@ -391,10 +414,33 @@ export class FreeSpinHudView extends Container {
         this.syncTextSlots();
       })
       .catch((error: unknown) => {
-        this.loadPromise = null;
+        if (this.loadPromise === attempt) this.loadPromise = null;
         throw error;
       });
-    return this.loadPromise;
+    this.loadPromise = attempt;
+    return attempt;
+  }
+
+  /** Free Spins 退出后销毁事件代视图；共享 atlas 仍由首启共享包拥有。 */
+  clearArtwork(): void {
+    this.artworkGeneration += 1;
+    this.loadPromise = null;
+    this.counterOperation += 1;
+    this.retriggerOperation += 1;
+    this.cancelCapContinue();
+    for (const host of [this.counterHost, this.retriggerHost]) {
+      for (const child of host.removeChildren()) {
+        try { child.destroy({ children: true }); } catch { /* 最佳努力 GPU/视图清理 */ }
+      }
+      host.visible = false;
+    }
+    this.counterView = null;
+    this.retriggerView = null;
+    this.counterLabel = null;
+    this.counterValue = null;
+    this.retriggerValue = null;
+    this.visible = false;
+    this.interactive = false;
   }
 
   /** 恢复重新连接快照而不重播显示/扫描/重新触发。 */
@@ -583,10 +629,8 @@ export class FreeSpinHudView extends Container {
 
   override destroy(options?: Parameters<Container["destroy"]>[0]): void {
     if (this.disposed) return;
+    this.clearArtwork();
     this.disposed = true;
-    this.counterOperation += 1;
-    this.retriggerOperation += 1;
-    this.cancelCapContinue();
     super.destroy(options);
   }
 
@@ -834,4 +878,11 @@ function validateFreeSpinCap(event: Readonly<FreeSpinCapReachedEvent>): void {
 
 function waitFor(durationMs: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, durationMs));
+}
+
+function freeSpinArtworkAbortReason(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("Free Spins artwork load was aborted");
+  error.name = "AbortError";
+  return error;
 }

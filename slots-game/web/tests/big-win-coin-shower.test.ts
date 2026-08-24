@@ -3,18 +3,37 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BigWinView } from "../src/renderer/BigWinView";
 import {
   BIG_WIN_COIN_ATLAS_URL,
+  BIG_WIN_COIN_FRAME_FUSE_POLICY,
   BIG_WIN_COIN_IDS,
   BIG_WIN_COIN_INITIALIZATION_BATCH_CAP,
   BIG_WIN_COIN_MANIFEST_URL,
   BIG_WIN_COIN_PHYSICS,
   BIG_WIN_COIN_POOL_SEQUENCE,
   BIG_WIN_COIN_TOTAL_POOL_SIZE,
+  advanceBigWinCoinFrameFuse,
   advanceCoinEmissionCounter,
   BigWinCoinShower,
   createCoinParticleState,
+  initialBigWinCoinFrameFuseState,
+  resolveBigWinCoinParticleBudget,
   runBigWinCoinPoolInitialization,
   tickCoinParticle,
+  type BigWinCoinFrameFusePolicy,
+  type BigWinCoinShowerOptions,
 } from "../src/renderer/BigWinCoinShower";
+
+const TEST_FRAME_FUSE_POLICY = Object.freeze({
+  slowFrameThresholdMs: 30,
+  healthyFrameThresholdMs: 20,
+  slowFrameWindowSize: 4,
+  slowFramesToDegrade: 2,
+  healthyFramesToRecover: 3,
+  budgets: Object.freeze([
+    Object.freeze({ activeParticleLimit: 150, densityScale: 1 }),
+    Object.freeze({ activeParticleLimit: 72, densityScale: 0.5 }),
+    Object.freeze({ activeParticleLimit: 30, densityScale: 0.25 }),
+  ]),
+}) satisfies BigWinCoinFrameFusePolicy;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -49,6 +68,19 @@ async function flushUntil(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 20 && !predicate(); attempt += 1) {
     await Promise.resolve();
   }
+}
+
+async function loadCoinShower(
+  options: BigWinCoinShowerOptions = {},
+): Promise<BigWinCoinShower> {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(
+    JSON.stringify(validCoinManifest()),
+    { status: 200, headers: { "content-type": "application/json" } },
+  )));
+  vi.spyOn(Texture, "fromURL").mockResolvedValue(Texture.EMPTY);
+  const shower = new BigWinCoinShower(() => 0.5, options);
+  await shower.load(undefined, { requestFrame: () => Promise.resolve() });
+  return shower;
 }
 
 describe("captured Big Win coin shower", () => {
@@ -86,6 +118,73 @@ describe("captured Big Win coin shower", () => {
       burstTicks: 15,
       tierDensities: [1, 2, 3, 4],
     });
+    expect(BIG_WIN_COIN_TOTAL_POOL_SIZE).toBe(150);
+    expect(resolveBigWinCoinParticleBudget(initialBigWinCoinFrameFuseState())).toEqual({
+      activeParticleLimit: 150,
+      densityScale: 1,
+    });
+  });
+
+  it("keeps normal frames unchanged and ignores an isolated GC-length frame", () => {
+    let state = initialBigWinCoinFrameFuseState();
+    state = advanceBigWinCoinFrameFuse(state, 45, TEST_FRAME_FUSE_POLICY);
+    for (let frame = 0; frame < TEST_FRAME_FUSE_POLICY.slowFrameWindowSize; frame += 1) {
+      state = advanceBigWinCoinFrameFuse(state, 16, TEST_FRAME_FUSE_POLICY);
+    }
+    expect(state.level).toBe(0);
+    expect(state.slowFrameCount).toBe(0);
+
+    for (let frame = 0; frame < 120; frame += 1) {
+      state = advanceBigWinCoinFrameFuse(state, 16, BIG_WIN_COIN_FRAME_FUSE_POLICY);
+    }
+    expect(state.level).toBe(0);
+    expect(resolveBigWinCoinParticleBudget(state)).toEqual({
+      activeParticleLimit: 150,
+      densityScale: 1,
+    });
+  });
+
+  it("degrades only after bounded repeated slow frames and recovers one level at a time", () => {
+    let state = initialBigWinCoinFrameFuseState();
+    state = advanceBigWinCoinFrameFuse(state, 40, TEST_FRAME_FUSE_POLICY);
+    state = advanceBigWinCoinFrameFuse(state, 16, TEST_FRAME_FUSE_POLICY);
+    state = advanceBigWinCoinFrameFuse(state, 40, TEST_FRAME_FUSE_POLICY);
+    expect(state.level).toBe(1);
+    expect(resolveBigWinCoinParticleBudget(state, {}, TEST_FRAME_FUSE_POLICY)).toEqual({
+      activeParticleLimit: 72,
+      densityScale: 0.5,
+    });
+
+    state = advanceBigWinCoinFrameFuse(state, 40, TEST_FRAME_FUSE_POLICY);
+    state = advanceBigWinCoinFrameFuse(state, 40, TEST_FRAME_FUSE_POLICY);
+    expect(state.level).toBe(2);
+    expect(resolveBigWinCoinParticleBudget(state, {}, TEST_FRAME_FUSE_POLICY)).toEqual({
+      activeParticleLimit: 30,
+      densityScale: 0.25,
+    });
+
+    for (let frame = 0; frame < 3; frame += 1) {
+      state = advanceBigWinCoinFrameFuse(state, 16, TEST_FRAME_FUSE_POLICY);
+    }
+    expect(state.level).toBe(1);
+    for (let frame = 0; frame < 3; frame += 1) {
+      state = advanceBigWinCoinFrameFuse(state, 16, TEST_FRAME_FUSE_POLICY);
+    }
+    expect(state.level).toBe(0);
+  });
+
+  it("applies deterministic lower budgets for reduced motion and an explicit low tier", () => {
+    const state = initialBigWinCoinFrameFuseState();
+    expect(resolveBigWinCoinParticleBudget(
+      state,
+      { reducedMotion: true },
+      TEST_FRAME_FUSE_POLICY,
+    )).toEqual({ activeParticleLimit: 72, densityScale: 0.5 });
+    expect(resolveBigWinCoinParticleBudget(
+      state,
+      { performanceTier: "low" },
+      TEST_FRAME_FUSE_POLICY,
+    )).toEqual({ activeParticleLimit: 30, densityScale: 0.25 });
   });
 
   it("matches the random initial frame and ballistic initializer", () => {
@@ -230,5 +329,90 @@ describe("captured Big Win coin shower", () => {
     await expect(loading).rejects.toMatchObject({ name: "AbortError" });
     expect(shower.artworkLoaded).toBe(false);
     expect(destroyPool).toHaveBeenCalledTimes(BIG_WIN_COIN_POOL_SEQUENCE.length);
+  });
+
+  it("consumes a verified manifest/atlas without URL requests and permits a clean retry", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const fromUrl = vi.spyOn(Texture, "fromURL");
+    const shower = new BigWinCoinShower(() => 0.5);
+    const options = {
+      verifiedManifest: validCoinManifest(),
+      verifiedAtlasTexture: Texture.EMPTY,
+      requestFrame: () => Promise.resolve(),
+    } as const;
+
+    const first = shower.load(undefined, options);
+    const joined = shower.load(undefined, options);
+    await expect(Promise.all([first, joined])).resolves.toEqual([undefined, undefined]);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(fromUrl).not.toHaveBeenCalled();
+    expect(shower.artworkLoaded).toBe(true);
+
+    shower.clearArtwork();
+    expect(shower.artworkLoaded).toBe(false);
+    await expect(shower.load(undefined, options)).resolves.toBeUndefined();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(fromUrl).not.toHaveBeenCalled();
+    expect(shower.artworkLoaded).toBe(true);
+    shower.destroy({ children: true });
+  });
+
+  it("enforces the active cap without changing the healthy 150-pool path", async () => {
+    const normal = await loadCoinShower({ frameFusePolicy: TEST_FRAME_FUSE_POLICY });
+    normal.setTier(3);
+    expect(normal.activeParticleCount).toBe(60);
+    expect(normal.particleBudgetSnapshot).toMatchObject({
+      adaptiveLevel: 0,
+      activeParticleLimit: 150,
+      densityScale: 1,
+    });
+    normal.update(16);
+    expect(normal.particleBudgetSnapshot.adaptiveLevel).toBe(0);
+    normal.destroy({ children: true });
+
+    const degraded = await loadCoinShower({ frameFusePolicy: TEST_FRAME_FUSE_POLICY });
+    degraded.setTier(3);
+    for (let frame = 0; frame < 4; frame += 1) degraded.update(40);
+    expect(degraded.particleBudgetSnapshot).toMatchObject({
+      adaptiveLevel: 2,
+      activeParticleLimit: 30,
+      densityScale: 0.25,
+    });
+    expect(degraded.activeParticleCount).toBeLessThanOrEqual(30);
+    degraded.update(500);
+    expect(degraded.activeParticleCount).toBeLessThanOrEqual(30);
+    degraded.destroy({ children: true });
+  });
+
+  it("resets adaptive state on stop, killAll and destroy", async () => {
+    const shower = await loadCoinShower({ frameFusePolicy: TEST_FRAME_FUSE_POLICY });
+    const degradeFully = () => {
+      shower.setTier(3);
+      for (let frame = 0; frame < 4; frame += 1) shower.update(40);
+      expect(shower.particleBudgetSnapshot.adaptiveLevel).toBe(2);
+    };
+
+    degradeFully();
+    shower.stop();
+    expect(shower.particleBudgetSnapshot).toMatchObject({
+      adaptiveLevel: 0,
+      slowFrameCount: 0,
+      healthyFrameStreak: 0,
+    });
+
+    degradeFully();
+    shower.killAll();
+    expect(shower.activeParticleCount).toBe(0);
+    expect(shower.particleBudgetSnapshot).toMatchObject({
+      adaptiveLevel: 0,
+      slowFrameCount: 0,
+      healthyFrameStreak: 0,
+    });
+
+    degradeFully();
+    shower.destroy({ children: true });
+    expect(shower.activeParticleCount).toBe(0);
+    expect(shower.particleBudgetSnapshot.adaptiveLevel).toBe(0);
   });
 });

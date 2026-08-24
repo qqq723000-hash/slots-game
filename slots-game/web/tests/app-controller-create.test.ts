@@ -88,6 +88,7 @@ interface FakeRoot {
   readonly dataset: Record<string, string>;
   innerHTML: string;
   querySelector(selector: string): unknown;
+  replaceChildren(...children: unknown[]): void;
 }
 
 function createRoot(): HTMLElement {
@@ -103,6 +104,7 @@ function createRoot(): HTMLElement {
     dataset: {},
     innerHTML: "",
     querySelector: (selector) => roles[selector] ?? null,
+    replaceChildren: vi.fn(),
   };
   return root as unknown as HTMLElement;
 }
@@ -118,6 +120,17 @@ describe("AppController.create startup ownership", () => {
       innerWidth: 1_200,
       innerHeight: 900,
       matchMedia: () => ({ matches: false }),
+    });
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        className: "",
+        dataset: {},
+        clientWidth: 1_200,
+        clientHeight: 900,
+        append: vi.fn(),
+        appendChild: vi.fn(),
+        setAttribute: vi.fn(),
+      }),
     });
   });
 

@@ -36,7 +36,8 @@ function allowlistedRequest(
   const values = candidate as Record<string, unknown>;
   const reason = values.reason;
   const code = values.code;
-  if ((reason !== "initial-session-timeout" && reason !== "initial-session-failed"
+  if ((reason !== "initial-session-timeout" && reason !== "session-timeout"
+      && reason !== "initial-session-failed"
       && reason !== "committed-result-recovery-required")
     || (code !== "SESSION_TIMEOUT" && code !== "OPERATOR_SESSION_REQUIRED")) {
     return null;
@@ -91,5 +92,32 @@ export function notifyOperatorSessionRequired(
     windowValue.parent.postMessage(message, targetOrigin);
   } catch {
     // postMessage 是宿主恢复旁路；失败时游戏仍保持故障关闭。
+  }
+}
+
+/**
+ * 顶层同源部署的显式退出兜底。跨框架生产始终只走精确 postMessage；未配置、
+ * 跨源、协议相对、带查询/片段的目标一律不导航。
+ */
+export function returnTopLevelSessionToOperator(
+  windowValue: Window | undefined,
+  configuredPath?: string,
+): boolean {
+  if (!windowValue || !configuredPath || isWindowFramed(windowValue)) return false;
+  if (!configuredPath.startsWith("/") || configuredPath.startsWith("//")) return false;
+  let target: URL;
+  try {
+    target = new URL(configuredPath, windowValue.location.href);
+  } catch {
+    return false;
+  }
+  if (target.origin !== windowValue.location.origin
+    || target.username !== "" || target.password !== ""
+    || target.search !== "" || target.hash !== "") return false;
+  try {
+    windowValue.location.assign(target.toString());
+    return true;
+  } catch {
+    return false;
   }
 }

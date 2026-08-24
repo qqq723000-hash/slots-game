@@ -15,6 +15,10 @@ import {
   type PrimalRuntimeAssetChannel,
 } from "../../assets/primalRuntimeAssets";
 import type { SpineData } from "./SpineAdapter";
+import {
+  cachedPixiTextureAttempt,
+  disposePixiTextureAttempt,
+} from "../pixiTextureCleanup";
 
 const ROOT = publicAssetUrl("assets/primal-runtime/spine");
 
@@ -262,6 +266,23 @@ export const PRIMAL_SPINE_SPECS: Readonly<Record<PrimalSpineKey, PrimalSpineSpec
 
 const dataPromises = new Map<string, Promise<SpineData>>();
 const atlasPromises = new Map<string, Promise<TextureAtlas>>();
+const PRIMAL_SPINE_ATLAS_PAGE_COUNTS: Readonly<Record<
+PrimalRuntimeAssetChannel,
+Readonly<Record<PrimalSpineSpec["group"], number>>
+>> = Object.freeze({
+  desktop: Object.freeze({
+    spine_background: 2,
+    spine_fps: 2,
+    spine_symbols: 3,
+    spine_ui: 2,
+  }),
+  mobile: Object.freeze({
+    spine_background: 2,
+    spine_fps: 2,
+    spine_symbols: 2,
+    spine_ui: 2,
+  }),
+});
 
 export function primalSpineSkeletonUrl(key: PrimalSpineKey): string {
   const spec = PRIMAL_SPINE_SPECS[key];
@@ -274,6 +295,31 @@ export function primalSpineAtlasUrl(
 ): string {
   const spec = PRIMAL_SPINE_SPECS[key];
   return primalSpineTextureAtlasUrl(spec.group, channel);
+}
+
+/**
+ * pixi-spine 从 atlas 文本回调页面名。只允许当前固定资源族的有界 AVIF
+ * basename，禁止绝对 URL、查询串、反斜杠和目录穿越进入 Texture.fromURL。
+ */
+export function resolvePrimalSpineAtlasPageUrl(
+  group: PrimalSpineSpec["group"],
+  channel: PrimalRuntimeAssetChannel,
+  page: unknown,
+): string {
+  const level = channel === "mobile" ? 2 : 1;
+  const prefix = `${group}_level${level}`;
+  if (typeof page !== "string") {
+    throw new Error("Invalid Primal Spine atlas page");
+  }
+  const pageCount = PRIMAL_SPINE_ATLAS_PAGE_COUNTS[channel][group];
+  const reviewedPages = Array.from({ length: pageCount }, (_, index) => (
+    index === 0 ? `${prefix}.avif` : `${prefix}_${index + 1}.avif`
+  ));
+  if (!reviewedPages.includes(page)) {
+    throw new Error("Invalid Primal Spine atlas page");
+  }
+  const atlasUrl = primalSpineTextureAtlasUrl(group, channel);
+  return `${atlasUrl.slice(0, atlasUrl.lastIndexOf("/") + 1)}${page}`;
 }
 
 export function loadPrimalSpineData(
@@ -306,6 +352,29 @@ export function loadPrimalSpineData(
   return promise;
 }
 
+/**
+ * 直接解析事件租约已验证的 skeleton 字节；共享 atlas 仍复用首启建立的
+ * channel/group Promise，不会再次请求 BigWin.skel URL。
+ */
+export async function loadPrimalSpineDataFromVerifiedBinary(
+  key: PrimalSpineKey,
+  binary: Uint8Array,
+  channel: PrimalRuntimeAssetChannel = activePrimalRuntimeAssetChannel(),
+  signal?: AbortSignal,
+): Promise<SpineData> {
+  if (!browserAllowsAuthoredPrimalSpine(channel)) {
+    throw new Error("Authored Primal Spine assets are disabled for this device profile");
+  }
+  throwIfPrimalSpineAborted(signal);
+  const spec = PRIMAL_SPINE_SPECS[key];
+  const atlas = await awaitPrimalSpineAbort(loadAtlas(spec.group, channel), signal);
+  throwIfPrimalSpineAborted(signal);
+  const parser = new SkeletonBinary(new AtlasAttachmentLoader(atlas));
+  const data = parser.readSkeletonData(binary.slice()) as SpineData;
+  throwIfPrimalSpineAborted(signal);
+  return data;
+}
+
 export function loadPrimalSpineSet<const K extends readonly PrimalSpineKey[]>(
   keys: K,
   channel: PrimalRuntimeAssetChannel = activePrimalRuntimeAssetChannel(),
@@ -324,19 +393,32 @@ function loadAtlas(
 
   const atlasUrl = primalSpineTextureAtlasUrl(group, channel);
   const promise = fetchText(atlasUrl).then((atlasText) => new Promise<TextureAtlas>((resolve, reject) => {
-    const baseUrl = atlasUrl.slice(0, atlasUrl.lastIndexOf("/") + 1);
     let textureError: unknown;
     new TextureAtlas(
       atlasText,
       (page, complete) => {
-        void Texture.fromURL(`${baseUrl}${page}`).then(
-          (texture) => complete(texture.baseTexture),
-          (error: unknown) => {
-            textureError ??= error;
-            // 让 atlas 解析器在拒绝外部 Promise 之前正常终止，而不是让其回调链挂起。
-            complete(Texture.EMPTY.baseTexture);
-          },
-        );
+        let pageUrl: string | null = null;
+        try {
+          pageUrl = resolvePrimalSpineAtlasPageUrl(group, channel, page);
+          const pageAttempt = Texture.fromURL(pageUrl);
+          const attemptedTexture = cachedPixiTextureAttempt(pageUrl);
+          void pageAttempt.then(
+            (texture) => complete(texture.baseTexture),
+            (error: unknown) => {
+              // Pixi 6 会在 Promise 拒绝前把页面对象留在全局 cache；仅按本次
+              // Texture.fromURL 同步捕获的对象身份驱逐，使下一次 atlas 加载可重试。
+              disposePixiTextureAttempt(attemptedTexture);
+              textureError ??= error;
+              // 让 atlas 解析器在拒绝外部 Promise 之前正常终止，而不是让其回调链挂起。
+              complete(Texture.EMPTY.baseTexture);
+            },
+          );
+        } catch (error) {
+          // 第三方解析器提供的页名或同步 Texture 错误都必须完成回调，避免解析悬挂。
+          if (pageUrl) disposePixiTextureAttempt(cachedPixiTextureAttempt(pageUrl));
+          textureError ??= error;
+          complete(Texture.EMPTY.baseTexture);
+        }
       },
       (atlas) => {
         if (textureError) {
@@ -385,4 +467,45 @@ function asAssetError(url: string, error: unknown): Error {
   return error instanceof Error
     ? new Error(`Failed to load ${url}: ${error.message}`)
     : new Error(`Failed to load ${url}`);
+}
+
+function awaitPrimalSpineAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(primalSpineAbortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = (): void => signal.removeEventListener("abort", onAbort);
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(primalSpineAbortReason(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function throwIfPrimalSpineAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw primalSpineAbortReason(signal);
+}
+
+function primalSpineAbortReason(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error("Primal Spine verified binary load was aborted");
+  error.name = "AbortError";
+  return error;
 }

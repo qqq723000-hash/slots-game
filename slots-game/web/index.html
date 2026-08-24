@@ -24,7 +24,14 @@
         </div>
         <span class="launch-loading__brand">Powered by G'm GO</span>
         <span class="launch-loading__status">Loading game resources</span>
-        <div class="launch-loading__track"><b></b></div>
+        <div
+          class="launch-loading__track"
+          role="progressbar"
+          aria-label="Game loading progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        ><b aria-hidden="true"></b></div>
         <span class="launch-loading__value">0%</span>
       </div>
     </div>

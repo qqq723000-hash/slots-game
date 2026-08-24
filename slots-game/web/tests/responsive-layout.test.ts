@@ -439,6 +439,167 @@ describe("responsive game viewport", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("keeps a fine-pointer phone without launcher routing on the desktop letterbox baseline", () => {
+    const fixture = responsiveLayoutLifecycleFixture();
+    Object.assign(fixture.viewport, { clientWidth: 390, clientHeight: 844 });
+    const frames = createManualFrameScheduler();
+    const matchMedia = vi.fn((query: string) => ({
+      matches: query === "(pointer: fine)",
+    }));
+    vi.stubGlobal("ResizeObserver", class {
+      observe(): void {}
+      disconnect(): void {}
+    });
+    vi.stubGlobal("location", { search: "" });
+    vi.stubGlobal("matchMedia", matchMedia);
+    vi.stubGlobal("navigator", { maxTouchPoints: 0 });
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      visualViewport: null,
+    });
+    try {
+      const layout = new ResponsiveLayout(
+        fixture.viewport,
+        fixture.frame,
+        fixture.onLayout,
+        frames,
+      );
+      layout.start();
+
+      const snapshot = fixture.onLayout.mock.calls.at(-1)?.[0];
+      expect(snapshot?.channel).toBe("desktop");
+      expect(snapshot?.physicalViewportRegion).toEqual({
+        left: 0,
+        top: 0,
+        width: 390,
+        height: 844,
+      });
+      expect(snapshot?.viewportRegion).toEqual({
+        left: 0,
+        top: 0,
+        width: 1_280,
+        height: 720,
+      });
+      expect(fixture.frame.dataset).toMatchObject({
+        channel: "desktop",
+        designWidth: "1280",
+        designHeight: "720",
+        frameScale: "0.3046875",
+      });
+      expect(fixture.frame.style.top).toBe("312.3125px");
+      expect(fixture.frame.style.transform).toBe("scale(0.3046875)");
+      expect(matchMedia).toHaveBeenCalledWith("(pointer: coarse)");
+      expect(matchMedia).toHaveBeenCalledWith("(pointer: fine)");
+      layout.stop();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
+    {
+      name: "phone portrait",
+      width: 390,
+      height: 844,
+      profile: "phone-pt",
+      mobileLayout: "pt",
+      designWidth: 390,
+      designHeight: 844,
+      scale: 1,
+    },
+    {
+      name: "phone landscape",
+      width: 844,
+      height: 390,
+      profile: "phone-ls",
+      mobileLayout: "ls",
+      designWidth: 844,
+      designHeight: 390,
+      scale: 1,
+    },
+    {
+      name: "tablet portrait",
+      width: 768,
+      height: 1_024,
+      profile: "tablet-pt",
+      mobileLayout: "iPad_pt",
+      designWidth: 633,
+      designHeight: 844,
+      scale: 1_024 / 844,
+    },
+    {
+      name: "tablet landscape",
+      width: 1_024,
+      height: 768,
+      profile: "tablet-ls",
+      mobileLayout: "ls",
+      designWidth: 844,
+      designHeight: 633,
+      scale: 1_024 / 844,
+    },
+  ])("commits the explicit mobile launcher route through the real frame transform on $name", ({
+    width,
+    height,
+    profile,
+    mobileLayout,
+    designWidth,
+    designHeight,
+    scale,
+  }) => {
+    const fixture = responsiveLayoutLifecycleFixture();
+    Object.assign(fixture.viewport, { clientWidth: width, clientHeight: height });
+    const frames = createManualFrameScheduler();
+    vi.stubGlobal("ResizeObserver", class {
+      observe(): void {}
+      disconnect(): void {}
+    });
+    vi.stubGlobal("location", { search: "?channel=mobile&layout=mobile" });
+    vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
+      // IAB/DevTools 在手机视口下仍可能保留鼠标级主指针；显式移动路由必须优先。
+      matches: query === "(pointer: fine)",
+    })));
+    vi.stubGlobal("navigator", { maxTouchPoints: 0 });
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      visualViewport: null,
+    });
+    try {
+      const layout = new ResponsiveLayout(
+        fixture.viewport,
+        fixture.frame,
+        fixture.onLayout,
+        frames,
+      );
+      layout.start();
+
+      const snapshot = fixture.onLayout.mock.calls.at(-1)?.[0];
+      expect(snapshot?.channel).toBe("mobile");
+      expect(snapshot?.surfaceProfile).toBe(profile);
+      expect(snapshot?.mobileProfile).toBe(mobileLayout);
+      expect(snapshot?.frame.width).toBeCloseTo(width, 10);
+      expect(snapshot?.frame.height).toBeCloseTo(height, 10);
+      expect(snapshot?.frame.x).toBeCloseTo(0, 10);
+      expect(snapshot?.frame.y).toBeCloseTo(0, 10);
+      expect(snapshot?.frame.scale).toBeCloseTo(scale, 12);
+      expect(fixture.frame.dataset).toMatchObject({
+        channel: "mobile",
+        surfaceProfile: profile,
+        designWidth: String(designWidth),
+        designHeight: String(designHeight),
+        mobileLayout,
+      });
+      expect(fixture.frame.style.width).toBe(`${designWidth}px`);
+      expect(fixture.frame.style.height).toBe(`${designHeight}px`);
+      expect(fixture.frame.style.transform).toBe(`scale(${scale})`);
+      layout.stop();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("contains a 1440×900 desktop surface with horizontal letterbox bars", () => {
     expect(computeResponsiveFrameGeometry(1_440, 900)).toEqual({
       x: 0,
@@ -570,6 +731,21 @@ describe("responsive game viewport", () => {
     expect(landscape.spinVisiblePhysicalSize).toBeCloseTo(52.5416666667, 10);
     expect(landscape.spinHitPhysicalSize).toBeCloseTo(86.088, 10);
     expect(landscape.spinHitLogicalSize).toBeCloseTo(158.9316923077, 10);
+
+    const tabletScale = 1_024 / 844;
+    const tabletLandscape = responsiveControlGeometry(1_024, 768, tabletScale, true);
+    expect(tabletLandscape.utilityVisiblePhysicalSize).toBeCloseTo(42.4644549763, 10);
+    expect(tabletLandscape.utilityHitPhysicalSize).toBeCloseTo(73.728, 10);
+    expect(tabletLandscape.utilityHitLogicalSize).toBeCloseTo(60.768, 10);
+    expect(tabletLandscape.spinVisiblePhysicalSize).toBeCloseTo(117.6872037915, 10);
+    expect(tabletLandscape.spinHitPhysicalSize).toBeCloseTo(117.6872037915, 10);
+    expect(tabletLandscape.spinHitLogicalSize).toBe(DESKTOP_SPIN_VISIBLE_SIZE);
+
+    const tabletPortrait = responsiveControlGeometry(768, 1_024, tabletScale, true);
+    expect(tabletPortrait.utilityHitPhysicalSize).toBeCloseTo(61.44, 10);
+    expect(tabletPortrait.utilityHitLogicalSize).toBeCloseTo(50.64, 10);
+    expect(tabletPortrait.spinHitPhysicalSize).toBeCloseTo(117.6872037915, 10);
+    expect(tabletPortrait.spinHitLogicalSize).toBe(DESKTOP_SPIN_VISIBLE_SIZE);
   });
 
   it("keeps desktop gameplay in canonical coordinates while letterboxing the physical viewport", () => {

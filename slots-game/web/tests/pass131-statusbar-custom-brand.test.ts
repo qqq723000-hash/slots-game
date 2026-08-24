@@ -24,7 +24,8 @@ describe("Pass 131 cross-device status brand", () => {
     const panel = source.match(/<section\s+class="status-panel"[\s\S]*?<\/section>/)?.[0] ?? "";
     expect(source).toContain('publicAssetUrl("assets/brand/statusbar-gm-go.png")');
     expect(panel.match(/status-panel__provider/g)).toHaveLength(1);
-    expect(panel).toContain('src="${STATUSBAR_GM_GO}"');
+    expect(panel).toContain('data-static-image="statusbar-provider"');
+    expect(source).toContain('"statusbar-provider": STATUSBAR_GM_GO');
     expect(panel).toContain('alt="G\'m GO"');
     expect(panel.indexOf("status-panel__provider"))
       .toBeLessThan(panel.indexOf("status-metric--balance"));

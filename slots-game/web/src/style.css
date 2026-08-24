@@ -4964,6 +4964,132 @@ select {
   background: transparent;
 }
 
+/* 服务端空闲终态：按官方 390×844 捕获还原，并在所有布局保持同一比例语义。 */
+[data-rgs-session-timeout="true"] .launch-loading-host,
+[data-rgs-session-timeout="true"] .orientation-lock {
+  /* 超时可能发生在启动/Intro；外层 status surface 不能遮住唯一终态 alertdialog。 */
+  display: none !important;
+}
+
+.session-timeout-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.session-timeout-scrim[data-open="true"] {
+  opacity: 0.5;
+  pointer-events: auto;
+}
+
+.session-timeout-modal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 101;
+  box-sizing: border-box;
+  width: clamp(217.5px, 34cqw, 420px);
+  max-width: calc(100cqw - 24px);
+  max-height: calc(100cqh - 24px);
+  padding: 20px 12px 14.26px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  transform: translate(-50%, -50%);
+  border: 0;
+  border-radius: 10px;
+  color: #e6e6e6;
+  background: radial-gradient(rgb(51, 51, 51), rgb(23, 28, 24));
+  box-shadow: 0 7px 28px rgba(0, 0, 0, 0.48);
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+}
+
+.session-timeout-modal[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-timeout-modal h2 {
+  min-height: 49px;
+  margin: 0 -5.15px;
+  color: #e8b31d;
+  font-family: "ROBOTO_CONDENSED_BOLD", "Primal Roboto Condensed", "Arial Narrow", sans-serif;
+  font-size: clamp(21.1px, 2.2cqw, 27px);
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.16;
+}
+
+.session-timeout-modal__message {
+  margin: 10.72px 0 19.3px;
+  color: #e6e6e6;
+  font-family: "Primal Roboto Condensed", "Arial Narrow", sans-serif;
+  font-size: clamp(12.66px, 1.32cqw, 16px);
+  font-weight: 400;
+  line-height: 1.667;
+}
+
+.session-timeout-modal__message p {
+  margin: 0;
+}
+
+.session-timeout-modal__message p + p {
+  margin-top: 1.667em;
+}
+
+.session-timeout-modal__exit {
+  display: inline-grid;
+  width: 97.89px;
+  min-width: 97.89px;
+  min-height: 44px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  color: #fff;
+  background: transparent;
+  cursor: pointer;
+  font-family: "ROBOTO_CONDENSED_BOLD", "Primal Roboto Condensed", "Arial Narrow", sans-serif;
+  font-size: 16.88px;
+  font-weight: 700;
+  line-height: 18.5px;
+}
+
+.session-timeout-modal__exit span {
+  box-sizing: border-box;
+  width: 97.89px;
+  min-height: 28.94px;
+  padding: 4.22px 10.97px;
+  border: 1px solid #cf3039;
+  border-radius: 5px;
+  background: linear-gradient(90deg, #d73842 0 2px, #a8222b 2px calc(100% - 2px), #d73842 calc(100% - 2px));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.12), 0 2px 4px rgba(0, 0, 0, 0.36);
+}
+
+.session-timeout-modal__exit:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+
+.game-frame[data-channel="mobile"] .session-timeout-modal {
+  width: clamp(217.5px, 55.77cqw, 360px);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .session-timeout-modal {
+  width: clamp(217.5px, 31cqw, 360px);
+  max-height: calc(100cqh - 16px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-timeout-scrim,
+  .session-timeout-modal {
+    scroll-behavior: auto;
+  }
+}
+
 /* 任意移动视口 DOM 合约 */
 /*
  * 移动设计域由当前视口纵横比连续求解；这里仅消费连续 cqw/cqh 与现有 gameplay/status 变量。

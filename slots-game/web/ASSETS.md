@@ -40,3 +40,15 @@ npm run build:bundle-check
 
 新增、移动或替换资源时，必须同步更新运行时引用、资源清单、权属分类和外部精确哈希审批。
 不能通过删除来源记录、降低清单覆盖率或把资源移到未保护目录来绕过发布门禁。
+
+## 浏览器红色 GO 图标取证记录
+
+- 页面来源：`https://www.playngo.com/games/primal-rampage`。
+- 官网声明的 192×192 PNG：`https://static.wixstatic.com/media/70709a_7b481f81488a4ff7bb417c4b507c3cf7%7Emv2.png/v1/fill/w_192%2Ch_192%2Clg_1%2Cusm_0.66_1.00_0.01/70709a_7b481f81488a4ff7bb417c4b507c3cf7%7Emv2.png`。
+- 2026-08-25 获取的原始 PNG SHA-256：`af0d5f5dcfc3c43be05806a7c4954d870c3540156c158704b4c6033f4c223388`。
+- 当前 `public/favicon.ico` 由该 PNG 生成 16/32/48/64/128/256 六种 32-bit 尺寸，SHA-256 为
+  `9871915e932f969bd5b733083f76dbe80b5e1fa1a36aac18da6411b8da1491ac`。
+
+该记录只证明字节来源与转换关系，不授予 Play’n GO 商标或图形的分发权。图标继续受
+`asset-provenance.json` 的 `EXTERNAL_APPROVAL_REQUIRED` 规则约束；商业发布必须由仓库外审批文件
+覆盖当前精确哈希，不得把官网下载行为解释为授权。

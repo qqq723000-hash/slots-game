@@ -8,7 +8,8 @@ export const DESKTOP_UTILITY_VISIBLE_SIZE = 35;
 export const DESKTOP_SPIN_VISIBLE_SIZE = 97;
 
 const MOBILE_CONTROL_MAX_SIZE = 130;
-const MOBILE_MAX_SHORT_EDGE = 600;
+const MOBILE_CONTROL_INFER_SHORT_EDGE = 600;
+const MOBILE_LAUNCHER_MAX_SHORT_EDGE = 768;
 const MOBILE_UTILITY_PORTRAIT_CQH = 0.075;
 const MOBILE_UTILITY_LANDSCAPE_CQW = 0.09;
 const MOBILE_UTILITY_POINTER_SCALE = 0.8;
@@ -435,8 +436,9 @@ export function responsiveChannelFromEnvironment(
 }
 
 /**
- * 解析当前构图通道，不读取资产用的 `channel=` 参数。桌面小窗口仍保持 PC
- * 构图；只有触控/粗指针设备、显式 `layout=` 或典型手机短边才进入移动构图。
+ * 解析当前构图通道。`layout=` 仍是最高优先级；官网移动启动器只提供
+ * `channel=mobile`，因此在手机/平板尺寸范围内也把它作为移动构图的可靠提示。
+ * 超出该范围的桌面窗口继续按输入能力选择，避免移动资产通道强制改写 PC 构图。
  */
 export function responsiveLayoutChannel(
   viewportWidth: number,
@@ -450,6 +452,11 @@ export function responsiveLayoutChannel(
   const width = finiteDimension(viewportWidth);
   const height = finiteDimension(viewportHeight);
   if (width <= 0 || height <= 0) return "desktop";
+  const compactLauncherSurface = Math.min(width, height) <= MOBILE_LAUNCHER_MAX_SHORT_EDGE
+    && Math.max(width, height) <= 1_366;
+  if (params.get("channel")?.toLowerCase() === "mobile" && compactLauncherSurface) {
+    return "mobile";
+  }
   if (environment.coarsePointer) return "mobile";
   // 触控笔记本通常同时暴露 maxTouchPoints 与精细主指针，仍应保持 PC 构图。
   if (environment.finePointer) return "desktop";
@@ -591,13 +598,16 @@ export function responsiveControlGeometry(
   viewportWidth: number,
   viewportHeight: number,
   frameScale: number,
+  mobileOverride?: boolean,
 ): ResponsiveControlGeometry {
   const width = finiteDimension(viewportWidth);
   const height = finiteDimension(viewportHeight);
   const scale = Number.isFinite(frameScale) && frameScale > 0 ? frameScale : 0;
   const utilityVisiblePhysicalSize = DESKTOP_UTILITY_VISIBLE_SIZE * scale;
   const spinVisiblePhysicalSize = DESKTOP_SPIN_VISIBLE_SIZE * scale;
-  const mobile = width > 0 && height > 0 && Math.min(width, height) < MOBILE_MAX_SHORT_EDGE;
+  const mobile = mobileOverride ?? (
+    width > 0 && height > 0 && Math.min(width, height) < MOBILE_CONTROL_INFER_SHORT_EDGE
+  );
 
   let utilityHitPhysicalSize = utilityVisiblePhysicalSize;
   let spinHitPhysicalSize = spinVisiblePhysicalSize;
@@ -605,8 +615,14 @@ export function responsiveControlGeometry(
     const utilityWrapper = width >= height
       ? Math.min(MOBILE_CONTROL_MAX_SIZE, width * MOBILE_UTILITY_LANDSCAPE_CQW)
       : Math.min(MOBILE_CONTROL_MAX_SIZE, height * MOBILE_UTILITY_PORTRAIT_CQH);
-    utilityHitPhysicalSize = utilityWrapper * MOBILE_UTILITY_POINTER_SCALE;
-    spinHitPhysicalSize = width * MOBILE_SPIN_CQW * MOBILE_SPIN_POINTER_SCALE;
+    utilityHitPhysicalSize = Math.max(
+      utilityVisiblePhysicalSize,
+      utilityWrapper * MOBILE_UTILITY_POINTER_SCALE,
+    );
+    spinHitPhysicalSize = Math.max(
+      spinVisiblePhysicalSize,
+      width * MOBILE_SPIN_CQW * MOBILE_SPIN_POINTER_SCALE,
+    );
   }
 
   return {
@@ -812,6 +828,7 @@ export class ResponsiveLayout {
       snapshot.physicalViewportRegion.width,
       snapshot.physicalViewportRegion.height,
       geometry.scale,
+      snapshot.channel === "mobile",
     );
     this.frame.style.setProperty("--utility-hit-size", `${controls.utilityHitLogicalSize}px`);
     this.frame.style.setProperty("--spin-hit-size", `${controls.spinHitLogicalSize}px`);

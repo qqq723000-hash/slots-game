@@ -65,6 +65,19 @@ describe("production browser transaction fixture", () => {
       },
     ));
     const token = (decodedBody(exchange).data as { accessToken: string }).accessToken;
+    const sessionStatus = fixture.responseForPausedRequest(paused(
+      `${root}/sessions/status`,
+      "POST",
+      binding,
+      `Bearer ${token}`,
+    ));
+    expect(decodedBody(sessionStatus).data).toEqual({
+      operatorId: baseOptions.operatorId,
+      sessionId: baseOptions.sessionId,
+      status: "ACTIVE",
+      idleDisconnectAt: "2098-12-31T23:30:00Z",
+      serverTime: "2026-08-21T08:00:00Z",
+    });
     const spin = fixture.responseForPausedRequest(paused(
       `${root}/spins`,
       "POST",
@@ -98,6 +111,7 @@ describe("production browser transaction fixture", () => {
     expect(result.balanceMinor).toBe("800");
     expect(fixture.snapshot()).toMatchObject({
       exchangeCount: 1,
+      sessionStatusCount: 1,
       spinCount: 1,
       acknowledgementCount: 1,
       order: ["session-exchange", "spin", "result-acknowledgement"],
@@ -127,8 +141,13 @@ describe("production browser transaction fixture", () => {
       name: "Access-Control-Allow-Origin",
       value: baseOptions.pageOrigin,
     });
+    expect(response.responseHeaders).toContainEqual({
+      name: "Access-Control-Allow-Headers",
+      value: "Authorization, Content-Type, Traceparent, X-Operator-Id, X-Request-Id",
+    });
     expect(fixture.snapshot()).toMatchObject({
       exchangeCount: 0,
+      sessionStatusCount: 0,
       spinCount: 0,
       acknowledgementCount: 0,
       order: [],

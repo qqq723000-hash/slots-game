@@ -33,6 +33,60 @@ import {
   type PresentationRulesBindingResult,
 } from "./presentationRules";
 
+const DOM_OVERLAY_STATIC_HTML_POLICY_NAME = "slots-game-static-html";
+
+interface TrustedHtmlPolicy {
+  createHTML(input: string): unknown;
+}
+
+interface TrustedHtmlPolicyFactory {
+  createPolicy(
+    name: string,
+    rules: Readonly<{ createHTML(input: string): string }>,
+  ): TrustedHtmlPolicy;
+}
+
+// 唯一 TrustedHTML 铸造能力只存在于本模块词法作用域；不得导出 policy、factory、
+// 注册 tag 或接受外部模板的通用 mount API。
+let domOverlayPolicyFactory: TrustedHtmlPolicyFactory | null = null;
+let domOverlayPolicy: TrustedHtmlPolicy | null = null;
+
+function mountReviewedDomOverlayShell(target: Element, reviewedSource: string): void {
+  const candidate = Reflect.get(globalThis, "trustedTypes") as unknown;
+  const value = isTrustedHtmlPolicyFactory(candidate)
+    ? trustedDomOverlayHtml(candidate, reviewedSource)
+    : reviewedSource;
+  // lib.dom 在尚未原生声明 TrustedHTML 的 TypeScript 版本中仍把该属性标为 string。
+  (target as unknown as { innerHTML: unknown }).innerHTML = value;
+}
+
+function trustedDomOverlayHtml(
+  factory: TrustedHtmlPolicyFactory,
+  reviewedSource: string,
+): unknown {
+  if (domOverlayPolicyFactory !== factory || domOverlayPolicy === null) {
+    const policy = factory.createPolicy(DOM_OVERLAY_STATIC_HTML_POLICY_NAME, {
+      createHTML: (input) => input,
+    });
+    if (!isTrustedHtmlPolicy(policy)) {
+      throw new TypeError("Trusted Types DOM overlay policy is invalid");
+    }
+    domOverlayPolicyFactory = factory;
+    domOverlayPolicy = policy;
+  }
+  return domOverlayPolicy.createHTML(reviewedSource);
+}
+
+function isTrustedHtmlPolicyFactory(value: unknown): value is TrustedHtmlPolicyFactory {
+  return value !== null && typeof value === "object"
+    && typeof Reflect.get(value, "createPolicy") === "function";
+}
+
+function isTrustedHtmlPolicy(value: unknown): value is TrustedHtmlPolicy {
+  return value !== null && typeof value === "object"
+    && typeof Reflect.get(value, "createHTML") === "function";
+}
+
 type SpinHandler = () => void;
 type FastStopHandler = () => void;
 type BetHandler = (betMinor: MoneyMinor) => void;
@@ -40,6 +94,12 @@ type SkipHandler = () => void;
 type PreviewContinueHandler = () => void;
 type SoundToggleHandler = () => void;
 type FastPlayHandler = (enabled: boolean) => void;
+type SessionTimeoutExitHandler = () => void;
+interface SessionTimeoutIsolationSnapshot {
+  readonly element: HTMLElement;
+  readonly inert: boolean;
+  readonly ariaHidden: string | null;
+}
 export type GameMenuTab = "settings" | "paytable" | "rules";
 export type UiPanelId = "bet" | "autoplay" | GameMenuTab;
 export type UiPanelHandler = (panel: UiPanelId) => void;
@@ -674,131 +734,164 @@ const PRIMAL_REFERENCE_ROOT = publicAssetUrl("assets/primal-reference");
 const POWERED_BY_GM_GO = publicAssetUrl("assets/brand/powered-by-gm-go.png");
 const STATUSBAR_GM_GO = publicAssetUrl("assets/brand/statusbar-gm-go.png");
 
-function officialHelpArtworkMarkup(
+function appendOfficialHelpArtwork(
+  parent: ParentNode,
   artwork: readonly {
     readonly asset: string;
     readonly alt: string;
     readonly authoredWidthPx: number;
     readonly authoredHeightPx: number;
   }[],
-): string {
-  if (artwork.length === 0) return "";
-  return `
-    <div class="official-help__artwork" aria-label="Feature artwork">
-      ${artwork.map(({ asset, alt, authoredWidthPx, authoredHeightPx }) => `
-        <img
-          src="${PRIMAL_REFERENCE_ROOT}/${asset}"
-          alt="${alt}"
-          style="--official-help-art-width: ${authoredWidthPx}px; --official-help-art-height: ${authoredHeightPx}px"
-        />
-      `).join("")}
-    </div>
-  `;
+): void {
+  if (artwork.length === 0) return;
+  const container = document.createElement("div");
+  container.className = "official-help__artwork";
+  container.setAttribute("aria-label", "Feature artwork");
+  for (const { asset, alt, authoredWidthPx, authoredHeightPx } of artwork) {
+    const image = document.createElement("img");
+    image.src = `${PRIMAL_REFERENCE_ROOT}/${asset}`;
+    image.alt = alt;
+    image.style.setProperty("--official-help-art-width", `${authoredWidthPx}px`);
+    image.style.setProperty("--official-help-art-height", `${authoredHeightPx}px`);
+    container.append(image);
+  }
+  parent.appendChild(container);
 }
 
-function officialHelpCopyMarkup(
+function appendOfficialHelpCopy(
+  parent: ParentNode,
   section: typeof PRIMAL_HELP_SECTIONS[number],
   paragraphIndexes: readonly number[],
-): string {
-  return `
-    <div class="official-help__copy">
-      ${paragraphIndexes.map((index) => `
-        <p
-          data-locale-key="${section.paragraphKeys[index]}"
-          style="--official-help-line-box-height: ${section.paragraphBoxHeightsPx[index]}px"
-        >${section.paragraphs[index]}</p>
-      `).join("")}
-    </div>
-  `;
+): void {
+  const copy = document.createElement("div");
+  copy.className = "official-help__copy";
+  for (const index of paragraphIndexes) {
+    const key = section.paragraphKeys[index];
+    const paragraphText = section.paragraphs[index];
+    const boxHeight = section.paragraphBoxHeightsPx[index];
+    if (key === undefined || paragraphText === undefined || boxHeight === undefined) {
+      throw new Error(`Invalid official help paragraph index: ${section.id}:${index}`);
+    }
+    const paragraph = document.createElement("p");
+    paragraph.dataset.localeKey = key;
+    paragraph.style.setProperty("--official-help-line-box-height", `${boxHeight}px`);
+    paragraph.textContent = paragraphText;
+    copy.append(paragraph);
+  }
+  parent.appendChild(copy);
 }
 
-function officialHelpSectionContentMarkup(
+function appendOfficialHelpSectionContent(
+  parent: ParentNode,
   section: typeof PRIMAL_HELP_SECTIONS[number],
-): string {
+): void {
   const allParagraphs = section.paragraphs.map((_, index) => index);
   if (section.id === "wild") {
-    return `
-      <div class="wild-paytable" aria-label="Wild multiplier artwork">
-        ${PAYTABLE_WILD_ENTRIES.map(({ label, asset }) => `
-          <figure class="wild-paytable__item">
-            <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} wild symbol" />
-            <figcaption>${label}</figcaption>
-          </figure>
-        `).join("")}
-      </div>
-      ${officialHelpCopyMarkup(section, allParagraphs)}
-    `;
+    const paytable = document.createElement("div");
+    paytable.className = "wild-paytable";
+    paytable.setAttribute("aria-label", "Wild multiplier artwork");
+    for (const { label, asset } of PAYTABLE_WILD_ENTRIES) {
+      const figure = document.createElement("figure");
+      figure.className = "wild-paytable__item";
+      const image = document.createElement("img");
+      image.src = `${PRIMAL_REFERENCE_ROOT}/${asset}`;
+      image.alt = `${label} wild symbol`;
+      const caption = document.createElement("figcaption");
+      caption.textContent = label;
+      figure.append(image, caption);
+      paytable.append(figure);
+    }
+    parent.appendChild(paytable);
+    appendOfficialHelpCopy(parent, section, allParagraphs);
+    return;
   }
   if (section.id === "vault") {
-    return [
-      officialHelpArtworkMarkup(section.artwork.slice(0, 1)),
-      officialHelpCopyMarkup(section, [0, 1]),
-      officialHelpArtworkMarkup(section.artwork.slice(1)),
-      officialHelpCopyMarkup(section, [2]),
-    ].join("");
+    appendOfficialHelpArtwork(parent, section.artwork.slice(0, 1));
+    appendOfficialHelpCopy(parent, section, [0, 1]);
+    appendOfficialHelpArtwork(parent, section.artwork.slice(1));
+    appendOfficialHelpCopy(parent, section, [2]);
+    return;
   }
   if (section.id === "kong-quest") {
-    return [
-      officialHelpArtworkMarkup(section.artwork.slice(0, 1)),
-      officialHelpCopyMarkup(section, [0, 1, 2, 3]),
-      officialHelpArtworkMarkup(section.artwork.slice(1, 2)),
-      officialHelpCopyMarkup(section, [4, 5]),
-      officialHelpArtworkMarkup(section.artwork.slice(2)),
-    ].join("");
+    appendOfficialHelpArtwork(parent, section.artwork.slice(0, 1));
+    appendOfficialHelpCopy(parent, section, [0, 1, 2, 3]);
+    appendOfficialHelpArtwork(parent, section.artwork.slice(1, 2));
+    appendOfficialHelpCopy(parent, section, [4, 5]);
+    appendOfficialHelpArtwork(parent, section.artwork.slice(2));
+    return;
   }
   if (section.id === "king-spin") {
-    return [
-      officialHelpArtworkMarkup(section.artwork.slice(0, 1)),
-      officialHelpCopyMarkup(section, [0, 1, 2]),
-      officialHelpArtworkMarkup(section.artwork.slice(1, 2)),
-      officialHelpCopyMarkup(section, [3, 4]),
-      officialHelpArtworkMarkup(section.artwork.slice(2)),
-    ].join("");
+    appendOfficialHelpArtwork(parent, section.artwork.slice(0, 1));
+    appendOfficialHelpCopy(parent, section, [0, 1, 2]);
+    appendOfficialHelpArtwork(parent, section.artwork.slice(1, 2));
+    appendOfficialHelpCopy(parent, section, [3, 4]);
+    appendOfficialHelpArtwork(parent, section.artwork.slice(2));
+    return;
   }
-  return `${officialHelpArtworkMarkup(section.artwork)}${officialHelpCopyMarkup(
-    section,
-    allParagraphs,
-  )}`;
+  appendOfficialHelpArtwork(parent, section.artwork);
+  appendOfficialHelpCopy(parent, section, allParagraphs);
 }
 
-function officialHelpSectionsMarkup(): string {
-  const features = PRIMAL_HELP_SECTIONS.map((section) => `
-    <article
-      class="official-help__section official-help__section--${section.id}"
-      data-help-section="${section.id}"
-      aria-labelledby="official-help-${section.id}"
-    >
-      <h4 id="official-help-${section.id}" data-locale-key="${section.titleKey}">${section.title}</h4>
-      ${officialHelpSectionContentMarkup(section)}
-    </article>
-  `).join("");
+function appendOfficialHelpSections(parent: ParentNode): void {
+  for (const section of PRIMAL_HELP_SECTIONS) {
+    const article = document.createElement("article");
+    article.className = `official-help__section official-help__section--${section.id}`;
+    article.dataset.helpSection = section.id;
+    article.setAttribute("aria-labelledby", `official-help-${section.id}`);
+    const heading = document.createElement("h4");
+    heading.id = `official-help-${section.id}`;
+    heading.dataset.localeKey = section.titleKey;
+    heading.textContent = section.title;
+    article.append(heading);
+    appendOfficialHelpSectionContent(article, section);
+    parent.appendChild(article);
+  }
 
-  return `
-    ${features}
-    <section
-      class="base-paytable official-help__section official-help__section--paying-symbols"
-      data-help-section="paying-symbols"
-      aria-labelledby="base-paytable-title"
-    >
-      <h4 id="base-paytable-title" data-locale-key="IDS_PAYINGSYMBOLS_UC">${PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PAYINGSYMBOLS_UC}</h4>
-      <div class="base-paytable__grid">
-        ${BASE_PAYTABLE_ENTRIES.map(({ label, multiplier, asset }) => `
-          <figure class="base-paytable__item">
-            <img src="${PRIMAL_REFERENCE_ROOT}/${asset}" alt="${label} symbol" />
-            <figcaption><strong>${label}</strong><span>${multiplier}× total bet</span></figcaption>
-          </figure>
-        `).join("")}
-      </div>
-    </section>
-    <article
-      class="official-help__section official-help__section--way-wins"
-      data-help-section="way-wins"
-      aria-labelledby="official-help-way-wins"
-    >
-      <h4 id="official-help-way-wins" data-locale-key="IDS_PR_PAYWAYS">${PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PR_PAYWAYS}</h4>
-      <div class="official-help__copy"><p data-locale-key="IDS_PR_WW_LR" style="--official-help-line-box-height: 120px">${PRIMAL_WAY_WINS_COPY}</p></div>
-    </article>
-  `;
+  const paytable = document.createElement("section");
+  paytable.className = "base-paytable official-help__section official-help__section--paying-symbols";
+  paytable.dataset.helpSection = "paying-symbols";
+  paytable.setAttribute("aria-labelledby", "base-paytable-title");
+  const paytableHeading = document.createElement("h4");
+  paytableHeading.id = "base-paytable-title";
+  paytableHeading.dataset.localeKey = "IDS_PAYINGSYMBOLS_UC";
+  paytableHeading.textContent = PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PAYINGSYMBOLS_UC;
+  const grid = document.createElement("div");
+  grid.className = "base-paytable__grid";
+  for (const { label, multiplier, asset } of BASE_PAYTABLE_ENTRIES) {
+    const figure = document.createElement("figure");
+    figure.className = "base-paytable__item";
+    const image = document.createElement("img");
+    image.src = `${PRIMAL_REFERENCE_ROOT}/${asset}`;
+    image.alt = `${label} symbol`;
+    const caption = document.createElement("figcaption");
+    const title = document.createElement("strong");
+    title.textContent = label;
+    const value = document.createElement("span");
+    value.textContent = `${multiplier}× total bet`;
+    caption.append(title, value);
+    figure.append(image, caption);
+    grid.append(figure);
+  }
+  paytable.append(paytableHeading, grid);
+  parent.appendChild(paytable);
+
+  const ways = document.createElement("article");
+  ways.className = "official-help__section official-help__section--way-wins";
+  ways.dataset.helpSection = "way-wins";
+  ways.setAttribute("aria-labelledby", "official-help-way-wins");
+  const waysHeading = document.createElement("h4");
+  waysHeading.id = "official-help-way-wins";
+  waysHeading.dataset.localeKey = "IDS_PR_PAYWAYS";
+  waysHeading.textContent = PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PR_PAYWAYS;
+  const copy = document.createElement("div");
+  copy.className = "official-help__copy";
+  const paragraph = document.createElement("p");
+  paragraph.dataset.localeKey = "IDS_PR_WW_LR";
+  paragraph.style.setProperty("--official-help-line-box-height", "120px");
+  paragraph.textContent = PRIMAL_WAY_WINS_COPY;
+  copy.append(paragraph);
+  ways.append(waysHeading, copy);
+  parent.appendChild(ways);
 }
 
 export interface OfficialHelpProjectionGeometry {
@@ -827,6 +920,14 @@ export interface MobileDomLayoutGeometry {
   readonly roundBottom: number;
   readonly roundInlineStart: number;
   readonly roundInlineEnd: number;
+}
+
+function bestEffortDomOverlayCleanup(cleanup: () => void): void {
+  try {
+    cleanup();
+  } catch {
+    // 一个 DOM/observer/RAF owner 的拆卸故障不得阻止其余 UI owner 释放。
+  }
 }
 
 function clampedDomLayoutValue(value: number, minimum: number, maximum: number): number {
@@ -1029,6 +1130,128 @@ const JACKPOT_TIERS = [
   { name: "MINOR", multiplier: 30n },
   { name: "MINI", multiplier: 10n },
 ] as const;
+
+const STATIC_IMAGE_SOURCES = Object.freeze({
+  "powered-by": POWERED_BY_GM_GO,
+  "statusbar-provider": STATUSBAR_GM_GO,
+  "preview-logo": `${PRIMAL_REFERENCE_ROOT}/primal-rampage-logo.png`,
+  "preview-wheel": `${PRIMAL_REFERENCE_ROOT}/10026.png`,
+  "preview-reels": `${PRIMAL_REFERENCE_ROOT}/10025.png`,
+  "sound-control": `${PRIMAL_REFERENCE_ROOT}/10009.svg`,
+  "settings-control": `${PRIMAL_REFERENCE_ROOT}/10005.svg`,
+  "autoplay-control": `${PRIMAL_REFERENCE_ROOT}/10006.svg`,
+  "bet-control": `${PRIMAL_REFERENCE_ROOT}/10007.svg`,
+  "paytable-control": `${PRIMAL_REFERENCE_ROOT}/10008.svg`,
+  "spin-halo": `${PRIMAL_REFERENCE_ROOT}/10002.svg`,
+  "spin-arrows": `${PRIMAL_REFERENCE_ROOT}/10001.svg`,
+  "spin-disabled": `${PRIMAL_REFERENCE_ROOT}/spin-button-disabled.svg`,
+  "spin-continue": `${PRIMAL_REFERENCE_ROOT}/10003.svg`,
+  "spin-autoplay-stop": `${PRIMAL_REFERENCE_ROOT}/10004.svg`,
+});
+
+function requiredStaticMountPoint(host: ParentNode, role: string): HTMLElement {
+  const element = host.querySelector<HTMLElement>(`[data-role="${role}"]`);
+  if (!element) throw new Error(`Missing static UI mount point: ${role}`);
+  return element;
+}
+
+function bindStaticImageSources(host: ParentNode): void {
+  for (const image of host.querySelectorAll<HTMLImageElement>("img[data-static-image]")) {
+    const key = image.dataset.staticImage;
+    if (key === undefined || !Object.prototype.hasOwnProperty.call(STATIC_IMAGE_SOURCES, key)) {
+      throw new Error(`Unknown static image binding: ${key ?? "missing"}`);
+    }
+    image.src = STATIC_IMAGE_SOURCES[key as keyof typeof STATIC_IMAGE_SOURCES];
+    delete image.dataset.staticImage;
+  }
+}
+
+function mountJackpotTiers(host: ParentNode): void {
+  const levels = requiredStaticMountPoint(host, "jackpot-levels");
+  const fragment = document.createDocumentFragment();
+  for (const { name } of JACKPOT_TIERS) {
+    const item = document.createElement("li");
+    item.dataset.tier = name.toLowerCase();
+    const label = document.createElement("span");
+    label.textContent = name;
+    const value = document.createElement("strong");
+    value.dataset.role = "jackpot-value";
+    value.textContent = "—";
+    item.append(label, value);
+    fragment.append(item);
+  }
+  levels.replaceChildren(fragment);
+}
+
+function mountAutoplayOptions(host: ParentNode): void {
+  const options = requiredStaticMountPoint(host, "autoplay-options");
+  const fragment = document.createDocumentFragment();
+  for (const count of AUTO_PLAY_SPIN_COUNTS) {
+    const selected = count === DEFAULT_AUTO_PLAY_SPINS;
+    const button = document.createElement("button");
+    button.className = `autoplay-option${selected ? " is-selected" : ""}`;
+    button.type = "button";
+    button.setAttribute("role", "radio");
+    button.dataset.autoplayCount = String(count);
+    button.setAttribute("aria-checked", String(selected));
+    button.setAttribute("aria-label", `${count} auto spins`);
+    button.tabIndex = selected ? 0 : -1;
+    button.textContent = String(count);
+    fragment.append(button);
+  }
+  options.replaceChildren(fragment);
+}
+
+function mountAutoplayStopConditions(
+  host: ParentNode,
+  settings: Readonly<AutoPlayStopSettings>,
+): void {
+  const conditions = requiredStaticMountPoint(host, "autoplay-stop-conditions");
+  const fragment = document.createDocumentFragment();
+  for (const { boundary, setting, label } of AUTO_PLAY_STOP_CONDITIONS) {
+    const row = document.createElement("label");
+    row.className = "autoplay-stop-condition";
+    const text = document.createElement("span");
+    text.textContent = label;
+    const input = document.createElement("input");
+    input.id = `autoplay-stop-${boundary}`;
+    input.name = "autoplayStopConditions";
+    input.type = "checkbox";
+    input.dataset.autoplayStopBoundary = boundary;
+    input.setAttribute("aria-label", label);
+    input.checked = settings[setting];
+    row.append(text, input);
+    fragment.append(row);
+  }
+  conditions.replaceChildren(fragment);
+}
+
+function bindPresentationRulesContent(host: ParentNode): void {
+  const menu = requiredStaticMountPoint(host, "game-menu");
+  menu.dataset.presentationRulesVersion = PRIMAL_PRESENTATION_RULES.version;
+  const viewport = requiredStaticMountPoint(host, "presentation-rules-content");
+  viewport.dataset.presentationRulesVersion = PRIMAL_PRESENTATION_RULES.version;
+  viewport.dataset.helpLocale = PRIMAL_PRESENTATION_RULES.locale;
+  viewport.dataset.advertisedLocales = PRIMAL_PRESENTATION_RULES.advertisedLocales.join(",");
+  const sections = requiredStaticMountPoint(host, "official-help-sections");
+  appendOfficialHelpSections(sections);
+  for (const version of host.querySelectorAll<HTMLElement>(
+    "[data-static-presentation-rules-version]",
+  )) {
+    version.textContent = PRIMAL_PRESENTATION_RULES.version;
+  }
+}
+
+function bindStaticShellContent(
+  host: ParentNode,
+  autoplayStopSettings: Readonly<AutoPlayStopSettings>,
+): void {
+  bindStaticImageSources(host);
+  mountJackpotTiers(host);
+  bindPresentationRulesContent(host);
+  mountAutoplayOptions(host);
+  mountAutoplayStopConditions(host, autoplayStopSettings);
+}
 
 export interface SoundControlPresentation {
   readonly state: "on" | "muted" | "unavailable";
@@ -1283,6 +1506,33 @@ function eventTitle(
   }
 }
 
+/**
+ * 收集包含超时 modal 的 DOM 分支之外、直到 document.body 的所有兄弟分支。
+ * 这样 canvas、独立 launch status、orientation shell 及同页宿主控件都会被隔离，
+ * 同时绝不 inert modal 自己的任何祖先。
+ */
+export function sessionTimeoutIsolationBranches(
+  host: HTMLElement,
+  modal: HTMLElement,
+  scrim: HTMLElement,
+): readonly HTMLElement[] {
+  const result = new Set<HTMLElement>();
+  let activeBranch: HTMLElement | null = modal;
+  const body = host.ownerDocument?.body ?? null;
+  while (activeBranch?.parentElement) {
+    const parentElement: HTMLElement = activeBranch.parentElement;
+    for (const candidate of parentElement.children) {
+      if (candidate instanceof HTMLElement
+        && candidate !== activeBranch
+        && candidate !== modal
+        && candidate !== scrim) result.add(candidate);
+    }
+    if (parentElement === body) break;
+    activeBranch = parentElement;
+  }
+  return Object.freeze([...result]);
+}
+
 export class DomOverlay {
   private readonly panelLifecycle = new UiPanelLifecycle();
   private readonly host: HTMLElement;
@@ -1342,7 +1592,13 @@ export class DomOverlay {
   private readonly previewContinue: HTMLButtonElement;
   private readonly previewSound: HTMLButtonElement;
   private readonly previewOptOut: HTMLInputElement;
+  private readonly sessionTimeoutScrim: HTMLElement;
+  private readonly sessionTimeoutModal: HTMLElement;
+  private readonly sessionTimeoutExit: HTMLButtonElement;
+  private readonly sessionTimeoutBackground: readonly HTMLElement[];
+  private sessionTimeoutIsolationState: readonly SessionTimeoutIsolationSnapshot[] | null = null;
   private readonly loading: HTMLElement;
+  private readonly loadingTrack: HTMLElement;
   private readonly loadingBar: HTMLElement;
   private readonly loadingStatus: HTMLElement;
   private readonly loadingValue: HTMLElement;
@@ -1408,9 +1664,15 @@ export class DomOverlay {
   private previewContinueHandler: PreviewContinueHandler = () => undefined;
   private soundToggleHandler: SoundToggleHandler = () => undefined;
   private fastPlayHandler: FastPlayHandler = () => undefined;
+  private sessionTimeoutExitHandler: SessionTimeoutExitHandler = () => undefined;
+  private sessionTimeoutVisible = false;
+  private sessionTimeoutExitRequested = false;
   private officialHelpResizeObserver: ResizeObserver | null = null;
   private officialHelpResizeFrameHandle: number | null = null;
   private officialHelpResizeGeneration = 0;
+  private deferredFocusGeneration = 0;
+  private featureAnnouncementGeneration = 0;
+  private readonly domEventController = new AbortController();
   private destroyed = false;
   private readonly handleOfficialHelpResize = (): void => {
     this.scheduleObservedLayoutSync();
@@ -1450,14 +1712,22 @@ export class DomOverlay {
       search: window.location.search,
       documentLanguage: document.documentElement.lang,
     });
-    host.innerHTML = `
+    mountReviewedDomOverlayShell(host, `
       <div class="launch-loading" data-role="launch-loading" aria-live="polite">
         <div class="launch-loading__mark" aria-hidden="true">
-          <img src="${POWERED_BY_GM_GO}" alt="" />
+          <img data-static-image="powered-by" alt="" />
         </div>
         <span class="launch-loading__brand">Powered by G'm GO</span>
         <span class="launch-loading__status" data-role="loading-status">Loading game resources</span>
-        <div class="launch-loading__track"><b data-role="loading-bar"></b></div>
+        <div
+          class="launch-loading__track"
+          data-role="loading-track"
+          role="progressbar"
+          aria-label="Game loading progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        ><b data-role="loading-bar" aria-hidden="true"></b></div>
         <span class="launch-loading__value" data-role="loading-value">0%</span>
       </div>
 
@@ -1475,7 +1745,7 @@ export class DomOverlay {
         <div class="feature-preview__authored" data-role="preview-authored" aria-hidden="true"></div>
         <img
           class="feature-preview__logo"
-          src="${PRIMAL_REFERENCE_ROOT}/primal-rampage-logo.png"
+          data-static-image="preview-logo"
           alt="Primal Rampage"
         />
         <div class="feature-preview__content">
@@ -1484,7 +1754,7 @@ export class DomOverlay {
             <article class="feature-card feature-card--wheel">
               <strong class="feature-card__title" data-title="Primal Wheel"><span>Primal Wheel</span></strong>
               <div class="feature-card__art">
-                <img src="${PRIMAL_REFERENCE_ROOT}/10026.png" alt="Primal Wheel" />
+                <img data-static-image="preview-wheel" alt="Primal Wheel" />
               </div>
               <div class="feature-card__copy">
                 <span>Spin the wheel and win<br />big!</span>
@@ -1494,7 +1764,7 @@ export class DomOverlay {
             <article class="feature-card feature-card--reels">
               <strong class="feature-card__title" data-title="Expanding Reels"><span>Expanding Reels</span></strong>
               <div class="feature-card__art">
-                <img src="${PRIMAL_REFERENCE_ROOT}/10025.png" alt="Expanded slot reels" />
+                <img data-static-image="preview-reels" alt="Expanded slot reels" />
               </div>
               <div class="feature-card__copy">
                 <span>Conquer the reels in<br />Expanding Free Spins!</span>
@@ -1520,15 +1790,42 @@ export class DomOverlay {
             type="button"
             aria-label="Mute sound"
             aria-pressed="false"
-          ><img src="${PRIMAL_REFERENCE_ROOT}/10009.svg" alt="" aria-hidden="true" /></button>
+          ><img data-static-image="sound-control" alt="" aria-hidden="true" /></button>
           <img
             class="launcher-powered-by"
-            src="${POWERED_BY_GM_GO}"
+            data-static-image="powered-by"
             alt="Powered by G'm GO"
             role="img"
             aria-label="Powered by G'm GO"
           />
         </div>
+      </section>
+
+      <div
+        class="session-timeout-scrim"
+        data-role="session-timeout-scrim"
+        data-open="false"
+        aria-hidden="true"
+      ></div>
+      <section
+        class="session-timeout-modal"
+        data-role="session-timeout-modal"
+        data-open="false"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="session-timeout-title"
+        aria-describedby="session-timeout-message"
+        aria-hidden="true"
+        tabindex="-1"
+      >
+        <h2 id="session-timeout-title">Your session has timed out</h2>
+        <div id="session-timeout-message" class="session-timeout-modal__message">
+          <p>The session has timed out. Please logon again to continue playing.</p>
+          <p>If you were in the middle of playing a game, your current progress is stored and your game can be continued once you have logged on again.</p>
+        </div>
+        <button class="session-timeout-modal__exit" data-role="session-timeout-exit" type="button">
+          <span>EXIT</span>
+        </button>
       </section>
 
       <!-- 保留为空操作的 HUD 显示挂点；基础游戏的可见标志由 Pixi 合成中的
@@ -1546,14 +1843,7 @@ export class DomOverlay {
 
       <aside class="jackpot-tower" data-role="jackpot-tower" aria-label="Primal Wheel prize pools">
         <span class="jackpot-tower__caption">Primal prizes</span>
-        <ol class="jackpot-tower__levels">
-          ${JACKPOT_TIERS.map(({ name }) => `
-            <li data-tier="${name.toLowerCase()}">
-              <span>${name}</span>
-              <strong data-role="jackpot-value">—</strong>
-            </li>
-          `).join("")}
-        </ol>
+        <ol class="jackpot-tower__levels" data-role="jackpot-levels"></ol>
       </aside>
 
       <button class="intro-skip" data-role="intro-skip" type="button" hidden>
@@ -1571,7 +1861,6 @@ export class DomOverlay {
         data-role="game-menu"
         data-open="false"
         data-presentation-rules-status="missing-binding"
-        data-presentation-rules-version="${PRIMAL_PRESENTATION_RULES.version}"
         role="dialog"
         aria-modal="true"
         aria-labelledby="game-menu-title"
@@ -1650,16 +1939,13 @@ export class DomOverlay {
             <div
               class="official-help-viewport"
               data-role="presentation-rules-content"
-              data-presentation-rules-version="${PRIMAL_PRESENTATION_RULES.version}"
-              data-help-locale="${PRIMAL_PRESENTATION_RULES.locale}"
-              data-advertised-locales="${PRIMAL_PRESENTATION_RULES.advertisedLocales.join(",")}"
               hidden
             >
               <div class="official-help-projection" data-role="official-help-projection">
                 <div class="official-help" data-role="official-help-authored-surface">
-                  ${officialHelpSectionsMarkup()}
+                  <div data-role="official-help-sections"></div>
                   <p class="presentation-rules-meta">
-                    ${PRIMAL_PRESENTATION_RULES.version} · exact session definition binding required
+                    <span data-static-presentation-rules-version></span> · exact session definition binding required
                   </p>
                 </div>
               </div>
@@ -1681,7 +1967,7 @@ export class DomOverlay {
             <h3>Game rules</h3>
             <div class="rules-card" data-role="presentation-rules-summary" hidden>
               <p>Round outcomes, balances, available bets and feature events are supplied by the authoritative RGS and validated before presentation.</p>
-              <p>This feature guide is fixed to ${PRIMAL_PRESENTATION_RULES.version} and is enabled only when the game, definition version and complete SHA-256 identity match its explicit allow-list.</p>
+              <p>This feature guide is fixed to <span data-static-presentation-rules-version></span> and is enabled only when the game, definition version and complete SHA-256 identity match its explicit allow-list.</p>
               <p>A changed mathematical definition requires a reviewed presentationRules revision; this client never assumes that another definition is compatible.</p>
               <p>Use Spin to request a round. The menu presents rules but never creates or changes an outcome.</p>
             </div>
@@ -1817,19 +2103,7 @@ export class DomOverlay {
           <div><small>Spin control</small><h2 id="autoplay-title">Auto Play</h2></div>
           <button data-role="autoplay-close" type="button" aria-label="Close autoplay panel">×</button>
         </header>
-        <div class="autoplay-options" data-role="autoplay-options" role="radiogroup" aria-label="Number of auto spins">
-          ${AUTO_PLAY_SPIN_COUNTS.map((count) => `
-            <button
-              class="autoplay-option${count === DEFAULT_AUTO_PLAY_SPINS ? " is-selected" : ""}"
-              type="button"
-              role="radio"
-              data-autoplay-count="${count}"
-              aria-checked="${count === DEFAULT_AUTO_PLAY_SPINS}"
-              aria-label="${count} auto spins"
-              tabindex="${count === DEFAULT_AUTO_PLAY_SPINS ? 0 : -1}"
-            >${count}</button>
-          `).join("")}
-        </div>
+        <div class="autoplay-options" data-role="autoplay-options" role="radiogroup" aria-label="Number of auto spins"></div>
         <div class="autoplay-stop-rule" data-role="autoplay-stop-rule">
           <button
             class="autoplay-stop-toggle"
@@ -1848,21 +2122,7 @@ export class DomOverlay {
             role="group"
             aria-label="Stop autoplay conditions"
             hidden
-          >
-            ${AUTO_PLAY_STOP_CONDITIONS.map(({ boundary, setting, label }) => `
-              <label class="autoplay-stop-condition">
-                <span>${label}</span>
-                <input
-                  id="autoplay-stop-${boundary}"
-                  name="autoplayStopConditions"
-                  type="checkbox"
-                  data-autoplay-stop-boundary="${boundary}"
-                  aria-label="${label}"
-                  ${this.autoplayStopSettings[setting] ? "checked" : ""}
-                />
-              </label>
-            `).join("")}
-          </div>
+          ></div>
         </div>
         <p class="autoplay-modal__status" data-role="autoplay-status" aria-live="polite">50 spins selected</p>
         <button class="compact-modal__action" data-role="autoplay-action" type="button">Start</button>
@@ -1902,7 +2162,7 @@ export class DomOverlay {
           title="Settings"
         >
           <span class="utility-button__hit-area" aria-hidden="true"></span>
-          <img class="utility-button__asset" src="${PRIMAL_REFERENCE_ROOT}/10005.svg" alt="" aria-hidden="true" />
+          <img class="utility-button__asset" data-static-image="settings-control" alt="" aria-hidden="true" />
         </button>
         <button
           class="utility-button utility-button--auto"
@@ -1915,7 +2175,7 @@ export class DomOverlay {
           title="Auto play"
         >
           <span class="utility-button__hit-area" aria-hidden="true"></span>
-          <img class="utility-button__asset" src="${PRIMAL_REFERENCE_ROOT}/10006.svg" alt="" aria-hidden="true" />
+          <img class="utility-button__asset" data-static-image="autoplay-control" alt="" aria-hidden="true" />
         </button>
         <button
           class="bet-trigger"
@@ -1928,7 +2188,7 @@ export class DomOverlay {
           aria-controls="bet-selector"
         >
           <span class="utility-button__hit-area" aria-hidden="true"></span>
-          <img class="bet-trigger__icon" src="${PRIMAL_REFERENCE_ROOT}/10007.svg" alt="" aria-hidden="true" />
+          <img class="bet-trigger__icon" data-static-image="bet-control" alt="" aria-hidden="true" />
           <span>Total bet</span>
           <strong data-role="bet-trigger-value">—</strong>
           <i aria-hidden="true"></i>
@@ -1955,7 +2215,7 @@ export class DomOverlay {
           title="Paytable"
         >
           <span class="utility-button__hit-area" aria-hidden="true"></span>
-          <img class="utility-button__asset" src="${PRIMAL_REFERENCE_ROOT}/10008.svg" alt="" aria-hidden="true" />
+          <img class="utility-button__asset" data-static-image="paytable-control" alt="" aria-hidden="true" />
         </button>
         <button
           class="utility-button utility-button--sound"
@@ -1967,7 +2227,7 @@ export class DomOverlay {
           title="Sound on"
         >
           <span class="utility-button__hit-area" aria-hidden="true"></span>
-          <img class="utility-button__asset" src="${PRIMAL_REFERENCE_ROOT}/10009.svg" alt="" aria-hidden="true" />
+          <img class="utility-button__asset" data-static-image="sound-control" alt="" aria-hidden="true" />
         </button>
       </nav>
 
@@ -1979,7 +2239,7 @@ export class DomOverlay {
       >
         <img
           class="status-panel__provider"
-          src="${STATUSBAR_GM_GO}"
+          data-static-image="statusbar-provider"
           alt="G'm GO"
           draggable="false"
         />
@@ -2010,17 +2270,18 @@ export class DomOverlay {
         <button class="spin-button" data-role="spin" data-mode="waiting" data-action="none" data-visual-token="disabled-spin" type="button" disabled aria-label="Spin unavailable">
           <span class="spin-button__hit-area" aria-hidden="true"></span>
           <span class="spin-button__halo" aria-hidden="true">
-            <img src="${PRIMAL_REFERENCE_ROOT}/10002.svg" alt="" />
+            <img data-static-image="spin-halo" alt="" />
           </span>
-          <img class="spin-button__arrows" src="${PRIMAL_REFERENCE_ROOT}/10001.svg" alt="" aria-hidden="true" />
-          <img class="spin-button__disabled" src="${PRIMAL_REFERENCE_ROOT}/spin-button-disabled.svg" alt="" aria-hidden="true" />
-          <img class="spin-button__continue" src="${PRIMAL_REFERENCE_ROOT}/10003.svg" alt="" aria-hidden="true" />
-          <img class="spin-button__autoplay-stop" data-role="spin-autoplay-stop" src="${PRIMAL_REFERENCE_ROOT}/10004.svg" alt="" aria-hidden="true" />
+          <img class="spin-button__arrows" data-static-image="spin-arrows" alt="" aria-hidden="true" />
+          <img class="spin-button__disabled" data-static-image="spin-disabled" alt="" aria-hidden="true" />
+          <img class="spin-button__continue" data-static-image="spin-continue" alt="" aria-hidden="true" />
+          <img class="spin-button__autoplay-stop" data-role="spin-autoplay-stop" data-static-image="spin-autoplay-stop" alt="" aria-hidden="true" />
           <span class="spin-button__autoplay-count" data-role="spin-autoplay-count" aria-hidden="true"></span>
           <span class="spin-button__text" data-role="spin-text">Spin</span>
         </button>
       </div>
-    `;
+    `);
+    bindStaticShellContent(host, this.autoplayStopSettings);
 
     this.balance = this.require(host, "balance");
     this.bet = this.require(host, "bet") as HTMLSelectElement;
@@ -2085,13 +2346,23 @@ export class DomOverlay {
     this.previewContinue = this.require(host, "preview-continue") as HTMLButtonElement;
     this.previewSound = this.require(host, "preview-sound") as HTMLButtonElement;
     this.previewOptOut = this.require(host, "preview-opt-out") as HTMLInputElement;
+    this.sessionTimeoutScrim = this.require(host, "session-timeout-scrim");
+    this.sessionTimeoutModal = this.require(host, "session-timeout-modal");
+    this.sessionTimeoutExit = this.require(host, "session-timeout-exit") as HTMLButtonElement;
+    this.sessionTimeoutBackground = sessionTimeoutIsolationBranches(
+      host,
+      this.sessionTimeoutModal,
+      this.sessionTimeoutScrim,
+    );
     this.featurePreview.inert = true;
     this.gameMenu.inert = true;
     this.autoplayModal.inert = true;
+    this.sessionTimeoutModal.inert = true;
     this.syncAutoplayStopSettings();
     this.setAutoplayStopConditionsOpen(false);
     this.syncFeaturePreviewContinue();
     this.loading = this.require(host, "launch-loading");
+    this.loadingTrack = this.require(host, "loading-track");
     this.loadingBar = this.require(host, "loading-bar");
     this.loadingStatus = this.require(host, "loading-status");
     this.loadingValue = this.require(host, "loading-value");
@@ -2112,45 +2383,46 @@ export class DomOverlay {
       this.toolStrip,
     ];
     this.statusPanel.tabIndex = -1;
+    const eventOptions = { signal: this.domEventController.signal } as const;
 
-    this.spin.addEventListener("click", () => this.handlePrimarySpinAction());
+    this.spin.addEventListener("click", () => this.handlePrimarySpinAction(), eventOptions);
     this.bet.addEventListener("change", () => {
       this.syncBetChoices();
       this.betHandler(this.bet.value);
-    });
-    this.betTrigger.addEventListener("click", () => this.setBetPopupOpen(true));
-    this.betClose.addEventListener("click", () => this.setBetPopupOpen(false));
-    this.betScrim.addEventListener("click", () => this.setBetPopupOpen(false));
-    this.betDecrease.addEventListener("click", () => this.stepBet(-1));
-    this.betIncrease.addEventListener("click", () => this.stepBet(1));
+    }, eventOptions);
+    this.betTrigger.addEventListener("click", () => this.setBetPopupOpen(true), eventOptions);
+    this.betClose.addEventListener("click", () => this.setBetPopupOpen(false), eventOptions);
+    this.betScrim.addEventListener("click", () => this.setBetPopupOpen(false), eventOptions);
+    this.betDecrease.addEventListener("click", () => this.stepBet(-1), eventOptions);
+    this.betIncrease.addEventListener("click", () => this.stepBet(1), eventOptions);
     this.betChoices.addEventListener("click", (event) => {
       const choice = (event.target as HTMLElement).closest<HTMLButtonElement>(".bet-choice");
       if (!choice || choice.disabled || !choice.dataset.value) return;
       this.selectBet(choice.dataset.value, true);
-    });
-    this.betChoices.addEventListener("keydown", this.handleBetChoiceKeyDown);
-    this.settingsButton.addEventListener("click", () => this.setGameMenuOpen(true, "settings"));
-    this.paytableButton.addEventListener("click", () => this.setGameMenuOpen(true, "paytable"));
-    this.gameMenuClose.addEventListener("click", () => this.setGameMenuOpen(false));
-    this.gameMenu.addEventListener("click", this.handleGameMenuClick);
-    this.gameMenu.addEventListener("keydown", this.handleGameMenuKeyDown);
-    this.autoplayButton.addEventListener("click", () => this.setAutoplayModalOpen(true));
-    this.autoplayClose.addEventListener("click", () => this.setAutoplayModalOpen(false));
-    this.autoplayScrim.addEventListener("click", () => this.setAutoplayModalOpen(false));
-    this.autoplayOptions.addEventListener("click", this.handleAutoplayOptionClick);
-    this.autoplayOptions.addEventListener("keydown", this.handleAutoplayOptionKeyDown);
-    this.autoplayStopToggle.addEventListener("click", this.handleAutoplayStopToggle);
-    this.autoplayStopConditions.addEventListener("change", this.handleAutoplayStopConditionChange);
+    }, eventOptions);
+    this.betChoices.addEventListener("keydown", this.handleBetChoiceKeyDown, eventOptions);
+    this.settingsButton.addEventListener("click", () => this.setGameMenuOpen(true, "settings"), eventOptions);
+    this.paytableButton.addEventListener("click", () => this.setGameMenuOpen(true, "paytable"), eventOptions);
+    this.gameMenuClose.addEventListener("click", () => this.setGameMenuOpen(false), eventOptions);
+    this.gameMenu.addEventListener("click", this.handleGameMenuClick, eventOptions);
+    this.gameMenu.addEventListener("keydown", this.handleGameMenuKeyDown, eventOptions);
+    this.autoplayButton.addEventListener("click", () => this.setAutoplayModalOpen(true), eventOptions);
+    this.autoplayClose.addEventListener("click", () => this.setAutoplayModalOpen(false), eventOptions);
+    this.autoplayScrim.addEventListener("click", () => this.setAutoplayModalOpen(false), eventOptions);
+    this.autoplayOptions.addEventListener("click", this.handleAutoplayOptionClick, eventOptions);
+    this.autoplayOptions.addEventListener("keydown", this.handleAutoplayOptionKeyDown, eventOptions);
+    this.autoplayStopToggle.addEventListener("click", this.handleAutoplayStopToggle, eventOptions);
+    this.autoplayStopConditions.addEventListener("change", this.handleAutoplayStopConditionChange, eventOptions);
     this.autoplayAction.addEventListener("click", () => {
       if (this.autoplayActive) this.stopAutoplay(true);
       else this.startAutoplay();
-    });
-    this.sound.addEventListener("click", () => this.soundToggleHandler());
-    this.previewSound.addEventListener("click", () => this.soundToggleHandler());
+    }, eventOptions);
+    this.sound.addEventListener("click", () => this.soundToggleHandler(), eventOptions);
+    this.previewSound.addEventListener("click", () => this.soundToggleHandler(), eventOptions);
     this.skip.addEventListener("click", () => {
       this.restoreSpinFocus = document.activeElement === this.skip;
       this.skipHandler();
-    });
+    }, eventOptions);
     this.previewContinue.addEventListener("click", () => {
       if (this.featurePreview.dataset.visible !== "true") return;
       if (this.previewContinue.disabled) return;
@@ -2162,15 +2434,21 @@ export class DomOverlay {
         }
       }
       this.previewContinueHandler();
-    });
-    document.addEventListener("keydown", this.handleKeyDown);
+    }, eventOptions);
+    this.sessionTimeoutExit.addEventListener("click", () => {
+      if (!this.sessionTimeoutVisible || this.sessionTimeoutExitRequested) return;
+      this.sessionTimeoutExitRequested = true;
+      this.sessionTimeoutModal.dataset.exitRequested = "true";
+      this.sessionTimeoutExitHandler();
+    }, eventOptions);
+    document.addEventListener("keydown", this.handleKeyDown, eventOptions);
     if (typeof ResizeObserver === "function") {
       this.officialHelpResizeObserver = new ResizeObserver(this.handleOfficialHelpResize);
       this.officialHelpResizeObserver.observe(this.host);
       this.officialHelpResizeObserver.observe(this.officialHelpViewport);
       this.officialHelpResizeObserver.observe(this.officialHelpAuthoredSurface);
     }
-    window.addEventListener("resize", this.handleOfficialHelpResize);
+    window.addEventListener("resize", this.handleOfficialHelpResize, eventOptions);
     this.syncMobileDomLayout();
     this.setHudReveal(0);
   }
@@ -2202,6 +2480,35 @@ export class DomOverlay {
 
   onFastPlayChange(handler: FastPlayHandler): void {
     this.fastPlayHandler = handler;
+  }
+
+  /**
+   * 服务端空闲终态的唯一玩家表面。背景与 Escape 均不可关闭；EXIT 只把控制权
+   * 交回运营商，不会在浏览器中刷新、重连或重放 launch code。
+   */
+  showSessionTimeout(handler: SessionTimeoutExitHandler): void {
+    if (this.destroyed || this.sessionTimeoutVisible) return;
+    // 面板关闭 setter 会立即同步 inert；必须在它们运行前保存外层 canvas/loading/
+    // orientation 与同页宿主分支的原始状态，destroy 时才能精确恢复。
+    this.captureSessionTimeoutIsolationState();
+    this.sessionTimeoutVisible = true;
+    this.sessionTimeoutExitRequested = false;
+    this.sessionTimeoutExitHandler = handler;
+    this.stopAutoplay(false);
+    this.setBetPopupOpen(false, false);
+    this.setAutoplayModalOpen(false, false);
+    this.setGameMenuOpen(false, this.activeMenuTab, false);
+    this.setFeaturePreviewVisible(false);
+    this.sessionTimeoutScrim.dataset.open = "true";
+    this.sessionTimeoutModal.dataset.open = "true";
+    this.sessionTimeoutScrim.setAttribute("aria-hidden", "false");
+    this.sessionTimeoutModal.setAttribute("aria-hidden", "false");
+    this.sessionTimeoutModal.inert = false;
+    this.isolateSessionTimeoutBackground();
+    this.syncModalBackgroundInert();
+    this.scheduleActiveDialogFocus(this.sessionTimeoutModal, () => {
+      this.sessionTimeoutExit.focus();
+    });
   }
 
   onPanelOpen(handler: UiPanelHandler): void {
@@ -2415,6 +2722,7 @@ export class DomOverlay {
     const percentage = Math.round(progress * 100);
     this.loadingBar.style.transform = `scaleX(${progress})`;
     this.loadingValue.textContent = `${percentage}%`;
+    this.loadingTrack.setAttribute("aria-valuenow", String(percentage));
   }
 
   setStartupProgress(event: Readonly<PreloadProgress>): void {
@@ -2424,6 +2732,7 @@ export class DomOverlay {
       : Math.min(99, Math.round(progress * 100));
     this.loadingBar.style.transform = `scaleX(${progress})`;
     this.loadingValue.textContent = `${percentage}%`;
+    this.loadingTrack.setAttribute("aria-valuenow", String(percentage));
     this.loadingStatus.textContent = startupStageLabel(event.stage);
     this.loading.dataset.stage = event.stage;
     if (event.taskName) this.loading.dataset.task = event.taskName;
@@ -2437,7 +2746,12 @@ export class DomOverlay {
     this.featurePreview.setAttribute("aria-hidden", String(!visible));
     this.featurePreview.inert = !visible;
     this.syncModalBackgroundInert();
-    if (visible) queueMicrotask(() => this.previewContinue.focus());
+    if (visible) {
+      this.scheduleActiveDialogFocus(
+        this.featurePreview,
+        () => this.previewContinue.focus(),
+      );
+    }
     else if (document.activeElement === this.previewContinue) this.previewContinue.blur();
   }
 
@@ -2615,7 +2929,9 @@ export class DomOverlay {
     menu.dataset.presentationRulesVersion = PRIMAL_PRESENTATION_RULES.version;
     menu.dataset.presentationRulesLocale = this.presentationRulesBinding.record.locale;
     menu.dataset.presentationRulesRequestedLocale = this.presentationRulesBinding.record.requestedLocale;
-    if (bound) queueMicrotask(() => this.syncOfficialHelpProjection());
+    if (bound) queueMicrotask(() => {
+      if (!this.destroyed) this.syncOfficialHelpProjection();
+    });
   }
 
   private bindSessionMoneyFormatter(session: SessionOpened): void {
@@ -2895,6 +3211,10 @@ export class DomOverlay {
   }
 
   setControls(canSpin: boolean, canChangeBet: boolean): void {
+    if (this.sessionTimeoutVisible) {
+      canSpin = false;
+      canChangeBet = false;
+    }
     this.canSpin = canSpin;
     this.canChangeBet = canChangeBet;
     this.bet.disabled = !canChangeBet;
@@ -2942,9 +3262,11 @@ export class DomOverlay {
   }
 
   async announceEvent(event: FeatureEvent, durationMs = 620): Promise<void> {
+    const generation = ++this.featureAnnouncementGeneration;
     this.feature.textContent = eventTitle(event, this.activeMoneyFormatter());
     this.feature.dataset.visible = "true";
     await new Promise((resolve) => setTimeout(resolve, durationMs));
+    if (this.destroyed || generation !== this.featureAnnouncementGeneration) return;
     this.feature.dataset.visible = "false";
     await new Promise((resolve) => setTimeout(resolve, 160));
   }
@@ -2954,6 +3276,8 @@ export class DomOverlay {
     this.toast.textContent = message;
     this.toast.dataset.visible = "true";
     this.toastTimer = setTimeout(() => {
+      this.toastTimer = null;
+      if (this.destroyed) return;
       this.toast.dataset.visible = "false";
     }, 4_000);
   }
@@ -2961,22 +3285,57 @@ export class DomOverlay {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.cancelObservedLayoutSync();
-    this.cancelWinCounter();
-    this.clearAutoplayTimer();
-    this.wheelHyperspinEffect.destroy();
-    document.removeEventListener("keydown", this.handleKeyDown);
-    this.betChoices.removeEventListener("keydown", this.handleBetChoiceKeyDown);
-    this.gameMenu.removeEventListener("click", this.handleGameMenuClick);
-    this.gameMenu.removeEventListener("keydown", this.handleGameMenuKeyDown);
-    this.autoplayOptions.removeEventListener("click", this.handleAutoplayOptionClick);
-    this.autoplayOptions.removeEventListener("keydown", this.handleAutoplayOptionKeyDown);
-    this.autoplayStopToggle.removeEventListener("click", this.handleAutoplayStopToggle);
-    this.autoplayStopConditions.removeEventListener("change", this.handleAutoplayStopConditionChange);
-    this.officialHelpResizeObserver?.disconnect();
+    this.deferredFocusGeneration += 1;
+    this.featureAnnouncementGeneration += 1;
+    // 先撤销包括内联闭包在内的全部 DOM/window/document 监听器，并立即让仍在页面
+    // 中的旧 HUD 不可达。加载表面已由 launchHost 独立持有，可继续展示固定失败文案。
+    bestEffortDomOverlayCleanup(() => this.domEventController?.abort());
+    bestEffortDomOverlayCleanup(() => this.restoreSessionTimeoutIsolationState());
+    bestEffortDomOverlayCleanup(() => { this.host.inert = true; });
+    bestEffortDomOverlayCleanup(() => this.host.replaceChildren());
+    this.spinHandler = () => undefined;
+    this.fastStopHandler = () => undefined;
+    this.betHandler = () => undefined;
+    this.skipHandler = () => undefined;
+    this.previewContinueHandler = () => undefined;
+    this.soundToggleHandler = () => undefined;
+    this.fastPlayHandler = () => undefined;
+    this.sessionTimeoutExitHandler = () => undefined;
+    bestEffortDomOverlayCleanup(() => this.cancelObservedLayoutSync());
+    bestEffortDomOverlayCleanup(() => this.cancelWinCounter());
+    bestEffortDomOverlayCleanup(() => this.clearAutoplayTimer());
+    bestEffortDomOverlayCleanup(() => this.wheelHyperspinEffect.destroy());
+    bestEffortDomOverlayCleanup(() => document.removeEventListener("keydown", this.handleKeyDown));
+    bestEffortDomOverlayCleanup(() => (
+      this.betChoices.removeEventListener("keydown", this.handleBetChoiceKeyDown)
+    ));
+    bestEffortDomOverlayCleanup(() => (
+      this.gameMenu.removeEventListener("click", this.handleGameMenuClick)
+    ));
+    bestEffortDomOverlayCleanup(() => (
+      this.gameMenu.removeEventListener("keydown", this.handleGameMenuKeyDown)
+    ));
+    bestEffortDomOverlayCleanup(() => (
+      this.autoplayOptions.removeEventListener("click", this.handleAutoplayOptionClick)
+    ));
+    bestEffortDomOverlayCleanup(() => (
+      this.autoplayOptions.removeEventListener("keydown", this.handleAutoplayOptionKeyDown)
+    ));
+    bestEffortDomOverlayCleanup(() => (
+      this.autoplayStopToggle.removeEventListener("click", this.handleAutoplayStopToggle)
+    ));
+    bestEffortDomOverlayCleanup(() => (
+      this.autoplayStopConditions.removeEventListener("change", this.handleAutoplayStopConditionChange)
+    ));
+    const officialHelpResizeObserver = this.officialHelpResizeObserver;
     this.officialHelpResizeObserver = null;
-    window.removeEventListener("resize", this.handleOfficialHelpResize);
-    if (this.toastTimer) clearTimeout(this.toastTimer);
+    bestEffortDomOverlayCleanup(() => officialHelpResizeObserver?.disconnect());
+    bestEffortDomOverlayCleanup(() => (
+      window.removeEventListener("resize", this.handleOfficialHelpResize)
+    ));
+    const toastTimer = this.toastTimer;
+    this.toastTimer = null;
+    if (toastTimer) bestEffortDomOverlayCleanup(() => clearTimeout(toastTimer));
   }
 
   private applyRoundState(presentation: RoundStatePresentation): void {
@@ -3052,6 +3411,11 @@ export class DomOverlay {
       return;
     }
     if (event.key !== "Escape") return;
+    if (this.sessionTimeoutVisible) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (this.gameMenu.dataset.open === "true") {
       event.preventDefault();
       this.setGameMenuOpen(false);
@@ -3164,12 +3528,14 @@ export class DomOverlay {
   }
 
   private anyControlPanelOpen(): boolean {
-    return this.gameMenu.dataset.open === "true"
+    return this.sessionTimeoutVisible
+      || this.gameMenu.dataset.open === "true"
       || this.autoplayModal.dataset.open === "true"
       || this.betPopup.dataset.open === "true";
   }
 
   private activeDialog(): HTMLElement | null {
+    if (this.sessionTimeoutVisible) return this.sessionTimeoutModal;
     if (this.featurePreview.dataset.visible === "true") return this.featurePreview;
     if (this.gameMenu.dataset.open === "true") return this.gameMenu;
     if (this.autoplayModal.dataset.open === "true") return this.autoplayModal;
@@ -3177,10 +3543,53 @@ export class DomOverlay {
     return null;
   }
 
+  private scheduleActiveDialogFocus(dialog: HTMLElement, focus: () => void): void {
+    const generation = ++this.deferredFocusGeneration;
+    queueMicrotask(() => {
+      if (this.destroyed
+        || generation !== this.deferredFocusGeneration
+        || dialog.inert
+        || this.activeDialog() !== dialog) return;
+      focus();
+    });
+  }
+
   private syncModalBackgroundInert(): void {
     const inert = !this.hudInteractive || this.activeDialog() !== null;
     // 仅原型单元线束可以有意省略组装的 DOM。
     for (const element of this.modalBackground ?? []) element.inert = inert;
+    if (this.sessionTimeoutVisible) {
+      for (const element of this.sessionTimeoutBackground ?? []) element.inert = true;
+    }
+  }
+
+  private captureSessionTimeoutIsolationState(): void {
+    if (this.sessionTimeoutIsolationState !== null) return;
+    this.sessionTimeoutIsolationState = Object.freeze(
+      [...(this.sessionTimeoutBackground ?? [])].map((element) => Object.freeze({
+        element,
+        inert: element.inert,
+        ariaHidden: element.getAttribute("aria-hidden"),
+      })),
+    );
+  }
+
+  private isolateSessionTimeoutBackground(): void {
+    this.captureSessionTimeoutIsolationState();
+    for (const { element } of this.sessionTimeoutIsolationState ?? []) {
+      element.inert = true;
+      element.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  private restoreSessionTimeoutIsolationState(): void {
+    const snapshots = this.sessionTimeoutIsolationState;
+    this.sessionTimeoutIsolationState = null;
+    for (const { element, inert, ariaHidden } of snapshots ?? []) {
+      element.inert = inert;
+      if (ariaHidden === null) element.removeAttribute("aria-hidden");
+      else element.setAttribute("aria-hidden", ariaHidden);
+    }
   }
 
   private trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement): void {
@@ -3287,7 +3696,11 @@ export class DomOverlay {
     this.syncModalBackgroundInert();
     if (open) {
       if (!wasOpen) this.panelLifecycle.setVisible(tab, true);
-      queueMicrotask(() => this.gameMenuTabs.find((control) => control.dataset.menuTab === tab)?.focus());
+      this.scheduleActiveDialogFocus(this.gameMenu, () => {
+        if (this.activeMenuTab === tab) {
+          this.gameMenuTabs.find((control) => control.dataset.menuTab === tab)?.focus();
+        }
+      });
       return;
     }
     if (wasOpen) this.panelLifecycle.setVisible(closingTab, false);
@@ -3351,7 +3764,7 @@ export class DomOverlay {
     this.syncModalBackgroundInert();
     if (wasOpen !== open) this.panelLifecycle.setVisible("autoplay", open);
     if (open) {
-      queueMicrotask(() => {
+      this.scheduleActiveDialogFocus(this.autoplayModal, () => {
         if (this.autoplayActive) this.autoplayAction.focus();
         else this.autoplayOptions.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
       });
@@ -3503,7 +3916,9 @@ export class DomOverlay {
     this.bet.value = value;
     this.syncBetChoices();
     this.betHandler(value);
-    if (restoreChoiceFocus) queueMicrotask(() => this.focusSelectedBetChoice());
+    if (restoreChoiceFocus) {
+      this.scheduleActiveDialogFocus(this.betPopup, () => this.focusSelectedBetChoice());
+    }
   }
 
   private stepBet(direction: -1 | 1): void {
@@ -3557,7 +3972,9 @@ export class DomOverlay {
     this.betTrigger.setAttribute("aria-expanded", String(shouldOpen));
     this.syncModalBackgroundInert();
     if (wasOpen !== shouldOpen) this.panelLifecycle.setVisible("bet", shouldOpen);
-    if (shouldOpen) queueMicrotask(() => this.focusSelectedBetChoice());
+    if (shouldOpen) {
+      this.scheduleActiveDialogFocus(this.betPopup, () => this.focusSelectedBetChoice());
+    }
     else {
       this.restoreDialogFocus(this.betReturnFocus, restoreFocus);
       this.betReturnFocus = null;

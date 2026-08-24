@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
+import { BaseTexture, Container, Graphics, Sprite, Text, TextStyle, Texture } from "pixi.js";
 import {
   SYMBOL_ASSET_BY_ID,
   WILD_MULTIPLIER_ASSETS,
@@ -58,11 +58,29 @@ function allSymbolURLs(): readonly string[] {
 
 export function loadSymbolTextures(): Promise<void> {
   if (symbolLoadPromise) return symbolLoadPromise;
-  symbolLoadPromise = Promise.all(allSymbolURLs().map(async (url) => {
-    const texture = await Texture.fromURL(url);
-    symbolTextures.set(url, texture);
-  })).then(() => undefined);
-  return symbolLoadPromise;
+  const attempt = Promise.all(allSymbolURLs().map(async (url) => {
+    try {
+      const texture = await Texture.fromURL(url);
+      return [url, texture] as const;
+    } catch (error) {
+      // Pixi 6 可以把失败的 URL 留在 Texture/BaseTexture cache。失败启动必须继续
+      // 向 PreloadGate 传播，同时释放拒绝缓存，允许显式的后续启动重新获取资源。
+      const cachedTexture = Texture.removeFromCache(url);
+      cachedTexture?.destroy(true);
+      const cachedBaseTexture = BaseTexture.removeFromCache(url);
+      cachedBaseTexture?.destroy();
+      throw error;
+    }
+  })).then((entries) => {
+    // Promise.all 会 fail-fast，而同批的其他 Pixi 请求无法取消。只有整批成功才原子发布，
+    // 因而失败 attempt 的晚到完成既不会留下半套业务纹理，也不会与下一次重试交叉写入。
+    for (const [url, texture] of entries) symbolTextures.set(url, texture);
+  });
+  symbolLoadPromise = attempt;
+  void attempt.catch(() => {
+    if (symbolLoadPromise === attempt) symbolLoadPromise = null;
+  });
+  return attempt;
 }
 
 /** 通过共享符号图集加载所有十个原始符号状态。 */

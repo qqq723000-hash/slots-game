@@ -33,6 +33,7 @@ export const PLAYER_ERROR_DIAGNOSTIC_EVENT = "slots-game:player-error";
 
 export type OperatorSessionRequestReason =
   | "initial-session-timeout"
+  | "session-timeout"
   | "initial-session-failed"
   | "committed-result-recovery-required";
 export type OperatorSessionRequestCode =

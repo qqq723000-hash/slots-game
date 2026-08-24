@@ -36,6 +36,13 @@ import {
 } from "./spine/SpineAdapter";
 import { loadPrimalSpineSet } from "./spine/PrimalSpineAssets";
 import {
+  FREE_SPIN_VERIFIED_SPINE_KEYS,
+  WHEEL_VERIFIED_SPINE_KEYS,
+  disposeVerifiedWheelArtwork,
+  type VerifiedFreeSpinArtwork,
+  type VerifiedWheelArtwork,
+} from "./VerifiedFeatureArtwork";
+import {
   PRIMAL_PANEL_LAYOUT,
   SpineTextBinding,
   freeSpinIntroTextFields,
@@ -90,49 +97,31 @@ export {
 } from "./wheelMotion";
 
 const FEATURE_TEXTURE_URLS: readonly string[] = Object.freeze([
-  PRIMAL_ASSETS.features.expandedReels,
-  PRIMAL_ASSETS.features.wheelBlue,
-  PRIMAL_ASSETS.features.wheelRed,
-  PRIMAL_ASSETS.features.wheelDual,
-  PRIMAL_ASSETS.features.vaultExtraSpin,
-  PRIMAL_ASSETS.symbols.rage,
+  // Rage 已由符号首包拥有；Wheel 三纹理改由 feature-wheel 事件租约直接解码。
   PRIMAL_ASSETS.features.energyFrames,
 ]);
 
 let featureTextureLoad: Promise<void> | null = null;
-let authoredWheelData: SpineData | null = null;
-let authoredWheelLoad: Promise<void> | null = null;
-const AUTHORED_FEATURE_SPINE_KEYS = Object.freeze([
-  "wheel",
+let authoredInteractionLoad: Promise<void> | null = null;
+const AUTHORED_INTERACTION_SPINE_KEYS = Object.freeze([
   "trail",
-  "wheelPopupStart",
-  "wheelSummaryFreespins",
-  "wheelSummaryJackpot",
-  "freeSpinIntroKongQuest",
-  "freeSpinIntroKingSpin",
-  "freeSpinSummary",
 ] as const);
-type AuthoredFeatureSpineKey = typeof AUTHORED_FEATURE_SPINE_KEYS[number];
-const authoredFeatureData: Partial<Record<AuthoredFeatureSpineKey, SpineData>> = {};
+type AuthoredInteractionSpineKey = typeof AUTHORED_INTERACTION_SPINE_KEYS[number];
+const authoredInteractionData: Partial<Record<AuthoredInteractionSpineKey, SpineData>> = {};
 
-function loadAuthoredFeatureSpines(): Promise<void> {
-  if (AUTHORED_FEATURE_SPINE_KEYS.every((key) => authoredFeatureData[key])) return Promise.resolve();
-  if (authoredWheelLoad) return authoredWheelLoad;
-  const attempt = loadPrimalSpineSet(AUTHORED_FEATURE_SPINE_KEYS).then((data) => {
-    Object.assign(authoredFeatureData, data);
-    authoredWheelData = data.wheel;
+function loadAuthoredInteractionSpines(): Promise<void> {
+  if (AUTHORED_INTERACTION_SPINE_KEYS.every((key) => authoredInteractionData[key])) {
+    return Promise.resolve();
+  }
+  if (authoredInteractionLoad) return authoredInteractionLoad;
+  const attempt = loadPrimalSpineSet(AUTHORED_INTERACTION_SPINE_KEYS).then((data) => {
+    Object.assign(authoredInteractionData, data);
   });
-  authoredWheelLoad = attempt;
+  authoredInteractionLoad = attempt;
   void attempt.catch(() => {
-    // 所需的创作特征数据必须拒绝启动门。仅清除失败的运行中尝试，以便稍后显式启动/重试可以再次获取它；切勿将拒绝转化为 false 准备成功。
-    if (authoredWheelLoad === attempt) authoredWheelLoad = null;
+    if (authoredInteractionLoad === attempt) authoredInteractionLoad = null;
   });
   return attempt;
-}
-
-function loadAuthoredWheel(): Promise<void> {
-  if (authoredWheelData) return Promise.resolve();
-  return loadAuthoredFeatureSpines();
 }
 
 /** 在移除发射幕之前预加载预设的功能板。 */
@@ -140,7 +129,7 @@ export function loadFeatureTextures(): Promise<void> {
   if (featureTextureLoad) return featureTextureLoad;
   const attempt = Promise.all([
     Promise.all(FEATURE_TEXTURE_URLS.map((url) => Texture.fromURL(url))),
-    loadAuthoredFeatureSpines(),
+    loadAuthoredInteractionSpines(),
   ]).then(() => undefined);
   featureTextureLoad = attempt;
   void attempt.catch(() => {
@@ -1721,6 +1710,11 @@ export class FeatureEffects {
   private rageCascadePlaybackPaused = false;
   private presentationGeneration = 0;
   private presentationAbortController = new AbortController();
+  private freeSpinArtwork: VerifiedFreeSpinArtwork["spines"] | null = null;
+  private wheelArtwork: VerifiedWheelArtwork | null = null;
+  private freeSpinArtworkLoad: Promise<void> | null = null;
+  private wheelArtworkLoad: Promise<void> | null = null;
+  private featureArtworkGeneration = 0;
   private destroyed = false;
   private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
 
@@ -1736,6 +1730,88 @@ export class FeatureEffects {
   ) {
     this.reelAlphaLayers = new ReelAlphaLayers(this.reels);
     this.hostLayer.addChild(this.view);
+  }
+
+  /** 已校验负载在控制器持有事件租约时一次性采用；不再按 skeleton/纹理 URL 请求。 */
+  adoptVerifiedFreeSpinArtwork(artwork: VerifiedFreeSpinArtwork): void {
+    if (this.destroyed) throw new Error("FeatureEffects was destroyed");
+    this.featureArtworkGeneration += 1;
+    this.freeSpinArtwork = artwork.spines;
+    this.freeSpinArtworkLoad = null;
+  }
+
+  /** Wheel 的三张 blob 纹理由本实例独占，并在事件租约结束/销毁时按对象身份释放。 */
+  adoptVerifiedWheelArtwork(artwork: VerifiedWheelArtwork): void {
+    if (this.destroyed) {
+      disposeVerifiedWheelArtwork(artwork);
+      throw new Error("FeatureEffects was destroyed");
+    }
+    if (this.wheelArtwork !== artwork) disposeVerifiedWheelArtwork(this.wheelArtwork);
+    this.featureArtworkGeneration += 1;
+    this.wheelArtwork = artwork;
+    this.wheelArtworkLoad = null;
+  }
+
+  releaseVerifiedFeatureArtwork(kind: "free-spins" | "wheel"): void {
+    this.featureArtworkGeneration += 1;
+    if (kind === "free-spins") {
+      this.freeSpinArtwork = null;
+      this.freeSpinArtworkLoad = null;
+      return;
+    }
+    const artwork = this.wheelArtwork;
+    this.wheelArtwork = null;
+    this.wheelArtworkLoad = null;
+    disposeVerifiedWheelArtwork(artwork);
+  }
+
+  private async ensureFreeSpinArtwork(token: FeaturePresentationToken): Promise<void> {
+    if (this.freeSpinArtwork) return;
+    const generation = this.featureArtworkGeneration;
+    if (!this.freeSpinArtworkLoad) {
+      const attempt = loadPrimalSpineSet(FREE_SPIN_VERIFIED_SPINE_KEYS).then((spines) => {
+        if (!this.destroyed && generation === this.featureArtworkGeneration) {
+          this.freeSpinArtwork = spines;
+        }
+      });
+      this.freeSpinArtworkLoad = attempt;
+      void attempt.catch(() => {
+        if (this.freeSpinArtworkLoad === attempt) this.freeSpinArtworkLoad = null;
+      });
+    }
+    await this.awaitPresentation(this.freeSpinArtworkLoad, token);
+    this.assertPresentationCurrent(token);
+    if (!this.freeSpinArtwork) throw new Error("Required Free Spins artwork is unavailable");
+  }
+
+  private async ensureWheelArtwork(token: FeaturePresentationToken): Promise<void> {
+    if (this.wheelArtwork) return;
+    const generation = this.featureArtworkGeneration;
+    if (!this.wheelArtworkLoad) {
+      const attempt = loadPrimalSpineSet(WHEEL_VERIFIED_SPINE_KEYS).then((spines) => {
+        if (!this.destroyed && generation === this.featureArtworkGeneration) {
+          // 兼容独立渲染器/测试宿主的按需 URL 回退；生产控制器始终先采用验证包。
+          this.wheelArtwork = Object.freeze({
+            kind: "wheel",
+            channel: "desktop",
+            spines,
+            ownsTextures: false,
+            textures: Object.freeze({
+              blue: Texture.from(PRIMAL_ASSETS.features.wheelBlue),
+              red: Texture.from(PRIMAL_ASSETS.features.wheelRed),
+              dual: Texture.from(PRIMAL_ASSETS.features.wheelDual),
+            }),
+          });
+        }
+      });
+      this.wheelArtworkLoad = attempt;
+      void attempt.catch(() => {
+        if (this.wheelArtworkLoad === attempt) this.wheelArtworkLoad = null;
+      });
+    }
+    await this.awaitPresentation(this.wheelArtworkLoad, token);
+    this.assertPresentationCurrent(token);
+    if (!this.wheelArtwork) throw new Error("Required Primal Wheel artwork is unavailable");
   }
 
   /** 会话金额格式器只改变文字投影，不参与任何奖励或余额计算。 */
@@ -2612,9 +2688,9 @@ export class FeatureEffects {
     if (this.destroyed || events.length === 0) return;
     const token = this.currentPresentationToken();
     const descriptor = this.visualDescriptor("free-spin.trails", "free_spin.awarded");
-    if (!authoredFeatureData.trail) {
+    if (!authoredInteractionData.trail) {
       try {
-        await this.awaitPresentation(loadAuthoredFeatureSpines(), token);
+        await this.awaitPresentation(loadAuthoredInteractionSpines(), token);
       } catch (error) {
         if (isFeaturePresentationCancelled(error)) return;
         this.visualTelemetry?.failedToStart(descriptor, {
@@ -2633,7 +2709,7 @@ export class FeatureEffects {
       const source = this.reels.getCellCenter({ reel: event.reel!, row: event.row! });
       if (!source) continue;
       const trail = createAuthoredCollectTrail(
-        authoredFeatureData.trail,
+        authoredInteractionData.trail,
         this.effectPoint(source),
         target,
         reducedMotion,
@@ -2680,6 +2756,10 @@ export class FeatureEffects {
     this.visualTelemetry?.cancelAll();
     this.rageCascadeMilestoneListener = null;
     this.cancelActivePresentation();
+    const wheelArtwork = this.wheelArtwork;
+    this.wheelArtwork = null;
+    this.freeSpinArtwork = null;
+    disposeVerifiedWheelArtwork(wheelArtwork);
   }
 
   private async presentSurgeCollection(
@@ -3099,7 +3179,7 @@ export class FeatureEffects {
     const target = this.characterCollectTarget?.() ?? new Point(LOGICAL_WIDTH / 2, 92);
     const scene = new Container();
     const trails = addressed.map(({ point }) => createAuthoredCollectTrail(
-      authoredFeatureData.trail,
+      authoredInteractionData.trail,
       point,
       target,
       reducedMotion,
@@ -3107,7 +3187,7 @@ export class FeatureEffects {
     if (!reducedMotion && trails.every((trail) => trail === null)) {
       this.visualTelemetry?.failedToStart(descriptor, {
         stage: "create",
-        code: authoredFeatureData.trail ? "spine-create-failed" : "empty-presentation",
+        code: authoredInteractionData.trail ? "spine-create-failed" : "empty-presentation",
         fallback: "procedural",
       });
       return false;
@@ -3256,9 +3336,9 @@ export class FeatureEffects {
       event.mode === "OVERDRIVE" ? "free-spin.intro.king" : "free-spin.intro.kong",
       event.type,
     );
-    if (!authoredFeatureData.freeSpinIntroKongQuest) {
+    if (!this.freeSpinArtwork?.freeSpinIntroKongQuest) {
       try {
-        await this.awaitPresentation(loadAuthoredFeatureSpines(), token);
+        await this.ensureFreeSpinArtwork(token);
       } catch (error) {
         if (isFeaturePresentationCancelled(error)) throw error;
         this.visualTelemetry?.failedToStart(descriptor, {
@@ -3271,8 +3351,8 @@ export class FeatureEffects {
     }
     this.assertPresentationCurrent(token);
     const introData = event.mode === "OVERDRIVE"
-      ? authoredFeatureData.freeSpinIntroKingSpin
-      : authoredFeatureData.freeSpinIntroKongQuest;
+      ? this.freeSpinArtwork?.freeSpinIntroKingSpin
+      : this.freeSpinArtwork?.freeSpinIntroKongQuest;
     const authoredIntro = createAuthoredPanel(
       introData,
       PRIMAL_PANEL_LAYOUT.freeSpinIntro,
@@ -3458,9 +3538,9 @@ export class FeatureEffects {
     token: FeaturePresentationToken,
   ): Promise<void> {
     const descriptor = this.visualDescriptor("free-spin.summary", event.type);
-    if (!authoredFeatureData.freeSpinSummary) {
+    if (!this.freeSpinArtwork?.freeSpinSummary) {
       try {
-        await this.awaitPresentation(loadAuthoredFeatureSpines(), token);
+        await this.ensureFreeSpinArtwork(token);
       } catch (error) {
         if (isFeaturePresentationCancelled(error)) throw error;
         this.visualTelemetry?.failedToStart(descriptor, {
@@ -3479,7 +3559,7 @@ export class FeatureEffects {
     dim.alpha = 0;
     const summaryTextFields = freeSpinSummaryTextBindings(event, this.moneyFormatter);
     const authoredSummary = createAuthoredPanel(
-      authoredFeatureData.freeSpinSummary,
+      this.freeSpinArtwork?.freeSpinSummary,
       PRIMAL_PANEL_LAYOUT.freeSpinSummary,
       summaryTextFields,
       this.responsiveLayoutTrackSource,
@@ -3646,9 +3726,9 @@ export class FeatureEffects {
   ): Promise<void> {
     // 在任何接管变得可见之前解决。未知/缺失的结果是协议错误，绝不是化妆品哈希回退路径的候选者。
     const wheelPlan = wheelSpineAnimationPlan(event);
-    if (!authoredWheelData) {
+    if (!this.wheelArtwork?.spines.wheel) {
       try {
-        await this.awaitPresentation(loadAuthoredWheel(), token);
+        await this.ensureWheelArtwork(token);
       } catch (error) {
         if (isFeaturePresentationCancelled(error)) throw error;
         this.visualTelemetry?.failedToStart(
@@ -3660,6 +3740,7 @@ export class FeatureEffects {
     }
     this.assertPresentationCurrent(token);
     const scene = new Container();
+    const authoredWheelData = this.wheelArtwork?.spines.wheel;
     let authoredPlayback = authoredWheelData
       ? createAuthoredWheelPlayback(
         authoredWheelData,
@@ -3669,7 +3750,7 @@ export class FeatureEffects {
       )
       : null;
     const popup = createAuthoredPanel(
-      authoredFeatureData.wheelPopupStart,
+      this.wheelArtwork?.spines.wheelPopupStart,
       PRIMAL_WHEEL_POPUP_LAYOUT,
       [],
       this.responsiveLayoutTrackSource,
@@ -3687,8 +3768,8 @@ export class FeatureEffects {
       || normalizedPrize === "KONG_QUEST"
       || normalizedPrize === "KING_SPIN";
     const summaryData = freeSpinSummary
-      ? authoredFeatureData.wheelSummaryFreespins
-      : authoredFeatureData.wheelSummaryJackpot;
+      ? this.wheelArtwork?.spines.wheelSummaryFreespins
+      : this.wheelArtwork?.spines.wheelSummaryJackpot;
     const summary = createAuthoredPanel(
       summaryData,
       PRIMAL_PANEL_LAYOUT.wheelSummary,
@@ -3715,12 +3796,12 @@ export class FeatureEffects {
     aura.lineStyle(3, 0xffad52, 0.4).drawCircle(0, 0, 206);
     aura.visible = false;
 
-    const wheelAsset = normalizedOutcome === "OVERDRIVE" || normalizedOutcome === "KING_SPIN"
-      ? PRIMAL_ASSETS.features.wheelDual
+    const wheelTexture = normalizedOutcome === "OVERDRIVE" || normalizedOutcome === "KING_SPIN"
+      ? this.wheelArtwork!.textures.dual
       : normalizedOutcome === "EXPANSION" || normalizedOutcome === "KONG_QUEST"
-        ? PRIMAL_ASSETS.features.wheelRed
-        : PRIMAL_ASSETS.features.wheelBlue;
-    const wheel = new Sprite(authoredTexture(wheelAsset));
+        ? this.wheelArtwork!.textures.red
+        : this.wheelArtwork!.textures.blue;
+    const wheel = new Sprite(wheelTexture);
     wheel.anchor.set(0.5);
     wheel.position.set(AUTHORED_WHEEL_LAYOUT.x, AUTHORED_WHEEL_LAYOUT.y);
     wheel.width = AUTHORED_WHEEL_LAYOUT.diameter;

@@ -65,6 +65,180 @@ export const BIG_WIN_COIN_TOTAL_POOL_SIZE = (
   BIG_WIN_COIN_POOL_SEQUENCE.length * BIG_WIN_COIN_PHYSICS.poolCapacity
 );
 
+export interface BigWinCoinParticleBudget {
+  readonly activeParticleLimit: number;
+  readonly densityScale: number;
+}
+
+export interface BigWinCoinFrameFusePolicy {
+  readonly slowFrameThresholdMs: number;
+  readonly healthyFrameThresholdMs: number;
+  readonly slowFrameWindowSize: number;
+  readonly slowFramesToDegrade: number;
+  readonly healthyFramesToRecover: number;
+  readonly budgets: readonly BigWinCoinParticleBudget[];
+}
+
+export interface BigWinCoinFrameFuseState {
+  readonly level: number;
+  readonly slowFrameMask: number;
+  readonly sampledFrameCount: number;
+  readonly slowFrameCount: number;
+  readonly healthyFrameStreak: number;
+}
+
+export type BigWinCoinPerformanceTier = "normal" | "low";
+
+/**
+ * 仅作用于本地装饰粒子。默认等级完全保留捕获的 150 池和原始密度；三个慢帧才会
+ * 降一级，避免一次 GC/后台调度抖动触发。恢复要求连续健康帧，并且每次只恢复一级。
+ */
+export const BIG_WIN_COIN_FRAME_FUSE_POLICY: BigWinCoinFrameFusePolicy = Object.freeze({
+  slowFrameThresholdMs: 34,
+  healthyFrameThresholdMs: 22,
+  slowFrameWindowSize: 12,
+  slowFramesToDegrade: 3,
+  healthyFramesToRecover: 90,
+  budgets: Object.freeze([
+    Object.freeze({ activeParticleLimit: 150, densityScale: 1 }),
+    Object.freeze({ activeParticleLimit: 96, densityScale: 0.75 }),
+    Object.freeze({ activeParticleLimit: 60, densityScale: 0.5 }),
+  ]),
+});
+
+export interface BigWinCoinShowerOptions {
+  /** `null` 供逐帧捕获基线显式禁用动态采样；固定低档和 reduced-motion 仍然生效。 */
+  readonly frameFusePolicy?: BigWinCoinFrameFusePolicy | null;
+  readonly performanceTier?: BigWinCoinPerformanceTier;
+  readonly reducedMotion?: boolean;
+}
+
+export function initialBigWinCoinFrameFuseState(): BigWinCoinFrameFuseState {
+  return Object.freeze({
+    level: 0,
+    slowFrameMask: 0,
+    sampledFrameCount: 0,
+    slowFrameCount: 0,
+    healthyFrameStreak: 0,
+  });
+}
+
+/** 纯状态转换；不读取 navigator、硬件信息、时间源或服务端状态。 */
+export function advanceBigWinCoinFrameFuse(
+  state: Readonly<BigWinCoinFrameFuseState>,
+  frameDurationMs: number,
+  policy: Readonly<BigWinCoinFrameFusePolicy> = BIG_WIN_COIN_FRAME_FUSE_POLICY,
+): BigWinCoinFrameFuseState {
+  if (!Number.isFinite(frameDurationMs) || frameDurationMs <= 0) return state;
+  assertBigWinCoinFrameFusePolicy(policy);
+  const windowMask = 2 ** policy.slowFrameWindowSize - 1;
+  const slowFrame = frameDurationMs >= policy.slowFrameThresholdMs;
+  const slowFrameMask = ((state.slowFrameMask << 1) | Number(slowFrame)) & windowMask;
+  const sampledFrameCount = Math.min(
+    policy.slowFrameWindowSize,
+    state.sampledFrameCount + 1,
+  );
+  const slowFrameCount = countSetBits(slowFrameMask);
+  const healthyFrameStreak = frameDurationMs <= policy.healthyFrameThresholdMs
+    ? state.healthyFrameStreak + 1
+    : 0;
+  const maximumLevel = policy.budgets.length - 1;
+
+  if (slowFrameCount >= policy.slowFramesToDegrade && state.level < maximumLevel) {
+    return Object.freeze({
+      level: state.level + 1,
+      slowFrameMask: 0,
+      sampledFrameCount: 0,
+      slowFrameCount: 0,
+      healthyFrameStreak: 0,
+    });
+  }
+  if (healthyFrameStreak >= policy.healthyFramesToRecover && state.level > 0) {
+    return Object.freeze({
+      level: state.level - 1,
+      slowFrameMask: 0,
+      sampledFrameCount: 0,
+      slowFrameCount: 0,
+      healthyFrameStreak: 0,
+    });
+  }
+  return Object.freeze({
+    level: state.level,
+    slowFrameMask,
+    sampledFrameCount,
+    slowFrameCount,
+    healthyFrameStreak: state.level === 0 ? 0 : healthyFrameStreak,
+  });
+}
+
+export function resolveBigWinCoinParticleBudget(
+  state: Readonly<BigWinCoinFrameFuseState>,
+  options: Readonly<{
+    reducedMotion?: boolean;
+    performanceTier?: BigWinCoinPerformanceTier;
+  }> = {},
+  policy: Readonly<BigWinCoinFrameFusePolicy> = BIG_WIN_COIN_FRAME_FUSE_POLICY,
+): BigWinCoinParticleBudget {
+  assertBigWinCoinFrameFusePolicy(policy);
+  const maximumLevel = policy.budgets.length - 1;
+  const fixedFloor = options.performanceTier === "low"
+    ? maximumLevel
+    : options.reducedMotion ? Math.min(1, maximumLevel) : 0;
+  const level = Math.max(fixedFloor, Math.min(maximumLevel, state.level));
+  return policy.budgets[level]!;
+}
+
+function countSetBits(value: number): number {
+  let remaining = value >>> 0;
+  let count = 0;
+  while (remaining !== 0) {
+    remaining &= remaining - 1;
+    count += 1;
+  }
+  return count;
+}
+
+function assertBigWinCoinFrameFusePolicy(
+  policy: Readonly<BigWinCoinFrameFusePolicy>,
+): void {
+  if (!Number.isFinite(policy.slowFrameThresholdMs)
+    || !Number.isFinite(policy.healthyFrameThresholdMs)
+    || policy.healthyFrameThresholdMs <= 0
+    || policy.slowFrameThresholdMs <= policy.healthyFrameThresholdMs) {
+    throw new Error("Big Win coin frame thresholds must satisfy 0 < healthy < slow");
+  }
+  if (!Number.isInteger(policy.slowFrameWindowSize)
+    || policy.slowFrameWindowSize < 1 || policy.slowFrameWindowSize > 30
+    || !Number.isInteger(policy.slowFramesToDegrade)
+    || policy.slowFramesToDegrade < 2
+    || policy.slowFramesToDegrade > policy.slowFrameWindowSize
+    || !Number.isInteger(policy.healthyFramesToRecover)
+    || policy.healthyFramesToRecover < 1) {
+    throw new Error("Big Win coin frame fuse window is invalid");
+  }
+  if (!Array.isArray(policy.budgets) || policy.budgets.length < 2) {
+    throw new Error("Big Win coin frame fuse requires at least two budgets");
+  }
+  policy.budgets.forEach((budget, index) => {
+    if (!Number.isInteger(budget.activeParticleLimit)
+      || budget.activeParticleLimit < 1
+      || budget.activeParticleLimit > BIG_WIN_COIN_TOTAL_POOL_SIZE
+      || !Number.isFinite(budget.densityScale)
+      || budget.densityScale <= 0 || budget.densityScale > 1) {
+      throw new Error("Big Win coin particle budget is invalid");
+    }
+    if (index === 0 && (budget.activeParticleLimit !== BIG_WIN_COIN_TOTAL_POOL_SIZE
+      || budget.densityScale !== 1)) {
+      throw new Error("Big Win coin normal budget must preserve captured physics");
+    }
+    const previous = policy.budgets[index - 1];
+    if (previous && (budget.activeParticleLimit > previous.activeParticleLimit
+      || budget.densityScale > previous.densityScale)) {
+      throw new Error("Big Win coin degraded budgets must be monotonic");
+    }
+  });
+}
+
 export interface BigWinCoinPoolInitializationOptions {
   readonly batchSize?: number;
   readonly signal?: AbortSignal;
@@ -107,6 +281,10 @@ export interface BigWinCoinShowerLoadOptions {
   readonly batchSize?: number;
   readonly requestFrame?: FrameRequest;
   readonly onProgress?: (fraction: number) => void;
+  /** 与 verifiedAtlasTexture 成对提供；来自事件租约已校验 JSON bytes 的解码值。 */
+  readonly verifiedManifest?: unknown;
+  /** 与 verifiedManifest 成对提供；由同一租约已校验 PNG bytes 解码。 */
+  readonly verifiedAtlasTexture?: Texture;
 }
 
 export interface CoinParticleState {
@@ -300,6 +478,17 @@ class CoinPoolRuntime {
     this.active.length = 0;
   }
 
+  /** 降档时优先释放最老的粒子；新触发的层级反馈仍保持可见。 */
+  trimActive(limit: number): void {
+    const boundedLimit = Math.max(0, Math.min(BIG_WIN_COIN_PHYSICS.poolCapacity, limit));
+    while (this.active.length > boundedLimit) {
+      const particle = this.active.pop();
+      if (!particle) break;
+      particle.sprite.alpha = 0;
+      this.free.push(particle);
+    }
+  }
+
   get activeCount(): number {
     return this.active.length;
   }
@@ -326,18 +515,31 @@ class CoinPoolRuntime {
  */
 export class BigWinCoinShower extends Container {
   private readonly random: RandomSource;
+  private readonly frameFusePolicy: BigWinCoinFrameFusePolicy | null;
   private pools: CoinPoolRuntime[] = [];
   private loadPromise: Promise<void> | null = null;
   private disposed = false;
   private emitting = false;
+  private reducedMotion: boolean;
+  private performanceTier: BigWinCoinPerformanceTier;
+  private frameFuseState = initialBigWinCoinFrameFuseState();
   private density: number = BIG_WIN_COIN_PHYSICS.tierDensities[0];
   private emissionCounter = 0;
   private poolIndex = 0;
   private tickAccumulatorMs = 0;
 
-  constructor(random: RandomSource = Math.random) {
+  constructor(
+    random: RandomSource = Math.random,
+    options: BigWinCoinShowerOptions = {},
+  ) {
     super();
     this.random = random;
+    this.frameFusePolicy = options.frameFusePolicy === undefined
+      ? BIG_WIN_COIN_FRAME_FUSE_POLICY
+      : options.frameFusePolicy;
+    if (this.frameFusePolicy) assertBigWinCoinFrameFusePolicy(this.frameFusePolicy);
+    this.performanceTier = options.performanceTier ?? "normal";
+    this.reducedMotion = options.reducedMotion === true;
   }
 
   get artworkLoaded(): boolean {
@@ -348,16 +550,45 @@ export class BigWinCoinShower extends Container {
     return this.pools.reduce((total, pool) => total + pool.activeCount, 0);
   }
 
+  /** 本地只读诊断；未接入 DOM、遥测、网络或服务端结果。 */
+  get particleBudgetSnapshot(): Readonly<{
+    adaptiveLevel: number;
+    activeParticleLimit: number;
+    densityScale: number;
+    slowFrameCount: number;
+    healthyFrameStreak: number;
+  }> {
+    const budget = this.currentParticleBudget();
+    return Object.freeze({
+      adaptiveLevel: this.frameFuseState.level,
+      activeParticleLimit: budget.activeParticleLimit,
+      densityScale: budget.densityScale,
+      slowFrameCount: this.frameFuseState.slowFrameCount,
+      healthyFrameStreak: this.frameFuseState.healthyFrameStreak,
+    });
+  }
+
   load(
     signal?: AbortSignal,
     options: BigWinCoinShowerLoadOptions = {},
   ): Promise<void> {
     if (this.artworkLoaded) return Promise.resolve();
     if (this.loadPromise) return this.loadPromise;
-    const attempt = Promise.all([
-      loadCoinAtlasManifest(signal),
-      Texture.fromURL(BIG_WIN_COIN_ATLAS_URL),
-    ]).then(async ([manifest, atlas]) => {
+    const hasVerifiedManifest = options.verifiedManifest !== undefined;
+    const hasVerifiedAtlas = options.verifiedAtlasTexture !== undefined;
+    if (hasVerifiedManifest !== hasVerifiedAtlas) {
+      return Promise.reject(new Error("Verified Big Win coin manifest and atlas must be provided together"));
+    }
+    const source = hasVerifiedManifest && options.verifiedAtlasTexture
+      ? Promise.resolve([
+          parseCoinAtlasManifest(options.verifiedManifest),
+          options.verifiedAtlasTexture,
+        ] as const)
+      : Promise.all([
+          loadCoinAtlasManifest(signal),
+          Texture.fromURL(BIG_WIN_COIN_ATLAS_URL),
+        ] as const);
+    const attempt = source.then(async ([manifest, atlas]) => {
       if (this.disposed) return;
       throwIfAborted(signal);
       const textures = makeCoinTextures(manifest, atlas);
@@ -398,6 +629,7 @@ export class BigWinCoinShower extends Container {
   }
 
   start(density: number = BIG_WIN_COIN_PHYSICS.tierDensities[0]): void {
+    this.resetFrameFuse();
     this.setDensity(density);
     this.emitting = true;
     this.emissionCounter = 0;
@@ -406,6 +638,24 @@ export class BigWinCoinShower extends Container {
 
   stop(): void {
     this.emitting = false;
+    this.resetFrameFuse();
+  }
+
+  setReducedMotion(enabled: boolean): void {
+    if (this.reducedMotion === enabled) return;
+    this.reducedMotion = enabled;
+    this.resetFrameFuse();
+    this.enforceActiveParticleLimit();
+  }
+
+  setPerformanceTier(tier: BigWinCoinPerformanceTier): void {
+    if (tier !== "normal" && tier !== "low") {
+      throw new Error("Big Win coin performance tier must be normal or low");
+    }
+    if (this.performanceTier === tier) return;
+    this.performanceTier = tier;
+    this.resetFrameFuse();
+    this.enforceActiveParticleLimit();
   }
 
   setDensity(density: number): void {
@@ -434,6 +684,15 @@ export class BigWinCoinShower extends Container {
 
   update(deltaMs: number): void {
     if (!Number.isFinite(deltaMs) || deltaMs <= 0 || this.pools.length === 0) return;
+    if (this.emitting && this.frameFusePolicy) {
+      const previousLevel = this.frameFuseState.level;
+      this.frameFuseState = advanceBigWinCoinFrameFuse(
+        this.frameFuseState,
+        deltaMs,
+        this.frameFusePolicy,
+      );
+      if (this.frameFuseState.level !== previousLevel) this.enforceActiveParticleLimit();
+    }
     const tickMs = 1_000 / BIG_WIN_COIN_PHYSICS.tickRate;
     let remainingMs = deltaMs;
 
@@ -458,23 +717,65 @@ export class BigWinCoinShower extends Container {
     this.emissionCounter = 0;
     this.poolIndex = 0;
     this.tickAccumulatorMs = 0;
+    this.resetFrameFuse();
+  }
+
+  /**
+   * 丢弃尚未被 BigWinView 原子采用的一代派生纹理/精灵；共享 atlas BaseTexture
+   * 仍由字体或视图 owner 持有。随后同一实例可用新租约重试。
+   */
+  clearArtwork(): void {
+    this.killAll();
+    const pools = this.pools;
+    this.pools = [];
+    this.loadPromise = null;
+    destroyCoinPools(pools);
   }
 
   override destroy(options?: Parameters<Container["destroy"]>[0]): void {
     this.disposed = true;
-    this.killAll();
-    this.pools = [];
+    this.clearArtwork();
     super.destroy(options);
   }
 
   private emitTick(yForce: number): void {
-    const step = advanceCoinEmissionCounter(this.emissionCounter, this.density);
+    const budget = this.currentParticleBudget();
+    const step = advanceCoinEmissionCounter(
+      this.emissionCounter,
+      this.density * budget.densityScale,
+    );
     this.emissionCounter = step.counter;
     for (let index = 0; index < step.count; index += 1) {
+      if (this.activeParticleCount >= budget.activeParticleLimit) break;
       const pool = this.pools[this.poolIndex];
       pool?.emit(yForce);
       this.poolIndex = (this.poolIndex + 1) % BIG_WIN_COIN_POOL_SEQUENCE.length;
     }
+  }
+
+  private currentParticleBudget(): BigWinCoinParticleBudget {
+    return resolveBigWinCoinParticleBudget(
+      this.frameFuseState,
+      {
+        reducedMotion: this.reducedMotion,
+        performanceTier: this.performanceTier,
+      },
+      this.frameFusePolicy ?? BIG_WIN_COIN_FRAME_FUSE_POLICY,
+    );
+  }
+
+  private enforceActiveParticleLimit(): void {
+    if (this.pools.length === 0) return;
+    const limit = this.currentParticleBudget().activeParticleLimit;
+    const perPool = Math.floor(limit / this.pools.length);
+    const remainder = limit % this.pools.length;
+    this.pools.forEach((pool, index) => {
+      pool.trimActive(perPool + (index < remainder ? 1 : 0));
+    });
+  }
+
+  private resetFrameFuse(): void {
+    this.frameFuseState = initialBigWinCoinFrameFuseState();
   }
 }
 
@@ -528,7 +829,7 @@ async function loadCoinAtlasManifest(signal?: AbortSignal): Promise<CoinAtlasMan
   return parseCoinAtlasManifest(parsed);
 }
 
-function parseCoinAtlasManifest(value: unknown): CoinAtlasManifest {
+export function parseCoinAtlasManifest(value: unknown): CoinAtlasManifest {
   const manifest = value as Partial<CoinAtlasManifest> | null;
   if (
     manifest?.schemaVersion !== 1

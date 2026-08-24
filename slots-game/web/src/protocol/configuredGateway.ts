@@ -41,6 +41,8 @@ export interface ConfiguredGatewayOptions {
     | "ledgerStorage"
     | "timers"
     | "now"
+    | "monotonicNow"
+    | "sessionStatusIntervalMs"
     | "requestId"
     | "requestTimeoutMs"
     | "pollDelayMs"

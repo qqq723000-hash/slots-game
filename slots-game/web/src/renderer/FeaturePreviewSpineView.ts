@@ -181,11 +181,14 @@ export class FeaturePreviewSpineView {
       this.applyResponsiveLayout();
       if (this.requestedVisible) this.startPlayback();
       return true;
-    }).catch(() => false);
-    this.loadPromise = attempt;
-    void attempt.finally(() => {
-      if (!this.spine && this.loadPromise === attempt) this.loadPromise = null;
     });
+    this.loadPromise = attempt;
+    void attempt.then(
+      () => undefined,
+      () => {
+        if (!this.spine && this.loadPromise === attempt) this.loadPromise = null;
+      },
+    );
     return attempt;
   }
 

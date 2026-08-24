@@ -5,17 +5,29 @@ import {
   Rectangle,
   Text,
   TextStyle,
+  Texture,
 } from "pixi.js";
 import { createSpineView, type Spine } from "./spine/SpineAdapter";
-import { loadPrimalSpineData } from "./spine/PrimalSpineAssets";
 import {
+  loadPrimalSpineData,
+  loadPrimalSpineDataFromVerifiedBinary,
+  primalSpineSkeletonUrl,
+} from "./spine/PrimalSpineAssets";
+import {
+  installPrimalBitmapFontFromVerifiedDescriptor,
   loadPrimalBitmapFont,
   PRIMAL_BITMAP_FONT_BASE,
   PRIMAL_BITMAP_FONT_LINE_HEIGHT,
   PRIMAL_BITMAP_FONT_NAME,
+  PRIMAL_BITMAP_FONT_PAGE_URL,
   PRIMAL_BITMAP_FONT_SIZE,
+  PRIMAL_BITMAP_FONT_URL,
 } from "./PrimalBitmapFont";
-import { BigWinCoinShower } from "./BigWinCoinShower";
+import {
+  BIG_WIN_COIN_MANIFEST_URL,
+  BigWinCoinShower,
+  type BigWinCoinShowerOptions,
+} from "./BigWinCoinShower";
 import type {
   VisualTelemetryOperation,
   VisualTelemetryReporter,
@@ -29,6 +41,15 @@ import {
   DEFAULT_MINOR_UNIT_FORMATTER,
   type MinorUnitFormatter,
 } from "../protocol/moneyFormatter";
+import type {
+  LoadedAssetPackage,
+  LoadedAssetResource,
+} from "../startup/StreamingAssetPackages";
+import type { PrimalRuntimeAssetChannel } from "../assets/primalRuntimeAssets";
+import {
+  disposePixiTextureAttempt,
+  loadPixiTextureFromVerifiedBytes,
+} from "./pixiTextureCleanup";
 
 export type BigWinTier = "bigwin" | "super" | "mega" | "ultra";
 
@@ -345,6 +366,72 @@ export type BigWinPresentationResult = "complete" | "cancelled";
 /** 一个接受的 CONTINUE 选择控制器的快速查看路径。 */
 export type BigWinInteractionResult = "quick-view";
 
+export interface BigWinVerifiedArtworkPayload {
+  readonly channel: PrimalRuntimeAssetChannel;
+  readonly spineBinary: Uint8Array;
+  readonly fontDescriptor: string;
+  readonly fontPageBytes: Uint8Array;
+  readonly coinManifest: unknown;
+}
+
+/**
+ * 将 feature-big-win 目标包中的四项已验证负载绑定到真实展示器。依赖包由租约
+ * 保留/校验，但此处不把共享 spine_ui atlas 冒充为 Big Win 独占首包节省。
+ */
+export function bigWinVerifiedArtworkFromPackage(
+  loaded: LoadedAssetPackage,
+): BigWinVerifiedArtworkPayload {
+  const channel = loaded.id === "desktop-feature-big-win"
+    ? "desktop"
+    : loaded.id === "mobile-feature-big-win"
+      ? "mobile"
+      : null;
+  if (!channel || loaded.stage !== "feature-on-demand") {
+    throw new Error("Invalid verified Big Win asset package");
+  }
+  const spine = requiredVerifiedBigWinResource(
+    loaded,
+    primalSpineSkeletonUrl("bigWin"),
+    "binary",
+  );
+  const font = requiredVerifiedBigWinResource(loaded, PRIMAL_BITMAP_FONT_URL, "text");
+  const page = requiredVerifiedBigWinResource(loaded, PRIMAL_BITMAP_FONT_PAGE_URL, "binary");
+  const coins = requiredVerifiedBigWinResource(loaded, BIG_WIN_COIN_MANIFEST_URL, "json");
+  let coinManifest: unknown;
+  try {
+    coinManifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(coins.bytes));
+  } catch {
+    throw new Error("Invalid verified Big Win coin manifest payload");
+  }
+  return Object.freeze({
+    channel,
+    spineBinary: spine.bytes,
+    fontDescriptor: new TextDecoder("utf-8", { fatal: true }).decode(font.bytes),
+    fontPageBytes: page.bytes,
+    coinManifest,
+  });
+}
+
+function requiredVerifiedBigWinResource(
+  loaded: LoadedAssetPackage,
+  url: string,
+  decoder: "binary" | "text" | "json",
+): LoadedAssetResource {
+  const runtimePath = (value: string): string => {
+    const marker = "/assets/primal-runtime/";
+    const offset = value.indexOf(marker);
+    return offset >= 0 ? value.slice(offset) : value;
+  };
+  const resource = [...loaded.resources.values()].find((candidate) => (
+    runtimePath(candidate.spec.url) === runtimePath(url)
+      && candidate.spec.decoder === decoder
+  ));
+  if (!resource || resource.bytes.byteLength !== resource.spec.bytes) {
+    throw new Error("Verified Big Win asset package is incomplete");
+  }
+  return resource;
+}
+
 export interface BigWinViewOptions {
   /** 仅纯显示格式；货币/面额政策属于主办方。 */
   readonly formatAmount?: (amountMinor: bigint) => string;
@@ -353,6 +440,8 @@ export interface BigWinViewOptions {
     plan: BigWinPlan,
   ) => unknown;
   readonly visualTelemetry?: VisualTelemetryReporter;
+  /** 仅控制本地装饰粒子预算；不参与中奖、金额、层级或服务端状态。 */
+  readonly coinShowerOptions?: BigWinCoinShowerOptions;
 }
 
 /**
@@ -395,7 +484,7 @@ interface ActiveBigWinPresentation {
  */
 export class BigWinView extends Container {
   private readonly amountPoint = new Vector2();
-  private readonly coinShower = new BigWinCoinShower();
+  private readonly coinShower: BigWinCoinShower;
   private formatter: NonNullable<BigWinViewOptions["formatAmount"]>;
   private milestoneListener: BigWinViewOptions["onMilestone"];
   private spine: Spine | null = null;
@@ -412,9 +501,12 @@ export class BigWinView extends Container {
   private displayedAmountMinor = 0n;
   private readonly visualTelemetry: VisualTelemetryReporter | null;
   private visualOperation: VisualTelemetryOperation | null = null;
+  /** 仅当全局 BitmapFont 未接管 verified PNG 时由视图持有。 */
+  private ownedVerifiedAtlasTexture: Texture | null = null;
 
   constructor(options: BigWinViewOptions = {}) {
     super();
+    this.coinShower = new BigWinCoinShower(Math.random, options.coinShowerOptions);
     // 从构建开始就拥有淋浴间，而不仅仅是在艺术品加载后。它的 150 个精灵池是跨帧构建的，因此在该工作期间被破坏的所有者必须在提交之前处理分离的尝试。
     this.addChild(this.coinShower);
     this.setResponsiveLayout(BIG_WIN_DESKTOP_REGION);
@@ -467,10 +559,18 @@ export class BigWinView extends Container {
     this.milestoneListener = listener;
   }
 
+  setReducedMotion(enabled: boolean): void {
+    this.coinShower.setReducedMotion(enabled);
+  }
+
   loadArtwork(
     signal?: AbortSignal,
     onProgress?: (fraction: number) => void,
+    verified?: BigWinVerifiedArtworkPayload,
   ): Promise<void> {
+    if (this.destroyed || signal?.aborted) {
+      return Promise.reject(bigWinArtworkAbortReason(signal));
+    }
     if (this.spine) {
       onProgress?.(1);
       return Promise.resolve();
@@ -489,32 +589,76 @@ export class BigWinView extends Container {
       onProgress?.(next);
     };
     publish();
-    const attempt = Promise.all([
-      loadPrimalSpineData("bigWin").then((data) => {
-        spineProgress = 1;
-        publish();
-        return data;
-      }),
-      loadBigWinSharedAtlas(
-        async () => {
-          const loaded = await loadPrimalBitmapFont();
-          sharedProgress = Math.max(sharedProgress, 0.2);
+    let verifiedTexture: Texture | null = null;
+    let verifiedTextureAdoptedByFont = false;
+    let verifiedCoinArtworkCreated = false;
+    const legacySources = (): Promise<readonly [Awaited<ReturnType<typeof loadPrimalSpineData>>, boolean]> => (
+      Promise.all([
+        loadPrimalSpineData("bigWin").then((data) => {
+          spineProgress = 1;
+          publish();
+          return data;
+        }),
+        loadBigWinSharedAtlas(
+          async () => {
+            const loaded = await loadPrimalBitmapFont(signal);
+            sharedProgress = Math.max(sharedProgress, 0.2);
+            publish();
+            return loaded;
+          },
+          () => this.coinShower.load(signal, {
+            onProgress: (fraction) => {
+              sharedProgress = Math.max(sharedProgress, 0.2 + fraction * 0.8);
+              publish();
+            },
+          }),
+        ).then((loaded) => {
+          sharedProgress = 1;
           publish();
           return loaded;
-        },
-        () => this.coinShower.load(signal, {
-          onProgress: (fraction) => {
-            sharedProgress = Math.max(sharedProgress, 0.2 + fraction * 0.8);
-            publish();
-          },
         }),
-      ).then((loaded) => {
-        sharedProgress = 1;
-        publish();
-        return loaded;
-      }),
-    ]).then(([data, hasBitmapFont]) => {
-      if (this.destroyed || signal?.aborted) return;
+      ])
+    );
+    const verifiedSources = async (): Promise<readonly [Awaited<ReturnType<
+      typeof loadPrimalSpineDataFromVerifiedBinary
+    >>, boolean]> => {
+      const data = await loadPrimalSpineDataFromVerifiedBinary(
+        "bigWin",
+        verified!.spineBinary,
+        verified!.channel,
+        signal,
+      );
+      spineProgress = 1;
+      publish();
+      // 顺序提交避免 skeleton 解析失败后留下已采用的 GPU/150-Sprite 代。
+      verifiedTexture = await loadPixiTextureFromVerifiedBytes(
+        verified!.fontPageBytes,
+        "image/png",
+        signal,
+      );
+      const font = installPrimalBitmapFontFromVerifiedDescriptor(
+        verified!.fontDescriptor,
+        verifiedTexture,
+      );
+      verifiedTextureAdoptedByFont = font.adoptedPageTexture;
+      sharedProgress = Math.max(sharedProgress, 0.2);
+      publish();
+      const coinArtworkWasLoaded = this.coinShower.artworkLoaded;
+      await this.coinShower.load(signal, {
+        verifiedManifest: verified!.coinManifest,
+        verifiedAtlasTexture: verifiedTexture,
+        onProgress: (fraction) => {
+          sharedProgress = Math.max(sharedProgress, 0.2 + fraction * 0.8);
+          publish();
+        },
+      });
+      verifiedCoinArtworkCreated = !coinArtworkWasLoaded && this.coinShower.artworkLoaded;
+      sharedProgress = 1;
+      publish();
+      return [data, font.installed] as const;
+    };
+    const attempt = (verified ? verifiedSources() : legacySources()).then(([data, hasBitmapFont]) => {
+      if (this.destroyed || signal?.aborted) throw bigWinArtworkAbortReason(signal);
       const spine = createSpineView(data);
       spine.autoUpdate = false;
       spine.skeleton.setSkinByName("default");
@@ -531,6 +675,10 @@ export class BigWinView extends Container {
       amount.visible = false;
       this.spine = spine;
       this.amountText = amount;
+      if (verifiedTexture && !verifiedTextureAdoptedByFont) {
+        this.ownedVerifiedAtlasTexture = verifiedTexture;
+      }
+      verifiedTexture = null;
       // 文本跟随骨架中最终制作好的边界槽位。该组件不绘制合成底板，也不替换美术资源。
       this.addChild(spine, this.coinShower, amount);
       this.playHidden();
@@ -543,7 +691,7 @@ export class BigWinView extends Container {
           id: "win.big",
           requirement: "conditional",
           mode: "authored",
-          sourceEvent: "launch.preload",
+          sourceEvent: "win.big",
         }, {
           stage: "load",
           code: "asset-load-failed",
@@ -551,6 +699,10 @@ export class BigWinView extends Container {
         });
       }
     }).catch((error: unknown) => {
+      if (verifiedCoinArtworkCreated) this.coinShower.clearArtwork();
+      if (verifiedTexture && !verifiedTextureAdoptedByFont) {
+        disposePixiTextureAttempt(verifiedTexture, [this.ownedVerifiedAtlasTexture]);
+      }
       this.loadPromise = null;
       throw error;
     });
@@ -559,11 +711,15 @@ export class BigWinView extends Container {
   }
 
   /** 仅在真实层隐藏剪辑之后或使用 `cancelled` 才能解决。 */
-  async present(plan: BigWinPlan): Promise<BigWinPresentationResult> {
+  async present(
+    plan: BigWinPlan,
+    signal?: AbortSignal,
+    verified?: BigWinVerifiedArtworkPayload,
+  ): Promise<BigWinPresentationResult> {
     const requestId = ++this.requestId;
     this.finishActive("cancelled");
     try {
-      await this.loadArtwork();
+      await this.loadArtwork(signal, undefined, verified);
     } catch (error) {
       this.visualTelemetry?.failedToStart({
         id: "win.big",
@@ -577,7 +733,7 @@ export class BigWinView extends Container {
       });
       throw error;
     }
-    if (requestId !== this.requestId || this.destroyed) return "cancelled";
+    if (requestId !== this.requestId || this.destroyed || signal?.aborted) return "cancelled";
 
     this.visualOperation = this.visualTelemetry?.start({
       id: "win.big",
@@ -675,6 +831,9 @@ export class BigWinView extends Container {
     if (!this.coinShower.destroyed) {
       this.coinShower.destroy({ children: true });
     }
+    const ownedVerifiedAtlasTexture = this.ownedVerifiedAtlasTexture;
+    this.ownedVerifiedAtlasTexture = null;
+    disposePixiTextureAttempt(ownedVerifiedAtlasTexture);
     super.destroy(options);
   }
 
@@ -997,6 +1156,13 @@ export class BigWinView extends Container {
     amount.alpha = slot.color.a * spine.skeleton.color.a;
     amount.visible = this.visible && attachment !== null && amount.alpha > 0.001;
   }
+}
+
+function bigWinArtworkAbortReason(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("Big Win artwork load was aborted");
+  error.name = "AbortError";
+  return error;
 }
 
 function setRequiredAnimation(spine: Spine, animation: string, loop: boolean): void {

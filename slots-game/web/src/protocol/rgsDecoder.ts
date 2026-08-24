@@ -36,6 +36,7 @@ export interface DecodedRgsSession {
   readonly binding: RgsBinding;
   readonly status: "ACTIVE" | "BLOCKED" | "CLOSED" | "EXPIRED";
   readonly expiresAt: string;
+  readonly idleDisconnectAt: string;
   readonly balanceMinor: MoneyMinor;
   readonly revision: string;
   readonly sequence: number;
@@ -45,7 +46,17 @@ export interface DecodedRgsSession {
 export interface DecodedRgsExchange {
   readonly requestId: string;
   readonly accessToken: string;
+  readonly serverTime: string;
   readonly session: DecodedRgsSession;
+}
+
+export interface DecodedRgsSessionStatus {
+  readonly requestId: string;
+  readonly operatorId: string;
+  readonly sessionId: string;
+  readonly status: "ACTIVE" | "EXPIRED";
+  readonly idleDisconnectAt: string;
+  readonly serverTime: string;
 }
 
 export type RgsRoundKind = "BASE" | "FREE_SPIN" | "BONUS";
@@ -69,6 +80,8 @@ export interface DecodedRgsSpin {
   readonly startRevision: string;
   readonly endRevision: string;
   readonly resultHash: string;
+  /** 本次权威轮次提交后更新的服务端空闲断开绝对时间。 */
+  readonly idleDisconnectAt: string;
 }
 
 /** 仅用于定位旋转响应解码边界，不得携带响应值、标识或异常内容。 */
@@ -332,8 +345,17 @@ export function decodeRgsExchange(
   const decodedEnvelope = envelope(value, "response");
   requireMatchingRequestId(decodedEnvelope.requestId, expectedRequestId);
   const data = record(decodedEnvelope.data, "response.data");
-  exactKeys(data, ["accessToken", "session"], ["accessToken", "session"], "response.data");
+  exactKeys(
+    data,
+    ["accessToken", "serverTime", "session"],
+    ["accessToken", "serverTime", "session"],
+    "response.data",
+  );
   const accessToken = text(data.accessToken, "response.data.accessToken", 80, 8_192);
+  const serverTime = text(data.serverTime, "response.data.serverTime", 20, 64);
+  if (!Number.isFinite(Date.parse(serverTime))) {
+    throw new RgsProtocolError("response.data.serverTime must be an RFC3339 timestamp");
+  }
   const rawSession = record(data.session, "response.data.session");
   const sessionKeys = [
     "operatorId",
@@ -346,6 +368,7 @@ export function decodeRgsExchange(
     "jurisdiction",
     "status",
     "expiresAt",
+    "idleDisconnectAt",
     "balanceMinor",
     "revision",
     "sequence",
@@ -364,13 +387,32 @@ export function decodeRgsExchange(
   if (!Number.isFinite(Date.parse(expiresAt))) {
     throw new RgsProtocolError("response.data.session.expiresAt must be an RFC3339 timestamp");
   }
+  const idleDisconnectAt = text(
+    rawSession.idleDisconnectAt,
+    "response.data.session.idleDisconnectAt",
+    20,
+    64,
+  );
+  const idleDisconnectTime = Date.parse(idleDisconnectAt);
+  if (!Number.isFinite(idleDisconnectTime)) {
+    throw new RgsProtocolError(
+      "response.data.session.idleDisconnectAt must be an RFC3339 timestamp",
+    );
+  }
+  if (idleDisconnectTime > Date.parse(expiresAt)) {
+    throw new RgsProtocolError(
+      "response.data.session.idleDisconnectAt must not exceed the session expiry",
+    );
+  }
   return Object.freeze({
     requestId: decodedEnvelope.requestId,
     accessToken,
+    serverTime,
     session: Object.freeze({
       binding: decodedBinding,
       status,
       expiresAt,
+      idleDisconnectAt,
       balanceMinor: decimal(rawSession.balanceMinor, "response.data.session.balanceMinor"),
       revision: revision(rawSession.revision, "response.data.session.revision"),
       sequence: sequence(rawSession.sequence, "response.data.session.sequence"),
@@ -380,7 +422,7 @@ export function decodeRgsExchange(
 }
 
 export function rgsSessionOpened(
-  exchange: DecodedRgsExchange,
+  exchange: Pick<DecodedRgsExchange, "requestId" | "session">,
   betOptionsMinor: readonly MoneyMinor[],
   defaultBetMinor: MoneyMinor,
 ): SessionOpened {
@@ -403,12 +445,68 @@ export function rgsSessionOpened(
   // 通用消息解码器只负责共享玩法协议；RGS 在其已验证的完整绑定上追加表现规则身份。
   return {
     ...decoded,
+    idleDisconnectAt: exchange.session.idleDisconnectAt,
     definitionBinding: Object.freeze({
       gameId: exchange.session.binding.gameId,
       definitionVersion: exchange.session.binding.definitionVersion,
       definitionHash: exchange.session.binding.definitionHash,
     }),
   };
+}
+
+/**
+ * 原版 FLUSH 的 HTTP 等价物：只读取会话终止状态与服务端时间，绝不携带或更新
+ * 余额、轮次、特性、revision 或 sequence。
+ */
+export function decodeRgsSessionStatus(
+  value: unknown,
+  expectedRequestId: string,
+  expectedOperatorId: string,
+  expectedSessionId: string,
+): DecodedRgsSessionStatus {
+  const decodedEnvelope = envelope(value, "response");
+  requireMatchingRequestId(decodedEnvelope.requestId, expectedRequestId);
+  const decoded = record(decodedEnvelope.data, "response.data");
+  const keys = [
+    "operatorId",
+    "sessionId",
+    "status",
+    "idleDisconnectAt",
+    "serverTime",
+  ] as const;
+  exactKeys(decoded, keys, keys, "response.data");
+  const operatorId = identifier(decoded.operatorId, "response.data.operatorId");
+  const sessionId = identifier(decoded.sessionId, "response.data.sessionId");
+  if (operatorId !== expectedOperatorId || sessionId !== expectedSessionId) {
+    throw new RgsProtocolError("session status returned a foreign operator/session binding");
+  }
+  const status = text(decoded.status, "response.data.status") as DecodedRgsSessionStatus["status"];
+  if (status !== "ACTIVE" && status !== "EXPIRED") {
+    throw new RgsProtocolError("response.data.status is unsupported");
+  }
+  const idleDisconnectAt = text(
+    decoded.idleDisconnectAt,
+    "response.data.idleDisconnectAt",
+    20,
+    64,
+  );
+  const serverTime = text(decoded.serverTime, "response.data.serverTime", 20, 64);
+  if (!Number.isFinite(Date.parse(idleDisconnectAt))) {
+    throw new RgsProtocolError(
+      "response.data.idleDisconnectAt must be an RFC3339 timestamp",
+    );
+  }
+  if (!Number.isFinite(Date.parse(serverTime))) {
+    throw new RgsProtocolError("response.data.serverTime must be an RFC3339 timestamp");
+  }
+  return Object.freeze({
+    requestId: decodedEnvelope.requestId,
+    operatorId,
+    sessionId,
+    status,
+    idleDisconnectAt,
+    serverTime,
+  });
 }
 
 function position(value: unknown, path: string): { reel: number; row: number } {
@@ -661,6 +759,7 @@ function decodedSpinData(
     "startRevision",
     "endRevision",
     "resultHash",
+    "idleDisconnectAt",
     "sequence",
     "betMinor",
     "chargedBetMinor",
@@ -749,6 +848,17 @@ function decodedSpinData(
   if (!DIGEST_PATTERN.test(resultHash)) {
     throw new RgsProtocolError("response.data.resultHash is invalid");
   }
+  const idleDisconnectAt = text(
+    decoded.idleDisconnectAt,
+    "response.data.idleDisconnectAt",
+    20,
+    64,
+  );
+  if (!Number.isFinite(Date.parse(idleDisconnectAt))) {
+    throw new RgsProtocolError(
+      "response.data.idleDisconnectAt must be an RFC3339 timestamp",
+    );
+  }
 
   const result = Object.freeze({
     result: translated,
@@ -766,6 +876,7 @@ function decodedSpinData(
     startRevision,
     endRevision,
     resultHash,
+    idleDisconnectAt,
   });
   onStage?.("decode-complete");
   return result;

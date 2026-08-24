@@ -100,7 +100,7 @@ function corsHeaders(pageOrigin, contentType = true) {
     { name: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS" },
     {
       name: "Access-Control-Allow-Headers",
-      value: "Authorization, Content-Type, X-Operator-Id, X-Request-Id",
+      value: "Authorization, Content-Type, Traceparent, X-Operator-Id, X-Request-Id",
     },
     { name: "Cache-Control", value: "no-store" },
     { name: "Vary", value: "Origin" },
@@ -120,11 +120,13 @@ export function createControlledRgsTransactionFixture(options) {
   const baseUrl = new URL(options.baseUrl);
   const pageOrigin = new URL(options.pageOrigin).origin;
   const exchangeUrl = endpoint(baseUrl, "/client/v1/sessions/exchange");
+  const sessionStatusUrl = endpoint(baseUrl, "/client/v1/sessions/status");
   const spinUrl = endpoint(baseUrl, "/client/v1/spins");
   const acknowledgementUrl = endpoint(baseUrl, "/client/v1/results/acknowledgements");
   const expectedBinding = binding(options);
   const order = [];
   let exchangeCount = 0;
+  let sessionStatusCount = 0;
   let spinCount = 0;
   let acknowledgementCount = 0;
   let committedRound = null;
@@ -163,10 +165,12 @@ export function createControlledRgsTransactionFixture(options) {
     return jsonFulfillment(pageOrigin, {
       data: {
         accessToken: ACCESS_TOKEN,
+        serverTime: "2026-08-21T08:00:00Z",
         session: {
           ...expectedBinding,
           status: "ACTIVE",
           expiresAt: "2099-01-01T00:00:00Z",
+          idleDisconnectAt: "2098-12-31T23:30:00Z",
           balanceMinor: options.initialBalanceMinor,
           revision: "0",
           sequence: "0",
@@ -231,6 +235,7 @@ export function createControlledRgsTransactionFixture(options) {
         startRevision: "0",
         endRevision: "1",
         resultHash: RESULT_HASH,
+        idleDisconnectAt: "2098-12-31T23:45:00Z",
         sequence: "1",
         betMinor: options.betMinor,
         chargedBetMinor: options.betMinor,
@@ -240,6 +245,42 @@ export function createControlledRgsTransactionFixture(options) {
         wins: [],
         events: [],
         feature: feature(),
+      },
+      requestId,
+    });
+  }
+
+  function sessionStatus(request) {
+    if (exchangeCount !== 1) {
+      throw new Error("RGS 会话状态探测发生在受控会话交换之前");
+    }
+    requireEqual(request.method, "POST", "RGS 会话状态方法");
+    requireJsonCorsRequest(request, pageOrigin);
+    requireAuthorization(request, `Bearer ${ACCESS_TOKEN}`);
+    const requestId = requireRequestId(request);
+    const body = parseBody(request, [
+      "operatorId",
+      "sessionId",
+      "gameId",
+      "definitionVersion",
+      "definitionHash",
+      "currency",
+      "currencyExponent",
+      "jurisdiction",
+    ], "RGS 会话状态");
+    for (const [name, value] of Object.entries(expectedBinding)) {
+      requireEqual(body[name], value, `RGS 会话状态 ${name}`);
+    }
+    sessionStatusCount += 1;
+    return jsonFulfillment(pageOrigin, {
+      data: {
+        operatorId: options.operatorId,
+        sessionId: options.sessionId,
+        status: "ACTIVE",
+        idleDisconnectAt: committedRound === null
+          ? "2098-12-31T23:30:00Z"
+          : "2098-12-31T23:45:00Z",
+        serverTime: "2026-08-21T08:00:00Z",
       },
       requestId,
     });
@@ -297,11 +338,13 @@ export function createControlledRgsTransactionFixture(options) {
     if (target.origin !== baseUrl.origin) throw new Error("拦截到非目标 RGS 来源");
     const route = target.href === exchangeUrl.href
       ? exchange
-      : target.href === spinUrl.href
-        ? spin
-        : target.href === acknowledgementUrl.href
-          ? acknowledge
-          : null;
+      : target.href === sessionStatusUrl.href
+        ? sessionStatus
+        : target.href === spinUrl.href
+          ? spin
+          : target.href === acknowledgementUrl.href
+            ? acknowledge
+            : null;
     if (route === null) throw new Error(`受控 RGS 收到未声明路径：${target.pathname}`);
     if (request.method === "OPTIONS") return preflight(request);
     return route(request);
@@ -310,6 +353,7 @@ export function createControlledRgsTransactionFixture(options) {
   function snapshot() {
     return Object.freeze({
       exchangeCount,
+      sessionStatusCount,
       spinCount,
       acknowledgementCount,
       order: Object.freeze([...order]),

@@ -18,6 +18,7 @@ import {
   bigWinResponsiveTransform,
   bigWinTierFor,
   bigWinTransitionAnimation,
+  bigWinVerifiedArtworkFromPackage,
   loadBigWinSharedAtlas,
   planBigWin,
   type BigWinPlan,
@@ -29,9 +30,11 @@ import {
   PRIMAL_BITMAP_FONT_DISPLAY_SIZE,
   PRIMAL_BITMAP_FONT_LINE_HEIGHT,
   PRIMAL_BITMAP_FONT_NAME,
+  PRIMAL_BITMAP_FONT_PAGE_URL,
   PRIMAL_BITMAP_FONT_SIZE,
   PRIMAL_BITMAP_FONT_URL,
 } from "../src/renderer/PrimalBitmapFont";
+import { BIG_WIN_COIN_MANIFEST_URL } from "../src/renderer/BigWinCoinShower";
 import {
   PRIMAL_SPINE_SPECS,
   primalSpineSkeletonUrl,
@@ -115,6 +118,49 @@ function mountedBigWin(
 }
 
 describe("native Big Win planning", () => {
+  it("binds all four verified target resources to the renderer payload without network I/O", () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const spineBytes = Uint8Array.of(1, 2, 3);
+    const fontBytes = new TextEncoder().encode("verified descriptor");
+    const pageBytes = Uint8Array.of(137, 80, 78, 71);
+    const coinBytes = new TextEncoder().encode('{"verified":true}');
+    const resource = (
+      id: string,
+      url: string,
+      decoder: "binary" | "text" | "json",
+      bytes: Uint8Array,
+    ) => Object.freeze({
+      spec: Object.freeze({ id, url, decoder, bytes: bytes.byteLength, sha256: "0".repeat(64) }),
+      bytes,
+      decoded: null,
+    });
+    const loaded = Object.freeze({
+      id: "desktop-feature-big-win",
+      version: "test",
+      stage: "feature-on-demand" as const,
+      resources: new Map([
+        ["spine", resource("spine", primalSpineSkeletonUrl("bigWin"), "binary", spineBytes)],
+        ["font", resource("font", PRIMAL_BITMAP_FONT_URL, "text", fontBytes)],
+        ["page", resource("page", PRIMAL_BITMAP_FONT_PAGE_URL, "binary", pageBytes)],
+        ["coins", resource("coins", BIG_WIN_COIN_MANIFEST_URL, "json", coinBytes)],
+      ]),
+    });
+
+    const payload = bigWinVerifiedArtworkFromPackage(loaded);
+
+    expect(payload).toMatchObject({
+      channel: "desktop",
+      spineBinary: spineBytes,
+      fontDescriptor: "verified descriptor",
+      fontPageBytes: pageBytes,
+      coinManifest: { verified: true },
+    });
+    expect(payload.spineBinary).toBe(spineBytes);
+    expect(payload.fontPageBytes).toBe(pageBytes);
+    expect(fetcher).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
   it("uses the captured 20/100/250/500x tiers with integer comparisons", () => {
     expect(BIG_WIN_TIER_THRESHOLDS).toEqual([
       { tier: "bigwin", multiplier: 20n },

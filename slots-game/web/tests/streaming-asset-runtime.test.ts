@@ -3,11 +3,13 @@ import type { AssetPackageManifest } from "../src/startup/StreamingAssetPackages
 import {
   StreamingAssetRuntime,
   assetStreamingMode,
+  beginStreamingAssetEventLease,
   publishStreamingAssetDiagnostics,
   streamingPackageManifestUrl,
 } from "../src/startup/StreamingAssetRuntime";
 
 const SHA = "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb";
+const ZERO_SHA = "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9";
 
 function manifest(channel: "desktop" | "mobile"): AssetPackageManifest {
   return {
@@ -69,8 +71,49 @@ function manifestResponse(channel: "desktop" | "mobile"): Response {
   });
 }
 
+function bigWinManifest(channel: "desktop" | "mobile"): AssetPackageManifest {
+  const resource = (id: string, url: string, decoder: "binary" | "text" | "json") => ({
+    id: `${channel}:${id}`,
+    url,
+    bytes: 1,
+    sha256: ZERO_SHA,
+    decoder,
+  });
+  return {
+    schemaVersion: 1,
+    assetSet: `primal-rampage-runtime:${channel}`,
+    packages: [
+      {
+        id: `${channel}-spine-ui-shared`,
+        version: "1",
+        stage: "base-critical",
+        resources: [resource("ui-atlas", `/assets/${channel}-ui-atlas.bin`, "binary")],
+      },
+      {
+        id: `${channel}-feature-big-win`,
+        version: "1",
+        stage: "feature-on-demand",
+        dependsOn: [`${channel}-spine-ui-shared`],
+        resources: [
+          resource("big-win-skel", "/assets/BigWin.skel", "binary"),
+          resource("big-win-font", "/assets/PrimalRampage.fnt", "text"),
+          resource("big-win-page", "/assets/PrimalRampage.png", "binary"),
+          resource("big-win-coins", "/assets/big-win-coins.json", "json"),
+        ],
+      },
+    ],
+  };
+}
+
 function binaryResponse(): Response {
   return new Response(new TextEncoder().encode("a"), {
+    status: 200,
+    headers: { "content-length": "1" },
+  });
+}
+
+function zeroResponse(): Response {
+  return new Response(new TextEncoder().encode("0"), {
     status: 200,
     headers: { "content-length": "1" },
   });
@@ -106,9 +149,11 @@ describe("StreamingAssetRuntime Phase-B shadow bridge", () => {
     runtime.destroy();
   });
 
-  it("defaults unknown modes to off and maps the boot-frozen channel manifest", () => {
-    expect(assetStreamingMode(undefined)).toBe("off");
-    expect(assetStreamingMode("on-demand")).toBe("off");
+  it("defaults to on-demand, fails unknown modes closed, and maps the boot-frozen manifest", () => {
+    expect(assetStreamingMode(undefined)).toBe("on-demand");
+    expect(assetStreamingMode("")).toBe("on-demand");
+    expect(assetStreamingMode("on-demand")).toBe("on-demand");
+    expect(assetStreamingMode("future-mode")).toBe("off");
     expect(assetStreamingMode("shadow")).toBe("shadow");
     expect(streamingPackageManifestUrl("desktop")).toContain(
       "streaming-packages.desktop.json",
@@ -116,6 +161,108 @@ describe("StreamingAssetRuntime Phase-B shadow bridge", () => {
     expect(streamingPackageManifestUrl("mobile")).toContain(
       "streaming-packages.mobile.json",
     );
+  });
+
+  it("acquires a verified event package in on-demand mode without scheduling the shadow stage", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).includes("streaming-packages")
+        ? manifestResponse("desktop")
+        : binaryResponse()
+    ));
+    const runtime = new StreamingAssetRuntime({
+      channel: "desktop",
+      mode: "on-demand",
+      fetch: fetcher,
+    });
+
+    expect(runtime.scheduleFeatureShadowPrefetch()).toBe(false);
+    const eventLease = beginStreamingAssetEventLease(
+      runtime,
+      "desktop-feature-wheel",
+    );
+    const packageLease = await eventLease.ready;
+
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(packageLease.packageIds).toEqual([
+      "desktop-shared",
+      "desktop-feature-wheel",
+    ]);
+    expect(runtime.diagnostics()).toMatchObject({
+      mode: "on-demand",
+      manifestState: "validated",
+      retainedPayloadBytes: 2,
+    });
+    expect(eventLease.release()).toBe(true);
+    expect(eventLease.release()).toBe(false);
+    expect(packageLease.released).toBe(true);
+    expect(runtime.diagnostics().retainedPayloadBytes).toBe(0);
+    runtime.destroy();
+  });
+
+  it("performs zero Big Win requests before the event and fetches every closure resource once", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).includes("streaming-packages")
+        ? new Response(JSON.stringify(bigWinManifest("desktop")), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+        : zeroResponse()
+    ));
+    const runtime = new StreamingAssetRuntime({
+      channel: "desktop",
+      mode: "on-demand",
+      fetch: fetcher,
+    });
+
+    expect(runtime.scheduleFeatureShadowPrefetch()).toBe(false);
+    await Promise.resolve();
+    expect(fetcher).not.toHaveBeenCalled();
+
+    const eventLease = beginStreamingAssetEventLease(runtime, "desktop-feature-big-win");
+    await eventLease.ready;
+    const urls = fetcher.mock.calls.map(([input]) => String(input));
+    expect(urls).toHaveLength(6);
+    expect(new Set(urls).size).toBe(6);
+    for (const url of urls) {
+      expect(urls.filter((candidate) => candidate === url)).toHaveLength(1);
+    }
+    expect(urls.filter((url) => /BigWin|PrimalRampage|big-win-coins/u.test(url)))
+      .toHaveLength(4);
+
+    eventLease.release();
+    runtime.destroy();
+  });
+
+  it("releases a late package when an event ends before a non-cooperative source resolves", async () => {
+    let resolveAcquire!: (lease: import("../src/startup/StreamingAssetPackages").AcquiredAssetPackage) => void;
+    const release = vi.fn(() => true);
+    const acquirePackage = vi.fn(() => new Promise<
+      import("../src/startup/StreamingAssetPackages").AcquiredAssetPackage
+    >((resolve) => {
+      resolveAcquire = resolve;
+    }));
+    const eventLease = beginStreamingAssetEventLease(
+      { acquirePackage },
+      "desktop-feature-big-win",
+    );
+    await Promise.resolve();
+
+    expect(acquirePackage).toHaveBeenCalledWith(
+      "desktop-feature-big-win",
+      eventLease.signal,
+    );
+    expect(eventLease.release()).toBe(true);
+    expect(eventLease.signal.aborted).toBe(true);
+    resolveAcquire({
+      id: "desktop-feature-big-win",
+      packageIds: ["desktop-feature-big-win"],
+      package: {} as never,
+      released: false,
+      release,
+    });
+
+    await expect(eventLease.ready).rejects.toMatchObject({ name: "AbortError" });
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("publishes bounded non-authoritative diagnostics without resource payloads", () => {

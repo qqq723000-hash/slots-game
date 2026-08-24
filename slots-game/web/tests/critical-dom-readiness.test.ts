@@ -92,12 +92,29 @@ describe("waitForCriticalDomReadiness", () => {
     let settled = false;
     void run.then(() => { settled = true; });
 
+    await flushMicrotasks();
+    expect(first.decode).not.toHaveBeenCalled();
+    expect(second.decode).not.toHaveBeenCalled();
+    first.complete = true;
+    first.naturalWidth = 128;
+    first.dispatchEvent(new Event("load"));
+    second.complete = true;
+    second.naturalWidth = 128;
+    second.dispatchEvent(new Event("load"));
+    await flushMicrotasks();
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+    await flushMicrotasks();
+    expect(first.decode).toHaveBeenCalledOnce();
+    expect(second.decode).toHaveBeenCalledOnce();
+
     firstDecode.resolve();
     await flushMicrotasks();
     expect(settled).toBe(false);
     expect(load).not.toHaveBeenCalled();
 
     secondDecode.resolve();
+    await flushMicrotasks();
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
     await flushMicrotasks();
     expect(load.mock.calls.map(([descriptor]) => descriptor))
       .toEqual(DEFAULT_CRITICAL_FONT_DESCRIPTORS);
@@ -129,6 +146,8 @@ describe("waitForCriticalDomReadiness", () => {
 
   it("rejects a required image whose decoder fails without reporting completion", async () => {
     const image = new FakeImage("/broken.png");
+    image.complete = true;
+    image.naturalWidth = 128;
     image.decode = vi.fn(async () => { throw new Error("corrupt image"); });
     const progress: CriticalDomReadinessProgress[] = [];
 
@@ -141,6 +160,42 @@ describe("waitForCriticalDomReadiness", () => {
       resource: "/broken.png",
     });
     expect(progress.some(({ stage }) => stage === "complete")).toBe(false);
+  });
+
+  it("does not create a cold-cache decode promise until the image load boundary", async () => {
+    const earlyDecode = deferred<void>();
+    const image = new FakeImage("/cold-cache.png");
+    image.decode = vi.fn(() => image.complete ? Promise.resolve() : earlyDecode.promise);
+    const run = waitForCriticalDomReadiness(rootWith([image]), { fontSet: null });
+
+    await flushMicrotasks();
+    expect(image.decode).not.toHaveBeenCalled();
+    image.complete = true;
+    image.naturalWidth = 256;
+    image.dispatchEvent(new Event("load"));
+
+    await expect(run).resolves.toBeUndefined();
+    expect(image.decode).toHaveBeenCalledOnce();
+  });
+
+  it("retries a loaded image when Chromium leaves the first decode promise pending", async () => {
+    const stalledDecode = deferred<void>();
+    const image = new FakeImage("/cold-cache-stalled-decode.png");
+    image.complete = true;
+    image.naturalWidth = 256;
+    image.decode = vi.fn()
+      .mockReturnValueOnce(stalledDecode.promise)
+      .mockResolvedValueOnce(undefined);
+
+    const run = waitForCriticalDomReadiness(rootWith([image]), { fontSet: null });
+    await flushMicrotasks();
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+    await flushMicrotasks();
+    expect(image.decode).toHaveBeenCalledOnce();
+
+    await expect(run).resolves.toBeUndefined();
+    expect(image.decode).toHaveBeenCalledTimes(2);
+    stalledDecode.resolve();
   });
 
   it("uses load/error events when jsdom or a legacy browser has no image.decode", async () => {
@@ -192,6 +247,8 @@ describe("waitForCriticalDomReadiness", () => {
   it("propagates AbortSignal while decode is pending and never reports complete", async () => {
     const decode = deferred<void>();
     const image = new FakeImage("/slow.png");
+    image.complete = true;
+    image.naturalWidth = 128;
     image.decode = () => decode.promise;
     const controller = new AbortController();
     const reason = new Error("route disposed");

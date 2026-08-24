@@ -17,7 +17,7 @@ import {
   type StreamingAssetPackageManagerOptions,
 } from "./StreamingAssetPackages";
 
-export type AssetStreamingMode = "off" | "shadow";
+export type AssetStreamingMode = "off" | "on-demand" | "shadow";
 export type StreamingManifestState =
   "off" | "unrequested" | "loading" | "validated" | "failed" | "destroyed";
 export type ShadowPackageState =
@@ -39,7 +39,7 @@ export interface StreamingAssetRuntimeDiagnostics {
   readonly backgroundScheduled: boolean;
   readonly backgroundRunning: boolean;
   readonly featureStageVerified: boolean;
-  /** 旧影子校验始终为零；只有实验性租约实际持有载荷时才允许非零。 */
+  /** 旧影子校验始终为零；只有真实消费者租约持有载荷时才允许非零。 */
   readonly retainedPayloadBytes: number;
   readonly peakOperationPayloadBytes: number;
   readonly lastError: string | null;
@@ -61,13 +61,19 @@ export interface StreamingAssetRuntimeDataset {
 
 export interface StreamingAssetRuntimePort {
   scheduleFeatureShadowPrefetch(): boolean;
+  /**
+   * 可选是为了兼容旧宿主；生产 StreamingAssetRuntime 在 on-demand/shadow 模式下
+   * 始终提供经过清单大小与 SHA-256 校验的消费者租约。
+   */
+  acquirePackage?(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<AcquiredAssetPackage>;
   diagnostics(): StreamingAssetRuntimeDiagnostics;
   destroy(): void;
 }
 
-/**
- * C期所有权缝。它有意不属于 StreamingAssetRuntimePort，因此在存在切换证据之前应用程序不会意外地将其用作权威功能/结果门。
- */
+/** 消费者所有权扩展；永远不能成为权威功能、结果或金额决策输入。 */
 export interface StreamingAssetConsumerPort {
   acquirePackage(id: string, signal?: AbortSignal): Promise<AcquiredAssetPackage>;
   acquireStage(stage: AssetPackageStage, signal?: AbortSignal): Promise<AcquiredAssetPackageStage>;
@@ -82,7 +88,7 @@ export interface StreamingAssetRuntimeOptions {
   readonly mode?: AssetStreamingMode | string;
   readonly fetch?: typeof fetch;
   readonly manifestUrl?: string;
-  /** 一个串行影子操作保留的已验证响应字节。 */
+  /** 一个串行影子操作或真实消费者租约允许保留的已验证响应字节。 */
   readonly maxOperationPayloadBytes?: number;
   readonly managerOptions?: Omit<
     StreamingAssetPackageManagerOptions,
@@ -97,9 +103,81 @@ export interface StreamingAssetRuntimeOptions {
 
 const DEFAULT_MAX_OPERATION_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
-/** 未知构建值按故障时默认拒绝处理，退回未经流式切换的完整加载器。 */
+/**
+ * 未显式配置时启用真实事件租约；未知构建值仍故障关闭为 off。shadow 保留
+ * 启动后全功能包校验，而 on-demand 只在真实消费事件发生后取包。
+ */
 export function assetStreamingMode(value: unknown): AssetStreamingMode {
-  return value === "shadow" ? "shadow" : "off";
+  if (value === undefined || value === "") return "on-demand";
+  if (value === "on-demand" || value === "shadow") return value;
+  return "off";
+}
+
+export function streamingFeaturePackageId(
+  channel: PrimalRuntimeAssetChannel,
+  feature: "big-win" | "free-spins" | "wheel",
+): string {
+  return `${channel}-feature-${feature}`;
+}
+
+export interface StreamingAssetEventLease {
+  readonly signal: AbortSignal;
+  readonly ready: Promise<AcquiredAssetPackage>;
+  readonly released: boolean;
+  /** 幂等；取消尚未完成的获取，并释放已经采用的包引用。 */
+  release(): boolean;
+}
+
+/**
+ * 将消费者包租约绑定到单次功能事件。状态只由调用者动作驱动，不读取玩法或服务端
+ * 结果；先 release 后晚到的错误实现也无法泄漏底层包引用。
+ */
+export function beginStreamingAssetEventLease(
+  consumer: Pick<StreamingAssetConsumerPort, "acquirePackage">,
+  packageId: string,
+): StreamingAssetEventLease {
+  const controller = new AbortController();
+  let acquired: AcquiredAssetPackage | null = null;
+  let released = false;
+  let eventLease!: StreamingAssetEventLease;
+  let acquisition: Promise<AcquiredAssetPackage>;
+  try {
+    // 调用本身必须发生在权威结果进入对应表现状态之前；底层网络/校验仍异步，
+    // 同步异常则转换为同一个 ready 拒绝边界。
+    acquisition = Promise.resolve(consumer.acquirePackage(packageId, controller.signal));
+  } catch (error) {
+    acquisition = Promise.reject(error);
+  }
+  const ready = acquisition
+    .then((lease) => {
+      if (released) {
+        lease.release();
+        throw new AssetPackageAbortedError("Feature asset event lease was released");
+      }
+      acquired = lease;
+      return lease;
+    });
+  // 事件可能先进入制作好的 lead-in；立即登记拒绝观察者，避免弱网失败在正式
+  // await 边界前形成 unhandledrejection。调用方随后 await ready 仍会收到原错误。
+  void ready.catch(() => undefined);
+  eventLease = Object.freeze({
+    signal: controller.signal,
+    ready,
+    get released() {
+      return released;
+    },
+    release(): boolean {
+      if (released) return false;
+      released = true;
+      controller.abort(new AssetPackageAbortedError("Feature asset event lease was released"));
+      const lease = acquired;
+      acquired = null;
+      if (lease) lease.release();
+      else void ready.then((lateLease) => lateLease.release(), () => undefined);
+      return true;
+    },
+  });
+  return eventLease;
 }
 
 export function streamingPackageManifestUrl(
@@ -153,8 +231,8 @@ export function publishStreamingAssetDiagnostics(
 }
 
 /**
- * B 阶段缓存/完整性影子通道。它绝不把解码数据交给 Pixi 或 AudioManager，
- * 因而不能误变成权威特性门控。每次操作独占临时包管理器，并在完成后释放所有已校验字节；生命周期外只保留小型、不可变的诊断信息。
+ * 流式资源运行时。shadow 操作只保留诊断；on-demand 消费者可在有界租约内把
+ * 已校验负载交给 Pixi。两种模式都不能参与权威功能、结果或金额决策。
  */
 export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
   private readonly channel: PrimalRuntimeAssetChannel;
@@ -210,7 +288,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
   async validateManifest(signal?: AbortSignal): Promise<AssetPackageManifest> {
     this.assertUsable();
     if (this.mode === "off")
-      throw new Error("Asset streaming shadow mode is disabled");
+      throw new Error("Asset streaming mode is disabled");
     if (this.manifest) return this.manifest;
     if (this.manifestPromise)
       return this.awaitWithCallerAbort(this.manifestPromise, signal);
@@ -273,9 +351,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     });
   }
 
-  /**
-   * 实验消费者所有权 API。影子/默认关闭行为和所有现有应用程序接线保持不变；没有游戏事件调用它。
-   */
+  /** Big Win 等真实功能事件使用的大小/SHA-256 已验证消费者所有权 API。 */
   async acquirePackage(
     id: string,
     signal?: AbortSignal,
@@ -289,7 +365,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     );
   }
 
-  /** 实验原子阶段所有权API；参见 acquirePackage()。 */
+  /** 原子阶段所有权 API；shadow 诊断与未来整阶段消费者参见 acquirePackage()。 */
   async acquireStage(
     stage: AssetPackageStage,
     signal?: AbortSignal,
@@ -531,7 +607,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
   ): Promise<StreamingAssetPackageManager> {
     this.assertUsable();
     if (this.mode === "off") {
-      throw new Error("Asset streaming shadow mode is disabled");
+      throw new Error("Asset streaming mode is disabled");
     }
     if (this.consumerManager) return this.consumerManager;
     if (this.consumerManagerPromise) {

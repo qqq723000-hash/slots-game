@@ -44,6 +44,7 @@ import {
 import { createSpinEnvironmentState } from "../src/renderer/spinEnvironmentMotion";
 import type { CharacterAnimationEvent } from "../src/renderer/intro/LaunchScene";
 import type { WinCelebrationResidentFacts } from "../src/renderer/WinCelebration";
+import { BIG_WIN_CONTROLLER_LEAD_IN_MS } from "../src/renderer/BigWinView";
 import { ReelRoundStateMachine } from "../src/reels/ReelRoundStateMachine";
 import { LaunchStateMachine } from "../src/startup/LaunchStateMachine";
 import type { PreloadProgress } from "../src/startup/PreloadGate";
@@ -168,6 +169,7 @@ interface ControllerPrototypeHarness {
   presentIntroAudio(cue: { name: string; atMs: number }): void;
   handleSession(session: SessionOpened): void;
   handleStatus(status: "idle" | "connecting" | "online" | "recovering" | "offline"): void;
+  handleSessionTimeout(timeout: Readonly<import("../src/protocol/GameGateway").GatewaySessionTimeout>): void;
   handleSpinResult(result: SpinResult, originFeatureState?: Readonly<FeatureState>): void;
   handleError(error: import("../src/app/state/types").ServerError | Error): void;
   rejectSpinResult(error: unknown): void;
@@ -3437,6 +3439,114 @@ describe("AppController feature orchestration seams", () => {
     expect(transition).not.toHaveBeenCalled();
   });
 
+  it("makes an idle SESSION_TIMEOUT terminal, preserves recovery ownership, and hands EXIT to the operator once", () => {
+    const controller = prototypeHarness();
+    const exitHandlers: Array<() => void> = [];
+    const requestOperatorSession = vi.fn();
+    const resolveNormalWinDelay = vi.fn();
+    const resolveFeaturePreview = vi.fn();
+    const ui = {
+      rollbackAcceptedPaidAutoplaySpin: vi.fn(),
+      completeAutoplayStopRound: vi.fn(),
+      setConnection: vi.fn(),
+      setControls: vi.fn(),
+      showSessionTimeout: vi.fn((handler: () => void) => exitHandlers.push(handler)),
+    };
+    const audio = {
+      stopGameIntro: vi.fn(),
+      stopReelLoop: vi.fn(),
+      destroy: vi.fn(),
+    };
+    const renderer = {
+      cancelSpinPresentation: vi.fn(),
+      setFeaturePreviewVisible: vi.fn(),
+    };
+    const reelRound = { reset: vi.fn() };
+    const stops = { cancel: vi.fn() };
+    const preload = { abort: vi.fn() };
+    const streamingAssets = { destroy: vi.fn() };
+    const intro = { destroy: vi.fn() };
+    const machine = { phase: "presenting", transition: vi.fn() };
+    const root = { dataset: { rgsSession: "online" } as Record<string, string> };
+    const clearInitialRgsSessionTimeout = vi.fn();
+    const cancelScheduledFreeSpin = vi.fn();
+    const stopPostWinIdleRepeat = vi.fn();
+    const stopRoundAudio = vi.fn();
+    const releaseFeatureAssetEventLease = vi.fn();
+    Object.assign(controller as unknown as Record<string, unknown>, {
+      destroyed: false,
+      sessionTimedOut: false,
+      connectionStatus: "online",
+      root,
+      ui,
+      audio,
+      renderer,
+      reelRound,
+      stops,
+      preload,
+      streamingAssets,
+      intro,
+      machine,
+      clearInitialRgsSessionTimeout,
+      cancelScheduledFreeSpin,
+      stopPostWinIdleRepeat,
+      stopRoundAudio,
+      releaseFeatureAssetEventLease,
+      requestOperatorSession,
+      normalWinDelayResolver: resolveNormalWinDelay,
+      featurePreviewResolver: resolveFeaturePreview,
+      featurePreviewActive: true,
+      featurePreviewContinuePending: true,
+      activePresentationSequence: 12,
+      activeRageCollectionPresentationSequence: 12,
+      activeRageCascadePresentationSequence: 12,
+      roundOriginFeatureState: BASE_FEATURE,
+      bufferedRecoveredSpinResult: { result: roundResult(), originFeatureState: BASE_FEATURE },
+    });
+
+    controller.handleSessionTimeout({
+      code: "SESSION_TIMEOUT",
+      idleDisconnectAt: "2029-12-31T23:30:00Z",
+    });
+    controller.handleSessionTimeout({
+      code: "SESSION_TIMEOUT",
+      idleDisconnectAt: "2029-12-31T23:30:00Z",
+    });
+
+    expect(root.dataset).toEqual({
+      rgsSessionTimeout: "true",
+      rgsSessionTimeoutCode: "SESSION_TIMEOUT",
+    });
+    expect(ui.setConnection).toHaveBeenCalledWith("offline");
+    expect(ui.setControls).toHaveBeenCalledWith(false, false);
+    expect(ui.showSessionTimeout).toHaveBeenCalledOnce();
+    expect(ui.rollbackAcceptedPaidAutoplaySpin).toHaveBeenCalledOnce();
+    expect(ui.completeAutoplayStopRound).toHaveBeenCalledWith(12);
+    expect(resolveNormalWinDelay).toHaveBeenCalledOnce();
+    expect(resolveFeaturePreview).toHaveBeenCalledOnce();
+    expect(stopRoundAudio).toHaveBeenCalledWith(0);
+    expect(audio.stopGameIntro).toHaveBeenCalledWith(0);
+    expect(audio.destroy).toHaveBeenCalledOnce();
+    expect(stops.cancel).toHaveBeenCalledOnce();
+    expect(renderer.cancelSpinPresentation).toHaveBeenCalledOnce();
+    expect(reelRound.reset).toHaveBeenCalledWith("session-timeout");
+    expect(releaseFeatureAssetEventLease.mock.calls).toEqual([["wheel"], ["free-spins"]]);
+    expect(preload.abort).toHaveBeenCalledOnce();
+    expect(streamingAssets.destroy).toHaveBeenCalledOnce();
+    expect(intro.destroy).toHaveBeenCalledOnce();
+    expect(machine.transition).toHaveBeenCalledWith({ type: "FATAL_ERROR" });
+    expect(requestOperatorSession).not.toHaveBeenCalled();
+
+    controller.handleStatus("online");
+    controller.handleError(new Error("late transport callback"));
+    controller.handleSpinResult(roundResult());
+    expect(ui.setConnection).toHaveBeenCalledTimes(1);
+
+    exitHandlers[0]?.();
+    expect(requestOperatorSession).toHaveBeenCalledOnce();
+    expect(requestOperatorSession.mock.calls[0]?.[1]).toBe("session-timeout");
+  });
+
   it("keeps Splash Continue inert until the first authoritative session", () => {
     const controller = prototypeHarness();
     const resolveGate = vi.fn();
@@ -3610,6 +3720,72 @@ describe("AppController feature orchestration seams", () => {
       await run;
       expect(introPlay).toHaveBeenCalledOnce();
       expect(launch.phase).toBe("ready");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not advance launch, recovered presentation, or shadow prefetch after timeout during Intro", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    try {
+      const controller = prototypeHarness();
+      const launch = new LaunchStateMachine();
+      launch.transition({ type: "START_PRELOAD" });
+      launch.transition({ type: "SESSION_READY" });
+      let resolveIntro!: () => void;
+      const introBarrier = new Promise<void>((resolve) => { resolveIntro = resolve; });
+      const introPlay = vi.fn(() => introBarrier);
+      const syncLaunchUi = vi.fn();
+      const releaseBufferedRecoveredSpinResult = vi.fn();
+      const scheduleFeatureShadowPrefetch = vi.fn();
+      Object.assign(controller, {
+        destroyed: false,
+        sessionTimedOut: false,
+        launch,
+        root: { dataset: {} },
+        preload: { run: vi.fn(async () => undefined) },
+        startupFrameRequest: async () => undefined,
+        ui: {
+          isFeaturePreviewDismissed: vi.fn(() => true),
+          setStartupProgress: vi.fn(),
+          setLaunchStatus: vi.fn(),
+          setLaunchPhase: vi.fn(),
+          setHudReveal: vi.fn(),
+          setFeaturePreviewEnabled: vi.fn(),
+          setSpinMode: vi.fn(),
+          applySnapshot: vi.fn(),
+          setControls: vi.fn(),
+          showError: vi.fn(),
+        },
+        renderer: {
+          setJackpotHudReveal: vi.fn(),
+          completeActiveCharacterIntroForReducedMotion: vi.fn(),
+        },
+        intro: { play: introPlay },
+        streamingAssets: {
+          scheduleFeatureShadowPrefetch,
+          diagnostics: vi.fn(),
+          destroy: vi.fn(),
+        },
+        skipFeaturePreview: true,
+        initialSessionResolver: null,
+        launchClock: { resetToWall: vi.fn() },
+        syncGameMusic: vi.fn(),
+        syncLaunchUi,
+        refreshUi: vi.fn(),
+        releaseBufferedRecoveredSpinResult,
+      });
+
+      const run = controller.runLaunch();
+      await vi.waitFor(() => expect(introPlay).toHaveBeenCalledOnce());
+      Object.assign(controller as unknown as Record<string, unknown>, { sessionTimedOut: true });
+      resolveIntro();
+      await run;
+
+      expect(launch.phase).not.toBe("ready");
+      expect(syncLaunchUi).toHaveBeenCalledTimes(1);
+      expect(releaseBufferedRecoveredSpinResult).not.toHaveBeenCalled();
+      expect(scheduleFeatureShadowPrefetch).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -3909,6 +4085,82 @@ describe("AppController feature orchestration seams", () => {
     expect(onFeatureEvent).toHaveBeenCalledWith(null);
     expect(controller.activeObservedFeatureEvents).toEqual([]);
   });
+
+  it("continues every independent owner cleanup after an early destroy failure", () => {
+    const controller = prototypeHarness();
+    const preloadAbort = vi.fn(() => { throw new Error("preload abort failed"); });
+    const streamingDestroy = vi.fn();
+    const initialSessionResolver = vi.fn();
+    const gatewayClose = vi.fn();
+    const layoutStop = vi.fn();
+    const audioDestroy = vi.fn();
+    const uiDestroy = vi.fn();
+    const rendererDestroy = vi.fn();
+    const removeMotionListener = vi.fn();
+    const renderer = {
+      cancelSpinPresentation: vi.fn(),
+      setFeaturePresentationMilestoneListener: vi.fn(),
+      setFeaturePresentationBranchListener: vi.fn(),
+      setFeaturePresentationInputCheckpointListener: vi.fn(),
+      setRageCascadePresentationMilestoneListener: vi.fn(),
+      setRageCascadePresentationPaused: vi.fn(),
+      setVaultUnlockPresentationMilestoneListener: vi.fn(),
+      setBigWinMilestoneListener: vi.fn(),
+      setFeaturePreviewVisible: vi.fn(),
+      destroy: rendererDestroy,
+    };
+    Object.assign(controller, {
+      root: { dataset: {} },
+      destroyed: false,
+      stopPostWinIdleRepeat: vi.fn(),
+      clearInitialRgsSessionTimeout: vi.fn(),
+      preload: { abort: preloadAbort },
+      streamingAssets: { destroy: streamingDestroy },
+      activeObservedFeatureEvents: [],
+      observePresentationMilestone: vi.fn(),
+      activePresentationSequence: null,
+      activeRageCollectionPresentationSequence: null,
+      activeRageCascadePresentationSequence: null,
+      featurePreviewResolver: vi.fn(() => { throw new Error("preview resolver failed"); }),
+      initialSessionResolver,
+      featurePreviewContinuePending: true,
+      roundOriginFeatureState: BASE_FEATURE,
+      bufferedRecoveredSpinResult: {},
+      cancelScheduledFreeSpin: vi.fn(),
+      stopRoundAudio: vi.fn(),
+      audio: { stopGameIntro: vi.fn(), destroy: audioDestroy },
+      stops: { cancel: vi.fn() },
+      reelRound: { reset: vi.fn() },
+      renderer,
+      intro: { destroy: vi.fn() },
+      gateway: { close: gatewayClose },
+      layout: { stop: layoutStop },
+      reducedMotionMedia: { removeEventListener: removeMotionListener },
+      ui: {
+        completeAutoplayStopRound: vi.fn(),
+        clearWheelBonusRoundSummary: vi.fn(),
+        destroy: uiDestroy,
+      },
+    });
+
+    expect(() => controller.destroy()).not.toThrow();
+    controller.destroy();
+
+    for (const cleanup of [
+      preloadAbort,
+      streamingDestroy,
+      initialSessionResolver,
+      gatewayClose,
+      layoutStop,
+      removeMotionListener,
+      audioDestroy,
+      uiDestroy,
+      rendererDestroy,
+    ]) expect(cleanup).toHaveBeenCalledOnce();
+    expect(controller.featurePreviewResolver).toBeNull();
+    expect(controller.initialSessionResolver).toBeNull();
+    expect(controller.destroyed).toBe(true);
+  });
 });
 
 interface RoundHarness extends ControllerPrototypeHarness {
@@ -4085,6 +4337,73 @@ function createRoundHarness(previousFeatureState: FeatureState = BASE_FEATURE): 
 }
 
 describe("AppController round ordering", () => {
+  it("does not apply, ACK, report, or revive a round cancelled by SESSION_TIMEOUT", async () => {
+    const controller = createRoundHarness();
+    let releasePresentation!: () => void;
+    const presentationBarrier = new Promise<void>((resolve) => {
+      releasePresentation = resolve;
+    });
+    const renderer = controller.renderer as {
+      reconcileReelRows: ReturnType<typeof vi.fn>;
+      restoreFeatureState: ReturnType<typeof vi.fn>;
+    };
+    renderer.reconcileReelRows.mockImplementation(() => presentationBarrier);
+    delete (controller as unknown as Record<string, unknown>).presentEffect;
+    const machine = (controller as unknown as {
+      machine: { phase: string; transition: ReturnType<typeof vi.fn> };
+    }).machine;
+    const ui = (controller as unknown as {
+      ui: {
+        applyResult: ReturnType<typeof vi.fn>;
+        showError: ReturnType<typeof vi.fn>;
+        completeAutoplayStopRound: ReturnType<typeof vi.fn>;
+      };
+    }).ui;
+    const reelRound = (controller as unknown as {
+      reelRound: { reset: ReturnType<typeof vi.fn> };
+    }).reelRound;
+    const acknowledgeSpinResult = vi.fn(() => true);
+    const refreshUi = vi.fn();
+    Object.assign(controller, {
+      destroyed: false,
+      sessionTimedOut: false,
+      gateway: { hasPendingSpin: true, acknowledgeSpinResult },
+      refreshUi,
+      lastPlayerFacingError: null,
+      root: { dataset: {} },
+    });
+
+    controller.handleSpinResult(roundResult());
+    await vi.waitFor(() => expect(renderer.reconcileReelRows).toHaveBeenCalledOnce());
+    machine.transition.mockClear();
+    ui.applyResult.mockClear();
+    ui.showError.mockClear();
+    ui.completeAutoplayStopRound.mockClear();
+    reelRound.reset.mockClear();
+    refreshUi.mockClear();
+    Object.assign(controller as unknown as Record<string, unknown>, {
+      sessionTimedOut: true,
+    });
+    machine.phase = "failed";
+    releasePresentation();
+    await expect(controller.presentation).rejects.toMatchObject({
+      name: "RoundPresentationCancelledError",
+    });
+    await flushMicrotasks();
+
+    expect(ui.applyResult).not.toHaveBeenCalled();
+    expect(acknowledgeSpinResult).not.toHaveBeenCalled();
+    expect(ui.showError).not.toHaveBeenCalled();
+    expect(ui.completeAutoplayStopRound).not.toHaveBeenCalled();
+    expect(renderer.restoreFeatureState).not.toHaveBeenCalled();
+    expect(reelRound.reset).not.toHaveBeenCalled();
+    expect(machine.transition).not.toHaveBeenCalled();
+    expect(machine.phase).toBe("failed");
+    expect(refreshUi).not.toHaveBeenCalled();
+    expect((controller as unknown as { gateway: { hasPendingSpin: boolean } }).gateway.hasPendingSpin)
+      .toBe(true);
+  });
+
   it("publishes only the fixed synchronous delivery stage when acceptance throws", () => {
     const controller = createRoundHarness();
     const root = { dataset: {} as Record<string, string> };
@@ -4910,6 +5229,265 @@ describe("AppController round ordering", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("starts the verified Big Win event lease during lead-in and releases it after presentation", async () => {
+    const controller = createRoundHarness();
+    const renderer = controller.renderer as {
+      bigWin: { present: ReturnType<typeof vi.fn> };
+    };
+    const releasePackage = vi.fn(() => true);
+    const verifiedBytes = {
+      spine: Uint8Array.of(1, 2, 3),
+      font: new TextEncoder().encode("verified-font"),
+      page: Uint8Array.of(137, 80, 78, 71),
+      coins: new TextEncoder().encode('{"schemaVersion":1}'),
+    };
+    const loadedResource = (
+      id: string,
+      url: string,
+      decoder: "binary" | "text" | "json",
+      bytes: Uint8Array,
+    ) => Object.freeze({
+      spec: Object.freeze({ id, url, decoder, bytes: bytes.byteLength, sha256: "0".repeat(64) }),
+      bytes,
+      decoded: bytes,
+    });
+    const loadedPackage = Object.freeze({
+      id: "desktop-feature-big-win",
+      version: "test",
+      stage: "feature-on-demand" as const,
+      resources: new Map([
+        ["spine", loadedResource("spine", "/assets/primal-runtime/spine/spine_ui/BigWin.skel", "binary", verifiedBytes.spine)],
+        ["font", loadedResource("font", "/assets/primal-runtime/fonts/primal-rampage/PrimalRampage.fnt", "text", verifiedBytes.font)],
+        ["page", loadedResource("page", "/assets/primal-runtime/fonts/primal-rampage/PrimalRampage.png", "binary", verifiedBytes.page)],
+        ["coins", loadedResource("coins", "/assets/primal-runtime/interface/big-win-coins.json", "json", verifiedBytes.coins)],
+      ]),
+    });
+    const acquirePackage = vi.fn(async (_id: string, _signal?: AbortSignal) => ({
+      id: "desktop-feature-big-win",
+      packageIds: ["desktop-feature-big-win"],
+      package: loadedPackage,
+      released: false,
+      release: releasePackage,
+    }));
+    let releaseLeadIn!: () => void;
+    let leadInPending = false;
+    const presentationDelay = vi.fn((durationMs: number) => {
+      if (durationMs === BIG_WIN_CONTROLLER_LEAD_IN_MS && !leadInPending) {
+        leadInPending = true;
+        return new Promise<void>((resolve) => { releaseLeadIn = resolve; });
+      }
+      return Promise.resolve();
+    });
+    Object.assign(controller, {
+      bigWinAssetPackageId: "desktop-feature-big-win",
+      streamingAssets: {
+        acquirePackage,
+        diagnostics: () => ({ mode: "on-demand" }),
+        destroy: vi.fn(),
+        scheduleFeatureShadowPrefetch: vi.fn(),
+      },
+      presentationDelay,
+    });
+
+    controller.handleSpinResult(roundResult({ totalWinMinor: "2000", wins: [{
+      id: "big-win",
+      symbol: "TANK",
+      amountMinor: "2000",
+      cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
+    }] }));
+    await vi.waitFor(() => expect(acquirePackage).toHaveBeenCalledOnce());
+
+    expect(leadInPending).toBe(true);
+    expect(renderer.bigWin.present).not.toHaveBeenCalled();
+    const signal = acquirePackage.mock.calls[0]?.[1];
+    if (!signal) throw new Error("Expected Big Win event lease signal");
+    expect(acquirePackage).toHaveBeenCalledWith("desktop-feature-big-win", signal);
+    expect(signal.aborted).toBe(false);
+
+    releaseLeadIn();
+    await controller.presentation;
+
+    expect(renderer.bigWin.present).toHaveBeenCalledOnce();
+    const presentCall = renderer.bigWin.present.mock.calls[0] as unknown as [
+      unknown,
+      AbortSignal,
+      { spineBinary: Uint8Array; fontDescriptor: string; fontPageBytes: Uint8Array; coinManifest: unknown },
+    ];
+    expect(presentCall[1]).toBe(signal);
+    expect(presentCall[2]).toMatchObject({
+      spineBinary: verifiedBytes.spine,
+      fontDescriptor: "verified-font",
+      fontPageBytes: verifiedBytes.page,
+      coinManifest: { schemaVersion: 1 },
+    });
+    expect(releasePackage).toHaveBeenCalledOnce();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("starts Wheel and Free Spins leases before state transition, deduplicates them, and releases by feature lifetime", async () => {
+    const controller = createRoundHarness();
+    const releaseById = new Map<string, ReturnType<typeof vi.fn>>();
+    const acquirePackage = vi.fn(async (id: string, _signal?: AbortSignal) => {
+      const release = vi.fn(() => true);
+      releaseById.set(id, release);
+      return {
+        id,
+        packageIds: [id],
+        package: Object.freeze({
+          id,
+          version: "test",
+          stage: "feature-on-demand" as const,
+          resources: new Map(),
+        }),
+        released: false,
+        release,
+      };
+    });
+    const adoptVerifiedFeatureArtwork = vi.fn(async () => undefined);
+    const releaseVerifiedFeatureArtwork = vi.fn();
+    Object.assign(controller.renderer, {
+      adoptVerifiedFeatureArtwork,
+      releaseVerifiedFeatureArtwork,
+    });
+    Object.assign(controller, {
+      freeSpinsAssetPackageId: "desktop-feature-free-spins",
+      wheelAssetPackageId: "desktop-feature-wheel",
+      streamingAssets: {
+        acquirePackage,
+        diagnostics: () => ({ mode: "on-demand" }),
+        destroy: vi.fn(),
+        scheduleFeatureShadowPrefetch: vi.fn(),
+      },
+    });
+    const machine = (controller as unknown as {
+      machine: { transition: ReturnType<typeof vi.fn> };
+    }).machine;
+    const featureState: FeatureState = {
+      mode: "EXPANSION",
+      freeSpinsRemaining: 8,
+      freeSpinsPlayed: 0,
+      baseBetMinor: "100",
+      freeSpinsWinMinor: "0",
+      rageLevel: 1,
+      rageCollected: 0,
+    };
+
+    controller.handleSpinResult(roundResult({
+      wins: [],
+      totalWinMinor: "0",
+      grid: guaranteedRageGrid(),
+      events: [
+        GUARANTEED_RAGE_EVENT,
+        { type: "wheel.started" },
+        {
+          type: "wheel.awarded",
+          outcome: "EXPANSION",
+          prize: "KONG_QUEST",
+        },
+        { type: "free_spins.started", mode: "EXPANSION", awarded: 8 },
+      ],
+      featureState,
+    }));
+
+    expect(acquirePackage.mock.calls.map(([id]) => id)).toEqual([
+      "desktop-feature-free-spins",
+      "desktop-feature-wheel",
+    ]);
+    expect(acquirePackage.mock.invocationCallOrder[0])
+      .toBeLessThan(machine.transition.mock.invocationCallOrder[0] ?? 0);
+    expect(acquirePackage.mock.invocationCallOrder[1])
+      .toBeLessThan(machine.transition.mock.invocationCallOrder[0] ?? 0);
+    await controller.presentation;
+
+    expect(adoptVerifiedFeatureArtwork).toHaveBeenCalledTimes(2);
+    expect(releaseById.get("desktop-feature-wheel")).toHaveBeenCalledOnce();
+    expect(releaseById.get("desktop-feature-free-spins")).not.toHaveBeenCalled();
+    expect(releaseVerifiedFeatureArtwork).toHaveBeenCalledWith("wheel");
+
+    controller.snapshot.featureState = {
+      ...featureState,
+      freeSpinsRemaining: 1,
+      freeSpinsPlayed: 7,
+    };
+    (machine as unknown as { phase: string }).phase = "requesting";
+    controller.handleSpinResult(roundResult({
+      roundId: "round-2",
+      sequence: 2,
+      chargedBetMinor: "0",
+      wins: [],
+      totalWinMinor: "0",
+      events: [
+        { type: "grid.expanded", rows: 3, ways: 27 },
+        {
+          type: "free_spins.completed",
+          mode: "EXPANSION",
+          awarded: 8,
+          cumulativeWinMinor: "0",
+        },
+      ],
+      featureState: BASE_FEATURE,
+    }));
+    await controller.presentation;
+
+    expect(acquirePackage).toHaveBeenCalledTimes(2);
+    expect(releaseById.get("desktop-feature-free-spins")).toHaveBeenCalledOnce();
+    expect(releaseVerifiedFeatureArtwork).toHaveBeenCalledWith("free-spins");
+  });
+
+  it("shows a fixed weak-network error and still ACKs once without another economic request", async () => {
+    const controller = createRoundHarness();
+    const renderer = controller.renderer as {
+      bigWin: { present: ReturnType<typeof vi.fn> };
+    };
+    const ui = (controller as unknown as {
+      ui: { showError: ReturnType<typeof vi.fn> };
+    }).ui;
+    const acknowledgeSpinResult = vi.fn(() => true);
+    const spin = vi.fn();
+    const diagnostic = vi.fn();
+    const sensitive = new Error("https://assets.invalid/?launchCode=secret");
+    Object.assign(controller, {
+      bigWinAssetPackageId: "desktop-feature-big-win",
+      streamingAssets: {
+        acquirePackage: vi.fn(async () => { throw sensitive; }),
+        diagnostics: () => ({ mode: "on-demand" }),
+        destroy: vi.fn(),
+        scheduleFeatureShadowPrefetch: vi.fn(),
+      },
+      gateway: { acknowledgeSpinResult, spin },
+      lastPlayerFacingError: null,
+      onPlayerErrorDiagnostic: diagnostic,
+      root: { dataset: {} },
+      presentEffect: async (effect: () => Promise<void>) => {
+        try {
+          await effect();
+        } catch (error) {
+          (controller as unknown as {
+            reportPlayerError(cause: unknown, context: "feature-presentation"): void;
+          }).reportPlayerError(error, "feature-presentation");
+        }
+      },
+    });
+
+    controller.handleSpinResult(roundResult({ totalWinMinor: "2000", wins: [{
+      id: "big-win",
+      symbol: "TANK",
+      amountMinor: "2000",
+      cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
+    }] }));
+    await controller.presentation;
+
+    expect(renderer.bigWin.present).not.toHaveBeenCalled();
+    expect(ui.showError).toHaveBeenCalledWith(
+      "The game could not finish this presentation. Please contact support if this continues.",
+    );
+    expect(JSON.stringify(ui.showError.mock.calls)).not.toContain("launchCode");
+    expect(JSON.stringify(ui.showError.mock.calls)).not.toContain("secret");
+    expect(diagnostic).toHaveBeenCalledWith({ code: "PRESENTATION_UNAVAILABLE" });
+    expect(acknowledgeSpinResult).toHaveBeenCalledOnce();
+    expect(spin).not.toHaveBeenCalled();
   });
 
   it("has no synthetic Continue tail and skips later normal-win records", async () => {
