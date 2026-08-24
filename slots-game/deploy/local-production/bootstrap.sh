@@ -15,6 +15,10 @@ elif [ ! -s "$secrets_root/deployment-metadata.json" ]; then
   exit 1
 fi
 chmod 0700 "$secrets_root"
+# 旧版本机状态可能早于生产共享准入门禁。该幂等子命令只在四个 Valkey
+# 专用文件全部缺失时使用既有本地 CA 补齐材料；绝不旋转任何已有密钥。
+(cd "$repository_root/server" && \
+  go run ./cmd/local-production-bootstrap add-shared-admission "$secrets_root")
 
 (cd "$repository_root/web" && npm ci --ignore-scripts)
 (cd "$repository_root/web" && \
@@ -22,6 +26,7 @@ chmod 0700 "$secrets_root"
   VITE_RGS_BET_OPTIONS_MINOR=10,20,50,100,200,300,400,600,1000,2000,5000,10000 \
   VITE_RGS_DEFAULT_BET_MINOR=100 \
   VITE_RGS_HOST_ORIGIN=https://slots.localhost:8443 \
+  VITE_OPERATOR_RETURN_URL=/operator/ \
   npm run build)
 node "$repository_root/deploy/web/render-release-nginx.mjs" \
   --input "$repository_root/deploy/web/nginx.conf" \

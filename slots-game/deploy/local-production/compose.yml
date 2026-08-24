@@ -17,6 +17,14 @@ x-build-metadata: &build-metadata
     OCI_IMAGE_SOURCE: ${LOCAL_PRODUCTION_IMAGE_SOURCE:?run bootstrap.sh first}
     OCI_IMAGE_VERSION: ${LOCAL_PRODUCTION_IMAGE_VERSION:?run bootstrap.sh first}
 
+x-web-build-metadata: &web-build-metadata
+  args:
+    OCI_IMAGE_CREATED: ${LOCAL_PRODUCTION_IMAGE_CREATED:?run bootstrap.sh first}
+    OCI_IMAGE_REVISION: ${LOCAL_PRODUCTION_IMAGE_REVISION:?run bootstrap.sh first}
+    OCI_IMAGE_SOURCE: ${LOCAL_PRODUCTION_IMAGE_SOURCE:?run bootstrap.sh first}
+    OCI_IMAGE_VERSION: ${LOCAL_PRODUCTION_IMAGE_VERSION:?run bootstrap.sh first}
+    VITE_OPERATOR_RETURN_URL: /operator/
+
 x-go-build: &go-build
   <<: *build-metadata
   context: ../..
@@ -69,6 +77,10 @@ services:
       - {source: postgres_backup_password, target: postgres-backup.password}
       - {source: rgs_migrator_password, target: rgs-migrator.password}
       - {source: rgs_runtime_password, target: rgs-runtime.password}
+      - {source: valkey_password, target: valkey-password}
+      - {source: shared_admission_hmac, target: shared-admission-hmac.key}
+      - {source: valkey_cert, target: valkey-server.pem}
+      - {source: valkey_key, target: valkey-server-key.pem}
       - {source: postgres_cert, target: postgres-server.pem}
       - {source: postgres_key, target: postgres-server-key.pem}
       - {source: ingress_cert, target: ingress-server.pem}
@@ -87,6 +99,8 @@ services:
       - operator_derived:/target/operator-derived
       - root_ca_bundle:/target/root-ca
       - postgres_secrets:/target/postgres
+      - valkey_secrets:/target/valkey
+      - valkey_data:/target/valkey-data
       - ingress_secrets:/target/ingress
       - prometheus_bundle:/target/prometheus
       - grafana_bundle:/target/grafana
@@ -158,6 +172,30 @@ services:
     logging:
       driver: local
       options: {max-size: 10m, max-file: "4"}
+
+  valkey:
+    <<: *hardened
+    image: valkey/valkey:8.1-alpine@sha256:e0eb7c480958d32bdc4357a74bdd70653ae15f2f9b4c93c4a5a9fad1dc471c84
+    user: "999:1000"
+    restart: unless-stopped
+    depends_on:
+      service-volume-init: {condition: service_completed_successfully}
+    command: [valkey-server, /run/valkey-secrets/valkey.conf]
+    volumes:
+      - valkey_secrets:/run/valkey-secrets:ro
+      - valkey_data:/data
+    networks: [admission]
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=8m,uid=999,gid=1000"]
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$(sed -n "1p" /run/valkey-secrets/valkey-password)" valkey-cli --tls --cacert /run/valkey-secrets/local-production-root-ca.pem --user rgs-api -h valkey -p 6379 ping | grep -qx PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 30s
+    mem_limit: 128m
+    cpus: 1.0
+    pids_limit: 96
 
   rgs-migrator:
     <<: *hardened
@@ -256,6 +294,7 @@ services:
       LOCAL_OPERATOR_GAME_ID: ${LOCAL_PRODUCTION_GAME_ID:?run bootstrap.sh first}
       LOCAL_OPERATOR_DEFINITION_VERSION: ${LOCAL_PRODUCTION_DEFINITION_VERSION:?run bootstrap.sh first}
       LOCAL_OPERATOR_DEFINITION_HASH: ${LOCAL_PRODUCTION_DEFINITION_HASH:?run bootstrap.sh first}
+      LOCAL_OPERATOR_IDLE_DISCONNECT: 20m
       PROBE_URL: https://127.0.0.1:8443/healthz
       PROBE_ROOT_CA_FILE: /run/operator-secrets/local-production-root-ca.pem
       PROBE_SERVER_NAME: local-operator
@@ -314,6 +353,7 @@ services:
     depends_on:
       rgs-migrator: {condition: service_completed_successfully}
       local-operator: {condition: service_healthy}
+      valkey: {condition: service_healthy}
       vector: {condition: service_started}
     environment:
       RGS_DATABASE_URL_FILE: /run/local-production/rgs-runtime-database.url
@@ -329,6 +369,14 @@ services:
       RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE: /run/local-production/definition-approval-public.pem
       RGS_LAUNCH_HMAC_KEY_FILE: /run/local-production/launch-hmac.key
       RGS_WALLET_ROOT_CA_FILE: /run/local-production/local-production-root-ca.pem
+      RGS_SHARED_ADMISSION_URL: rediss://valkey:6379
+      RGS_SHARED_ADMISSION_USERNAME: rgs-api
+      RGS_SHARED_ADMISSION_PASSWORD_FILE: /run/local-production/valkey-password
+      RGS_SHARED_ADMISSION_HMAC_KEY_FILE: /run/local-production/shared-admission-hmac.key
+      RGS_SHARED_ADMISSION_ROOT_CA_FILE: /run/local-production/local-production-root-ca.pem
+      RGS_SHARED_ADMISSION_TIMEOUT: 200ms
+      RGS_SHARED_ADMISSION_RATE_PER_SECOND: "500"
+      RGS_SHARED_ADMISSION_RATE_BURST: "1000"
       RGS_OPERATIONS_BEARER_TOKEN_FILE: /run/local-production/operations.token
       RGS_OUTBOX_ENDPOINT_URL: https://wallet:8443/audit
       RGS_OUTBOX_HMAC_KEY_ID: local-production-outbox-1
@@ -343,6 +391,8 @@ services:
       RGS_RATE_PER_SECOND: "50"
       RGS_RATE_BURST: "100"
       RGS_SUCCESS_ACCESS_LOG_SAMPLE_PER_MILLION: "1000000"
+      RGS_SESSION_IDLE_DISCONNECT_MIN: 1m
+      RGS_SESSION_IDLE_DISCONNECT_MAX: 24h
       PROBE_URL: http://127.0.0.1:8081/readyz
       PROBE_BEARER_FILE: /run/local-production/operations.token
     volumes:
@@ -352,6 +402,7 @@ services:
       edge: {aliases: [rgs]}
       audit: {}
       operations: {}
+      admission: {}
     tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m"]
     healthcheck:
       test: [CMD, /service-probe]
@@ -373,7 +424,7 @@ services:
     <<: *hardened
     image: slots-web:local-production
     build:
-      <<: *build-metadata
+      <<: *web-build-metadata
       context: ../..
       dockerfile: deploy/local-production/Dockerfile.web
     restart: unless-stopped
@@ -588,6 +639,7 @@ networks:
   database: {internal: true}
   audit: {internal: true}
   operations: {internal: true}
+  admission: {internal: true}
   observability: {internal: true}
   alert: {internal: true}
   log_egress: {internal: true}
@@ -599,6 +651,7 @@ networks:
 
 volumes:
   postgres_data: {}
+  valkey_data: {}
   rgs_runtime_secrets: {}
   rgs_migrator_secrets: {}
   operator_secrets: {}
@@ -607,6 +660,7 @@ volumes:
   root_ca_bundle: {}
   operator_data: {}
   postgres_secrets: {}
+  valkey_secrets: {}
   ingress_secrets: {}
   prometheus_bundle: {}
   prometheus_data: {}
@@ -654,6 +708,10 @@ secrets:
   postgres_backup_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/postgres-backup.password"}
   rgs_migrator_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/rgs-migrator.password"}
   rgs_runtime_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/rgs-runtime.password"}
+  valkey_password: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/valkey-password"}
+  shared_admission_hmac: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/shared-admission-hmac.key"}
+  valkey_cert: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/valkey-server.pem"}
+  valkey_key: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/valkey-server-key.pem"}
   postgres_cert: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/postgres-server.pem"}
   postgres_key: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/postgres-server-key.pem"}
   ingress_cert: {file: "${LOCAL_PRODUCTION_STATE_ROOT}/secrets/ingress-server.pem"}

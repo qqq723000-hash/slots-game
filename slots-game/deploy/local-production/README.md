@@ -2,7 +2,7 @@
 
 此目录在一台 macOS 主机上以 `RGS_ENVIRONMENT=production` 配置分支运行完整集成验收，
 不属于 AWS 正式生产拓扑，也不能证明多可用区、托管服务或云端安全控制已经落地。环境使用
-TLS PostgreSQL、一次性迁移器、独立公网/运维监听器、HTTPS 入口、持久化钱包与审计
+TLS PostgreSQL、TLS/ACL Valkey 共享准入、一次性迁移器、独立公网/运维监听器、HTTPS 入口、持久化钱包与审计
 接收端、Prometheus、Grafana、Alertmanager 和 Vector。所有宿主机端口仅绑定回环地址。
 
 运行态镜像只包含二进制、最终 Web 白名单资产和必要配置；源码、测试、研究文档、
@@ -24,6 +24,11 @@ TLS PostgreSQL、一次性迁移器、独立公网/运维监听器、HTTPS 入�
 重建。`up.sh` 会在启动后自动执行端到端验收；
 宿主机必须安装 Google Chrome 或 Chromium，以执行真实 WebGL 会话门禁。
 CA 信任命令只修改当前用户的 macOS 登录钥匙串；系统可能要求一次用户确认。
+
+Valkey 只加入未发布到宿主机的内部 `admission` 网络，使用固定摘要镜像、独立 TLS
+证书、专用 `rgs-api` ACL、文件口令与 HMAC，并固定 `noeviction`。旧本地状态首次升级时，
+`bootstrap.sh` 只补齐全部缺失的四个 Valkey 专用材料；若发现部分文件存在则失败关闭，
+不会轮换任何既有数据库、钱包、签名或入口密钥。
 
 本地镜像构建会注入 OCI `created/revision/source/version` 标签，并由 `bootstrap.sh`
 通过 BuildKit 命令行参数显式生成 `mode=max` SLSA provenance；Compose 文件本身
@@ -71,6 +76,12 @@ pbcopy < "$slots_state_root/secrets/local-operator-admin.token"
 打开 `https://slots.localhost:8443/operator/` 后粘贴该值。玩家 ID 与钱包账户 ID 可留空；
 本机运营服务会使用部署时固定的默认测试身份。入口返回 `401` 时，应重新从上述文件
 复制当前令牌，不要把令牌写入 URL、截图、聊天记录或仓库。
+
+本地 profile 把已签名 operator 空闲策略固定为 20 分钟；这是本机验收策略，不是对原游戏
+公开分钟数的声明。只有成功接受的新经济轮次续期，status/refresh/保活不续期。超时后新的
+launch 会复用同一尚未绝对过期的服务端会话并重置 transport generation，保留余额、revision、
+feature 与 pending result；浏览器不能提交 `sessionId` 选择要复用的会话。Web 构建还固定注入
+`VITE_OPERATOR_RETURN_URL=/operator/`，因此顶层同源游戏执行 EXIT 时回到本机运营入口。
 
 `verify.sh` 不仅检查 HTTP 探针，还会在临时 Chrome 配置中创建并消费一次性会话，确认
 精确 RGS origin 的 POST 交换成功、会话已应用到玩家余额、地址栏片段已清除、严格 CSP

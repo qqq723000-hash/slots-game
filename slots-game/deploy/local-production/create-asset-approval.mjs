@@ -26,9 +26,15 @@ const protectedPrefixes = [
   "assets/primal-reference/",
   "assets/brand/",
 ];
+const protectedExactPaths = new Set([
+  "favicon.ico",
+]);
 const assets = manifest.files.filter((entry) => (
   entry && typeof entry.path === "string"
-  && protectedPrefixes.some((prefix) => entry.path.startsWith(prefix))
+  && (
+    protectedExactPaths.has(entry.path)
+    || protectedPrefixes.some((prefix) => entry.path.startsWith(prefix))
+  )
 ));
 if (assets.length === 0) fail("release manifest contains no protected assets");
 
