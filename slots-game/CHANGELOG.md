@@ -5,6 +5,25 @@
 
 ## 未发布
 
+- 新增默认关闭的高额派奖 `RISK_PENDING` 持久审批状态机、签名幂等决策接口与数据库时钟到期策略；
+  候选结果、钱包摘要和审计 Outbox 同事务落库，未经批准不外呼钱包，也不向客户端泄露完整结果；
+  生产启用仍须由运营商个人 SSO/MFA、职责分离、双人复核和监管审计系统完成外部身份控制；
+- 新增 PostgreSQL `0012` 会话空闲断开、transport generation 栅栏和同会话 relaunch；浏览器使用
+  服务端时间加单调时钟展示 `SESSION_TIMEOUT`，保留未 ACK 结果并由新会话恢复。恢复耗尽、人工复核和
+  ACK 恢复耗尽现在统一移交运营商新会话，不会永久显示假重试，也不会自动重提 Spin；
+- 增加默认关闭的服务端 W3C/OTLP 追踪、远端 Trace ID keyed sampling、固定低基数 span 属性、
+  导出失败告警和终止 flush 预算；浏览器为每个 RGS 请求生成无持久身份的独立 W3C `traceparent`，
+  日志只保留固定错误类别和单向相关标识，不记录异常文本、金额或业务身份；
+- 将 Big Win、Free Spins 与 Wheel 独占资源移出首启路径并改为清单校验后的事件租约；增加 Big Win
+  慢帧粒子降档/恢复、移动与平板四视口空闲弹窗、红色 GO favicon、DOM 图片解码就绪和代理空 GET
+  兼容恢复门禁；视觉失败只影响表现，不改变权威结果、ACK 或 pending ledger；
+- 增加默认关闭的同区域 RDS PostgreSQL reader 接口、独立 endpoint、ReplicaLag 与总 IOPS/吞吐告警，
+  以及本地生产 Valkey TLS/ACL 准入、原子备份发布、双库隔离恢复和严格日志脱敏验收；应用读路由、
+  RDS Proxy/PgBouncer、跨区 DR 与真实目标账号部署仍是独立门禁；
+- 将共享准入启动检查从 PING 升级为匿名短 TTL 的双次真实 Lua canary，覆盖基础桶所需 ACL；独立
+  Worker 只有在首次完整恢复 pass 成功后才通过启动就绪，真实 Claim 查询或取得任务的处理失败都会
+  阻止晋级，避免滚动发布在恢复路径实际不可用时替换全部旧副本，同时保留 API 的
+  status/pending/ACK 恢复流量；
 - 增加应用 API Regional WAF 基线、托管规则组、超限请求拒绝、分层速率规则、脱敏日志和告警契约；
   CloudFront 仍只承载静态 Web，不被描述为 API 源站隐藏层；Shield Standard 自动基础防护、真实
   WAF 关联/日志/告警与可选 Shield Advanced 响应仍须在目标 AWS 账号留存验收证据；

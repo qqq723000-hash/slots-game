@@ -87,7 +87,8 @@ EKS 平台
 
 指标 label 禁止包含运营商、玩家、会话、轮次、钱包操作或 request ID。日志禁止记录 token、launch
 code、nonce 原文、私钥、签名、DSN、请求/响应正文、原始 URL/query、RemoteAddr 或不必要的钱包
-标识。调查所需关联使用语法受限的 request ID 与数据库中受控映射，不把高基数业务身份送入 AMP。
+标识。长期日志只保留 request ID 的稳定 SHA-256 摘要；调查时在受控环境把协议返回的原值转换为
+同格式摘要，并结合数据库中的受控映射，不把原值或高基数业务身份送入 AMP。
 
 ## 5. 仪表盘最低集合
 
@@ -158,10 +159,20 @@ Chart 内置的二十七条集群规则必须在 AMP 或等价求值器中存在
 - `SlotsRGSDatabasePoolSaturated`
 - `SlotsRGSDatabasePoolWaits`
 
-Terraform 已为 RDS 创建 CPU、连接、可用内存、可用存储、读写延迟和磁盘队列七类容量告警；平台
-必须验证这些告警和恢复状态实际送达最终值班端，并补充 RDS deadlock/IOPS/吞吐/SwapUsage、
-CloudFront、WAF、ALB、EKS、AMP rule evaluation、CloudWatch 日志管道、备份复制和证书/Secret 到期
-告警。任何告警都要有 owner、级别、runbook、最终接收端、去重键、静默到期时间和季度演练记录。
+Terraform 已为单实例 RDS 创建 11 个告警：CPU、连接、可用内存、可用存储、读写延迟、磁盘队列、
+SwapUsage、`ReadIOPS + WriteIOPS` 总量、`ReadThroughput + WriteThroughput` 总量，以及从 PostgreSQL
+导出日志精确匹配 `"deadlock detected"` 派生的
+自定义 deadlock Count 指标。RDS PostgreSQL DB instance 没有原生 `AWS/RDS:Deadlocks`；日志派生告警
+使用 60 秒 Sum、阈值 1、单次观测即告警，其余容量告警使用 3 个窗口中的 2 个持续越界。平台必须回读
+metric filter 的日志组、pattern、namespace、metric name/value/default/unit，以及 alarm 的
+unit/threshold/window、metric-math expression、ReturnData 与 source query 数据库维度，并验证
+ALARM 与 OK 状态实际送达最终值班端，同时补充 CloudFront、WAF、ALB、EKS、AMP rule evaluation、
+CloudWatch 日志管道、备份复制和证书/Secret 到期告警。任何告警都要有 owner、级别、runbook、最终
+接收端、去重键、静默到期时间和季度演练记录。
+可选同区域 PostgreSQL read replica 默认关闭；启用后另创建 CPU、连接、可用内存、可用存储、
+ReadLatency、DiskQueueDepth、SwapUsage 和 `ReplicaLag` 共 8 个告警。前 7 个缺失数据按
+`notBreaching`，`ReplicaLag` 缺失按 `breaching`，以避免复制链无样本时静默。应用目前没有采用
+reader endpoint；即使这些告警存在，也不能把查询已经卸载到副本写入容量报告。
 
 ## 7. 值班快速诊断
 
@@ -201,7 +212,35 @@ aws elbv2 describe-target-health --target-group-arn "$SLOTS_RGS_TARGET_GROUP_ARN
 4. failover 后检查 schema/定义清单、runtime 角色、pool wait、outbox 与 round 恢复。
 5. 执行小流量经济验收和对账，再恢复全部流量；记录端到端 RTO。
 
-### 8.3 钱包未知结果增长
+### 8.3 RDS deadlock、Swap 或 I/O 压力
+
+1. deadlock 日志派生告警后立即冻结相关发布/迁移，记录 alarm 时间窗、DB instance、应用 release 和最近变更；
+   不得把一次死锁当作可忽略的容量噪声。
+2. 在批准的受控环境查询 delivery 给出的 PostgreSQL CloudWatch 日志组和 Performance Insights 时间窗；
+   只归档最小必要的锁顺序、等待类型、事务/请求摘要和时间，不复制 DSN、玩家标识或完整敏感 SQL。
+3. 总 IOPS、总吞吐或 `SwapUsage` 越界时，同时核对 Read/Write 拆分、Read/WriteLatency、
+   DiskQueueDepth、FreeableMemory、连接池等待和 outbox/recovery 负载；不要通过 HPA 扩容继续放大数据库压力。
+4. CloudWatch alarm 不会自动生成死锁事务快照。平台外部事件消费者必须把告警和受控日志证据写入
+   批准的不可变事件库；该消费者未部署或未演练时，deadlock 自动取证只能标记为未验收。
+5. 修复锁顺序、索引、查询或容量后，以合成事务证明告警恢复、经济请求无重复且最终值班路由收到 OK。
+
+### 8.3A RDS 只读副本延迟或退役
+
+1. `ReplicaLag` 或副本容量告警触发时，先确认 delivery 中
+   `application_routing_adopted=false` 是否仍成立；当前仓库不把该 endpoint 注入应用，不能假定副本故障
+   已经影响经济写路径。
+2. 使用目标账号发布身份回读 reader 的 source identity、endpoint、KMS key、subnet group、参数组、
+   安全组、备份保留、删除保护和 `PendingModifiedValues`；任一漂移都停止应用发布。Multi-AZ standby
+   不是 reader，不能用 writer endpoint 的可用性代替该检查。
+3. 若未来应用采用 reader，必须按查询分类切回 writer 或停止非必要只读流量；不得把可能陈旧的副本
+   结果用于钱包终态、nonce/round 是否存在、ACK 幂等或任何读后写正确性判断。
+4. 不得直接删除 `replicate_source_db` 促成提升，也不得只把 Terraform 开关改回 `false`；资源的
+   `prevent_destroy` 会失败关闭。退役需要变更审批、连接排空、最终快照、目标确认和显式临时解除
+   destroy guard，完成后再恢复 guard。
+5. 同区域副本不是备份或跨区 DR。源区域故障仍执行第 11 节的 `prod-dr` 恢复流程；若要把副本提升为
+   writer，必须作为独立灾难变更验证复制追平、应用 DSN、单写围栏、钱包/审计对账和回退路径。
+
+### 8.4 钱包未知结果增长
 
 1. 保留原 round、request、`commandDigest` 与稳定 `operationId`，检查钱包网络、签名、超时和状态
    查询接口；不得从未认证响应推断资金终态。
@@ -214,14 +253,14 @@ aws elbv2 describe-target-health --target-group-arn "$SLOTS_RGS_TARGET_GROUP_ARN
 5. 与运营商按钱包 receipt、round 和审计事件对账；任何歧义按 P0 处理。不得创建新的借贷命令，
    也不得把 split/transfer 钱包临时映射为原子轮次接口。
 
-### 8.4 outbox 延迟或审计 sink 故障
+### 8.5 outbox 延迟或审计 sink 故障
 
 1. 检查 sink TLS/HMAC/mTLS、响应持久化语义、网络出口和 lease lost。
 2. 确认 backlog/最旧年龄仍在数据库中；不要删除或直接标记已发布。
 3. 达到就绪阈值时让 RGS 自动退出流量，避免无界积压。
 4. sink 恢复后观察幂等重放与 `eventId` 去重，并与数据库提交数量对账。
 
-### 8.5 完整性 quarantine 或对账差异
+### 8.6 完整性 quarantine 或对账差异
 
 1. 立即停止受影响定义、运营商或环境的流量，升级为 P0。
 2. 冻结发布、迁移、Secret 轮换和数据修复；保全 RDS snapshot、审计、CloudTrail 与部署证据。
@@ -229,14 +268,14 @@ aws elbv2 describe-target-health --target-group-arn "$SLOTS_RGS_TARGET_GROUP_ARN
 4. 在隔离副本复现和核验；由应用、数据库、安全、业务和运营商共同批准修复/恢复方案。
 5. 完成资金与审计对账、根因修复和独立复核后才可重新开放。
 
-### 8.6 Web release 故障
+### 8.7 Web release 故障
 
 1. 确认故障仅影响表现层，没有改变 RGS 经济状态。
 2. 将 release router 切回旧不可变前缀；不要覆盖 S3 对象或删除仍被会话使用的 release。
 3. 验证 HTML、JS、CSS、字体、Spine/音频素材都来自同一 release ID。
 4. 真实浏览器完成启动、spin、断线恢复与 CSP/CORS 验收后恢复默认路由。
 
-### 8.7 Secret 或签名密钥泄露
+### 8.8 Secret 或签名密钥泄露
 
 1. 启动安全事件流程，识别用途、运营商、环境、版本和可能暴露窗口。
 2. 创建新 Secrets Manager version/KMS material，并按协议 publish/switch/retire；不原地覆盖。

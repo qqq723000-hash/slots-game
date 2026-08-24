@@ -256,6 +256,7 @@ flowchart TB
 | `rgs-server` Worker 角色 | EKS Deployment | 钱包未知结果恢复、Outbox 投递和凭据清理 | 开放公网端口；创建新的 RNG 结果或 operationId |
 | `rgs-migrator` | EKS one-shot Job | `up`/`verify` schema，验证角色权限 | 承载业务流量；把迁移 DSN 交给运行时 |
 | PostgreSQL | RDS Multi-AZ instance | 会话、轮次、nonce、租约、游标和 outbox 权威状态 | 公网暴露；与运行时共用管理角色 |
+| PostgreSQL 可选读扩展 | 同区域 RDS read replica，默认关闭 | 仅承载经应用显式分类的非权威读取 | 接受写入；冒充 Multi-AZ standby、备份、Proxy 或跨区 DR |
 | Valkey 共享准入 | ElastiCache Multi-AZ replication group | 跨 API 副本的新启动与 Spin 身份令牌桶 | 充当资金、轮次、钱包结果或 `operationId` 幂等权威 |
 | 正式运营商控制面 | 公司服务 | SSO、授权、管理审计、签名启动与一次性交接 | 把管理 token/签名 key/operations Bearer 发给玩家 |
 | 正式钱包 | 公司或运营商服务 | 余额、原子借贷、查询和回滚协议 | 用 `local-operator` 代替；忽略幂等查询 |
@@ -282,6 +283,34 @@ RDS Proxy 是可选优化，不是默认依赖。应用初始化和事务中使�
 5. 峰值连接预算包含 API 与 Worker 各自的 `(最大副本 + maxSurge) × 每 Pod 最大连接`、两类
    终止中 Pod 的重叠连接、migrator、其他客户端和应急保留，不能只按稳定副本数计算。
 
+基线仍只有一个 Multi-AZ writer endpoint；四套环境示例把 `rds_read_replica.enabled` 固定为 `false`。
+Terraform 现在提供一个失败关闭的同区域 read replica 接口：只有显式启用时才创建独立
+`rds_reader_endpoint`、私网副本日志组、7 个容量告警和一个 `ReplicaLag` 告警。副本显式复用 source
+subnet group 和安全组，参数组由 RDS 继承并回读，同时配置备份保留期和删除保护；同区域加密副本的 KMS key 由 RDS 强制继承
+source，目标账号 live gate 必须回读相同 key、精确 source identity、endpoint、参数/网络绑定、备份、
+待应用修改以及全部告警。生产启用时 reader 自身也必须 Multi-AZ，但其 standby 同样不可读。主库的
+Multi-AZ standby 不对应用提供读 endpoint；read replica 是异步的，
+也不代替备份或 `prod-dr` 的跨区恢复。
+
+仓库没有把 reader endpoint 注入 API/Worker 数据源，合同固定
+`application_routing_adopted=false`；也没有实现 PgBouncer、RDS Proxy、自动提升或跨区 replica。启用
+基础设施前必须先完成查询只读性分类、read-after-write 一致性预算、连接池隔离和故障回退测试。直接
+关闭一个已创建的副本会被 `prevent_destroy` 拒绝，必须走经审批的退役/最终快照流程，不能靠删掉
+`replicate_source_db` 把它静默提升为独立 writer。
+
+Terraform 为主实例输出机器可读 `rds_alarm_contract`：8 个原生单指标告警与 2 个 metric-math 告警均
+使用 60 秒 2/3 debounce；总 IOPS 为 `ReadIOPS + WriteIOPS`，总吞吐为
+`ReadThroughput + WriteThroughput`，底层 `AWS/RDS` source query 固定 `DBInstanceIdentifier`、unit、
+period、stat 和 `ReturnData=false`，只有 `m1 + m2` expression 使用 `ReturnData=true`。这避免混合读写分别
+低于阈值但总量已超过 gp3/实例预算的漏报。RDS PostgreSQL DB instance 没有原生 `Deadlocks` 指标，因此已启用的
+PostgreSQL CloudWatch log export 由精确 `"deadlock detected"` metric filter 转成
+`Slots/RDSLogEvents` 自定义 `Count` 指标，再以 `Sum`、阈值 1 和 1/1 窗口告警。delivery 和目标账号门禁
+同时回读 filter 的日志组、pattern、namespace、metric name/value/default/unit、alarm 与完整
+MetricDataQueries；不会把虚拟 Total 指标伪装为 `AWS/RDS` 原生指标，也不会误用
+Aurora cluster 指标。所有告警显式固定 unit、SNS 动作与 `notBreaching` 缺失数据语义。`notBreaching`
+不证明采集健康，CloudWatch 也不会自动产生死锁事务快照；受控日志/Performance Insights 取证和不可变
+事件归档仍是企业平台外部门禁。
+
 ## 7. Web 版本隔离
 
 当前 Web 包含稳定 `/assets/...` 路径，仅靠 CloudFront 缓存失效或把新旧对象覆盖在同一路径，无法
@@ -289,6 +318,8 @@ RDS Proxy 是可选优化，不是默认依赖。应用初始化和事务中使�
 
 - 完整构建写入新的 `releases/<release-id>/`，上传后禁止覆盖；
 - CloudFront 只通过 OAC 读取，S3 Block Public Access 保持开启；
+- distribution 显式使用 `http2and3`，delivery contract 与目标账号 `get-distribution` 回读都拒绝退回
+  仅 HTTP/2；HTTP/3 的实际 QUIC 协商率和收益仍由目标网络 RUM 验收；
 - release router 以经验证的 cookie、独立 release host 或等价机制，把一次浏览器会话的 HTML、
   JS、CSS 和稳定素材固定到同一个前缀；
 - 新 release 健康检查通过后才切换默认路由，旧前缀保留到最长会话与回退窗口结束；
