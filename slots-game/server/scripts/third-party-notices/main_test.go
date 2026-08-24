@@ -18,8 +18,11 @@ func TestCollectProductionModulesExcludesTestOnlyDependencies(t *testing.T) {
 	if _, exists := modules["github.com/DATA-DOG/go-sqlmock"]; exists {
 		t.Fatal("仅测试依赖 go-sqlmock 被错误列入生产许可声明")
 	}
-	if len(modules) != 8 {
-		t.Fatalf("生产第三方模块数量错误：got %d want 8", len(modules))
+	if _, exists := modules["go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"]; !exists {
+		t.Fatal("生产 OTLP/HTTP exporter 未列入许可声明")
+	}
+	if len(modules) != 27 {
+		t.Fatalf("生产第三方模块数量错误：got %d want 27", len(modules))
 	}
 }
 

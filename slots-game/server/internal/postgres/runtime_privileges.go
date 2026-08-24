@@ -11,7 +11,7 @@ import (
 const (
 	CanonicalMigratorRole         = "rgs_migrator"
 	CanonicalRuntimeRole          = "rgs_runtime"
-	RuntimePrivilegePolicyVersion = "rgs-runtime-dml-v6"
+	RuntimePrivilegePolicyVersion = "rgs-runtime-dml-v8"
 )
 
 var runtimeInsertColumns = map[string][]string{
@@ -19,7 +19,8 @@ var runtimeInsertColumns = map[string][]string{
 		"operator_id", "session_id", "player_id", "wallet_account_id", "wallet_session_id",
 		"game_id", "definition_version", "definition_hash", "currency", "currency_exponent",
 		"jurisdiction", "status", "balance_snapshot_minor", "sequence", "revision",
-		"feature_state", "pending_round_id", "expires_at",
+		"feature_state", "pending_round_id", "expires_at", "idle_disconnect_seconds",
+		"idle_disconnect_at", "transport_generation",
 	},
 	"rgs_rounds": {
 		"operator_id", "session_id", "round_id", "server_transaction_id", "request_fingerprint",
@@ -31,6 +32,11 @@ var runtimeInsertColumns = map[string][]string{
 	"rgs_wallet_transactions": {
 		"operator_id", "transaction_id", "session_id", "round_id", "kind", "status", "currency",
 		"amount_minor", "request_fingerprint", "created_at", "updated_at",
+	},
+	"rgs_risk_reviews": {
+		"operator_id", "session_id", "round_id", "policy_version", "threshold_minor",
+		"payout_minor", "summary_hash", "expiry_policy", "status", "expires_at",
+		"created_at", "updated_at",
 	},
 	"rgs_outbox":          {"operator_id", "aggregate_type", "aggregate_id", "event_type", "payload"},
 	"rgs_operator_nonces": {"operator_id", "key_id", "nonce_hash", "expires_at", "created_at"},
@@ -44,6 +50,7 @@ var runtimeUpdateColumns = map[string][]string{
 	"rgs_sessions": {
 		"status", "balance_snapshot_minor", "sequence", "revision", "feature_state",
 		"pending_round_id", "updated_at", "integrity_quarantined_at",
+		"idle_disconnect_seconds", "idle_disconnect_at", "transport_generation",
 	},
 	"rgs_rounds": {
 		"status", "result_json", "wallet_transaction_id", "wallet_balance_minor", "wallet_lease_until",
@@ -52,6 +59,10 @@ var runtimeUpdateColumns = map[string][]string{
 		"result_delivery_required", "result_hash", "result_acknowledged_at",
 	},
 	"rgs_wallet_transactions": {"status", "operator_reference", "response_json", "failure_code", "updated_at"},
+	"rgs_risk_reviews": {
+		"status", "decision", "reason_code", "request_id", "idempotency_key",
+		"credential_key_id", "decision_fingerprint", "decided_at", "updated_at",
+	},
 	"rgs_outbox": {
 		"available_at", "lease_owner", "lease_token", "lease_until", "published_at", "attempts", "last_error",
 	},
@@ -67,6 +78,7 @@ var runtimeManagedTables = []string{
 	"rgs_operator_nonces",
 	"rgs_outbox",
 	"rgs_rounds",
+	"rgs_risk_reviews",
 	"rgs_schema_migrations",
 	"rgs_sessions",
 	"rgs_wallet_transactions",

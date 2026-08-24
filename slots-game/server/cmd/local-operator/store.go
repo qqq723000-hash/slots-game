@@ -32,6 +32,31 @@ const (
 	localOperatorWalletLockSeed int64 = 4_315_227_091
 )
 
+const localOperatorNonceConsumeSQL = `
+	WITH consumed AS (
+		INSERT INTO local_operator_nonces (
+			operator_id, key_id, nonce_hash, expires_at
+		)
+		SELECT $1,$2,$3,$4
+		WHERE $4 > CURRENT_TIMESTAMP
+		ON CONFLICT (operator_id, key_id, nonce_hash) DO UPDATE
+		SET expires_at=EXCLUDED.expires_at, created_at=CURRENT_TIMESTAMP
+		WHERE local_operator_nonces.expires_at <= CURRENT_TIMESTAMP
+		RETURNING 1
+	)
+	SELECT EXISTS (SELECT 1 FROM consumed)`
+
+const localOperatorReusableWalletSessionSQL = `
+	SELECT operator_id, wallet_session_ref, player_id, wallet_account_id,
+		rgs_session_id, game_id, definition_version, definition_hash,
+		currency, expires_at
+	FROM local_operator_wallet_sessions
+	WHERE operator_id=$1 AND player_id=$2 AND wallet_account_id=$3
+	  AND game_id=$4 AND definition_version=$5 AND definition_hash=$6
+	  AND currency=$7 AND expires_at>CURRENT_TIMESTAMP
+	ORDER BY created_at DESC
+	LIMIT 1`
+
 type postgresStore struct {
 	database *sql.DB
 }
@@ -370,6 +395,32 @@ func (s *postgresStore) RegisterWalletSession(
 	return nil
 }
 
+func (s *postgresStore) FindReusableWalletSession(
+	ctx context.Context,
+	operatorID, playerID, walletAccountID, gameID, definitionVersion, definitionHash, currency string,
+) (walletSessionSeed, bool, error) {
+	if !allIdentifiers(operatorID, playerID, walletAccountID, gameID, definitionVersion) ||
+		!digestPattern.MatchString(definitionHash) || !currencyPattern.MatchString(currency) {
+		return walletSessionSeed{}, false, errWalletSessionInvalid
+	}
+	var seed walletSessionSeed
+	err := s.database.QueryRowContext(ctx, localOperatorReusableWalletSessionSQL,
+		operatorID, playerID, walletAccountID, gameID, definitionVersion, definitionHash, currency,
+	).Scan(
+		&seed.OperatorID, &seed.WalletSessionRef, &seed.PlayerID, &seed.WalletAccountID,
+		&seed.SessionID, &seed.GameID, &seed.DefinitionVersion, &seed.DefinitionHash,
+		&seed.Currency, &seed.ExpiresAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return walletSessionSeed{}, false, nil
+	}
+	if err != nil {
+		return walletSessionSeed{}, false, fmt.Errorf("find reusable wallet session: %w", err)
+	}
+	seed.ExpiresAt = seed.ExpiresAt.UTC()
+	return seed, true, nil
+}
+
 func (s *postgresStore) Apply(ctx context.Context, request validatedRound) (storedOperation, error) {
 	tx, err := s.database.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
@@ -652,17 +703,10 @@ func (s *postgresStore) Consume(
 	}
 	digest := sha256.Sum256([]byte(nonce))
 	var consumed bool
-	err = s.database.QueryRowContext(ctx, `
-		WITH consumed AS (
-			INSERT INTO local_operator_nonces (
-				operator_id, key_id, nonce_hash, expires_at
-			) VALUES ($1,$2,$3,$4)
-			ON CONFLICT (operator_id, key_id, nonce_hash) DO UPDATE
-			SET expires_at=EXCLUDED.expires_at, created_at=CURRENT_TIMESTAMP
-			WHERE local_operator_nonces.expires_at <= CURRENT_TIMESTAMP
-			RETURNING 1
-		)
-		SELECT EXISTS (SELECT 1 FROM consumed)`,
+	// 请求验证使用进程时钟，但防重放的唯一权威边界是共享数据库时钟。即使本机
+	// 时钟落后，也不能插入数据库已判定过期的墓碑，否则同一 nonce 会反复命中
+	// “已过期可更新”分支并被多次接受。
+	err = s.database.QueryRowContext(ctx, localOperatorNonceConsumeSQL,
 		operatorID, keyID, hex.EncodeToString(digest[:]), expiresAt.UTC(),
 	).Scan(&consumed)
 	if err != nil {

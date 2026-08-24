@@ -78,6 +78,75 @@ func (r *MemoryRepository) GetSession(ctx context.Context, operatorID, sessionID
 	return entry.session, nil
 }
 
+func (r *MemoryRepository) ResetSessionTransport(
+	ctx context.Context,
+	operatorID, sessionID string,
+	idleDisconnect time.Duration,
+) (Session, error) {
+	if idleDisconnect < time.Second || idleDisconnect > 24*time.Hour {
+		return Session{}, ErrInvalidRequest
+	}
+	entry, err := r.lookupSession(ctx, operatorID, sessionID)
+	if err != nil {
+		return Session{}, err
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Session{}, err
+	}
+	now := time.Now().UTC()
+	if entry.session.Status == SessionBlocked {
+		return Session{}, ErrManualReview
+	}
+	if entry.session.Status != SessionActive || !entry.session.ExpiresAt.After(now) {
+		return Session{}, ErrSessionExpired
+	}
+	if entry.session.TransportGeneration >= MaxStateRevision {
+		return Session{}, ErrInvalidRequest
+	}
+	entry.session.TransportGeneration++
+	entry.session.IdleDisconnect = idleDisconnect
+	entry.session.IdleDisconnectAt = now.Add(idleDisconnect)
+	if entry.session.IdleDisconnectAt.After(entry.session.ExpiresAt) {
+		entry.session.IdleDisconnectAt = entry.session.ExpiresAt
+	}
+	entry.session.ServerTime = now
+	return entry.session, nil
+}
+
+func (r *MemoryRepository) AuthorizeSessionTransport(
+	ctx context.Context,
+	operatorID, sessionID string,
+	transportGeneration uint64,
+	allowIdleRecovery bool,
+) (Session, error) {
+	entry, err := r.lookupSession(ctx, operatorID, sessionID)
+	if err != nil {
+		return Session{}, err
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Session{}, err
+	}
+	if transportGeneration == 0 || transportGeneration != entry.session.TransportGeneration {
+		return Session{}, ErrSessionTimeout
+	}
+	now := time.Now().UTC()
+	if entry.session.Status == SessionBlocked {
+		return Session{}, ErrManualReview
+	}
+	if entry.session.Status != SessionActive || !entry.session.ExpiresAt.After(now) {
+		return Session{}, ErrSessionExpired
+	}
+	if !allowIdleRecovery && !entry.session.IdleDisconnectAt.After(now) {
+		return Session{}, ErrSessionTimeout
+	}
+	entry.session.ServerTime = now
+	return entry.session, nil
+}
+
 func (r *MemoryRepository) GetRound(ctx context.Context, key RoundKey) (RoundRecord, error) {
 	entry, err := r.lookupSession(ctx, key.OperatorID, key.SessionID)
 	if err != nil {
@@ -140,6 +209,9 @@ func (r *MemoryRepository) AcknowledgeResultDelivery(
 	if err := ctx.Err(); err != nil {
 		return ResultDelivery{}, false, err
 	}
+	if receipt.TransportGeneration != entry.session.TransportGeneration {
+		return ResultDelivery{}, false, ErrSessionTimeout
+	}
 	delivery, exists := entry.deliveries[receipt.RoundID]
 	if !exists {
 		return ResultDelivery{}, false, ErrResultDeliveryNotFound
@@ -201,6 +273,10 @@ func (r *MemoryRepository) PrepareRound(
 	if err := validateSessionBinding(entry.session, request); err != nil {
 		return RoundRecord{}, false, err
 	}
+	if request.TransportGeneration != entry.session.TransportGeneration ||
+		!entry.session.IdleDisconnectAt.After(time.Now()) {
+		return RoundRecord{}, false, ErrSessionTimeout
+	}
 	if entry.session.Sequence >= MaxClientSequence {
 		return RoundRecord{}, false, fmt.Errorf("%w: sequence exhausted", ErrInvalidRequest)
 	}
@@ -213,11 +289,15 @@ func (r *MemoryRepository) PrepareRound(
 		return RoundRecord{}, false, err
 	}
 	result = cloneSpinResult(result)
+	now := time.Now().UTC()
+	result.IdleDisconnectAt = now.Add(entry.session.IdleDisconnect)
+	if result.IdleDisconnectAt.After(entry.session.ExpiresAt) {
+		result.IdleDisconnectAt = entry.session.ExpiresAt
+	}
 	outcomeHash, err := PreparedOutcomeHashFor(result)
 	if err != nil {
 		return RoundRecord{}, false, err
 	}
-	now := time.Now().UTC()
 	walletCommand := WalletRound{
 		OperationID: walletOperationID(request), Fingerprint: fingerprint,
 		OperatorID: request.OperatorID, PlayerID: entry.session.PlayerID,
@@ -246,6 +326,10 @@ func (r *MemoryRepository) PrepareRound(
 		UpdatedAt:         now,
 	}
 	entry.session.PendingRoundID = request.RoundID
+	entry.session.IdleDisconnectAt = now.Add(entry.session.IdleDisconnect)
+	if entry.session.IdleDisconnectAt.After(entry.session.ExpiresAt) {
+		entry.session.IdleDisconnectAt = entry.session.ExpiresAt
+	}
 	entry.rounds[request.RoundID] = cloneRound(record)
 	entry.walletTransactions[walletCommand.OperationID] = memoryWalletTransaction{
 		Command: walletCommand, Kind: memoryWalletKindPlay, Status: memoryWalletStatusPending,

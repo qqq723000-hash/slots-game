@@ -64,7 +64,9 @@ func TestPostgresProductionRoundAndCredentialConcurrency(t *testing.T) {
 		GameID: "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
 		Currency: "EUR", CurrencyExponent: 2, Jurisdiction: "MT",
 		Status: rgs.SessionActive, ExpiresAt: time.Now().Add(time.Hour),
-		BalanceMinor: 10_000, Feature: game.EmptyFeatureState(),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().Add(20 * time.Minute),
+		TransportGeneration: 1,
+		BalanceMinor:        10_000, Feature: game.EmptyFeatureState(),
 	}
 	if err := repositoryA.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
@@ -91,7 +93,7 @@ func TestPostgresProductionRoundAndCredentialConcurrency(t *testing.T) {
 		RoundID: "round-a", GameID: session.GameID,
 		DefinitionVersion: session.DefinitionVersion, DefinitionHash: hash,
 		Currency: session.Currency, RoundKind: rgs.RoundKindBase,
-		BetMinor: 100, StartRevision: 0,
+		BetMinor: 100, StartRevision: 0, TransportGeneration: 1,
 	}
 	const callers = 32
 	var group sync.WaitGroup
@@ -146,14 +148,28 @@ func TestPostgresProductionRoundAndCredentialConcurrency(t *testing.T) {
 		RoundID: "round-b", GameID: session.GameID,
 		DefinitionVersion: session.DefinitionVersion, DefinitionHash: hash,
 		Currency: session.Currency, RoundKind: rgs.RoundKindBase,
-		BetMinor: 100, StartRevision: 1,
+		BetMinor: 100, StartRevision: 1, TransportGeneration: 1,
 	}); !errors.Is(err, rgs.ErrResultDeliveryPending) {
 		t.Fatalf("next spin before ACK error = %v", err)
 	}
 	receipt := rgs.ResultDeliveryAcknowledgement{
 		OperatorID: delivery.OperatorID, SessionID: delivery.SessionID,
 		RoundID: delivery.RoundID, Sequence: delivery.Sequence, ResultHash: delivery.ResultHash,
+		TransportGeneration: 1,
 	}
+	reset, err := repositoryB.ResetSessionTransport(
+		ctx, session.OperatorID, session.SessionID, 20*time.Minute,
+	)
+	if err != nil || reset.TransportGeneration != 2 {
+		t.Fatalf("transport reset = %+v error=%v", reset, err)
+	}
+	if _, changed, err := repositoryA.AcknowledgeResultDelivery(ctx, receipt); !errors.Is(err, rgs.ErrSessionTimeout) || changed {
+		t.Fatalf("old-generation result delivery ACK changed=%v error=%v", changed, err)
+	}
+	if pending, err := repositoryA.GetPendingResultDelivery(ctx, session.OperatorID, session.SessionID); err != nil || pending.ResultHash != delivery.ResultHash || !pending.AcknowledgedAt.IsZero() {
+		t.Fatalf("pending delivery after fenced ACK = %+v error=%v", pending, err)
+	}
+	receipt.TransportGeneration = reset.TransportGeneration
 	if _, changed, err := repositoryA.AcknowledgeResultDelivery(ctx, receipt); err != nil || !changed {
 		t.Fatalf("first result delivery ACK changed=%v error=%v", changed, err)
 	}
@@ -166,6 +182,537 @@ func TestPostgresProductionRoundAndCredentialConcurrency(t *testing.T) {
 
 	testPostgresCredentialConcurrency(t, database)
 	testRuntimePrivilegeBoundary(t, database)
+}
+
+func TestPostgresPrepareRechecksIdleDeadlineAfterWaitingForSessionLock(t *testing.T) {
+	databaseURLs := requirePostgresTestURLs(t)
+	lockerDB, err := sql.Open("pgx", databaseURLs.runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockerDB.Close()
+	contenderDB, err := sql.Open("pgx", databaseURLs.runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer contenderDB.Close()
+	// 单连接连接池保证下方取得的后端 PID 就是执行 PrepareRound 的连接，
+	// 因而 pg_blocking_pids 的锁等待判定具有确定性。
+	contenderDB.SetMaxOpenConns(1)
+	contenderDB.SetMaxIdleConns(1)
+	migrator, err := sql.Open("pgx", databaseURLs.migrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrator.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	truncateIntegrationTables(t, migrator)
+	defer truncateIntegrationTables(t, migrator)
+
+	var databaseNow time.Time
+	if err := migrator.QueryRowContext(ctx, databaseClockSQL).Scan(&databaseNow); err != nil {
+		t.Fatal(err)
+	}
+	databaseNow = databaseNow.UTC()
+	idleDeadline := databaseNow.Add(2 * time.Second)
+	hash := strings.Repeat("a", 64)
+	session := rgs.Session{
+		OperatorID: "operator-idle-lock", SessionID: "session-idle-lock",
+		PlayerID: "player-idle-lock", WalletAccountID: "wallet-idle-lock",
+		WalletSessionID: "wallet-session-idle-lock",
+		GameID:          "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
+		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
+		Status: rgs.SessionActive, ExpiresAt: databaseNow.Add(time.Hour),
+		IdleDisconnect: 2 * time.Second, IdleDisconnectAt: idleDeadline,
+		TransportGeneration: 1, BalanceMinor: 10_000, Feature: game.EmptyFeatureState(),
+	}
+	lockerRepository, err := NewRepository(lockerDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lockerRepository.CreateSession(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+
+	lockerTx, err := lockerDB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockerTx.Rollback()
+	if _, err := lockerTx.ExecContext(ctx, `
+		SELECT 1 FROM rgs_sessions
+		WHERE operator_id=$1 AND session_id=$2
+		FOR UPDATE`, session.OperatorID, session.SessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	var contenderPID int
+	if err := contenderDB.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&contenderPID); err != nil {
+		t.Fatal(err)
+	}
+	contenderRepository, err := NewRepository(contenderDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := rgs.SpinRequest{
+		OperatorID: session.OperatorID, SessionID: session.SessionID,
+		RoundID: "round-idle-lock", GameID: session.GameID,
+		DefinitionVersion: session.DefinitionVersion, DefinitionHash: session.DefinitionHash,
+		Currency: session.Currency, RoundKind: rgs.RoundKindBase,
+		BetMinor: 100, StartRevision: 0, TransportGeneration: 1,
+	}
+	type prepareResult struct {
+		prepared bool
+		err      error
+	}
+	resultChannel := make(chan prepareResult, 1)
+	var prepareCalls atomic.Int64
+	go func() {
+		_, prepared, prepareErr := contenderRepository.PrepareRound(
+			ctx, request, rgs.FingerprintFor(request),
+			rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
+				"https://wallet.test.invalid/idle-lock",
+			)),
+			func(rgs.Session) (rgs.SpinResult, error) {
+				prepareCalls.Add(1)
+				return validPreparedSessionIntegrityResult(request, 1), nil
+			},
+		)
+		resultChannel <- prepareResult{prepared: prepared, err: prepareErr}
+	}()
+
+	// 直接证明竞争者在截止时间前已进入并阻塞于会话行，不依赖调度器休眠或进程时钟。
+	waitForPostgresBlocker(t, ctx, migrator, contenderPID)
+	var blockedAt time.Time
+	if err := migrator.QueryRowContext(ctx, databaseClockSQL).Scan(&blockedAt); err != nil {
+		t.Fatal(err)
+	}
+	if !blockedAt.Before(idleDeadline) {
+		t.Fatalf("contender reached row lock wait at %s, not before idle deadline %s",
+			blockedAt.UTC(), idleDeadline)
+	}
+	waitForPostgresClock(t, ctx, migrator, idleDeadline)
+	if err := lockerTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case result := <-resultChannel:
+		if !errors.Is(result.err, rgs.ErrSessionTimeout) || result.prepared {
+			t.Fatalf("PrepareRound after lock wait = prepared:%t error:%v, want SESSION_TIMEOUT",
+				result.prepared, result.err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("PrepareRound remained blocked: %v", ctx.Err())
+	}
+	if calls := prepareCalls.Load(); calls != 0 {
+		t.Fatalf("RNG/prepare callback calls = %d, want 0", calls)
+	}
+
+	var roundCount, walletCount, roundOutboxCount, riskCount int
+	if err := migrator.QueryRowContext(ctx, `
+		SELECT
+			(SELECT count(*) FROM rgs_rounds
+			 WHERE operator_id=$1 AND session_id=$2),
+			(SELECT count(*) FROM rgs_wallet_transactions
+			 WHERE operator_id=$1 AND session_id=$2),
+			(SELECT count(*) FROM rgs_outbox
+			 WHERE operator_id=$1 AND aggregate_type='round'),
+			(SELECT count(*) FROM rgs_risk_reviews
+			 WHERE operator_id=$1 AND session_id=$2)`,
+		session.OperatorID, session.SessionID,
+	).Scan(&roundCount, &walletCount, &roundOutboxCount, &riskCount); err != nil {
+		t.Fatal(err)
+	}
+	if roundCount != 0 || walletCount != 0 || roundOutboxCount != 0 || riskCount != 0 {
+		t.Fatalf("timed-out intent side effects = rounds:%d wallet:%d outbox:%d risk:%d",
+			roundCount, walletCount, roundOutboxCount, riskCount)
+	}
+	var pendingRoundID sql.NullString
+	var persistedDeadline time.Time
+	var revision, sequence int64
+	if err := migrator.QueryRowContext(ctx, `
+		SELECT pending_round_id, idle_disconnect_at, revision, sequence
+		FROM rgs_sessions WHERE operator_id=$1 AND session_id=$2`,
+		session.OperatorID, session.SessionID,
+	).Scan(&pendingRoundID, &persistedDeadline, &revision, &sequence); err != nil {
+		t.Fatal(err)
+	}
+	if pendingRoundID.Valid || !persistedDeadline.Equal(idleDeadline) || revision != 0 || sequence != 0 {
+		t.Fatalf("timed-out intent mutated session = pending:%v idle:%s revision:%d sequence:%d",
+			pendingRoundID, persistedDeadline.UTC(), revision, sequence)
+	}
+}
+
+func TestPostgresPrepareRechecksDeliveryFenceAfterWaitingForSessionLock(t *testing.T) {
+	databaseURLs := requirePostgresTestURLs(t)
+	lockerDB, err := sql.Open("pgx", databaseURLs.runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockerDB.Close()
+	contenderDB, err := sql.Open("pgx", databaseURLs.runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer contenderDB.Close()
+	contenderDB.SetMaxOpenConns(1)
+	contenderDB.SetMaxIdleConns(1)
+	migrator, err := sql.Open("pgx", databaseURLs.migrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrator.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	truncateIntegrationTables(t, migrator)
+	defer truncateIntegrationTables(t, migrator)
+
+	var databaseNow time.Time
+	if err := migrator.QueryRowContext(ctx, databaseClockSQL).Scan(&databaseNow); err != nil {
+		t.Fatal(err)
+	}
+	databaseNow = databaseNow.UTC()
+	hash := strings.Repeat("a", 64)
+	session := rgs.Session{
+		OperatorID: "operator-delivery-lock", SessionID: "session-delivery-lock",
+		PlayerID: "player-delivery-lock", WalletAccountID: "wallet-delivery-lock",
+		WalletSessionID: "wallet-session-delivery-lock",
+		GameID:          "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
+		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
+		Status: rgs.SessionActive, ExpiresAt: databaseNow.Add(time.Hour),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: databaseNow.Add(20 * time.Minute),
+		TransportGeneration: 1, BalanceMinor: 10_000, Feature: game.EmptyFeatureState(),
+	}
+	lockerRepository, err := NewRepository(lockerDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lockerRepository.CreateSession(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	spinner := &integrationSpinner{}
+	wallet := &integrationWallet{balance: session.BalanceMinor, receipts: make(map[string]rgs.WalletReceipt)}
+	registry, err := rgs.NewMemoryDefinitionRegistry(rgs.DefinitionEntry{
+		GameID: session.GameID, Version: session.DefinitionVersion,
+		SHA256: session.DefinitionHash, Spinner: spinner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := rgs.NewCoordinator(rgs.CoordinatorConfig{}, lockerRepository, wallet, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	committedRequest := rgs.SpinRequest{
+		OperatorID: session.OperatorID, SessionID: session.SessionID,
+		RoundID: "round-delivery-committed", GameID: session.GameID,
+		DefinitionVersion: session.DefinitionVersion, DefinitionHash: session.DefinitionHash,
+		Currency: session.Currency, RoundKind: rgs.RoundKindBase,
+		BetMinor: 100, StartRevision: 0, TransportGeneration: 1,
+	}
+	committed, err := coordinator.Spin(ctx, committedRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := lockerRepository.GetPendingResultDelivery(ctx, session.OperatorID, session.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := lockerRepository.AcknowledgeResultDelivery(ctx, rgs.ResultDeliveryAcknowledgement{
+		OperatorID: session.OperatorID, SessionID: session.SessionID,
+		RoundID: committedRequest.RoundID, Sequence: committed.Sequence,
+		ResultHash: delivery.ResultHash, TransportGeneration: 1,
+	}); err != nil || !changed {
+		t.Fatalf("acknowledge setup delivery changed=%t error=%v", changed, err)
+	}
+
+	var baselineRounds, baselineWallet, baselineRoundOutbox, baselineRisk int
+	if err := migrator.QueryRowContext(ctx, `
+		SELECT
+			(SELECT count(*) FROM rgs_rounds
+			 WHERE operator_id=$1 AND session_id=$2),
+			(SELECT count(*) FROM rgs_wallet_transactions
+			 WHERE operator_id=$1 AND session_id=$2),
+			(SELECT count(*) FROM rgs_outbox
+			 WHERE operator_id=$1 AND aggregate_type='round'),
+			(SELECT count(*) FROM rgs_risk_reviews
+			 WHERE operator_id=$1 AND session_id=$2)`,
+		session.OperatorID, session.SessionID,
+	).Scan(&baselineRounds, &baselineWallet, &baselineRoundOutbox, &baselineRisk); err != nil {
+		t.Fatal(err)
+	}
+	var baselineDeadline time.Time
+	if err := migrator.QueryRowContext(ctx, `
+		SELECT idle_disconnect_at FROM rgs_sessions
+		WHERE operator_id=$1 AND session_id=$2`,
+		session.OperatorID, session.SessionID,
+	).Scan(&baselineDeadline); err != nil {
+		t.Fatal(err)
+	}
+
+	lockerTx, err := lockerDB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockerTx.Rollback()
+	if _, err := lockerTx.ExecContext(ctx, `
+		SELECT 1 FROM rgs_sessions
+		WHERE operator_id=$1 AND session_id=$2
+		FOR UPDATE`, session.OperatorID, session.SessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	var contenderPID int
+	if err := contenderDB.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&contenderPID); err != nil {
+		t.Fatal(err)
+	}
+	contenderRepository, err := NewRepository(contenderDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := rgs.SpinRequest{
+		OperatorID: session.OperatorID, SessionID: session.SessionID,
+		RoundID: "round-delivery-next", GameID: session.GameID,
+		DefinitionVersion: session.DefinitionVersion, DefinitionHash: session.DefinitionHash,
+		Currency: session.Currency, RoundKind: rgs.RoundKindBase,
+		BetMinor: 100, StartRevision: 1, TransportGeneration: 1,
+	}
+	type prepareResult struct {
+		prepared bool
+		err      error
+	}
+	resultChannel := make(chan prepareResult, 1)
+	var prepareCalls atomic.Int64
+	go func() {
+		_, prepared, prepareErr := contenderRepository.PrepareRound(
+			ctx, request, rgs.FingerprintFor(request),
+			rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
+				"https://wallet.test.invalid/delivery-lock",
+			)),
+			func(rgs.Session) (rgs.SpinResult, error) {
+				prepareCalls.Add(1)
+				result := validPreparedSessionIntegrityResult(request, 2)
+				result.ServerTransactionID = "rgs-op-v1:delivery-lock-next"
+				return result, nil
+			},
+		)
+		resultChannel <- prepareResult{prepared: prepared, err: prepareErr}
+	}()
+
+	waitForPostgresBlocker(t, ctx, migrator, contenderPID)
+	if _, err := lockerTx.ExecContext(ctx, `
+		UPDATE rgs_rounds
+		SET result_delivery_required=TRUE, result_acknowledged_at=NULL
+		WHERE operator_id=$1 AND session_id=$2 AND round_id=$3
+		  AND status='COMMITTED'`,
+		session.OperatorID, session.SessionID, committedRequest.RoundID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := lockerTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case result := <-resultChannel:
+		if !errors.Is(result.err, rgs.ErrResultDeliveryPending) || result.prepared {
+			t.Fatalf("PrepareRound after delivery commit = prepared:%t error:%v, want pending fence",
+				result.prepared, result.err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("PrepareRound remained blocked: %v", ctx.Err())
+	}
+	if calls := prepareCalls.Load(); calls != 0 {
+		t.Fatalf("RNG/prepare callback calls = %d, want 0", calls)
+	}
+
+	var roundCount, walletCount, roundOutboxCount, riskCount int
+	if err := migrator.QueryRowContext(ctx, `
+		SELECT
+			(SELECT count(*) FROM rgs_rounds
+			 WHERE operator_id=$1 AND session_id=$2),
+			(SELECT count(*) FROM rgs_wallet_transactions
+			 WHERE operator_id=$1 AND session_id=$2),
+			(SELECT count(*) FROM rgs_outbox
+			 WHERE operator_id=$1 AND aggregate_type='round'),
+			(SELECT count(*) FROM rgs_risk_reviews
+			 WHERE operator_id=$1 AND session_id=$2)`,
+		session.OperatorID, session.SessionID,
+	).Scan(&roundCount, &walletCount, &roundOutboxCount, &riskCount); err != nil {
+		t.Fatal(err)
+	}
+	if roundCount != baselineRounds || walletCount != baselineWallet ||
+		roundOutboxCount != baselineRoundOutbox || riskCount != baselineRisk {
+		t.Fatalf("fenced intent changed economic counts: rounds %d/%d wallet %d/%d outbox %d/%d risk %d/%d",
+			roundCount, baselineRounds, walletCount, baselineWallet,
+			roundOutboxCount, baselineRoundOutbox, riskCount, baselineRisk)
+	}
+	var pendingRoundID sql.NullString
+	var persistedDeadline time.Time
+	var revision, sequence int64
+	if err := migrator.QueryRowContext(ctx, `
+		SELECT pending_round_id, idle_disconnect_at, revision, sequence
+		FROM rgs_sessions WHERE operator_id=$1 AND session_id=$2`,
+		session.OperatorID, session.SessionID,
+	).Scan(&pendingRoundID, &persistedDeadline, &revision, &sequence); err != nil {
+		t.Fatal(err)
+	}
+	if pendingRoundID.Valid || !persistedDeadline.Equal(baselineDeadline) || revision != 1 || sequence != 1 {
+		t.Fatalf("fenced intent mutated session = pending:%v idle:%s revision:%d sequence:%d",
+			pendingRoundID, persistedDeadline.UTC(), revision, sequence)
+	}
+}
+
+func waitForPostgresBlocker(t *testing.T, ctx context.Context, observer *sql.DB, backendPID int) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blockers int
+		if err := observer.QueryRowContext(ctx,
+			`SELECT cardinality(pg_blocking_pids($1))`, backendPID,
+		).Scan(&blockers); err != nil {
+			t.Fatal(err)
+		}
+		if blockers > 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("backend %d never waited for the session row lock: %v", backendPID, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForPostgresClock(t *testing.T, ctx context.Context, database *sql.DB, deadline time.Time) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var now time.Time
+		if err := database.QueryRowContext(ctx, databaseClockSQL).Scan(&now); err != nil {
+			t.Fatal(err)
+		}
+		if !now.Before(deadline) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("database clock did not reach idle deadline %s: %v", deadline, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func TestPostgresHighValueRiskApprovalGatesWalletClaim(t *testing.T) {
+	databaseURLs := requirePostgresTestURLs(t)
+	database, err := sql.Open("pgx", databaseURLs.runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	migrator, err := sql.Open("pgx", databaseURLs.migrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrator.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	truncateIntegrationTables(t, migrator)
+	defer truncateIntegrationTables(t, migrator)
+
+	policy := rgs.HighValueRiskPolicy{
+		Enabled: true, ThresholdMinor: 50, PolicyVersion: "payout-v1",
+		ReviewTTL: time.Hour, ExpiryPolicy: rgs.RiskExpiryReject,
+	}
+	repository, err := NewRepositoryWithOptions(database, RepositoryOptions{RiskPolicy: policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := strings.Repeat("a", 64)
+	session := rgs.Session{
+		OperatorID: "operator-risk", SessionID: "session-risk", PlayerID: "player-risk",
+		WalletAccountID: "wallet-risk", WalletSessionID: "wallet-session-risk",
+		GameID: "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
+		Currency: "EUR", CurrencyExponent: 2, Jurisdiction: "MT",
+		Status: rgs.SessionActive, ExpiresAt: time.Now().Add(time.Hour),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().Add(20 * time.Minute),
+		TransportGeneration: 1,
+		BalanceMinor:        10_000, Feature: game.EmptyFeatureState(),
+	}
+	if err := repository.CreateSession(ctx, session); err != nil {
+		t.Fatal(err)
+	}
+	request := rgs.SpinRequest{
+		OperatorID: session.OperatorID, SessionID: session.SessionID, RoundID: "round-risk",
+		GameID: session.GameID, DefinitionVersion: session.DefinitionVersion,
+		DefinitionHash: hash, Currency: session.Currency, RoundKind: rgs.RoundKindBase,
+		BetMinor: 100, StartRevision: 0, TransportGeneration: 1,
+	}
+	outcome, err := (&integrationSpinner{}).Spin(ctx, game.SpinInput{BetMinor: request.BetMinor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := rgs.SpinResult{
+		OperatorID: request.OperatorID, SessionID: request.SessionID, RoundID: request.RoundID,
+		GameID: request.GameID, DefinitionVersion: request.DefinitionVersion,
+		DefinitionHash: request.DefinitionHash, Currency: request.Currency,
+		RoundKind: request.RoundKind, ServerTransactionID: "rgs-op-v1:risk",
+		StartRevision: 0, Sequence: 1, BetMinor: 100, ChargedBetMinor: 100,
+		TotalWinMinor: outcome.TotalWinMinor, Grid: outcome.Grid, Wins: outcome.Wins,
+		Events: outcome.Events, FeatureState: outcome.NextFeature,
+	}
+	profile := rgs.AtomicHTTPProfile(
+		rgs.WalletRouteBindingIDForCanonicalTarget("https://wallet.test.invalid/ledger"),
+	)
+	record, prepared, err := repository.PrepareRound(
+		ctx, request, rgs.FingerprintFor(request), profile,
+		func(rgs.Session) (rgs.SpinResult, error) { return result, nil },
+	)
+	if err != nil || !prepared || record.Status != rgs.RoundRiskPending ||
+		record.WalletPhase != "" || !record.NextAttemptAt.IsZero() {
+		t.Fatalf("risk prepare = record:%+v prepared:%v error:%v", record, prepared, err)
+	}
+	if _, claimed, err := repository.ClaimWallet(ctx, request.Key(), time.Minute); err != nil || claimed {
+		t.Fatalf("pre-approval wallet claim = claimed:%v error:%v", claimed, err)
+	}
+	var reviewStatus, roundStatus, walletPhase string
+	var nextAttempt sql.NullTime
+	if err := database.QueryRowContext(ctx, `
+		SELECT review.status, round.status, round.wallet_phase, round.next_attempt_at
+		FROM rgs_risk_reviews review
+		JOIN rgs_rounds round USING (operator_id, session_id, round_id)
+		WHERE review.operator_id=$1 AND review.session_id=$2 AND review.round_id=$3`,
+		request.OperatorID, request.SessionID, request.RoundID,
+	).Scan(&reviewStatus, &roundStatus, &walletPhase, &nextAttempt); err != nil {
+		t.Fatal(err)
+	}
+	if reviewStatus != "PENDING" || roundStatus != "RISK_PENDING" || walletPhase != "" || nextAttempt.Valid {
+		t.Fatalf("persisted risk gate = review:%s round:%s phase:%q next:%v",
+			reviewStatus, roundStatus, walletPhase, nextAttempt)
+	}
+	command := rgs.RiskDecisionCommand{
+		RoundKey: request.Key(), RequestID: "request-risk-a", IdempotencyKey: "decision-risk-a",
+		CredentialKeyID: "operator-key-a", Decision: rgs.RiskDecisionApprove,
+		ReasonCode: rgs.RiskReasonApproved,
+	}
+	decision, err := repository.DecideRisk(ctx, command)
+	if err != nil || decision.Status != rgs.RoundPrepared || decision.Replayed {
+		t.Fatalf("risk approval = %+v, error=%v", decision, err)
+	}
+	command.RequestID = "request-risk-b"
+	replay, err := repository.DecideRisk(ctx, command)
+	if err != nil || !replay.Replayed || replay.DecidedAt != decision.DecidedAt {
+		t.Fatalf("risk approval replay = %+v, error=%v", replay, err)
+	}
+	if _, claimed, err := repository.ClaimWallet(ctx, request.Key(), time.Minute); err != nil || !claimed {
+		t.Fatalf("approved wallet claim = claimed:%v error:%v", claimed, err)
+	}
 }
 
 func TestPostgresFeatureRoundInputStateRecovery(t *testing.T) {
@@ -237,7 +784,9 @@ func TestPostgresFeatureRoundInputStateRecovery(t *testing.T) {
 				GameID:          "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
 				Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
 				Status: rgs.SessionActive, ExpiresAt: time.Now().Add(time.Hour),
-				BalanceMinor: 10_000, Feature: test.input,
+				IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().Add(20 * time.Minute),
+				TransportGeneration: 1,
+				BalanceMinor:        10_000, Feature: test.input,
 			}
 			if err := repository.CreateSession(ctx, session); err != nil {
 				t.Fatal(err)
@@ -248,6 +797,7 @@ func TestPostgresFeatureRoundInputStateRecovery(t *testing.T) {
 				DefinitionVersion: session.DefinitionVersion, DefinitionHash: hash,
 				Currency: session.Currency, RoundKind: rgs.RoundKindFreeSpin,
 				BetMinor: test.input.BetMinor, StartRevision: session.Revision,
+				TransportGeneration: 1,
 			}
 			result := recoverableFeatureResult(request, test.next, test.events)
 			record, prepared, err := repository.PrepareRound(
@@ -437,6 +987,7 @@ func testPostgresCredentialConcurrency(t *testing.T, database *sql.DB) {
 		DefinitionVersion: "math-v1", DefinitionHash: strings.Repeat("a", 64),
 		RequestFingerprint: strings.Repeat("b", 64),
 		Currency:           "EUR", CurrencyExponent: 2, Jurisdiction: "MT",
+		IdleDisconnectSeconds: 1200,
 	}
 	issued, err := service.Issue(context.Background(), claims)
 	if err != nil {
@@ -505,6 +1056,7 @@ func testRuntimePrivilegeBoundary(t *testing.T, database *sql.DB) {
 		{name: "migration ledger update", statement: `UPDATE public.rgs_schema_migrations SET checksum=repeat('0', 64)`},
 		{name: "session delete", statement: `DELETE FROM public.rgs_sessions`},
 		{name: "round delete", statement: `DELETE FROM public.rgs_rounds`},
+		{name: "risk review delete", statement: `DELETE FROM public.rgs_risk_reviews`},
 		{name: "wallet delete", statement: `DELETE FROM public.rgs_wallet_transactions`},
 		{name: "outbox delete", statement: `DELETE FROM public.rgs_outbox`},
 	}
@@ -531,7 +1083,7 @@ func truncateIntegrationTables(t *testing.T, database *sql.DB) {
 	_, err := database.Exec(`
 		TRUNCATE TABLE
 			rgs_operator_nonces, rgs_launch_codes, rgs_outbox,
-			rgs_wallet_transactions, rgs_rounds, rgs_sessions,
+			rgs_risk_reviews, rgs_wallet_transactions, rgs_rounds, rgs_sessions,
 			rgs_wallet_recovery_operators
 		RESTART IDENTITY CASCADE`)
 	if err != nil {

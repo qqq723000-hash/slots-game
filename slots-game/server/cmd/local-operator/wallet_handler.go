@@ -23,6 +23,9 @@ type walletStore interface {
 	Rollback(context.Context, validatedRollback) (storedOperation, error)
 	EnsureAccount(context.Context, accountSeed) error
 	RegisterWalletSession(context.Context, walletSessionSeed) error
+	FindReusableWalletSession(
+		context.Context, string, string, string, string, string, string, string,
+	) (walletSessionSeed, bool, error)
 	Ping(context.Context) error
 }
 

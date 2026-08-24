@@ -37,6 +37,7 @@ func TestMetricsHaveNoHighCardinalityLabels(t *testing.T) {
 	metrics.AccessLogEmitted()
 	metrics.AccessLogDropped()
 	metrics.SecurityLogDropped()
+	metrics.TraceExportFailure()
 	var output bytes.Buffer
 	if err := metrics.WritePrometheus(&output); err != nil {
 		t.Fatal(err)
@@ -75,7 +76,8 @@ func TestMetricsHaveNoHighCardinalityLabels(t *testing.T) {
 	}
 	if !strings.Contains(text, "rgs_access_logs_emitted_total 1") ||
 		!strings.Contains(text, "rgs_access_logs_dropped_total 1") ||
-		!strings.Contains(text, "rgs_security_logs_dropped_total 1") {
+		!strings.Contains(text, "rgs_security_logs_dropped_total 1") ||
+		!strings.Contains(text, "rgs_trace_export_failures_total 1") {
 		t.Fatalf("access log counters missing from output: %s", text)
 	}
 	if !strings.Contains(text, "# TYPE rgs_auth_replays_total counter") ||
@@ -255,6 +257,86 @@ func TestAPIOnlyMetricsDoNotExposeSyntheticRecoveryZeros(t *testing.T) {
 	if strings.Contains(output.String(), "rgs_recovery_") {
 		t.Fatalf("API-only metrics exposed synthetic recovery state:\n%s", output.String())
 	}
+}
+
+func TestMetricsWithoutConfiguredAdmissionDoNotExposeSyntheticEconomicHealth(t *testing.T) {
+	var output bytes.Buffer
+	if err := (&Metrics{}).WritePrometheus(&output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "rgs_economic_admission_ready") ||
+		strings.Contains(output.String(), "rgs_economic_admission_last_success_") {
+		t.Fatalf("worker metrics exposed synthetic economic admission health:\n%s", output.String())
+	}
+}
+
+func TestEconomicAdmissionHealthRequiresBothComponentsAndPreservesLastSuccess(t *testing.T) {
+	metrics := &Metrics{}
+	metrics.EnableEconomicAdmissionHealthMetrics()
+	writeAt := func(observedAt time.Time) string {
+		t.Helper()
+		var output bytes.Buffer
+		if err := metrics.writeEconomicAdmissionHealthMetrics(&output, observedAt); err != nil {
+			t.Fatal(err)
+		}
+		assertNoHighCardinalityMetricLabels(t, output.String())
+		return output.String()
+	}
+	assertContains := func(text string, expected ...string) {
+		t.Helper()
+		for _, item := range expected {
+			if !strings.Contains(text, item) {
+				t.Fatalf("economic admission metrics missing %q:\n%s", item, text)
+			}
+		}
+	}
+
+	text := writeAt(time.Unix(1_700_000_000, 0))
+	assertContains(text,
+		"rgs_economic_admission_ready 0",
+		"rgs_economic_admission_last_success_timestamp_seconds 0",
+		"rgs_economic_admission_last_success_age_seconds -1",
+	)
+
+	metrics.ObserveSharedAdmissionHealth(true, time.Unix(1_699_999_990, 0))
+	text = writeAt(time.Unix(1_700_000_000, 0))
+	assertContains(text,
+		"rgs_economic_admission_ready 0",
+		"rgs_economic_admission_last_success_timestamp_seconds 0",
+	)
+
+	metrics.ObserveEconomicAdmissionHealth(true, time.Unix(1_699_999_995, 0))
+	text = writeAt(time.Unix(1_700_000_000, 0))
+	assertContains(text,
+		"rgs_economic_admission_ready 1",
+		"rgs_economic_admission_last_success_timestamp_seconds 1699999990",
+		"rgs_economic_admission_last_success_age_seconds 10",
+	)
+	// 只有一条路径产生新观测时，不能掩盖另一条路径已经陈旧的成功证据。
+	metrics.ObserveEconomicAdmissionHealth(true, time.Unix(1_700_000_001, 0))
+	text = writeAt(time.Unix(1_700_000_002, 0))
+	assertContains(text,
+		"rgs_economic_admission_last_success_timestamp_seconds 1699999990",
+		"rgs_economic_admission_last_success_age_seconds 12",
+	)
+
+	metrics.ObserveEconomicAdmissionHealth(false, time.Time{})
+	text = writeAt(time.Unix(1_700_000_005, 0))
+	assertContains(text,
+		"rgs_economic_admission_ready 0",
+		"rgs_economic_admission_last_success_timestamp_seconds 1699999990",
+		"rgs_economic_admission_last_success_age_seconds 15",
+	)
+
+	metrics.ObserveEconomicAdmissionHealth(true, time.Unix(1_700_000_010, 0))
+	metrics.ObserveSharedAdmissionHealth(true, time.Unix(1_700_000_011, 0))
+	metrics.ObserveSharedAdmissionHealth(true, time.Time{})
+	text = writeAt(time.Unix(1_700_000_012, 0))
+	assertContains(text,
+		"rgs_economic_admission_ready 0",
+		"rgs_economic_admission_last_success_timestamp_seconds 1700000010",
+		"rgs_economic_admission_last_success_age_seconds 2",
+	)
 }
 
 func TestMetricsExposeAttachedDatabasePoolGauges(t *testing.T) {

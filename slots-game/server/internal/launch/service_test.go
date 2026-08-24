@@ -354,5 +354,6 @@ func validClaims() Claims {
 		DefinitionVersion: "math-2026.07.1", DefinitionHash: strings.Repeat("a", 64),
 		RequestFingerprint: strings.Repeat("b", 64),
 		Currency:           "EUR", CurrencyExponent: 2, Jurisdiction: "GB",
+		IdleDisconnectSeconds: 1200,
 	}
 }

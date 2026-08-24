@@ -21,6 +21,7 @@ import (
 
 	"slots-game/server/internal/operator"
 	"slots-game/server/internal/rgs"
+	"slots-game/server/internal/telemetry"
 )
 
 const (
@@ -488,6 +489,9 @@ func (w *HTTPWallet) do(
 	}); err != nil {
 		return httpExchange{Cause: fmt.Errorf("wallet http: sign request: %w", err)}
 	}
+	// 经济请求签名固定后才注入 Trace Context，确保可选追踪不改变钱包认证/幂等契约。
+	// 只允许发出 traceparent 与已受信的本地 tracestate；公网边界会剥离调用方 tracestate。
+	telemetry.Inject(request.Context(), request.Header)
 	response, err := w.client.Do(request)
 	if err != nil {
 		// 传输故障后的资金结果不确定；协调器必须使用完全相同的操作标识

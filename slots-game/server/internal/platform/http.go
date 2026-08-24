@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"slots-game/server/internal/safelog"
 )
 
 type Middleware struct {
@@ -56,9 +58,10 @@ func (m Middleware) Wrap(next http.Handler) http.Handler {
 		if m.MaxRequestBytes > 0 && r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, m.MaxRequestBytes)
 		}
-		// Middleware 可被 rgs-server 以外的入口复用；日志只保留安全的 request_id 字段、
-		// 固定方法类别和耗时，绝不记录攻击者可控的原始路径、查询串或网络地址。
+		// Middleware 可被 rgs-server 以外的入口复用；协议响应保留原 request_id，长期日志
+		// 只保留它的稳定单向摘要、固定方法类别和耗时，绝不记录原始路径、查询串或网络地址。
 		logMethod := normalizedLogMethod(r.Method)
+		logRequestID := safelog.CorrelationIDDigest(requestID)
 		defer func() {
 			durationMilliseconds := time.Since(started).Milliseconds()
 			if recovered := recover(); recovered != nil {
@@ -67,12 +70,12 @@ func (m Middleware) Wrap(next http.Handler) http.Handler {
 					m.Metrics.HTTPServerFailures.Add(1)
 				}
 				if m.Logger != nil {
-					m.Logger.Error("http panic recovered", "request_id", requestID, "method", logMethod, "duration_ms", durationMilliseconds)
+					m.Logger.Error("http panic recovered", "request_id", logRequestID, "method", logMethod, "duration_ms", durationMilliseconds)
 				}
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 			}
 			if m.Logger != nil {
-				m.Logger.Info("http request", "request_id", requestID, "method", logMethod, "duration_ms", durationMilliseconds)
+				m.Logger.Info("http request", "request_id", logRequestID, "method", logMethod, "duration_ms", durationMilliseconds)
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -125,7 +128,7 @@ func ApplyCORSHeaders(w http.ResponseWriter, r *http.Request, allowedOrigins map
 	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Expose-Headers", "Retry-After")
 	w.Header().Set("Vary", "Origin")
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Content-Digest, Idempotency-Key, X-Operator-Id, X-Request-Id, X-Nonce, Signature, Signature-Input")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Content-Digest, Idempotency-Key, Traceparent, X-Operator-Id, X-Request-Id, X-Nonce, Signature, Signature-Input")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 }
 

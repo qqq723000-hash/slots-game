@@ -76,8 +76,16 @@ type Config struct {
 	WalletFastPathTimeout            time.Duration
 	WalletRootCAFile                 string
 	WalletMaxAttempts                int
+	HighValueRiskEnabled             bool
+	HighValueRiskThresholdMinor      int64
+	HighValueRiskPolicyVersion       string
+	HighValueRiskReviewTTL           time.Duration
+	HighValueRiskExpiryPolicy        string
+	HighValueRiskExpiryBatchSize     int
 	LaunchTTL                        time.Duration
 	AccessTokenTTL                   time.Duration
+	SessionIdleDisconnectMin         time.Duration
+	SessionIdleDisconnectMax         time.Duration
 	MaxRequestBytes                  int64
 	MaxInFlightRequests              int
 	MaxCryptoInFlight                int
@@ -87,6 +95,13 @@ type Config struct {
 	PreAuthRatePerSecond             float64
 	PreAuthRateBurst                 int
 	SuccessAccessLogSamplePerMillion int
+	TraceEndpoint                    string
+	TraceSampleRatio                 float64
+	TraceBatchTimeout                time.Duration
+	TraceExportTimeout               time.Duration
+	TraceShutdownTimeout             time.Duration
+	TraceMaxQueueSize                int
+	TraceMaxExportBatchSize          int
 	SharedAdmissionURL               string
 	SharedAdmissionUsername          string
 	SharedAdmissionPasswordFile      string
@@ -147,6 +162,8 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		WalletMaxAttempts:            100,
 		LaunchTTL:                    2 * time.Minute,
 		AccessTokenTTL:               15 * time.Minute,
+		SessionIdleDisconnectMin:     time.Minute,
+		SessionIdleDisconnectMax:     24 * time.Hour,
 		// AWS WAF/ALB 的受检正文窗口为 8 KiB。RGS 公网请求的最大合法字段即使采用
 		// 最坏的 JSON Unicode 转义也小于该值，因此应用边界不得接受 WAF 未完整检查的尾部。
 		MaxRequestBytes:                  8 << 10,
@@ -158,9 +175,16 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		PreAuthRatePerSecond:             5_000,
 		PreAuthRateBurst:                 10_000,
 		SuccessAccessLogSamplePerMillion: 1_000_000,
-		SharedAdmissionTimeout:           100 * time.Millisecond,
-		SharedAdmissionRatePerSecond:     20,
-		SharedAdmissionRateBurst:         40,
+		// 只有显式配置 endpoint 才启用 tracing；启用后的资源与时间预算保持明确且有界。
+		TraceSampleRatio:             0.01,
+		TraceBatchTimeout:            time.Second,
+		TraceExportTimeout:           3 * time.Second,
+		TraceShutdownTimeout:         5 * time.Second,
+		TraceMaxQueueSize:            1_024,
+		TraceMaxExportBatchSize:      256,
+		SharedAdmissionTimeout:       100 * time.Millisecond,
+		SharedAdmissionRatePerSecond: 20,
+		SharedAdmissionRateBurst:     40,
 		// EDoS 默认值是 RGS 自身的保守成本护栏，不代表任何第三方钱包合同配额。
 		// 生产部署必须按供应商容量证据审定 Chart 中的显式值。
 		EconomicOperatorRatePerSecond: 20,
@@ -210,12 +234,15 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 	assignString(lookup, "RGS_ACCESS_PRIVATE_KEY_FILE", &config.AccessPrivateKeyFile)
 	assignString(lookup, "RGS_ACCESS_PUBLIC_KEY_FILE", &config.AccessPublicKeyFile)
 	assignString(lookup, "RGS_LAUNCH_HMAC_KEY_FILE", &config.LaunchHMACKeyFile)
+	assignString(lookup, "RGS_OTEL_TRACES_ENDPOINT", &config.TraceEndpoint)
 	assignString(lookup, "RGS_SHARED_ADMISSION_URL", &config.SharedAdmissionURL)
 	assignString(lookup, "RGS_SHARED_ADMISSION_USERNAME", &config.SharedAdmissionUsername)
 	assignString(lookup, "RGS_SHARED_ADMISSION_PASSWORD_FILE", &config.SharedAdmissionPasswordFile)
 	assignString(lookup, "RGS_SHARED_ADMISSION_HMAC_KEY_FILE", &config.SharedAdmissionHMACKeyFile)
 	assignString(lookup, "RGS_SHARED_ADMISSION_ROOT_CA_FILE", &config.SharedAdmissionRootCAFile)
 	assignString(lookup, "RGS_WALLET_ROOT_CA_FILE", &config.WalletRootCAFile)
+	assignString(lookup, "RGS_HIGH_VALUE_RISK_POLICY_VERSION", &config.HighValueRiskPolicyVersion)
+	assignString(lookup, "RGS_HIGH_VALUE_RISK_EXPIRY_POLICY", &config.HighValueRiskExpiryPolicy)
 	assignString(lookup, "RGS_OUTBOX_ENDPOINT_URL", &config.OutboxEndpointURL)
 	assignString(lookup, "RGS_OUTBOX_HMAC_KEY_ID", &config.OutboxHMACKeyID)
 	assignString(lookup, "RGS_OUTBOX_HMAC_KEY_FILE", &config.OutboxHMACKeyFile)
@@ -235,6 +262,9 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 	if config.TLSTerminatedUpstream, err = boolValue(lookup, "RGS_TLS_TERMINATED_UPSTREAM", false); err != nil {
 		return Config{}, err
 	}
+	if config.HighValueRiskEnabled, err = boolValue(lookup, "RGS_HIGH_VALUE_RISK_ENABLED", false); err != nil {
+		return Config{}, err
+	}
 	for name, target := range map[string]*time.Duration{
 		"RGS_READ_HEADER_TIMEOUT":         &config.ReadHeaderTimeout,
 		"RGS_READ_TIMEOUT":                &config.ReadTimeout,
@@ -242,12 +272,18 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		"RGS_WRITE_TIMEOUT":               &config.WriteTimeout,
 		"RGS_IDLE_TIMEOUT":                &config.IdleTimeout,
 		"RGS_SHUTDOWN_TIMEOUT":            &config.ShutdownTimeout,
+		"RGS_OTEL_BATCH_TIMEOUT":          &config.TraceBatchTimeout,
+		"RGS_OTEL_EXPORT_TIMEOUT":         &config.TraceExportTimeout,
+		"RGS_OTEL_SHUTDOWN_TIMEOUT":       &config.TraceShutdownTimeout,
 		"RGS_DB_STATEMENT_TIMEOUT":        &config.DatabaseStatementTimeout,
 		"RGS_DB_LOCK_TIMEOUT":             &config.DatabaseLockTimeout,
 		"RGS_WALLET_TIMEOUT":              &config.WalletTimeout,
 		"RGS_WALLET_FAST_PATH_TIMEOUT":    &config.WalletFastPathTimeout,
+		"RGS_HIGH_VALUE_RISK_REVIEW_TTL":  &config.HighValueRiskReviewTTL,
 		"RGS_LAUNCH_TTL":                  &config.LaunchTTL,
 		"RGS_ACCESS_TOKEN_TTL":            &config.AccessTokenTTL,
+		"RGS_SESSION_IDLE_DISCONNECT_MIN": &config.SessionIdleDisconnectMin,
+		"RGS_SESSION_IDLE_DISCONNECT_MAX": &config.SessionIdleDisconnectMax,
 		"RGS_SHARED_ADMISSION_TIMEOUT":    &config.SharedAdmissionTimeout,
 		"RGS_OUTBOX_INTERVAL":             &config.OutboxInterval,
 		"RGS_OUTBOX_LEASE_DURATION":       &config.OutboxLeaseDuration,
@@ -273,10 +309,19 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 	if err := intValue(lookup, "RGS_MAX_CONNECTIONS_PER_LISTENER", &config.MaxConnectionsPerListener); err != nil {
 		return Config{}, err
 	}
+	if err := intValue(lookup, "RGS_OTEL_MAX_QUEUE_SIZE", &config.TraceMaxQueueSize); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_OTEL_MAX_EXPORT_BATCH_SIZE", &config.TraceMaxExportBatchSize); err != nil {
+		return Config{}, err
+	}
 	if err := floatValue(lookup, "RGS_RATE_PER_SECOND", &config.RatePerSecond); err != nil {
 		return Config{}, err
 	}
 	if err := floatValue(lookup, "RGS_PREAUTH_RATE_PER_SECOND", &config.PreAuthRatePerSecond); err != nil {
+		return Config{}, err
+	}
+	if err := floatValue(lookup, "RGS_OTEL_TRACE_SAMPLE_RATIO", &config.TraceSampleRatio); err != nil {
 		return Config{}, err
 	}
 	if err := intValue(lookup, "RGS_PREAUTH_RATE_BURST", &config.PreAuthRateBurst); err != nil {
@@ -307,6 +352,12 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		return Config{}, err
 	}
 	if err := intValue(lookup, "RGS_WALLET_MAX_ATTEMPTS", &config.WalletMaxAttempts); err != nil {
+		return Config{}, err
+	}
+	if err := int64Value(lookup, "RGS_HIGH_VALUE_RISK_THRESHOLD_MINOR", &config.HighValueRiskThresholdMinor); err != nil {
+		return Config{}, err
+	}
+	if err := intValue(lookup, "RGS_HIGH_VALUE_RISK_EXPIRY_BATCH_SIZE", &config.HighValueRiskExpiryBatchSize); err != nil {
 		return Config{}, err
 	}
 	if err := intValue(lookup, "RGS_DB_MAX_OPEN_CONNS", &config.DatabaseMaxOpenConns); err != nil {
@@ -421,6 +472,12 @@ func (c Config) Validate() error {
 		strings.TrimSpace(c.OperationsBearerTokenFile) == "" {
 		return errors.New("RGS_OPERATIONS_BEARER_TOKEN_FILE is required for a non-loopback operations listener")
 	}
+	if err := c.validateTracing(); err != nil {
+		return err
+	}
+	if err := c.validateHighValueRisk(); err != nil {
+		return err
+	}
 	if err := c.validateOutbox(); err != nil {
 		return err
 	}
@@ -445,18 +502,20 @@ func (c Config) Validate() error {
 		seenOrigins[origin.String()] = struct{}{}
 	}
 	for name, value := range map[string]time.Duration{
-		"read header timeout":        c.ReadHeaderTimeout,
-		"read timeout":               c.ReadTimeout,
-		"request timeout":            c.RequestTimeout,
-		"write timeout":              c.WriteTimeout,
-		"idle timeout":               c.IdleTimeout,
-		"shutdown timeout":           c.ShutdownTimeout,
-		"database statement timeout": c.DatabaseStatementTimeout,
-		"database lock timeout":      c.DatabaseLockTimeout,
-		"wallet timeout":             c.WalletTimeout,
-		"wallet fast path timeout":   c.WalletFastPathTimeout,
-		"launch TTL":                 c.LaunchTTL,
-		"access token TTL":           c.AccessTokenTTL,
+		"read header timeout":             c.ReadHeaderTimeout,
+		"read timeout":                    c.ReadTimeout,
+		"request timeout":                 c.RequestTimeout,
+		"write timeout":                   c.WriteTimeout,
+		"idle timeout":                    c.IdleTimeout,
+		"shutdown timeout":                c.ShutdownTimeout,
+		"database statement timeout":      c.DatabaseStatementTimeout,
+		"database lock timeout":           c.DatabaseLockTimeout,
+		"wallet timeout":                  c.WalletTimeout,
+		"wallet fast path timeout":        c.WalletFastPathTimeout,
+		"launch TTL":                      c.LaunchTTL,
+		"access token TTL":                c.AccessTokenTTL,
+		"session idle disconnect minimum": c.SessionIdleDisconnectMin,
+		"session idle disconnect maximum": c.SessionIdleDisconnectMax,
 	} {
 		if value <= 0 {
 			return fmt.Errorf("%s must be positive", name)
@@ -508,6 +567,14 @@ func (c Config) Validate() error {
 	if c.LaunchTTL > 5*time.Minute || c.AccessTokenTTL > time.Hour {
 		return errors.New("launch/access credentials exceed maximum TTL")
 	}
+	if c.SessionIdleDisconnectMin < time.Second || c.SessionIdleDisconnectMax > 24*time.Hour ||
+		c.SessionIdleDisconnectMin > c.SessionIdleDisconnectMax ||
+		c.SessionIdleDisconnectMin%time.Second != 0 || c.SessionIdleDisconnectMax%time.Second != 0 {
+		return errors.New("RGS_SESSION_IDLE_DISCONNECT_MIN/MAX must be whole seconds within [1s,24h]")
+	}
+	if c.Environment != Development && c.SessionIdleDisconnectMin < time.Minute {
+		return errors.New("RGS_SESSION_IDLE_DISCONNECT_MIN must be at least 1m outside development")
+	}
 	if c.MaxRequestBytes != 8<<10 {
 		return errors.New("RGS_MAX_REQUEST_BYTES must be exactly 8192 to match the complete edge inspection window")
 	}
@@ -552,6 +619,76 @@ func (c Config) Validate() error {
 	}
 	if c.DatabaseCriticalReserveConns < 1 || c.DatabaseCriticalReserveConns >= c.DatabaseMaxOpenConns {
 		return errors.New("RGS_DB_CRITICAL_RESERVE_CONNS must be between 1 and RGS_DB_MAX_OPEN_CONNS-1")
+	}
+	return nil
+}
+
+func (c Config) validateTracing() error {
+	if !finiteRate(c.TraceSampleRatio) || c.TraceSampleRatio < 0 || c.TraceSampleRatio > 1 {
+		return errors.New("RGS_OTEL_TRACE_SAMPLE_RATIO must be finite and between 0 and 1")
+	}
+	for name, value := range map[string]time.Duration{
+		"RGS_OTEL_BATCH_TIMEOUT":    c.TraceBatchTimeout,
+		"RGS_OTEL_EXPORT_TIMEOUT":   c.TraceExportTimeout,
+		"RGS_OTEL_SHUTDOWN_TIMEOUT": c.TraceShutdownTimeout,
+	} {
+		if value < 100*time.Millisecond || value > 30*time.Second {
+			return fmt.Errorf("%s must be between 100ms and 30s", name)
+		}
+	}
+	if c.TraceMaxQueueSize < 1 || c.TraceMaxQueueSize > 8_192 {
+		return errors.New("RGS_OTEL_MAX_QUEUE_SIZE must be between 1 and 8192")
+	}
+	if c.TraceMaxExportBatchSize < 1 || c.TraceMaxExportBatchSize > 1_024 ||
+		c.TraceMaxExportBatchSize > c.TraceMaxQueueSize {
+		return errors.New("RGS_OTEL_MAX_EXPORT_BATCH_SIZE must be between 1 and 1024 and not exceed RGS_OTEL_MAX_QUEUE_SIZE")
+	}
+	if c.TraceEndpoint == "" {
+		return nil
+	}
+	if len(c.TraceEndpoint) > 2_048 {
+		return errors.New("RGS_OTEL_TRACES_ENDPOINT must not exceed 2048 bytes")
+	}
+	endpoint, err := url.Parse(c.TraceEndpoint)
+	if err != nil || endpoint.Host == "" || endpoint.Opaque != "" ||
+		(endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
+		endpoint.User != nil || endpoint.Path != "/v1/traces" || endpoint.RawPath != "" ||
+		endpoint.ForceQuery || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return errors.New("RGS_OTEL_TRACES_ENDPOINT must be an http(s) URL ending exactly in /v1/traces without user info, query, or fragment")
+	}
+	if c.Environment == Production && endpoint.Scheme != "https" {
+		host := strings.ToLower(endpoint.Hostname())
+		address := net.ParseIP(host)
+		if host != "localhost" && (address == nil || !address.IsLoopback()) {
+			return errors.New("RGS_OTEL_TRACES_ENDPOINT must use https in production unless it targets a loopback collector")
+		}
+	}
+	return nil
+}
+
+func (c Config) validateHighValueRisk() error {
+	if !c.HighValueRiskEnabled {
+		if c.HighValueRiskThresholdMinor != 0 || c.HighValueRiskPolicyVersion != "" ||
+			c.HighValueRiskReviewTTL != 0 || c.HighValueRiskExpiryPolicy != "" ||
+			c.HighValueRiskExpiryBatchSize != 0 {
+			return errors.New("high-value risk settings require RGS_HIGH_VALUE_RISK_ENABLED=true")
+		}
+		return nil
+	}
+	if c.HighValueRiskThresholdMinor <= 0 {
+		return errors.New("RGS_HIGH_VALUE_RISK_THRESHOLD_MINOR must be positive when risk review is enabled")
+	}
+	if !validRuntimeIdentifier(c.HighValueRiskPolicyVersion) {
+		return errors.New("RGS_HIGH_VALUE_RISK_POLICY_VERSION must be a 1..128 character identifier")
+	}
+	if c.HighValueRiskReviewTTL < time.Minute || c.HighValueRiskReviewTTL > 72*time.Hour {
+		return errors.New("RGS_HIGH_VALUE_RISK_REVIEW_TTL must be between 1m and 72h")
+	}
+	if c.HighValueRiskExpiryPolicy != "REJECT" && c.HighValueRiskExpiryPolicy != "MANUAL_REVIEW" {
+		return errors.New("RGS_HIGH_VALUE_RISK_EXPIRY_POLICY must be REJECT or MANUAL_REVIEW")
+	}
+	if c.HighValueRiskExpiryBatchSize < 1 || c.HighValueRiskExpiryBatchSize > 1_000 {
+		return errors.New("RGS_HIGH_VALUE_RISK_EXPIRY_BATCH_SIZE must be between 1 and 1000")
 	}
 	return nil
 }

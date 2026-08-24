@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"slots-game/server/internal/safelog"
 )
 
 const publishFailureCode = "PUBLISH_FAILED"
@@ -264,7 +266,7 @@ func (d *Dispatcher) runAndObserve(ctx context.Context) {
 			"published", result.Published,
 			"failed", result.Failed,
 			"lease_lost", result.LeaseLost,
-			"error", err,
+			"error_class", safelog.ErrorClass(err),
 		)
 		return
 	}

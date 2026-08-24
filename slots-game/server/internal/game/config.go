@@ -152,8 +152,8 @@ func DemoConfig() Config {
 }
 
 func (c Config) Validate() error {
-	if c.GameID == "" {
-		return errors.New("game id is required")
+	if !gameIdentifierPattern.MatchString(c.GameID) {
+		return errors.New("invalid game id")
 	}
 	if !definitionVersionPattern.MatchString(c.DefinitionVersion) {
 		return errors.New("invalid game definition version")

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"slots-game/server/internal/game"
+	"slots-game/server/internal/telemetry"
 )
 
 // DefinitionRegistry 只解析不可变且已批准的游戏定义版本；禁止静默回退到更新版本。
@@ -46,6 +47,14 @@ type Coordinator struct {
 }
 
 const persistedRoundIntegrityFailure = "persisted round integrity validation failed"
+
+// ManualReviewReason* 是提交钱包回执失败时持久化到轮次、钱包账本和审计 Outbox 的
+// 稳定低基数原因码。错误链可能携带 DSN、钱包地址或玩家标识，禁止直接作为原因保存。
+const (
+	ManualReviewReasonWalletReceiptInvalid   = "WALLET_RECEIPT_INVALID"
+	ManualReviewReasonCommitRevisionConflict = "COMMIT_REVISION_CONFLICT"
+	ManualReviewReasonCommitStateIntegrity   = "COMMIT_STATE_INTEGRITY_FAILURE"
+)
 
 // walletIntentAdmitter 只进行本进程、无副作用的快速容量检查。最终准入仍由
 // SubmitRound 的非阻塞舱壁决定，因此检查成功绝不构成资金操作已获准的承诺。
@@ -125,7 +134,9 @@ func NewCoordinator(
 
 // Spin 在调用外部钱包前先准备并持久化不可变结果，再执行原子扣款/派彩命令并提交会话迁移。
 // 所有重试都必须先解析已持久化的轮次聚合，绝不能重新运行 RNG。
-func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (SpinResult, error) {
+func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (returned SpinResult, err error) {
+	ctx, span := telemetry.Start(ctx, "rgs.coordinator.spin")
+	defer func() { telemetry.End(span, err) }()
 	if err := validateSpinRequest(request); err != nil {
 		return SpinResult{}, err
 	}
@@ -204,7 +215,9 @@ func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (SpinResult
 }
 
 // Reconcile 恢复已经准备好的轮次，不会再次计算游戏数学；并发工作器和进程重启均可安全调用。
-func (c *Coordinator) Reconcile(ctx context.Context, key RoundKey) (SpinResult, error) {
+func (c *Coordinator) Reconcile(ctx context.Context, key RoundKey) (returned SpinResult, err error) {
+	ctx, span := telemetry.Start(ctx, "rgs.coordinator.reconcile")
+	defer func() { telemetry.End(span, err) }()
 	if err := validateRoundKey(key); err != nil {
 		return SpinResult{}, fmt.Errorf("%w: invalid recovery round key", ErrInvalidRequest)
 	}
@@ -375,7 +388,9 @@ func (c *Coordinator) waitForRound(ctx context.Context, initial RoundRecord) (Sp
 func (c *Coordinator) ReconcileClaim(
 	ctx context.Context,
 	claim WalletRecoveryClaim,
-) (SpinResult, WalletRecoveryDisposition, error) {
+) (returned SpinResult, disposition WalletRecoveryDisposition, err error) {
+	ctx, span := telemetry.Start(ctx, "rgs.coordinator.wallet_reconcile")
+	defer func() { telemetry.End(span, err) }()
 	if !claim.Action.Valid() || claim.LeaseUntil.IsZero() ||
 		claim.Record.Key != claim.Record.Request.Key() ||
 		!claim.Record.WalletLeaseUntil.Equal(claim.LeaseUntil) {
@@ -581,7 +596,11 @@ func (c *Coordinator) commitReceipt(ctx context.Context, claim WalletRecoveryCla
 		return result, latestErr
 	}
 	if errors.Is(err, ErrWalletReceiptInvalid) || claimIntegrityFailure(err) {
-		_, manualReviewChanged, markErr := c.repository.MarkClaimManualReview(ctx, claim, err.Error())
+		_, manualReviewChanged, markErr := c.repository.MarkClaimManualReview(
+			ctx,
+			claim,
+			commitManualReviewReason(err),
+		)
 		if errors.Is(markErr, ErrStaleWalletClaim) {
 			result, _, latestErr := c.resolveStaleClaim(ctx, claim.Record.Key)
 			return result, latestErr
@@ -602,6 +621,17 @@ func (c *Coordinator) commitReceipt(ctx context.Context, claim WalletRecoveryCla
 
 func claimIntegrityFailure(err error) bool {
 	return errors.Is(err, ErrManualReview) || errors.Is(err, ErrRevisionConflict)
+}
+
+func commitManualReviewReason(err error) string {
+	switch {
+	case errors.Is(err, ErrWalletReceiptInvalid):
+		return ManualReviewReasonWalletReceiptInvalid
+	case errors.Is(err, ErrRevisionConflict):
+		return ManualReviewReasonCommitRevisionConflict
+	default:
+		return ManualReviewReasonCommitStateIntegrity
+	}
 }
 
 // resolveStaleClaim 绝不重放旧 claim 的写操作。它只读取最新持久状态；若新的 owner
@@ -644,6 +674,8 @@ func terminalRoundResult(record RoundRecord) (SpinResult, bool, error) {
 		return SpinResult{}, true, ErrRoundRejected
 	case RoundManualReview:
 		return SpinResult{}, true, ErrManualReview
+	case RoundRiskPending:
+		return SpinResult{}, true, ErrRiskPending
 	case RoundPrepared, RoundWalletPending:
 		return SpinResult{}, false, nil
 	default:

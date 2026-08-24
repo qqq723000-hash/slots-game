@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -114,17 +115,42 @@ func main() {
 }
 
 func run(arguments []string, now func() time.Time) error {
-	if len(arguments) != 1 {
-		return errors.New("usage: local-production-bootstrap OUTPUT_DIRECTORY")
-	}
 	if now == nil {
 		return errors.New("clock is required")
+	}
+	if len(arguments) == 2 && arguments[0] == "add-shared-admission" {
+		directory, err := existingOutputDirectory(arguments[1])
+		if err != nil {
+			return err
+		}
+		return addSharedAdmissionMaterial(directory, now().UTC().Truncate(time.Second))
+	}
+	if len(arguments) != 1 {
+		return errors.New("usage: local-production-bootstrap [add-shared-admission] OUTPUT_DIRECTORY")
 	}
 	directory, err := prepareOutputDirectory(arguments[0])
 	if err != nil {
 		return err
 	}
 	return generate(directory, now().UTC().Truncate(time.Second))
+}
+
+func existingOutputDirectory(configured string) (string, error) {
+	if configured == "" {
+		return "", errors.New("output directory is required")
+	}
+	directory, err := filepath.Abs(configured)
+	if err != nil {
+		return "", errors.New("resolve output directory")
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return "", fmt.Errorf("inspect output directory: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 {
+		return "", errors.New("existing output must be a real 0700 directory")
+	}
+	return directory, nil
 }
 
 func prepareOutputDirectory(configured string) (string, error) {
@@ -287,6 +313,8 @@ func generate(directory string, now time.Time) error {
 	}{
 		{name: "launch-hmac.key", size: 32, standard64: true},
 		{name: "outbox-hmac.key", size: 32, standard64: true},
+		{name: "shared-admission-hmac.key", size: 32, standard64: true},
+		{name: "valkey-password", size: 32},
 		{name: "operations.token", size: 32},
 		{name: "grafana-admin-password", size: 32},
 		{name: "alertmanager.token", size: 32},
@@ -315,6 +343,11 @@ func generate(directory string, now time.Time) error {
 		{
 			name: "postgres-server", commonName: "postgres",
 			dnsNames:    []string{"localhost", "postgres", "slots-postgres"},
+			extKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		},
+		{
+			name: "valkey-server", commonName: "valkey",
+			dnsNames:    []string{"localhost", "valkey", "slots-valkey"},
 			extKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		},
 		{
@@ -366,7 +399,7 @@ func generate(directory string, now time.Time) error {
 		ExternalClaimsMade: false, DefinitionApprovalSchema: game.DefinitionApprovalSchemaV2,
 		OperatorSchema: "rgs-operators-v2",
 		TLSNames: []string{
-			"slots.localhost", "rgs.localhost", "local-operator", "wallet", "audit", "alertmanager", "postgres",
+			"slots.localhost", "rgs.localhost", "local-operator", "wallet", "audit", "alertmanager", "postgres", "valkey",
 		},
 	}
 	return writeJSON(filepath.Join(directory, "deployment-metadata.json"), metadata)
@@ -500,6 +533,113 @@ func writeRandomSecret(path string, size int, standardBase64 bool) error {
 		encoded = base64.StdEncoding.EncodeToString(value)
 	}
 	return writeExclusive(path, []byte(encoded+"\n"))
+}
+
+var sharedAdmissionMaterialNames = []string{
+	"shared-admission-hmac.key",
+	"valkey-password",
+	"valkey-server-key.pem",
+	"valkey-server.pem",
+}
+
+// addSharedAdmissionMaterial 在不轮换或复制任何既有密钥的前提下升级 Valkey 引入前的
+// 本地状态目录。材料包不完整时失败关闭，防止中断或人工迁移静默混用不同代际。
+func addSharedAdmissionMaterial(directory string, now time.Time) error {
+	present := 0
+	for _, name := range sharedAdmissionMaterialNames {
+		info, err := os.Lstat(filepath.Join(directory, name))
+		if err == nil {
+			if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
+				return fmt.Errorf("%s must be a restricted regular file", name)
+			}
+			present++
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect %s: %w", name, err)
+		}
+	}
+	if present == len(sharedAdmissionMaterialNames) {
+		return nil
+	}
+	if present != 0 {
+		return errors.New("shared admission material is incomplete; refusing to mix generations")
+	}
+
+	ca, err := readCertificateAuthority(directory)
+	if err != nil {
+		return err
+	}
+	if err := writeRandomSecret(filepath.Join(directory, "shared-admission-hmac.key"), 32, true); err != nil {
+		return err
+	}
+	if err := writeRandomSecret(filepath.Join(directory, "valkey-password"), 32, false); err != nil {
+		return err
+	}
+	return writeLeafCertificate(directory, now, ca, certificateProfile{
+		name: "valkey-server", commonName: "valkey",
+		dnsNames:    []string{"localhost", "valkey", "slots-valkey"},
+		extKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	})
+}
+
+func readCertificateAuthority(directory string) (certificateAuthority, error) {
+	certificatePEM, err := readRestrictedMaterial(filepath.Join(directory, "local-production-root-ca.pem"))
+	if err != nil {
+		return certificateAuthority{}, err
+	}
+	certificateBlock, certificateRest := pem.Decode(certificatePEM)
+	if certificateBlock == nil || certificateBlock.Type != "CERTIFICATE" || len(bytes.TrimSpace(certificateRest)) != 0 {
+		return certificateAuthority{}, errors.New("local production root CA certificate is invalid")
+	}
+	certificate, err := x509.ParseCertificate(certificateBlock.Bytes)
+	if err != nil || !certificate.IsCA {
+		return certificateAuthority{}, errors.New("local production root CA certificate is invalid")
+	}
+
+	privatePEM, err := readRestrictedMaterial(filepath.Join(directory, "local-production-root-ca-key.pem"))
+	if err != nil {
+		return certificateAuthority{}, err
+	}
+	privateBlock, privateRest := pem.Decode(privatePEM)
+	if privateBlock == nil || privateBlock.Type != "PRIVATE KEY" || len(bytes.TrimSpace(privateRest)) != 0 {
+		return certificateAuthority{}, errors.New("local production root CA key is invalid")
+	}
+	parsedPrivate, err := x509.ParsePKCS8PrivateKey(privateBlock.Bytes)
+	if err != nil {
+		return certificateAuthority{}, errors.New("local production root CA key is invalid")
+	}
+	privateKey, ok := parsedPrivate.(*ecdsa.PrivateKey)
+	if !ok {
+		return certificateAuthority{}, errors.New("local production root CA key is invalid")
+	}
+	certificatePublic, err := x509.MarshalPKIXPublicKey(certificate.PublicKey)
+	if err != nil {
+		return certificateAuthority{}, errors.New("marshal local production root CA public key")
+	}
+	privatePublic, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil || !bytes.Equal(certificatePublic, privatePublic) {
+		return certificateAuthority{}, errors.New("local production root CA certificate and key do not match")
+	}
+	return certificateAuthority{certificate: certificate, privateKey: privateKey}, nil
+}
+
+func readRestrictedMaterial(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("inspect %s: %w", filepath.Base(path), err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("%s must be a restricted regular file", filepath.Base(path))
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", filepath.Base(path), err)
+	}
+	if len(contents) == 0 || len(contents) > 1<<20 {
+		return nil, fmt.Errorf("%s has an invalid size", filepath.Base(path))
+	}
+	return contents, nil
 }
 
 func writeCertificateAuthority(directory string, now time.Time) (certificateAuthority, error) {

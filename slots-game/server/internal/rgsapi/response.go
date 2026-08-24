@@ -15,10 +15,11 @@ func makeSessionResponse(session rgs.Session) sessionResponse {
 		DefinitionHash: session.DefinitionHash, Currency: session.Currency,
 		CurrencyExponent: session.CurrencyExponent, Jurisdiction: session.Jurisdiction,
 		Status: session.Status, ExpiresAt: formatTime(session.ExpiresAt),
-		BalanceMinor: strconv.FormatInt(session.BalanceMinor, 10),
-		Revision:     strconv.FormatUint(session.Revision, 10),
-		Sequence:     strconv.FormatUint(session.Sequence, 10),
-		Feature:      makeFeatureStateResponse(session.Feature),
+		IdleDisconnectAt: formatTime(session.IdleDisconnectAt),
+		BalanceMinor:     strconv.FormatInt(session.BalanceMinor, 10),
+		Revision:         strconv.FormatUint(session.Revision, 10),
+		Sequence:         strconv.FormatUint(session.Sequence, 10),
+		Feature:          makeFeatureStateResponse(session.Feature),
 	}
 }
 
@@ -76,7 +77,7 @@ func makeSpinResultResponse(result rgs.SpinResult) (spinResultResponse, error) {
 		grid[reel] = make([]game.Cell, len(result.Grid[reel]))
 		copy(grid[reel], result.Grid[reel])
 	}
-	return spinResultResponse{
+	response := spinResultResponse{
 		OperatorID: result.OperatorID, SessionID: result.SessionID,
 		RoundID: result.RoundID, GameID: result.GameID,
 		DefinitionVersion: result.DefinitionVersion, DefinitionHash: result.DefinitionHash,
@@ -93,7 +94,11 @@ func makeSpinResultResponse(result rgs.SpinResult) (spinResultResponse, error) {
 		TotalWinMinor:       strconv.FormatInt(result.TotalWinMinor, 10),
 		Grid:                grid, Wins: wins, Events: events,
 		Feature: makeFeatureStateResponse(result.FeatureState),
-	}, nil
+	}
+	if !result.IdleDisconnectAt.IsZero() {
+		response.IdleDisconnectAt = formatTime(result.IdleDisconnectAt)
+	}
+	return response, nil
 }
 
 func makeFeatureStateResponse(feature game.FeatureState) featureStateResponse {

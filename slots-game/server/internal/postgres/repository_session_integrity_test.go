@@ -24,7 +24,8 @@ var sessionRowColumns = []string{
 	"wallet_session_id", "game_id", "definition_version", "definition_hash",
 	"currency", "currency_exponent", "jurisdiction", "status",
 	"balance_snapshot_minor", "sequence", "revision", "feature_state",
-	"pending_round_id", "expires_at", "integrity_quarantined_at",
+	"pending_round_id", "expires_at", "idle_disconnect_seconds",
+	"idle_disconnect_at", "transport_generation", "integrity_quarantined_at",
 }
 
 type sessionRowFixture struct {
@@ -133,6 +134,7 @@ func TestSpinQuarantinesInvalidSessionBeforeEngineOrWallet(t *testing.T) {
 		RoundID: "round-existing", GameID: "game-a", DefinitionVersion: "math-v1",
 		DefinitionHash: fixture.definitionHash, Currency: "USD",
 		RoundKind: rgs.RoundKindBase, BetMinor: 100, StartRevision: 0,
+		TransportGeneration: 1,
 	})
 	if !errors.Is(err, rgs.ErrSessionIntegrity) {
 		t.Fatalf("Spin() error = %v, want ErrSessionIntegrity", err)
@@ -174,7 +176,9 @@ func TestPostgresConcurrentSessionIntegrityQuarantinePreservesEconomicEvidence(t
 		GameID: "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
 		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
 		Status: rgs.SessionActive, ExpiresAt: time.Now().Add(time.Hour),
-		BalanceMinor: 10_000, Feature: game.EmptyFeatureState(),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().Add(20 * time.Minute),
+		TransportGeneration: 1,
+		BalanceMinor:        10_000, Feature: game.EmptyFeatureState(),
 	}
 	if err := repositoryA.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
@@ -184,7 +188,7 @@ func TestPostgresConcurrentSessionIntegrityQuarantinePreservesEconomicEvidence(t
 		RoundID: "round-pending", GameID: session.GameID,
 		DefinitionVersion: session.DefinitionVersion, DefinitionHash: hash,
 		Currency: session.Currency, RoundKind: rgs.RoundKindBase,
-		BetMinor: 100, StartRevision: 0,
+		BetMinor: 100, StartRevision: 0, TransportGeneration: 1,
 	}
 	_, prepared, err := repositoryA.PrepareRound(
 		ctx, request, rgs.FingerprintFor(request),
@@ -307,20 +311,19 @@ func (fixture sessionRowFixture) rows() *sqlmock.Rows {
 		"wallet-session-a", "game-a", "math-v1", fixture.definitionHash,
 		"USD", 2, "MT", fixture.status, fixture.balanceMinor,
 		fixture.sequence, fixture.revision, fixture.featureJSON,
-		fixture.pendingRoundID, time.Now().Add(time.Hour), fixture.quarantinedAt,
+		fixture.pendingRoundID, time.Now().Add(time.Hour), int64(1200),
+		time.Now().Add(20*time.Minute), int64(1), fixture.quarantinedAt,
 	)
 }
 
 func (fixture sessionRowFixture) prepareRows() *sqlmock.Rows {
-	columns := append(append([]string(nil), sessionRowColumns...),
-		"result_delivery_pending", "database_now")
-	return sqlmock.NewRows(columns).AddRow(
+	return sqlmock.NewRows(sessionRowColumns).AddRow(
 		fixture.operatorID, fixture.sessionID, "player-a", "wallet-account-a",
 		"wallet-session-a", "game-a", "math-v1", fixture.definitionHash,
 		"USD", 2, "MT", fixture.status, fixture.balanceMinor,
 		fixture.sequence, fixture.revision, fixture.featureJSON,
-		fixture.pendingRoundID, time.Now().Add(time.Hour), fixture.quarantinedAt,
-		false, time.Now().UTC(),
+		fixture.pendingRoundID, time.Now().Add(time.Hour), int64(1200),
+		time.Now().Add(20*time.Minute), int64(1), fixture.quarantinedAt,
 	)
 }
 

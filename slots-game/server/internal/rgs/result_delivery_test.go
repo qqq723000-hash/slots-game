@@ -58,7 +58,8 @@ func TestCommittedResultDeliveryBlocksOnlyNewRoundsUntilIdempotentAcknowledgemen
 	wrong := ResultDeliveryAcknowledgement{
 		OperatorID: delivery.OperatorID, SessionID: delivery.SessionID,
 		RoundID: delivery.RoundID, Sequence: delivery.Sequence,
-		ResultHash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		ResultHash:          "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		TransportGeneration: 1,
 	}
 	if _, _, err := coordinator.AcknowledgeResultDelivery(context.Background(), wrong); !errors.Is(err, ErrResultDeliveryMismatch) {
 		t.Fatalf("wrong hash ACK error = %v", err)
@@ -66,6 +67,7 @@ func TestCommittedResultDeliveryBlocksOnlyNewRoundsUntilIdempotentAcknowledgemen
 	receipt := ResultDeliveryAcknowledgement{
 		OperatorID: delivery.OperatorID, SessionID: delivery.SessionID,
 		RoundID: delivery.RoundID, Sequence: delivery.Sequence, ResultHash: delivery.ResultHash,
+		TransportGeneration: 1,
 	}
 	acknowledged, changed, err := coordinator.AcknowledgeResultDelivery(context.Background(), receipt)
 	if err != nil || !changed || acknowledged.AcknowledgedAt.IsZero() {
@@ -104,6 +106,7 @@ func TestConcurrentAcknowledgementsChangeDeliveryCursorExactlyOnce(t *testing.T)
 	receipt := ResultDeliveryAcknowledgement{
 		OperatorID: delivery.OperatorID, SessionID: delivery.SessionID,
 		RoundID: delivery.RoundID, Sequence: delivery.Sequence, ResultHash: delivery.ResultHash,
+		TransportGeneration: 1,
 	}
 	const callers = 32
 	var group sync.WaitGroup
@@ -125,5 +128,48 @@ func TestConcurrentAcknowledgementsChangeDeliveryCursorExactlyOnce(t *testing.T)
 	group.Wait()
 	if changes.Load() != 1 {
 		t.Fatalf("durable ACK transitions = %d, want 1", changes.Load())
+	}
+}
+
+func TestRelaunchFencesAuthorizedOldGenerationAcknowledgement(t *testing.T) {
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	coordinator := newTestCoordinator(t, repository, newTestWallet(10_000), &countingSpinner{
+		spin: func(game.SpinInput) (game.SpinOutcome, error) {
+			return payableOutcome(game.EmptyFeatureState()), nil
+		},
+	}, time.Second)
+	if _, err := coordinator.Spin(context.Background(), baseRequest("round-generation-ack", 100, 0)); err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := coordinator.GetPendingResultDelivery(context.Background(), "operator-a", "session-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldReceipt := ResultDeliveryAcknowledgement{
+		OperatorID: delivery.OperatorID, SessionID: delivery.SessionID,
+		RoundID: delivery.RoundID, Sequence: delivery.Sequence, ResultHash: delivery.ResultHash,
+		TransportGeneration: 1,
+	}
+	reset, err := repository.ResetSessionTransport(
+		context.Background(), delivery.OperatorID, delivery.SessionID, 20*time.Minute,
+	)
+	if err != nil || reset.TransportGeneration != 2 {
+		t.Fatalf("relaunch reset = %+v error=%v", reset, err)
+	}
+	if _, changed, err := coordinator.AcknowledgeResultDelivery(context.Background(), oldReceipt); !errors.Is(err, ErrSessionTimeout) || changed {
+		t.Fatalf("old-generation ACK changed=%t error=%v", changed, err)
+	}
+	stillPending, err := coordinator.GetPendingResultDelivery(
+		context.Background(), delivery.OperatorID, delivery.SessionID,
+	)
+	if err != nil || stillPending.ResultHash != delivery.ResultHash || !stillPending.AcknowledgedAt.IsZero() {
+		t.Fatalf("pending result was lost after fenced ACK: %+v error=%v", stillPending, err)
+	}
+	currentReceipt := oldReceipt
+	currentReceipt.TransportGeneration = reset.TransportGeneration
+	acknowledged, changed, err := coordinator.AcknowledgeResultDelivery(context.Background(), currentReceipt)
+	if err != nil || !changed || acknowledged.AcknowledgedAt.IsZero() {
+		t.Fatalf("current-generation ACK = %+v changed=%t error=%v", acknowledged, changed, err)
 	}
 }

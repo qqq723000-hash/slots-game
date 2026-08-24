@@ -20,7 +20,7 @@ var (
 	ErrRuntimePrivileges   = errors.New("postgres runtime privileges invalid")
 )
 
-const frozenSchemaManifestSHA256 = "fab6e6497d8fbc3bbeba8f77282841448e97bb6434dadb47c4b7b9b7ee40f1a5"
+const frozenSchemaManifestSHA256 = "4cd39a6a1377be77c0b1d9b3e911a05e4597bc6444dbfca4fcdc31571e1f0241"
 
 const schemaLedgerSQL = `
 SELECT version, checksum
@@ -148,6 +148,29 @@ SELECT
            OR actual.update_columns IS DISTINCT FROM expected.update_columns
            OR actual.definition <> expected.definition
     ) AS policy_ok`
+
+const sessionIdleTransportInvariantSQL = `
+SELECT COALESCE((
+    SELECT count(*)=1
+       AND bool_and(item.convalidated)
+	   AND bool_and(
+		   regexp_replace(
+			   pg_catalog.pg_get_expr(item.conbin, item.conrelid),
+			   '[[:space:]]+', '', 'g'
+		   )='(idle_disconnect_at<=expires_at)'
+	   )
+    FROM pg_catalog.pg_constraint AS item
+    JOIN pg_catalog.pg_class AS relation
+      ON relation.oid=item.conrelid
+    JOIN pg_catalog.pg_namespace AS namespace
+      ON namespace.oid=relation.relnamespace
+    WHERE namespace.nspname='public'
+      AND relation.relname='rgs_sessions'
+      AND relation.relkind='r'
+      AND relation.relpersistence='p'
+      AND item.contype='c'
+      AND item.conname='rgs_sessions_idle_disconnect_before_absolute_expiry'
+), false) AS policy_ok`
 
 type MigrationIdentity struct {
 	Version  string `json:"version"`
@@ -282,6 +305,17 @@ func verifyWalletRecoveryRegistryInvariant(ctx context.Context, queryer schemaIn
 	return nil
 }
 
+func verifySessionIdleTransportInvariant(ctx context.Context, queryer schemaInvariantQueryer) error {
+	var policyOK bool
+	if err := queryer.QueryRowContext(ctx, sessionIdleTransportInvariantSQL).Scan(&policyOK); err != nil {
+		return operationFailure(ctx, err, ErrSchemaState, "check session idle transport invariant")
+	}
+	if !policyOK {
+		return fmt.Errorf("%w: session idle transport invariant mismatch", ErrSchemaState)
+	}
+	return nil
+}
+
 type SchemaCheck struct {
 	database *sql.DB
 }
@@ -307,5 +341,8 @@ func (check *SchemaCheck) Check(ctx context.Context) error {
 	if err := validateSchemaLedger(manifest, actual, false); err != nil {
 		return err
 	}
-	return verifyWalletRecoveryRegistryInvariant(ctx, check.database)
+	if err := verifyWalletRecoveryRegistryInvariant(ctx, check.database); err != nil {
+		return err
+	}
+	return verifySessionIdleTransportInvariant(ctx, check.database)
 }

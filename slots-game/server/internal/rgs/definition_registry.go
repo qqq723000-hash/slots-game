@@ -35,7 +35,7 @@ func NewMemoryDefinitionRegistry(entries ...DefinitionEntry) (*MemoryDefinitionR
 			OperatorID: "validation", SessionID: "validation", RoundID: "validation",
 			GameID: entry.GameID, DefinitionVersion: entry.Version,
 			DefinitionHash: entry.SHA256, Currency: "USD", RoundKind: RoundKindBase,
-			BetMinor: 1,
+			BetMinor: 1, TransportGeneration: 1,
 		}
 		if err := validateSpinRequest(identity); err != nil {
 			return nil, fmt.Errorf("rgs: invalid definition identity: %w", err)

@@ -78,6 +78,7 @@ func (s *NonceStore) Consume(ctx context.Context, scope, nonce string, expiresAt
 
 // PurgeExpired 每次最多删除 batchSize 条过期随机数。调用方应周期执行，并在返回数量等于
 // batchSize 时继续分批处理；SKIP LOCKED 使多个维护工作器并发运行时仍保持安全。
+// PostgreSQL 时钟会对调用方边界取上限，防止快时钟副本提前删除仍有效的重放墓碑。
 func (s *NonceStore) PurgeExpired(ctx context.Context, before time.Time, batchSize int) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -203,7 +204,8 @@ func (s *LaunchStore) Consume(ctx context.Context, request launch.ConsumeRequest
 
 // PurgeExpired 每次最多删除 batchSize 条已超过兑换窗口且又经过
 // launch.IdempotencyRetention 的启动记录。在此之前每一行（包括已消费记录）都是幂等墓碑，
-// 防止确定性启动凭据重新变成可消费状态。
+// 防止确定性启动凭据重新变成可消费状态。PostgreSQL 时钟会对调用方边界取上限，避免
+// 快时钟副本缩短幂等保留期。
 func (s *LaunchStore) PurgeExpired(ctx context.Context, before time.Time, batchSize int) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -211,8 +213,8 @@ func (s *LaunchStore) PurgeExpired(ctx context.Context, before time.Time, batchS
 	if err := validatePurge(before, batchSize); err != nil {
 		return 0, err
 	}
-	retentionBoundary := before.UTC().Add(-launch.IdempotencyRetention)
-	result, err := s.db.ExecContext(ctx, launchPurgeSQL, retentionBoundary, batchSize)
+	retentionMicroseconds := launch.IdempotencyRetention.Microseconds()
+	result, err := s.db.ExecContext(ctx, launchPurgeSQL, before.UTC(), retentionMicroseconds, batchSize)
 	if err != nil {
 		return 0, fmt.Errorf("postgres launch store: purge expired: %w", err)
 	}
@@ -227,17 +229,18 @@ func (s *LaunchStore) PurgeExpired(ctx context.Context, before time.Time, batchS
 }
 
 type launchClaimsDocument struct {
-	OperatorID         string `json:"operatorId"`
-	SessionID          string `json:"sessionId"`
-	PlayerID           string `json:"playerId"`
-	WalletSessionID    string `json:"walletSessionId"`
-	GameID             string `json:"gameId"`
-	DefinitionVersion  string `json:"definitionVersion"`
-	DefinitionHash     string `json:"definitionHash"`
-	RequestFingerprint string `json:"requestFingerprint"`
-	Currency           string `json:"currency"`
-	CurrencyExponent   int    `json:"currencyExponent"`
-	Jurisdiction       string `json:"jurisdiction"`
+	OperatorID            string `json:"operatorId"`
+	SessionID             string `json:"sessionId"`
+	PlayerID              string `json:"playerId"`
+	WalletSessionID       string `json:"walletSessionId"`
+	GameID                string `json:"gameId"`
+	DefinitionVersion     string `json:"definitionVersion"`
+	DefinitionHash        string `json:"definitionHash"`
+	RequestFingerprint    string `json:"requestFingerprint"`
+	Currency              string `json:"currency"`
+	CurrencyExponent      int    `json:"currencyExponent"`
+	Jurisdiction          string `json:"jurisdiction"`
+	IdleDisconnectSeconds int64  `json:"idleDisconnectSeconds"`
 }
 
 func claimsDocumentFrom(claims launch.Claims) launchClaimsDocument {
@@ -248,6 +251,7 @@ func claimsDocumentFrom(claims launch.Claims) launchClaimsDocument {
 		DefinitionHash:     claims.DefinitionHash,
 		RequestFingerprint: claims.RequestFingerprint, Currency: claims.Currency,
 		CurrencyExponent: claims.CurrencyExponent, Jurisdiction: claims.Jurisdiction,
+		IdleDisconnectSeconds: claims.IdleDisconnectSeconds,
 	}
 }
 
@@ -259,6 +263,7 @@ func (document launchClaimsDocument) claims() launch.Claims {
 		DefinitionHash:     document.DefinitionHash,
 		RequestFingerprint: document.RequestFingerprint, Currency: document.Currency,
 		CurrencyExponent: document.CurrencyExponent, Jurisdiction: document.Jurisdiction,
+		IdleDisconnectSeconds: document.IdleDisconnectSeconds,
 	}
 }
 
@@ -390,7 +395,7 @@ const noncePurgeSQL = `
 	WITH expired AS (
 		SELECT operator_id, key_id, nonce_hash
 		FROM rgs_operator_nonces
-		WHERE expires_at <= $1
+		WHERE expires_at <= LEAST($1, CURRENT_TIMESTAMP)
 		ORDER BY expires_at
 		LIMIT $2
 		FOR UPDATE SKIP LOCKED
@@ -427,9 +432,9 @@ const launchPurgeSQL = `
 	WITH expired AS (
 		SELECT code_hash
 		FROM rgs_launch_codes
-		WHERE expires_at <= $1
+		WHERE expires_at <= LEAST($1, CURRENT_TIMESTAMP) - ($2::bigint * INTERVAL '1 microsecond')
 		ORDER BY expires_at
-		LIMIT $2
+		LIMIT $3
 		FOR UPDATE SKIP LOCKED
 	)
 	DELETE FROM rgs_launch_codes AS stored

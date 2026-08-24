@@ -45,6 +45,7 @@ type Handler struct {
 	launches              LaunchService
 	spins                 SpinCoordinator
 	rounds                RoundStatusReader
+	riskDecisions         RiskDecisionService
 	deliveries            ResultDeliveryService
 	admission             Admission
 	clientAdmission       Admission
@@ -96,6 +97,7 @@ func NewHandler(config Config) (*Handler, error) {
 		launches:              config.Launches,
 		spins:                 config.Spins,
 		rounds:                config.Rounds,
+		riskDecisions:         config.RiskDecisions,
 		deliveries:            deliveries,
 		admission:             config.Admission,
 		clientAdmission:       config.ClientAdmission,
@@ -146,10 +148,19 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		h.requirePOST(responseWriter, request, requestID, h.handleOperatorLaunch)
 	case OperatorRoundStatusPath:
 		h.requirePOST(responseWriter, request, requestID, h.handleOperatorRoundStatus)
+	case OperatorRiskDecisionPath:
+		if h.riskDecisions == nil {
+			closeUnreadRequestBody(request)
+			h.writeError(responseWriter, requestID, http.StatusNotFound, "NOT_FOUND", "route not found")
+			return
+		}
+		h.requirePOST(responseWriter, request, requestID, h.handleOperatorRiskDecision)
 	case ClientSessionExchangePath:
 		h.requirePOST(responseWriter, request, requestID, h.handleClientSessionExchange)
 	case ClientSessionRefreshPath:
 		h.requirePOST(responseWriter, request, requestID, h.handleClientSessionRefresh)
+	case ClientSessionStatusPath:
+		h.requirePOST(responseWriter, request, requestID, h.handleClientSessionStatus)
 	case ClientSpinPath:
 		h.requirePOST(responseWriter, request, requestID, h.handleClientSpin)
 	case ClientRoundStatusPath:
@@ -172,13 +183,36 @@ func (h *Handler) requireGET(writer http.ResponseWriter, request *http.Request, 
 		return
 	}
 	if request.ContentLength != 0 || len(request.TransferEncoding) != 0 ||
-		(request.Body != nil && request.Body != http.NoBody) ||
 		len(request.Header.Values("Content-Type")) != 0 || len(request.Header.Values("Content-Encoding")) != 0 {
 		closeUnreadRequestBody(request)
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "GET request must not include a body")
 		return
 	}
+	if !consumeEmptyGETBody(request) {
+		closeUnreadRequestBody(request)
+		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "GET request must not include a body")
+		return
+	}
 	endpoint(writer, request, requestID)
+}
+
+func consumeEmptyGETBody(request *http.Request) bool {
+	if request.Body == nil || request.Body == http.NoBody {
+		return true
+	}
+	// 反向代理可能为 Content-Length: 0 的请求安装一个只返回 EOF 的包装器。
+	// 仅探测一个字节：立即 EOF 才视为空正文；任何字节、非 EOF 错误或无进展读取
+	// 都失败即关闭连接，避免为了判空而排空攻击者控制的慢速正文。
+	var probe [1]byte
+	read, err := request.Body.Read(probe[:])
+	if read != 0 || !errors.Is(err, io.EOF) {
+		return false
+	}
+	if err := request.Body.Close(); err != nil {
+		return false
+	}
+	request.Body = http.NoBody
+	return true
 }
 
 type endpointFunc func(http.ResponseWriter, *http.Request, string)
@@ -249,7 +283,8 @@ func (h *Handler) handleOperatorLaunch(writer http.ResponseWriter, request *http
 		DefinitionVersion: payload.DefinitionVersion, DefinitionHash: payload.DefinitionHash,
 		Currency: payload.Currency, CurrencyExponent: payload.CurrencyExponent,
 		Jurisdiction: payload.Jurisdiction, BalanceMinor: balanceMinor,
-		SessionTTL: time.Duration(payload.SessionTTLSeconds) * time.Second,
+		SessionTTL:     time.Duration(payload.SessionTTLSeconds) * time.Second,
+		IdleDisconnect: time.Duration(payload.IdleDisconnectSeconds) * time.Second,
 	})
 	if err != nil {
 		h.writeMappedError(writer, requestID, err)
@@ -301,7 +336,7 @@ func (h *Handler) handleClientSessionExchange(writer http.ResponseWriter, reques
 		h.writeMappedError(writer, requestID, err)
 		return
 	}
-	if err := rgs.ValidateSession(result.Session); err != nil {
+	if err := rgs.ValidateSession(result.Session); err != nil || result.Session.ServerTime.IsZero() {
 		h.writeMappedError(writer, requestID, fmt.Errorf("%w: invalid exchange adapter result", ErrUnavailable))
 		return
 	}
@@ -311,12 +346,14 @@ func (h *Handler) handleClientSessionExchange(writer http.ResponseWriter, reques
 	}
 	claims, err := h.accessTokens.Verify(request.Context(), result.AccessToken, payload.OperatorID)
 	if err != nil || !claimsMatchBinding(claims, bindingFromSession(result.Session)) ||
+		claims.TransportGeneration != result.Session.TransportGeneration ||
 		claims.PlayerID != result.Session.PlayerID || claims.WalletSessionID != result.Session.WalletSessionID {
 		h.writeMappedError(writer, requestID, fmt.Errorf("%w: invalid access token from exchange adapter", ErrUnavailable))
 		return
 	}
 	h.writeSuccess(writer, requestID, http.StatusOK, sessionExchangeResponse{
 		AccessToken: result.AccessToken, Session: makeSessionResponse(result.Session),
+		ServerTime: formatTime(result.Session.ServerTime),
 	})
 }
 
@@ -334,8 +371,8 @@ func (h *Handler) handleClientSessionRefresh(writer http.ResponseWriter, request
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "request fields are invalid")
 		return
 	}
-	claims, ok := h.authenticateClient(
-		writer, request, requestID, payload.sessionBindingRequest,
+	claims, _, ok := h.authenticateClient(
+		writer, request, requestID, payload.sessionBindingRequest, false,
 	)
 	if !ok {
 		return
@@ -354,7 +391,7 @@ func (h *Handler) handleClientSessionRefresh(writer http.ResponseWriter, request
 		h.writeMappedError(writer, requestID, err)
 		return
 	}
-	if err := rgs.ValidateSession(result.Session); err != nil ||
+	if err := rgs.ValidateSession(result.Session); err != nil || result.Session.ServerTime.IsZero() ||
 		!claimsMatchBinding(claims, bindingFromSession(result.Session)) ||
 		claims.PlayerID != result.Session.PlayerID ||
 		claims.WalletSessionID != result.Session.WalletSessionID {
@@ -365,6 +402,7 @@ func (h *Handler) handleClientSessionRefresh(writer http.ResponseWriter, request
 		request.Context(), result.AccessToken, result.Session.OperatorID,
 	)
 	if err != nil || !claimsMatchBinding(refreshed, bindingFromSession(result.Session)) ||
+		refreshed.TransportGeneration != result.Session.TransportGeneration ||
 		refreshed.PlayerID != result.Session.PlayerID ||
 		refreshed.WalletSessionID != result.Session.WalletSessionID {
 		h.writeMappedError(writer, requestID, fmt.Errorf("%w: invalid refreshed access token", ErrUnavailable))
@@ -372,6 +410,38 @@ func (h *Handler) handleClientSessionRefresh(writer http.ResponseWriter, request
 	}
 	h.writeSuccess(writer, requestID, http.StatusOK, sessionExchangeResponse{
 		AccessToken: result.AccessToken, Session: makeSessionResponse(result.Session),
+		ServerTime: formatTime(result.Session.ServerTime),
+	})
+}
+
+func (h *Handler) handleClientSessionStatus(writer http.ResponseWriter, request *http.Request, requestID string) {
+	body, ok := h.readBody(writer, request, requestID)
+	if !ok {
+		return
+	}
+	var payload clientSessionStatusRequest
+	if err := decodeStrictJSON(body, &payload); err != nil {
+		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_JSON", "request body is invalid")
+		return
+	}
+	if err := validateBinding(payload.sessionBindingRequest); err != nil {
+		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "request fields are invalid")
+		return
+	}
+	_, session, ok := h.authenticateClient(
+		writer, request, requestID, payload.sessionBindingRequest, false,
+	)
+	if !ok {
+		return
+	}
+	if session.ServerTime.IsZero() {
+		h.writeMappedError(writer, requestID, fmt.Errorf("%w: session status missing authoritative clock", ErrUnavailable))
+		return
+	}
+	h.writeSuccess(writer, requestID, http.StatusOK, sessionStatusResponse{
+		OperatorID: session.OperatorID, SessionID: session.SessionID,
+		Status: session.Status, IdleDisconnectAt: formatTime(session.IdleDisconnectAt),
+		ServerTime: formatTime(session.ServerTime),
 	})
 }
 
@@ -390,7 +460,7 @@ func (h *Handler) handleClientSpin(writer http.ResponseWriter, request *http.Req
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "request fields are invalid")
 		return
 	}
-	claims, ok := h.authenticateClient(writer, request, requestID, payload.sessionBindingRequest)
+	claims, _, ok := h.authenticateClient(writer, request, requestID, payload.sessionBindingRequest, false)
 	if !ok {
 		return
 	}
@@ -409,6 +479,7 @@ func (h *Handler) handleClientSpin(writer http.ResponseWriter, request *http.Req
 		GameID: payload.GameID, DefinitionVersion: payload.DefinitionVersion,
 		DefinitionHash: payload.DefinitionHash, Currency: payload.Currency,
 		RoundKind: payload.RoundKind, BetMinor: betMinor, StartRevision: revision,
+		TransportGeneration: claims.TransportGeneration,
 	}
 	result, err := h.spins.Spin(request.Context(), spinRequest)
 	if err != nil {
@@ -419,6 +490,14 @@ func (h *Handler) handleClientSpin(writer http.ResponseWriter, request *http.Req
 		h.writeMappedError(writer, requestID, fmt.Errorf("%w: invalid coordinator result", ErrUnavailable))
 		return
 	}
+	updatedSession, err := h.launches.AuthorizeSession(request.Context(), SessionAuthorizationCommand{
+		Claims: claims, AllowIdleRecovery: true,
+	})
+	if err != nil {
+		h.writeMappedError(writer, requestID, err)
+		return
+	}
+	result.IdleDisconnectAt = updatedSession.IdleDisconnectAt
 	response, err := makeSpinResultResponse(result)
 	if err != nil {
 		h.writeMappedError(writer, requestID, fmt.Errorf("%w: encode committed result hash", ErrUnavailable))
@@ -441,10 +520,11 @@ func (h *Handler) handleClientRoundStatus(writer http.ResponseWriter, request *h
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "request fields are invalid")
 		return
 	}
-	if _, ok := h.authenticateClient(writer, request, requestID, payload.sessionBindingRequest); !ok {
+	_, session, ok := h.authenticateClient(writer, request, requestID, payload.sessionBindingRequest, true)
+	if !ok {
 		return
 	}
-	h.serveRoundStatus(writer, request.Context(), requestID, payload)
+	h.serveRoundStatus(writer, request.Context(), requestID, payload, session.IdleDisconnectAt)
 }
 
 func (h *Handler) handleClientPendingResult(writer http.ResponseWriter, request *http.Request, requestID string) {
@@ -453,7 +533,7 @@ func (h *Handler) handleClientPendingResult(writer http.ResponseWriter, request 
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "X-Operator-Id is required")
 		return
 	}
-	claims, ok := h.authenticateClientClaims(writer, request, requestID, operatorValues[0])
+	claims, session, ok := h.authenticateClientClaims(writer, request, requestID, operatorValues[0], true)
 	if !ok {
 		return
 	}
@@ -474,6 +554,7 @@ func (h *Handler) handleClientPendingResult(writer http.ResponseWriter, request 
 		h.writeMappedError(writer, requestID, fmt.Errorf("%w: invalid result delivery", ErrUnavailable))
 		return
 	}
+	delivery.Result.IdleDisconnectAt = session.IdleDisconnectAt
 	response, err := makeSpinResultResponse(delivery.Result)
 	if err != nil || response.ResultHash != delivery.ResultHash {
 		h.writeMappedError(writer, requestID, fmt.Errorf("%w: encode pending result", ErrUnavailable))
@@ -503,12 +584,14 @@ func (h *Handler) handleClientResultAcknowledgement(writer http.ResponseWriter, 
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "request fields are invalid")
 		return
 	}
-	if _, ok := h.authenticateClient(writer, request, requestID, payload.sessionBindingRequest); !ok {
+	claims, _, ok := h.authenticateClient(writer, request, requestID, payload.sessionBindingRequest, true)
+	if !ok {
 		return
 	}
 	receipt := rgs.ResultDeliveryAcknowledgement{
 		OperatorID: payload.OperatorID, SessionID: payload.SessionID,
 		RoundID: payload.RoundID, Sequence: sequence, ResultHash: payload.ResultHash,
+		TransportGeneration: claims.TransportGeneration,
 	}
 	delivery, _, err := h.deliveries.AcknowledgeResultDelivery(request.Context(), receipt)
 	if err != nil {
@@ -554,7 +637,58 @@ func (h *Handler) handleOperatorRoundStatus(writer http.ResponseWriter, request 
 		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "request fields are invalid")
 		return
 	}
-	h.serveRoundStatus(writer, request.Context(), requestID, payload)
+	h.serveRoundStatus(writer, request.Context(), requestID, payload, time.Time{})
+}
+
+func (h *Handler) handleOperatorRiskDecision(writer http.ResponseWriter, request *http.Request, requestID string) {
+	body, ok := h.readBody(writer, request, requestID)
+	if !ok {
+		return
+	}
+	verified, ok := h.authenticateOperator(writer, request, requestID, body)
+	if !ok {
+		return
+	}
+	requestID = verified.RequestID
+	if !h.admitVerifiedOperator(request.Context(), writer, requestID, verified.OperatorID) {
+		return
+	}
+	if err := h.operatorRequests.ConsumeNonce(request.Context(), verified); err != nil {
+		h.writeOperatorNonceError(writer, requestID, err)
+		return
+	}
+	var payload operatorRiskDecisionRequest
+	if err := decodeStrictJSON(body, &payload); err != nil {
+		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_JSON", "request body is invalid")
+		return
+	}
+	command := rgs.RiskDecisionCommand{
+		RoundKey: rgs.RoundKey{
+			OperatorID: payload.OperatorID, SessionID: payload.SessionID, RoundID: payload.RoundID,
+		},
+		RequestID: verified.RequestID, IdempotencyKey: verified.IdempotencyKey,
+		CredentialKeyID: verified.KeyID, Decision: payload.Decision, ReasonCode: payload.ReasonCode,
+	}
+	if payload.OperatorID != verified.OperatorID || rgs.ValidateRiskDecisionCommand(command) != nil {
+		h.writeError(writer, requestID, http.StatusBadRequest, "INVALID_REQUEST", "request fields are invalid")
+		return
+	}
+	result, err := h.riskDecisions.DecideRisk(request.Context(), command)
+	if err != nil {
+		h.writeMappedError(writer, requestID, err)
+		return
+	}
+	if result.RoundKey != command.RoundKey || result.Decision != command.Decision ||
+		result.DecidedAt.IsZero() ||
+		(result.Status != rgs.RoundPrepared && result.Status != rgs.RoundRejected) {
+		h.writeMappedError(writer, requestID, fmt.Errorf("%w: invalid risk decision result", ErrUnavailable))
+		return
+	}
+	h.writeSuccess(writer, requestID, http.StatusOK, operatorRiskDecisionResponse{
+		OperatorID: result.RoundKey.OperatorID, SessionID: result.RoundKey.SessionID,
+		RoundID: result.RoundKey.RoundID, Decision: result.Decision, Status: result.Status,
+		DecidedAt: formatTime(result.DecidedAt), Replayed: result.Replayed,
+	})
 }
 
 func (h *Handler) admitVerifiedOperator(ctx context.Context, writer http.ResponseWriter, requestID, operatorID string) bool {
@@ -566,7 +700,13 @@ func (h *Handler) admitVerifiedOperator(ctx context.Context, writer http.Respons
 	))
 }
 
-func (h *Handler) serveRoundStatus(writer http.ResponseWriter, ctx context.Context, requestID string, payload roundStatusRequest) {
+func (h *Handler) serveRoundStatus(
+	writer http.ResponseWriter,
+	ctx context.Context,
+	requestID string,
+	payload roundStatusRequest,
+	idleDisconnectAt time.Time,
+) {
 	record, err := h.rounds.GetRound(ctx, rgs.RoundKey{
 		OperatorID: payload.OperatorID, SessionID: payload.SessionID, RoundID: payload.RoundID,
 	})
@@ -583,6 +723,7 @@ func (h *Handler) serveRoundStatus(writer http.ResponseWriter, ctx context.Conte
 		RoundID: record.Key.RoundID, Status: record.Status,
 	}
 	if record.Status == rgs.RoundCommitted {
+		record.Result.IdleDisconnectAt = idleDisconnectAt
 		result, encodeErr := makeSpinResultResponse(record.Result)
 		if encodeErr != nil {
 			h.writeMappedError(writer, requestID, fmt.Errorf("%w: encode committed result hash", ErrUnavailable))
@@ -593,27 +734,40 @@ func (h *Handler) serveRoundStatus(writer http.ResponseWriter, ctx context.Conte
 	h.writeSuccess(writer, requestID, http.StatusOK, response)
 }
 
-func (h *Handler) authenticateClient(writer http.ResponseWriter, request *http.Request, requestID string, binding sessionBindingRequest) (operator.AccessTokenClaims, bool) {
-	claims, ok := h.authenticateClientClaims(writer, request, requestID, binding.OperatorID)
+func (h *Handler) authenticateClient(
+	writer http.ResponseWriter,
+	request *http.Request,
+	requestID string,
+	binding sessionBindingRequest,
+	allowIdleRecovery bool,
+) (operator.AccessTokenClaims, rgs.Session, bool) {
+	claims, session, ok := h.authenticateClientClaims(
+		writer, request, requestID, binding.OperatorID, allowIdleRecovery,
+	)
 	if !ok {
-		return operator.AccessTokenClaims{}, false
+		return operator.AccessTokenClaims{}, rgs.Session{}, false
 	}
 	if !claimsMatchBinding(claims, binding) {
 		h.writeError(writer, requestID, http.StatusForbidden, "TOKEN_BINDING_MISMATCH", "access token does not match the requested session")
-		return operator.AccessTokenClaims{}, false
+		return operator.AccessTokenClaims{}, rgs.Session{}, false
 	}
-	return claims, true
+	return claims, session, true
 }
 
-func (h *Handler) authenticateClientClaims(writer http.ResponseWriter, request *http.Request, requestID, operatorID string) (operator.AccessTokenClaims, bool) {
+func (h *Handler) authenticateClientClaims(
+	writer http.ResponseWriter,
+	request *http.Request,
+	requestID, operatorID string,
+	allowIdleRecovery bool,
+) (operator.AccessTokenClaims, rgs.Session, bool) {
 	token, err := bearerToken(request.Header)
 	if err != nil {
 		h.writeError(writer, requestID, http.StatusUnauthorized, "UNAUTHORIZED", "access token is required")
-		return operator.AccessTokenClaims{}, false
+		return operator.AccessTokenClaims{}, rgs.Session{}, false
 	}
 	release, ok := h.acquireCryptographicCapacity(request.Context(), writer, requestID)
 	if !ok {
-		return operator.AccessTokenClaims{}, false
+		return operator.AccessTokenClaims{}, rgs.Session{}, false
 	}
 	claims, err := func() (operator.AccessTokenClaims, error) {
 		defer release()
@@ -621,16 +775,25 @@ func (h *Handler) authenticateClientClaims(writer http.ResponseWriter, request *
 	}()
 	if err != nil {
 		h.writeMappedError(writer, requestID, err)
-		return operator.AccessTokenClaims{}, false
+		return operator.AccessTokenClaims{}, rgs.Session{}, false
 	}
 	// 客户端限流必须位于访问令牌验证之后，并绑定已验证的运营商与会话。
+	// 它也必须位于数据库 generation/deadline 校验之前，避免签名有效的旧 token
+	// 绕过请求配额直接消耗恢复连接预算。
 	// 不能使用 RemoteAddr/X-Forwarded-For：反向代理会让无关玩家共享地址，后者又可被伪造。
 	if h.clientAdmission != nil && !h.writeAdmissionResult(writer, requestID, h.clientAdmission.Admit(
 		request.Context(), clientAdmissionKey(claims.OperatorID, claims.SessionID), h.now(),
 	)) {
-		return operator.AccessTokenClaims{}, false
+		return operator.AccessTokenClaims{}, rgs.Session{}, false
 	}
-	return claims, true
+	session, err := h.launches.AuthorizeSession(request.Context(), SessionAuthorizationCommand{
+		Claims: claims, AllowIdleRecovery: allowIdleRecovery,
+	})
+	if err != nil {
+		h.writeMappedError(writer, requestID, err)
+		return operator.AccessTokenClaims{}, rgs.Session{}, false
+	}
+	return claims, session, true
 }
 
 func (h *Handler) authenticateOperator(
@@ -874,6 +1037,8 @@ func mapError(err error) (int, string, string) {
 		return http.StatusNotFound, "NOT_FOUND", "resource not found"
 	case errors.Is(err, rgs.ErrSessionExpired):
 		return http.StatusGone, "EXPIRED", "credential or session is expired"
+	case errors.Is(err, rgs.ErrSessionTimeout):
+		return http.StatusGone, "SESSION_TIMEOUT", "game session timed out from inactivity"
 	case errors.Is(err, rgs.ErrSessionExists), errors.Is(err, rgs.ErrIdempotencyConflict):
 		return http.StatusConflict, "IDEMPOTENCY_CONFLICT", "request conflicts with existing state"
 	case errors.Is(err, rgs.ErrRevisionConflict):
@@ -888,6 +1053,10 @@ func mapError(err error) (int, string, string) {
 		return http.StatusConflict, "RESULT_DELIVERY_MISMATCH", "result delivery acknowledgement does not match"
 	case errors.Is(err, rgs.ErrWalletPending):
 		return http.StatusAccepted, "ROUND_PENDING", "round settlement is pending"
+	case errors.Is(err, rgs.ErrRiskPending):
+		return http.StatusAccepted, "RISK_PENDING", "round is pending risk approval"
+	case errors.Is(err, rgs.ErrRiskDecisionConflict):
+		return http.StatusConflict, "RISK_DECISION_CONFLICT", "risk decision conflicts with persisted state"
 	case errors.Is(err, rgs.ErrWalletRejected), errors.Is(err, rgs.ErrRoundRejected):
 		return http.StatusConflict, "ROUND_REJECTED", "round was rejected"
 	case errors.Is(err, rgs.ErrManualReview), errors.Is(err, rgs.ErrSessionIntegrity),

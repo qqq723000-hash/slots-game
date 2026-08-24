@@ -163,7 +163,8 @@ func TestAccessTokenRejectsExpiryFutureAudienceIssuerAndTenant(t *testing.T) {
 			SessionID: "session-1", GameID: "iron-colossus", GameDefinitionVersion: "math-v1",
 			GameDefinitionHash: strings.Repeat("a", 64),
 			Currency:           "EUR", CurrencyExponent: 2, Jurisdiction: "DE",
-			IssuedAt: now.Unix(), ExpiresAt: now.Add(time.Minute).Unix(), TokenID: "at-forged",
+			TransportGeneration: 1,
+			IssuedAt:            now.Unix(), ExpiresAt: now.Add(time.Minute).Unix(), TokenID: "at-forged",
 		}
 		payload, err := json.Marshal(claims)
 		if err != nil {
@@ -226,6 +227,7 @@ func testAccessSubject(operatorID string) AccessTokenSubject {
 		SessionID: "session-1", GameID: "iron-colossus", GameDefinitionVersion: "math-v1",
 		GameDefinitionHash: strings.Repeat("a", 64),
 		Currency:           "EUR", CurrencyExponent: 2, Jurisdiction: "DE",
+		TransportGeneration: 1,
 	}
 }
 

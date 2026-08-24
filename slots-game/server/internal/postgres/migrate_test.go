@@ -78,6 +78,39 @@ func TestLocalizedHistoricalMigrationKeepsLedgerIdentityAndRejectsExecutableDrif
 	}
 }
 
+func TestIdleDisconnectMigrationRetainsOldWriterInsertDefaults(t *testing.T) {
+	contents, err := fs.ReadFile(migrationFiles, "migrations/0012_session_idle_disconnect.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := string(contents)
+	for _, required := range []string{
+		"idle_disconnect_seconds bigint DEFAULT 1200",
+		"idle_disconnect_at timestamptz DEFAULT clock_timestamp()",
+		"transport_generation bigint DEFAULT 1",
+		"idle_disconnect_at = LEAST(expires_at, clock_timestamp() + INTERVAL '20 minutes')",
+		"ALTER COLUMN idle_disconnect_seconds SET NOT NULL",
+		"ALTER COLUMN idle_disconnect_at SET NOT NULL",
+		"ALTER COLUMN transport_generation SET NOT NULL",
+		"CHECK (idle_disconnect_at <= expires_at)",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("idle migration is missing rolling old-writer compatibility fragment %q", required)
+		}
+	}
+	if strings.Contains(sqlText, "DROP DEFAULT") {
+		t.Fatal("idle migration drops defaults and would break an old CreateSession INSERT during rollout")
+	}
+	if strings.Contains(sqlText, "WHERE idle_disconnect_seconds IS NULL") {
+		t.Fatal("idle migration skips preexisting rows populated by ADD COLUMN defaults")
+	}
+	backfill := strings.Index(sqlText, "idle_disconnect_at = LEAST(expires_at")
+	constraint := strings.Index(sqlText, "CHECK (idle_disconnect_at <= expires_at)")
+	if backfill < 0 || constraint < 0 || backfill >= constraint {
+		t.Fatal("expired historical sessions are not clamped before the absolute-expiry constraint")
+	}
+}
+
 func TestMigratorRolePolicyRequiresExactUnprivilegedIdentity(t *testing.T) {
 	for _, required := range []string{
 		"rolname = 'rgs_migrator'",
@@ -139,6 +172,8 @@ func TestMigrateAndReconcileUsesOneLockedTransaction(t *testing.T) {
 			walletRecoveryRegistryInsertTriggerDefinition,
 			walletRecoveryRegistryUpdateTriggerDefinition,
 		).
+		WillReturnRows(sqlmock.NewRows([]string{"policy_ok"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta(sessionIdleTransportInvariantSQL)).
 		WillReturnRows(sqlmock.NewRows([]string{"policy_ok"}).AddRow(true))
 	mock.ExpectQuery(regexp.QuoteMeta(runtimePrivilegeCheckSQL)).
 		WithArgs(CanonicalRuntimeRole, false).

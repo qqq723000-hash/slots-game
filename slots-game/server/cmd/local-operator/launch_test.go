@@ -67,7 +67,7 @@ func TestLaunchClientSignsRequestAndVerifiesRGSResponse(t *testing.T) {
 		SessionID: "session-1", GameID: "iron-colossus", DefinitionVersion: "math-v1",
 		DefinitionHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Currency:       "CNY", CurrencyExponent: 2, Jurisdiction: "CN-LOCAL",
-		BalanceMinor: "10000", SessionTTLSeconds: 3600,
+		BalanceMinor: "10000", SessionTTLSeconds: 3600, IdleDisconnectSeconds: 1200,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestLauncherPersistsAuthoritativeWalletSessionBindingBeforeReturn(t *testin
 		GameID: "iron-colossus", DefinitionVersion: "math-v1",
 		DefinitionHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Currency:       "CNY", CurrencyExponent: 2, Jurisdiction: "CN-LOCAL",
-		InitialBalanceMinor: 10_000, SessionTTL: time.Hour,
+		InitialBalanceMinor: 10_000, SessionTTL: time.Hour, IdleDisconnect: 20 * time.Minute,
 		DefaultPlayerID: "player-1", DefaultWalletAccountID: "wallet-1",
 		AdminToken: []byte("0123456789abcdef"), Store: store, Client: client,
 		Metrics: &serviceMetrics{},
@@ -127,6 +127,13 @@ func TestLauncherPersistsAuthoritativeWalletSessionBindingBeforeReturn(t *testin
 	result, err := handler.(*launcher).create(context.Background(), launchInput{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	relaunched, err := handler.(*launcher).create(context.Background(), launchInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relaunched.SessionID != result.SessionID {
+		t.Fatalf("relaunch session = %q, want durable %q", relaunched.SessionID, result.SessionID)
 	}
 	store.mu.Lock()
 	defer store.mu.Unlock()

@@ -72,6 +72,20 @@ func TestConfigValidateRejectsInvalidBetOptions(t *testing.T) {
 		wantMessage string
 	}{
 		{
+			name: "game id is not a protocol identifier",
+			mutate: func(config *Config) {
+				config.GameID = "游戏/secret"
+			},
+			wantMessage: "invalid game id",
+		},
+		{
+			name: "game id exceeds protocol identifier limit",
+			mutate: func(config *Config) {
+				config.GameID = strings.Repeat("g", 129)
+			},
+			wantMessage: "invalid game id",
+		},
+		{
 			name: "missing pay unit",
 			mutate: func(config *Config) {
 				config.Bet.PayUnitMinor = 0

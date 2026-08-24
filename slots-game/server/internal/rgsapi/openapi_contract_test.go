@@ -18,6 +18,7 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 	// 描述 JSON 401 与 429，否则生成的 SDK/网关会遗漏真实的失败闭合响应。
 	for _, path := range []string{
 		"/client/v1/sessions/refresh",
+		"/client/v1/sessions/status",
 		"/client/v1/spins",
 		"/client/v1/rounds/status",
 		"/client/v1/results/pending",
@@ -47,7 +48,9 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 		t.Error("session exchange still declares the removed pre-authentication client rate limiter")
 	}
 
-	for _, path := range []string{"/operator/v1/launches", "/operator/v1/rounds/status"} {
+	for _, path := range []string{
+		"/operator/v1/launches", "/operator/v1/rounds/status", "/operator/v1/risk-decisions",
+	} {
 		section := openAPIPathSection(t, document, path)
 		if !strings.Contains(section, "'405':\n          $ref: '#/components/responses/SignedMethodNotAllowed'") {
 			t.Errorf("%s does not declare its signed JSON method error", path)
@@ -56,12 +59,16 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 	for _, path := range []string{
 		"/client/v1/sessions/exchange",
 		"/client/v1/sessions/refresh",
+		"/client/v1/sessions/status",
 		"/client/v1/spins",
 		"/client/v1/rounds/status",
 		"/client/v1/results/pending",
 		"/client/v1/results/acknowledgements",
 	} {
 		section := openAPIPathSection(t, document, path)
+		if !strings.Contains(section, "#/components/parameters/TraceParent") {
+			t.Errorf("%s does not declare optional W3C browser trace correlation", path)
+		}
 		if !strings.Contains(section, "'405':\n          $ref: '#/components/responses/ClientMethodNotAllowed'") {
 			t.Errorf("%s does not declare its JSON method error and Allow header", path)
 		}
@@ -112,6 +119,29 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 	}
 	if !strings.Contains(exchange, "'423':\n          $ref: '#/components/responses/Error'") {
 		t.Error("session exchange does not declare quarantined-session manual review")
+	}
+	status := openAPIPathSection(t, document, "/client/v1/sessions/status")
+	for _, expectation := range []string{
+		"operationId: getClientSessionStatus",
+		"#/components/schemas/SessionStatusRequest",
+		"#/components/schemas/SessionStatusSuccessEnvelope",
+		"stable error code SESSION_TIMEOUT",
+		"never rotates the token, extends the idle deadline, changes economic",
+	} {
+		if !strings.Contains(status, expectation) {
+			t.Errorf("session status contract is missing %q", expectation)
+		}
+	}
+	for _, expectation := range []string{
+		"bearerFormat: RGS-ACCESS-v3",
+		"required: [accessToken, session, serverTime]",
+		"required: [operatorId, sessionId, status, idleDisconnectAt, serverTime]",
+		"required: [idleDisconnectAt]",
+		"idleDisconnectSeconds:",
+	} {
+		if !strings.Contains(document, expectation) {
+			t.Errorf("idle transport OpenAPI contract is missing %q", expectation)
+		}
 	}
 }
 

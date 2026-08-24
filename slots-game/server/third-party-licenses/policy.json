@@ -2,6 +2,78 @@
   "schemaVersion": 1,
   "modules": [
     {
+      "path": "github.com/cenkalti/backoff/v5",
+      "version": "v5.0.3",
+      "moduleSum": "h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=",
+      "licenseExpression": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "5c0476add4c38b55d0ed5ac11b85e00c38f26e1caee20dfe3ab58190103d1fbc"
+        }
+      ]
+    },
+    {
+      "path": "github.com/cespare/xxhash/v2",
+      "version": "v2.3.0",
+      "moduleSum": "h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=",
+      "licenseExpression": "MIT",
+      "files": [
+        {
+          "name": "LICENSE.txt",
+          "sha256": "f566a9f97bacdaf00d9f21dd991e81dc11201c4e016c86b470799429a1c9a79c"
+        }
+      ]
+    },
+    {
+      "path": "github.com/go-logr/logr",
+      "version": "v1.4.4",
+      "moduleSum": "h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+        }
+      ]
+    },
+    {
+      "path": "github.com/go-logr/stdr",
+      "version": "v1.2.2",
+      "moduleSum": "h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
+      "path": "github.com/google/uuid",
+      "version": "v1.6.0",
+      "moduleSum": "h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=",
+      "licenseExpression": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "0a8d61ed3cbfd5312326e8126c31ce9c627a283adc99131b56896d29ada04b2d"
+        }
+      ]
+    },
+    {
+      "path": "github.com/grpc-ecosystem/grpc-gateway/v2",
+      "version": "v2.29.0",
+      "moduleSum": "h1:5VipnvEpbqr2gA2VbM+nYVbkIF28c5ZQfqCBQ5g2xfk=",
+      "licenseExpression": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "a15b1d1b168954c92ff7fb1620382418f7c72f4f4d251ee791d1098ad68ab0c4"
+        }
+      ]
+    },
+    {
       "path": "github.com/jackc/pgpassfile",
       "version": "v1.0.0",
       "moduleSum": "h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=",
@@ -66,6 +138,114 @@
       ]
     },
     {
+      "path": "go.opentelemetry.io/auto/sdk",
+      "version": "v1.2.1",
+      "moduleSum": "h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
+      "path": "go.opentelemetry.io/otel",
+      "version": "v1.45.0",
+      "moduleSum": "h1:pdrWmLHofpubmArBv1LgFSv1Z0Ie/ppdZzu+kUN5EeU=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "1ae07514be1d7bb33f0698f8d91fb51b8b9fe1463157ec1c72081a49b9bc6f40"
+        }
+      ]
+    },
+    {
+      "path": "go.opentelemetry.io/otel/exporters/otlp/otlptrace",
+      "version": "v1.45.0",
+      "moduleSum": "h1:QRefszxJmfPdjXUUm3j6iDzY03mTPXMjqErFqQ67vUg=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "1ae07514be1d7bb33f0698f8d91fb51b8b9fe1463157ec1c72081a49b9bc6f40"
+        }
+      ]
+    },
+    {
+      "path": "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
+      "version": "v1.45.0",
+      "moduleSum": "h1:QBajQ2SrwQijzHyZbQlPsuIzpl/ll8DY6wPWsajeGcI=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "1ae07514be1d7bb33f0698f8d91fb51b8b9fe1463157ec1c72081a49b9bc6f40"
+        }
+      ]
+    },
+    {
+      "path": "go.opentelemetry.io/otel/metric",
+      "version": "v1.45.0",
+      "moduleSum": "h1:7Eg1uH7CJ5cXv9is6tnBe1FI6rj1nwUdbFypRm3br/M=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "1ae07514be1d7bb33f0698f8d91fb51b8b9fe1463157ec1c72081a49b9bc6f40"
+        }
+      ]
+    },
+    {
+      "path": "go.opentelemetry.io/otel/sdk",
+      "version": "v1.45.0",
+      "moduleSum": "h1:4VVSMgQ83dUgW2aoX5f6JgLvHwIvzcuLnF9lUdCSpCw=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "1ae07514be1d7bb33f0698f8d91fb51b8b9fe1463157ec1c72081a49b9bc6f40"
+        }
+      ]
+    },
+    {
+      "path": "go.opentelemetry.io/otel/trace",
+      "version": "v1.45.0",
+      "moduleSum": "h1:l/mP6Uv7oNO7/TblbhpbgMidxhq1uO/rPsikOyVhxag=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "1ae07514be1d7bb33f0698f8d91fb51b8b9fe1463157ec1c72081a49b9bc6f40"
+        }
+      ]
+    },
+    {
+      "path": "go.opentelemetry.io/proto/otlp",
+      "version": "v1.11.0",
+      "moduleSum": "h1:5rrYs0Ykyj50sdU/JU0x8etU+LubXWb+gED6TbEdMIk=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    {
+      "path": "golang.org/x/net",
+      "version": "v0.57.0",
+      "moduleSum": "h1:K5+3DljvIuDG9/Jv9rvyMywYNFCQ9RSUY6OOTTkT+tE=",
+      "licenseExpression": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ]
+    },
+    {
       "path": "golang.org/x/sync",
       "version": "v0.22.0",
       "moduleSum": "h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=",
@@ -79,8 +259,8 @@
     },
     {
       "path": "golang.org/x/sys",
-      "version": "v0.44.0",
-      "moduleSum": "h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=",
+      "version": "v0.47.0",
+      "moduleSum": "h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
       "licenseExpression": "BSD-3-Clause",
       "files": [
         {
@@ -98,6 +278,58 @@
         {
           "name": "LICENSE",
           "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ]
+    },
+    {
+      "path": "google.golang.org/genproto/googleapis/api",
+      "version": "v0.0.0-20260803160001-6ac0973c030d",
+      "moduleSum": "h1:FarXi840EJWSHYTN3ERkADbPWjl307+FGrA22KAVjjc=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "path": "google.golang.org/genproto/googleapis/rpc",
+      "version": "v0.0.0-20260803160001-6ac0973c030d",
+      "moduleSum": "h1:IL4hdHzcUv2l/gcg98/Rj3FbtE6axwqslOW8SW0C+S0=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "path": "google.golang.org/grpc",
+      "version": "v1.83.0",
+      "moduleSum": "h1:JeNZEKJFbQxArAMl+hiytHauacDNqJUllNfmIMmpqnQ=",
+      "licenseExpression": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "name": "NOTICE.txt",
+          "sha256": "693ff28ec216d5112ac1bbfe64ef539005867d1c7bd427b57d579683293b947f"
+        }
+      ]
+    },
+    {
+      "path": "google.golang.org/protobuf",
+      "version": "v1.36.11",
+      "moduleSum": "h1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=",
+      "licenseExpression": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "4835612df0098ca95f8e7d9e3bffcb02358d435dbb38057c844c99d7f725eb20"
         }
       ]
     }

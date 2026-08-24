@@ -358,7 +358,7 @@ func TestSecurityStoresPurgeExpiredInBoundedSkipLockedBatches(t *testing.T) {
 		WithArgs(before.UTC(), 250).
 		WillReturnResult(sqlmock.NewResult(0, 250))
 	mock.ExpectExec(regexp.QuoteMeta(launchPurgeSQL)).
-		WithArgs(before.UTC().Add(-launch.IdempotencyRetention), 100).
+		WithArgs(before.UTC(), launch.IdempotencyRetention.Microseconds(), 100).
 		WillReturnResult(sqlmock.NewResult(0, 37))
 
 	if count, purgeErr := nonceStore.PurgeExpired(context.Background(), before, 250); purgeErr != nil || count != 250 {
@@ -368,6 +368,21 @@ func TestSecurityStoresPurgeExpiredInBoundedSkipLockedBatches(t *testing.T) {
 		t.Fatalf("LaunchStore.PurgeExpired() = (%d, %v), want (37, nil)", count, purgeErr)
 	}
 	assertSecurityExpectations(t, mock)
+}
+
+func TestSecurityPurgeSQLCapsCallerClockAtDatabaseTime(t *testing.T) {
+	t.Parallel()
+	for name, query := range map[string]string{
+		"nonce":  noncePurgeSQL,
+		"launch": launchPurgeSQL,
+	} {
+		if !strings.Contains(query, "LEAST($1, CURRENT_TIMESTAMP)") {
+			t.Errorf("%s purge SQL does not cap the caller clock at PostgreSQL time", name)
+		}
+	}
+	if !strings.Contains(launchPurgeSQL, "$2::bigint * INTERVAL '1 microsecond'") {
+		t.Error("launch purge SQL does not apply the idempotency retention window in PostgreSQL")
+	}
 }
 
 func TestSecurityStoresRejectUnboundedPurge(t *testing.T) {
@@ -435,17 +450,18 @@ func validLaunchRecord() launch.Record {
 	return launch.Record{
 		Digest: launch.CodeDigest(digest),
 		Claims: launch.Claims{
-			OperatorID:         "operator-a",
-			SessionID:          "session-1",
-			PlayerID:           "player-1",
-			WalletSessionID:    "wallet-session-1",
-			GameID:             "iron-colossus",
-			DefinitionVersion:  "math-2026.07.1",
-			DefinitionHash:     strings.Repeat("a", 64),
-			RequestFingerprint: strings.Repeat("b", 64),
-			Currency:           "EUR",
-			CurrencyExponent:   2,
-			Jurisdiction:       "MT",
+			OperatorID:            "operator-a",
+			SessionID:             "session-1",
+			PlayerID:              "player-1",
+			WalletSessionID:       "wallet-session-1",
+			GameID:                "iron-colossus",
+			DefinitionVersion:     "math-2026.07.1",
+			DefinitionHash:        strings.Repeat("a", 64),
+			RequestFingerprint:    strings.Repeat("b", 64),
+			Currency:              "EUR",
+			CurrencyExponent:      2,
+			Jurisdiction:          "MT",
+			IdleDisconnectSeconds: 1200,
 		},
 		CreatedAt: createdAt,
 		ExpiresAt: createdAt.Add(launch.DefaultTTL),

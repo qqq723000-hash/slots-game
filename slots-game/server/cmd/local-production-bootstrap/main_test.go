@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -149,6 +150,7 @@ func TestGeneratedTLSCertificatesCoverComposeAndHostNames(t *testing.T) {
 	roots.AddCert(ca)
 	serverNames := map[string][]string{
 		"postgres-server":       {"postgres", "slots-postgres"},
+		"valkey-server":         {"valkey", "slots-valkey"},
 		"ingress-server":        {"slots.localhost", "rgs.localhost", "ingress", "web", "rgs"},
 		"wallet-server":         {"wallet", "slots-wallet", "wallet-adapter"},
 		"audit-server":          {"audit", "slots-audit", "audit-sink", "log-sink"},
@@ -191,8 +193,9 @@ func TestGeneratedTLSCertificatesCoverComposeAndHostNames(t *testing.T) {
 
 func TestGeneratedSecretsHaveExpectedEncodingAndDoNotReuseMaterial(t *testing.T) {
 	directory := generateTestBundle(t)
-	standardBase64 := []string{"launch-hmac.key", "outbox-hmac.key"}
+	standardBase64 := []string{"launch-hmac.key", "outbox-hmac.key", "shared-admission-hmac.key"}
 	rawURLBase64 := []string{
+		"valkey-password",
 		"operations.token", "grafana-admin-password", "alertmanager.token",
 		"postgres-admin.password", "rgs-migrator.password", "rgs-runtime.password",
 		"local-operator-owner.password", "local-operator-runtime.password",
@@ -226,6 +229,34 @@ func TestGeneratedSecretsHaveExpectedEncodingAndDoNotReuseMaterial(t *testing.T)
 	}
 }
 
+func TestAddSharedAdmissionMaterialUpgradesAnExistingBundleWithoutRotation(t *testing.T) {
+	now := time.Date(2026, 8, 25, 1, 0, 0, 0, time.UTC)
+	directory := filepath.Join(t.TempDir(), "bundle")
+	if err := run([]string{directory}, func() time.Time { return now }); err != nil {
+		t.Fatal(err)
+	}
+	existingDigest := fileSHA256(t, filepath.Join(directory, "launch-hmac.key"))
+	for _, name := range sharedAdmissionMaterialNames {
+		if err := os.Remove(filepath.Join(directory, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := run([]string{"add-shared-admission", directory}, func() time.Time { return now }); err != nil {
+		t.Fatal(err)
+	}
+	if got := fileSHA256(t, filepath.Join(directory, "launch-hmac.key")); got != existingDigest {
+		t.Fatal("existing secret rotated during shared admission augmentation")
+	}
+	certificate := readCertificate(t, filepath.Join(directory, "valkey-server.pem"))
+	if err := certificate.VerifyHostname("valkey"); err != nil {
+		t.Fatal(err)
+	}
+	assertTLSKeyMatchesCertificate(t, filepath.Join(directory, "valkey-server-key.pem"), certificate)
+	if err := run([]string{"add-shared-admission", directory}, func() time.Time { return now.Add(time.Hour) }); err != nil {
+		t.Fatalf("idempotent augmentation failed: %v", err)
+	}
+}
+
 func TestRunRefusesToOverwriteOrFollowOutputSymlink(t *testing.T) {
 	now := func() time.Time { return time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC) }
 	directory := filepath.Join(t.TempDir(), "bundle")
@@ -254,6 +285,15 @@ func generateTestBundle(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return directory
+}
+
+func fileSHA256(t *testing.T, path string) [sha256.Size]byte {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sha256.Sum256(contents)
 }
 
 func readCertificate(t *testing.T, path string) *x509.Certificate {

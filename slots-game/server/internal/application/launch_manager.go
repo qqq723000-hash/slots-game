@@ -29,6 +29,8 @@ type LaunchManagerConfig struct {
 	PublicBaseURL     string
 	LaunchHMACKey     []byte
 	AccessTokenTTL    time.Duration
+	IdleDisconnectMin time.Duration
+	IdleDisconnectMax time.Duration
 	GameID            string
 	DefinitionVersion string
 	DefinitionHash    string
@@ -36,16 +38,18 @@ type LaunchManagerConfig struct {
 }
 
 type LaunchManager struct {
-	repository  rgs.Repository
-	launches    *launch.Service
-	issuers     map[string]*operator.AccessTokenIssuer
-	exchangeURL string
-	hmacKey     []byte
-	accessTTL   time.Duration
-	gameID      string
-	version     string
-	hash        string
-	now         func() time.Time
+	repository        rgs.Repository
+	launches          *launch.Service
+	issuers           map[string]*operator.AccessTokenIssuer
+	exchangeURL       string
+	hmacKey           []byte
+	accessTTL         time.Duration
+	idleDisconnectMin time.Duration
+	idleDisconnectMax time.Duration
+	gameID            string
+	version           string
+	hash              string
+	now               func() time.Time
 }
 
 func NewLaunchManager(
@@ -63,6 +67,17 @@ func NewLaunchManager(
 	if config.AccessTokenTTL < time.Second || config.AccessTokenTTL > time.Hour {
 		return nil, errors.New("application: invalid access token TTL")
 	}
+	if config.IdleDisconnectMin == 0 {
+		config.IdleDisconnectMin = time.Second
+	}
+	if config.IdleDisconnectMax == 0 {
+		config.IdleDisconnectMax = 24 * time.Hour
+	}
+	if config.IdleDisconnectMin < time.Second || config.IdleDisconnectMax > 24*time.Hour ||
+		config.IdleDisconnectMin > config.IdleDisconnectMax ||
+		config.IdleDisconnectMin%time.Second != 0 || config.IdleDisconnectMax%time.Second != 0 {
+		return nil, errors.New("application: invalid idle disconnect bounds")
+	}
 	if config.Now == nil {
 		config.Now = time.Now
 	}
@@ -70,7 +85,7 @@ func NewLaunchManager(
 		OperatorID: "validation", SessionID: "validation", RoundID: "validation",
 		GameID: config.GameID, DefinitionVersion: config.DefinitionVersion,
 		DefinitionHash: config.DefinitionHash, Currency: "USD",
-		RoundKind: rgs.RoundKindBase, BetMinor: 1,
+		RoundKind: rgs.RoundKindBase, BetMinor: 1, TransportGeneration: 1,
 	}
 	if err := rgs.ValidateSpinRequest(identity); err != nil {
 		return nil, fmt.Errorf("application: invalid approved definition identity: %w", err)
@@ -96,7 +111,9 @@ func NewLaunchManager(
 		repository: repository, launches: launches, issuers: copyIssuers,
 		exchangeURL: exchange.String(), hmacKey: append([]byte(nil), config.LaunchHMACKey...),
 		accessTTL: config.AccessTokenTTL, gameID: config.GameID,
-		version: config.DefinitionVersion, hash: config.DefinitionHash, now: config.Now,
+		idleDisconnectMin: config.IdleDisconnectMin,
+		idleDisconnectMax: config.IdleDisconnectMax,
+		version:           config.DefinitionVersion, hash: config.DefinitionHash, now: config.Now,
 	}, nil
 }
 
@@ -108,6 +125,10 @@ func (m *LaunchManager) CreateLaunch(
 		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
 	}
 	if command.SessionTTL < time.Minute || command.SessionTTL > 24*time.Hour {
+		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
+	}
+	if command.IdleDisconnect < m.idleDisconnectMin || command.IdleDisconnect > m.idleDisconnectMax ||
+		command.IdleDisconnect%time.Second != 0 {
 		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
 	}
 	if command.GameID != m.gameID || command.DefinitionVersion != m.version ||
@@ -126,7 +147,12 @@ func (m *LaunchManager) CreateLaunch(
 		Currency: command.Currency, CurrencyExponent: command.CurrencyExponent,
 		Jurisdiction: command.Jurisdiction, Status: rgs.SessionActive,
 		ExpiresAt: now.Add(command.SessionTTL), BalanceMinor: command.BalanceMinor,
+		IdleDisconnect:   command.IdleDisconnect,
+		IdleDisconnectAt: now.Add(command.IdleDisconnect), TransportGeneration: 1,
 		Feature: game.EmptyFeatureState(),
+	}
+	if session.IdleDisconnectAt.After(session.ExpiresAt) {
+		session.IdleDisconnectAt = session.ExpiresAt
 	}
 	if err := rgs.ValidateSession(session); err != nil {
 		return rgsapi.LaunchResult{}, err
@@ -139,7 +165,8 @@ func (m *LaunchManager) CreateLaunch(
 		DefinitionHash:     command.DefinitionHash,
 		RequestFingerprint: requestFingerprint,
 		Currency:           command.Currency, CurrencyExponent: command.CurrencyExponent,
-		Jurisdiction: command.Jurisdiction,
+		Jurisdiction:          command.Jurisdiction,
+		IdleDisconnectSeconds: int64(command.IdleDisconnect / time.Second),
 	}
 	if err := m.repository.CreateSession(ctx, session); err != nil {
 		if !errors.Is(err, rgs.ErrSessionExists) {
@@ -158,11 +185,11 @@ func (m *LaunchManager) CreateLaunch(
 		if existing.Status != rgs.SessionActive {
 			return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
 		}
-		if !existing.ExpiresAt.After(now) {
-			return rgsapi.LaunchResult{}, rgs.ErrSessionExpired
-		}
 		// balanceMinor 与 sessionTTL 仅用于首次创建会话。再次启动时，持久化余额和
 		// 绝对过期时间仍是权威值；新的浏览器交接绝不能重置或延长持久会话状态。
+		// 这里不以 Pod 时钟裁决绝对过期；一次性交接在 exchange 阶段由
+		// ResetSessionTransport 使用数据库时钟原子裁决，避免时钟偏快的 Pod
+		// 错误拒绝仍有效的持久会话。
 	}
 	code := m.launchCode(command.OperatorID, command.SessionID, command.IdempotencyKey)
 	issued, err := m.launches.IssueCode(ctx, claims, code)
@@ -195,33 +222,38 @@ func (m *LaunchManager) ExchangeSession(
 	if err != nil {
 		return rgsapi.ExchangeResult{}, err
 	}
-	now := m.now().UTC()
-	if session.Status != rgs.SessionActive || !session.ExpiresAt.After(now) ||
-		!claimsMatchSession(claims, session) {
+	if session.Status != rgs.SessionActive || !claimsMatchSession(claims, session) {
 		return rgsapi.ExchangeResult{}, rgsapi.ErrLaunchUnavailable
 	}
-	return m.issueSessionToken(session, now)
+	idleDisconnect := time.Duration(claims.IdleDisconnectSeconds) * time.Second
+	if idleDisconnect < m.idleDisconnectMin || idleDisconnect > m.idleDisconnectMax {
+		return rgsapi.ExchangeResult{}, rgsapi.ErrLaunchUnavailable
+	}
+	session, err = m.repository.ResetSessionTransport(
+		ctx, command.OperatorID, command.SessionID, idleDisconnect,
+	)
+	if err != nil {
+		return rgsapi.ExchangeResult{}, err
+	}
+	return m.issueSessionToken(session, session.ServerTime)
 }
 
 func (m *LaunchManager) RefreshSession(
 	ctx context.Context,
 	command rgsapi.RefreshCommand,
 ) (rgsapi.ExchangeResult, error) {
-	session, err := m.repository.GetSession(
+	session, err := m.repository.AuthorizeSessionTransport(
 		ctx, command.Claims.OperatorID, command.Claims.SessionID,
+		command.Claims.TransportGeneration, false,
 	)
 	if err != nil {
 		return rgsapi.ExchangeResult{}, err
 	}
-	now := m.now().UTC()
 	if session.Status == rgs.SessionBlocked {
 		return rgsapi.ExchangeResult{}, rgs.ErrManualReview
 	}
 	if session.Status != rgs.SessionActive {
 		return rgsapi.ExchangeResult{}, rgs.ErrInvalidRequest
-	}
-	if !session.ExpiresAt.After(now) {
-		return rgsapi.ExchangeResult{}, rgs.ErrSessionExpired
 	}
 	if command.Claims.PlayerID != session.PlayerID ||
 		command.Claims.WalletSessionID != session.WalletSessionID ||
@@ -233,19 +265,46 @@ func (m *LaunchManager) RefreshSession(
 		command.Claims.Jurisdiction != session.Jurisdiction {
 		return rgsapi.ExchangeResult{}, rgs.ErrInvalidRequest
 	}
-	return m.issueSessionToken(session, now)
+	return m.issueSessionToken(session, session.ServerTime)
+}
+
+func (m *LaunchManager) AuthorizeSession(
+	ctx context.Context,
+	command rgsapi.SessionAuthorizationCommand,
+) (rgs.Session, error) {
+	session, err := m.repository.AuthorizeSessionTransport(
+		ctx, command.Claims.OperatorID, command.Claims.SessionID,
+		command.Claims.TransportGeneration, command.AllowIdleRecovery,
+	)
+	if err != nil {
+		return rgs.Session{}, err
+	}
+	if command.Claims.PlayerID != session.PlayerID ||
+		command.Claims.WalletSessionID != session.WalletSessionID ||
+		command.Claims.GameID != session.GameID ||
+		command.Claims.GameDefinitionVersion != session.DefinitionVersion ||
+		command.Claims.GameDefinitionHash != session.DefinitionHash ||
+		command.Claims.Currency != session.Currency ||
+		command.Claims.CurrencyExponent != session.CurrencyExponent ||
+		command.Claims.Jurisdiction != session.Jurisdiction {
+		return rgs.Session{}, rgs.ErrInvalidRequest
+	}
+	return session, nil
 }
 
 func (m *LaunchManager) issueSessionToken(
 	session rgs.Session,
-	now time.Time,
+	authoritativeNow time.Time,
 ) (rgsapi.ExchangeResult, error) {
 	issuer := m.issuers[session.OperatorID]
 	if issuer == nil {
 		return rgsapi.ExchangeResult{}, rgsapi.ErrUnavailable
 	}
 	lifetime := m.accessTTL
-	if remaining := session.ExpiresAt.Sub(now); remaining < lifetime {
+	if authoritativeNow.IsZero() {
+		return rgsapi.ExchangeResult{}, rgsapi.ErrUnavailable
+	}
+	if remaining := session.ExpiresAt.Sub(authoritativeNow); remaining < lifetime {
 		lifetime = remaining
 	}
 	if lifetime < time.Second {
@@ -257,6 +316,7 @@ func (m *LaunchManager) issueSessionToken(
 		GameID: session.GameID, GameDefinitionVersion: session.DefinitionVersion,
 		GameDefinitionHash: session.DefinitionHash, Currency: session.Currency,
 		CurrencyExponent: session.CurrencyExponent, Jurisdiction: session.Jurisdiction,
+		TransportGeneration: session.TransportGeneration,
 	}, lifetime)
 	if err != nil {
 		return rgsapi.ExchangeResult{}, fmt.Errorf("%w: access token issue failed", rgsapi.ErrUnavailable)
@@ -298,6 +358,7 @@ func launchRequestFingerprint(command rgsapi.LaunchCommand) string {
 	writeLaunchField(digest, "jurisdiction", command.Jurisdiction)
 	writeLaunchField(digest, "balanceMinor", fmt.Sprintf("%d", command.BalanceMinor))
 	writeLaunchField(digest, "sessionTTL", command.SessionTTL.String())
+	writeLaunchField(digest, "idleDisconnect", command.IdleDisconnect.String())
 	return hex.EncodeToString(digest.Sum(nil))
 }
 

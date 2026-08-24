@@ -18,8 +18,12 @@ import (
 	"testing"
 	"time"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"slots-game/server/internal/operator"
 	"slots-game/server/internal/rgs"
+	"slots-game/server/internal/telemetry"
 )
 
 func TestDecodeStrictObjectRejectsDuplicateAndUnknownWalletFields(t *testing.T) {
@@ -314,6 +318,49 @@ func TestHTTPWalletSubmitRoundSendsV2BindingAndReturnsSucceeded(t *testing.T) {
 	if received.WalletSessionRef != command.WalletSessionRef ||
 		received.CommandDigest != command.CommandDigest {
 		t.Fatalf("v2 request binding = %+v", received)
+	}
+}
+
+func TestHTTPWalletInjectsOnlyCurrentTraceContextAfterSigning(t *testing.T) {
+	command := resolutionTestCommand()
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSpanProcessor(recorder),
+	)
+	defer provider.Shutdown(context.Background())
+	runtime := telemetry.NewWithProvider(provider)
+	var traceParent, traceState string
+	httpWallet := newResolutionTestWallet(t, func(
+		writer http.ResponseWriter,
+		request *http.Request,
+		responseKey operator.SigningKey,
+		now time.Time,
+	) {
+		traceParent = request.Header.Get("traceparent")
+		traceState = request.Header.Get("tracestate")
+		writeResolutionTestResponse(t, writer, request, responseKey, now, http.StatusOK, walletResponse{
+			Status: "SUCCEEDED", OperationID: command.OperationID,
+			Fingerprint: command.Fingerprint, TransactionID: "wallet-transaction-traced",
+			OperatorID: command.OperatorID, Currency: command.Currency,
+			DebitMinor:  strconv.FormatInt(command.DebitMinor, 10),
+			CreditMinor: strconv.FormatInt(command.CreditMinor, 10), BalanceMinor: "10150",
+			CommandDigest: command.CommandDigest,
+		})
+	})
+	ctx, parent := telemetry.Start(runtime.Context(context.Background()), "rgs.wallet.submit")
+	wantTraceParent := "00-" + parent.SpanContext().TraceID().String() + "-" +
+		parent.SpanContext().SpanID().String() + "-01"
+	resolution := httpWallet.SubmitRound(ctx, command)
+	parent.End()
+	if resolution.Status != rgs.ResolutionSucceeded {
+		t.Fatalf("SubmitRound() = %+v", resolution)
+	}
+	if traceParent != wantTraceParent || traceState != "" {
+		t.Fatalf("wallet trace headers = traceparent:%q tracestate:%q", traceParent, traceState)
+	}
+	if len(recorder.Ended()) != 1 {
+		t.Fatalf("unexpected local span count = %d", len(recorder.Ended()))
 	}
 }
 

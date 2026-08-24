@@ -79,6 +79,64 @@ func TestEconomicAdmissionStartupCanaryExercisesAtomicWriteACLWithoutBusinessIde
 	}
 }
 
+func TestEconomicAdmissionHealthTracksCanaryAndRuntimeOutcomes(t *testing.T) {
+	metrics := &platform.Metrics{}
+	fake := &fakeEconomicExecutor{result: []int64{1, 0, 0}}
+	admission := testEconomicAdmission(t, fake, []EconomicRoute{{
+		OperatorID: "operator-a", BackendID: "https://wallet.example",
+	}}, metrics)
+	now := time.Unix(1_700_000_000, 0)
+	admission.now = func() time.Time { return now }
+	metrics.ObserveSharedAdmissionHealth(true, now)
+
+	assertEconomicAdmissionHealth(t, metrics, 0, 0)
+	now = now.Add(time.Second)
+	if err := admission.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertEconomicAdmissionHealth(t, metrics, 1, now.Add(-time.Second).Unix())
+
+	fake.err = errors.New("canary failed")
+	now = now.Add(time.Second)
+	if err := admission.Check(context.Background()); err == nil {
+		t.Fatal("failed atomic canary was accepted")
+	}
+	assertEconomicAdmissionHealth(t, metrics, 0, now.Add(-2*time.Second).Unix())
+
+	fake.err = nil
+	fake.result = []int64{1, 0, 0}
+	now = now.Add(time.Second)
+	if err := admission.AdmitNewEconomicIntent(context.Background(), "operator-a", 1); err != nil {
+		t.Fatal(err)
+	}
+	assertEconomicAdmissionHealth(t, metrics, 1, now.Add(-3*time.Second).Unix())
+
+	fake.err = errors.New("runtime backend failed")
+	now = now.Add(time.Second)
+	if err := admission.AdmitNewEconomicIntent(context.Background(), "operator-a", 1); err == nil {
+		t.Fatal("failed runtime economic admission was accepted")
+	}
+	assertEconomicAdmissionHealth(t, metrics, 0, now.Add(-4*time.Second).Unix())
+
+	fake.err = nil
+	fake.result = []int64{0, 1, 250}
+	now = now.Add(2 * time.Second)
+	if err := admission.AdmitNewEconomicIntent(context.Background(), "operator-a", 1); err == nil {
+		t.Fatal("economic budget rejection was not returned")
+	}
+	// 合法的限流响应即使拒绝本次意图，仍能证明 Lua 路径当前可用。
+	assertEconomicAdmissionHealth(t, metrics, 1, now.Add(-6*time.Second).Unix())
+
+	fake.wait = true
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	now = now.Add(time.Second)
+	if err := admission.AdmitNewEconomicIntent(ctx, "operator-a", 1); err == nil {
+		t.Fatal("cancelled economic admission was accepted")
+	}
+	assertEconomicAdmissionHealth(t, metrics, 1, now.Add(-7*time.Second).Unix())
+}
+
 type fakeEconomicExecutor struct {
 	mu     sync.Mutex
 	result []int64

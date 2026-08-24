@@ -41,6 +41,9 @@ func validateOperatorLaunchRequest(request operatorLaunchRequest) error {
 		request.SessionTTLSeconds > int64(maximumSessionTTL/time.Second) {
 		return errors.New("invalid session TTL")
 	}
+	if request.IdleDisconnectSeconds < 1 || request.IdleDisconnectSeconds > 86400 {
+		return errors.New("invalid idle disconnect duration")
+	}
 	return nil
 }
 
@@ -117,7 +120,7 @@ func validateClientSpinRequest(request clientSpinRequest) (int64, uint64, error)
 		RoundID: request.RoundID, GameID: request.GameID,
 		DefinitionVersion: request.DefinitionVersion, DefinitionHash: request.DefinitionHash,
 		Currency: request.Currency, RoundKind: request.RoundKind,
-		BetMinor: betMinor, StartRevision: revision,
+		BetMinor: betMinor, StartRevision: revision, TransportGeneration: 1,
 	}
 	if err := rgs.ValidateSpinRequest(spin); err != nil {
 		return 0, 0, err
@@ -146,6 +149,9 @@ func validateResultDeliveryAcknowledgementRequest(request resultDeliveryAcknowle
 	receipt := rgs.ResultDeliveryAcknowledgement{
 		OperatorID: request.OperatorID, SessionID: request.SessionID,
 		RoundID: request.RoundID, Sequence: sequence, ResultHash: request.ResultHash,
+		// 浏览器永不提供代际；该哨兵只校验公开 payload 形状，handler 随后会用
+		// 已验证的 token claims 替换它。
+		TransportGeneration: 1,
 	}
 	if err := rgs.ValidateResultDeliveryAcknowledgement(receipt); err != nil {
 		return 0, err
@@ -200,7 +206,8 @@ func roundRecordMatches(record rgs.RoundRecord, request roundStatusRequest) bool
 		return false
 	}
 	switch record.Status {
-	case rgs.RoundPrepared, rgs.RoundWalletPending, rgs.RoundRejected, rgs.RoundManualReview:
+	case rgs.RoundPrepared, rgs.RoundRiskPending, rgs.RoundWalletPending,
+		rgs.RoundRejected, rgs.RoundManualReview:
 		return true
 	case rgs.RoundCommitted:
 		return spinResultMatches(record.Result, record.Request)

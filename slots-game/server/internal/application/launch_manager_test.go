@@ -24,7 +24,7 @@ func TestLaunchManagerIdempotentlyCreatesAndExchangesOnce(t *testing.T) {
 	signing := operator.SigningKey{
 		KeyID: "access-operator-a", OperatorID: "operator-a",
 		Purpose: operator.KeyPurposeAccessToken, PrivateKey: privateKey,
-		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(2 * time.Hour),
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(24 * time.Hour),
 	}
 	issuer, err := operator.NewAccessTokenIssuer(signing, operator.AccessTokenIssuerOptions{
 		Issuer: "rgs-test", Audience: "game-client",
@@ -55,7 +55,7 @@ func TestLaunchManagerIdempotentlyCreatesAndExchangesOnce(t *testing.T) {
 		WalletSessionID: "wallet-session-1", GameID: "iron-colossus",
 		DefinitionVersion: "math-v1", DefinitionHash: hash,
 		Currency: "EUR", CurrencyExponent: 2, Jurisdiction: "MT",
-		BalanceMinor: 10_000, SessionTTL: time.Hour,
+		BalanceMinor: 10_000, SessionTTL: time.Hour, IdleDisconnect: 20 * time.Minute,
 	}
 	first, err := manager.CreateLaunch(context.Background(), command)
 	if err != nil {
@@ -74,6 +74,9 @@ func TestLaunchManagerIdempotentlyCreatesAndExchangesOnce(t *testing.T) {
 		t.Fatalf("changed launch error = %v", err)
 	}
 
+	// 模拟应用 Pod 时钟比存储时钟快两小时；按存储库时钟，持久会话仍有近一小时。
+	// exchange/relaunch 不得因偏移的进程时钟烧掉 launch code 并错误拒绝。
+	now = now.Add(2 * time.Hour)
 	exchanged, err := manager.ExchangeSession(context.Background(), rgsapi.ExchangeCommand{
 		LaunchCode: first.LaunchCode, OperatorID: command.OperatorID,
 		SessionID: command.SessionID, RequestID: "exchange-1",
@@ -83,6 +86,9 @@ func TestLaunchManagerIdempotentlyCreatesAndExchangesOnce(t *testing.T) {
 	}
 	if exchanged.Session.BalanceMinor != command.BalanceMinor || exchanged.AccessToken == "" {
 		t.Fatalf("exchange = %+v", exchanged)
+	}
+	if !exchanged.Session.ServerTime.Before(now) {
+		t.Fatalf("test did not exercise a fast Pod clock: server=%s pod=%s", exchanged.Session.ServerTime, now)
 	}
 	ring, err := operator.NewMemoryKeyRing(operator.VerificationKey{
 		KeyID: signing.KeyID, OperatorID: signing.OperatorID,
@@ -106,6 +112,10 @@ func TestLaunchManagerIdempotentlyCreatesAndExchangesOnce(t *testing.T) {
 	if claims.GameDefinitionHash != hash || claims.SessionID != command.SessionID {
 		t.Fatalf("token claims = %+v", claims)
 	}
+	if claims.TransportGeneration != exchanged.Session.TransportGeneration ||
+		claims.TransportGeneration < 2 || exchanged.Session.IdleDisconnectAt.IsZero() {
+		t.Fatalf("exchange transport fencing = claims:%+v session:%+v", claims, exchanged.Session)
+	}
 	refreshed, err := manager.RefreshSession(context.Background(), rgsapi.RefreshCommand{
 		Claims: claims, RequestID: "refresh-1",
 	})
@@ -121,7 +131,8 @@ func TestLaunchManagerIdempotentlyCreatesAndExchangesOnce(t *testing.T) {
 	}
 	if refreshedClaims.SessionID != claims.SessionID ||
 		refreshedClaims.GameDefinitionHash != claims.GameDefinitionHash ||
-		refreshedClaims.TokenID == claims.TokenID {
+		refreshedClaims.TokenID == claims.TokenID ||
+		refreshedClaims.TransportGeneration != claims.TransportGeneration {
 		t.Fatalf("refreshed token claims = %+v, previous = %+v", refreshedClaims, claims)
 	}
 	if _, err := manager.ExchangeSession(context.Background(), rgsapi.ExchangeCommand{
@@ -176,6 +187,14 @@ func TestLaunchManagerIdempotentlyCreatesAndExchangesOnce(t *testing.T) {
 		relaunchedSession.Session.BalanceMinor != exchanged.Session.BalanceMinor ||
 		!relaunchedSession.Session.ExpiresAt.Equal(exchanged.Session.ExpiresAt) {
 		t.Fatalf("relaunch changed durable session: before=%+v after=%+v", exchanged.Session, relaunchedSession.Session)
+	}
+	if relaunchedSession.Session.TransportGeneration != exchanged.Session.TransportGeneration+1 {
+		t.Fatalf("relaunch generation = %d, want %d", relaunchedSession.Session.TransportGeneration, exchanged.Session.TransportGeneration+1)
+	}
+	if _, err := manager.AuthorizeSession(context.Background(), rgsapi.SessionAuthorizationCommand{
+		Claims: claims, AllowIdleRecovery: true,
+	}); !errors.Is(err, rgs.ErrSessionTimeout) {
+		t.Fatalf("old transport generation authorization = %v, want session timeout", err)
 	}
 	if _, err := manager.ExchangeSession(context.Background(), rgsapi.ExchangeCommand{
 		LaunchCode: relaunched.LaunchCode, OperatorID: command.OperatorID,

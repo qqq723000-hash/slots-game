@@ -17,7 +17,7 @@ import (
 const (
 	AccessTokenType            = "RGS-ACCESS"
 	AccessTokenAlgorithm       = "EdDSA"
-	AccessTokenVersion         = 2
+	AccessTokenVersion         = 3
 	DefaultAccessTokenLifetime = 15 * time.Minute
 	MaximumCompactTokenBytes   = 8 << 10
 )
@@ -33,6 +33,7 @@ type AccessTokenSubject struct {
 	Currency              string
 	CurrencyExponent      int
 	Jurisdiction          string
+	TransportGeneration   uint64
 }
 
 type AccessTokenClaims struct {
@@ -51,6 +52,7 @@ type AccessTokenClaims struct {
 	IssuedAt              int64  `json:"iat"`
 	ExpiresAt             int64  `json:"exp"`
 	TokenID               string `json:"jti"`
+	TransportGeneration   uint64 `json:"transport_generation"`
 }
 
 type compactTokenHeader struct {
@@ -129,8 +131,9 @@ func (i *AccessTokenIssuer) Issue(subject AccessTokenSubject, lifetime time.Dura
 		GameID: subject.GameID, GameDefinitionVersion: subject.GameDefinitionVersion,
 		GameDefinitionHash: subject.GameDefinitionHash,
 		Currency:           subject.Currency, CurrencyExponent: subject.CurrencyExponent,
-		Jurisdiction: subject.Jurisdiction,
-		IssuedAt:     issuedAt.Unix(), ExpiresAt: expiresAt.Unix(), TokenID: tokenID,
+		Jurisdiction:        subject.Jurisdiction,
+		TransportGeneration: subject.TransportGeneration,
+		IssuedAt:            issuedAt.Unix(), ExpiresAt: expiresAt.Unix(), TokenID: tokenID,
 	}
 	header := compactTokenHeader{
 		Algorithm: AccessTokenAlgorithm, Type: AccessTokenType,
@@ -279,6 +282,9 @@ func validateAccessSubject(subject AccessTokenSubject) error {
 		!jurisdictionPattern.MatchString(subject.Jurisdiction) {
 		return fmt.Errorf("%w: invalid access token subject", ErrMalformed)
 	}
+	if subject.TransportGeneration == 0 || subject.TransportGeneration > 9_223_372_036_854_775_807 {
+		return fmt.Errorf("%w: invalid transport generation", ErrMalformed)
+	}
 	return nil
 }
 
@@ -293,7 +299,8 @@ func validateAccessClaims(claims AccessTokenClaims) error {
 		GameID: claims.GameID, GameDefinitionVersion: claims.GameDefinitionVersion,
 		GameDefinitionHash: claims.GameDefinitionHash,
 		Currency:           claims.Currency, CurrencyExponent: claims.CurrencyExponent,
-		Jurisdiction: claims.Jurisdiction,
+		Jurisdiction:        claims.Jurisdiction,
+		TransportGeneration: claims.TransportGeneration,
 	})
 }
 

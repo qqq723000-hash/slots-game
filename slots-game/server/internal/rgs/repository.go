@@ -13,6 +13,14 @@ type PrepareOutcome func(Session) (SpinResult, error)
 type Repository interface {
 	CreateSession(context.Context, Session) error
 	GetSession(context.Context, string, string) (Session, error)
+	// ResetSessionTransport 是唯一 relaunch 原语：保留全部经济字段与绝对到期时间，
+	// 同时原子推进浏览器隔离代际并替换 idle 截止时间。返回的 ServerTime 必须来自
+	// 执行到期判定的同一权威存储时钟。
+	ResetSessionTransport(context.Context, string, string, time.Duration) (Session, error)
+	// AuthorizeSessionTransport 校验持久代际与数据库期限。allowIdleRecovery 只保留给
+	// round/result 恢复与 ACK，idle 超时后绝不允许新经济意图或 token refresh；
+	// 返回的 ServerTime 必须来自权威存储时钟。
+	AuthorizeSessionTransport(context.Context, string, string, uint64, bool) (Session, error)
 	GetRound(context.Context, RoundKey) (RoundRecord, error)
 	GetPendingResultDelivery(context.Context, string, string) (ResultDelivery, error)
 	AcknowledgeResultDelivery(context.Context, ResultDeliveryAcknowledgement) (ResultDelivery, bool, error)

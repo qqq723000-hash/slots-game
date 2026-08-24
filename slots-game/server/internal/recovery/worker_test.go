@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,19 @@ import (
 	"slots-game/server/internal/platform"
 	"slots-game/server/internal/rgs"
 )
+
+func TestRecoveryFailureLogsUseFixedClassWithoutErrorText(t *testing.T) {
+	t.Parallel()
+	const secret = "operator-a/session-a/round-a postgres://user:password@database"
+	var output bytes.Buffer
+	worker := &Worker{logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	worker.logFailure("round recovery pass failed", errors.New(secret))
+	logOutput := output.String()
+	if strings.Contains(logOutput, secret) || strings.Contains(logOutput, "password") ||
+		!strings.Contains(logOutput, `"error_class":"internal"`) {
+		t.Fatalf("unsafe recovery log: %s", logOutput)
+	}
+}
 
 type recoveryRepositoryStub struct {
 	mu            sync.Mutex
@@ -22,6 +36,17 @@ type recoveryRepositoryStub struct {
 	claimErr      error
 	snapshotErr   error
 	snapshotCalls int
+}
+
+type riskRecoveryRepositoryStub struct {
+	*recoveryRepositoryStub
+	riskErr   error
+	riskCalls int
+}
+
+func (stub *riskRecoveryRepositoryStub) ExpireRiskReviews(context.Context, int) (int, error) {
+	stub.riskCalls++
+	return 0, stub.riskErr
 }
 
 type scheduledRecovery struct {
@@ -125,6 +150,31 @@ func recoveryClaims(count int) []rgs.WalletRecoveryClaim {
 		}
 	}
 	return claims
+}
+
+func TestRiskExpiryFailureDoesNotStarveWalletRecovery(t *testing.T) {
+	riskFailure := errors.New("risk expiry unavailable")
+	repository := &riskRecoveryRepositoryStub{
+		recoveryRepositoryStub: &recoveryRepositoryStub{claims: recoveryClaims(1)},
+		riskErr:                riskFailure,
+	}
+	resolver := &resolverStub{resolved: make(map[rgs.RoundKey]int), terminal: true}
+	worker, err := New(Config{
+		Interval: 100 * time.Millisecond, AttemptTimeout: time.Second,
+		LeaseDuration: 2 * time.Second, InitialBackoff: time.Millisecond,
+		MaximumBackoff: time.Second, BatchSize: 10, MaxParallel: 1,
+		RiskExpiryBatchSize: 10,
+	}, repository, resolver, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = worker.RunOnce(context.Background())
+	if !errors.Is(err, riskFailure) {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if repository.riskCalls != 1 || len(resolver.resolved) != 1 {
+		t.Fatalf("risk calls=%d resolved=%v", repository.riskCalls, resolver.resolved)
+	}
 }
 
 func zeroInitialObservationJitter(time.Duration) time.Duration { return 0 }
