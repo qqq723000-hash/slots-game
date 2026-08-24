@@ -34,6 +34,21 @@ module "platform" {
   rds_multi_az                          = var.configuration.rds_multi_az
   rds_deletion_protection               = var.configuration.rds_deletion_protection
   rds_backup_retention_days             = var.configuration.rds_backup_retention_days
+  rds_read_replica                      = try(var.configuration.rds_read_replica, {
+    enabled        = false
+    instance_class = "db.t4g.medium"
+    multi_az       = false
+    alarm_thresholds = {
+      replica_lag_seconds      = 30
+      cpu_utilization_percent  = 80
+      database_connections     = 100
+      freeable_memory_bytes    = 268435456
+      free_storage_space_bytes = 10737418240
+      read_latency_seconds     = 0.1
+      disk_queue_depth         = 64
+      swap_usage_bytes         = 268435456
+    }
+  })
   rds_alarm_thresholds                  = var.configuration.rds_alarm_thresholds
   valkey_engine_version                 = var.configuration.valkey_engine_version
   valkey_node_type                      = var.configuration.valkey_node_type

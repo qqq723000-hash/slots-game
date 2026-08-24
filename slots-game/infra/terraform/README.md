@@ -75,6 +75,8 @@ infra/terraform
 Organizations、Control Tower、SCP、集中 CloudTrail、Security Hub、GuardDuty、预算与网络互联仍由平台仓库负责。
 应用发布角色还需对 delivery 指向的 Cluster Autoscaler role 具有只读 `iam:GetRolePolicy`，
 以让实时门禁确认实际策略包含 `autoscaling:DescribeTags`；该权限不允许写 IAM。
+同一角色还需要 `rds:DescribeDBInstances` 与 `logs:DescribeMetricFilters`，只用于回读 writer/可选 reader
+继承边界和 PostgreSQL deadlock metric filter；它们不授予数据库连接、修改或提升副本权限。
 
 ### API 与 Web 边缘防护合同
 
@@ -180,28 +182,71 @@ Environment 的 `AWS_EKS_NAMESPACE` 和 `AWS_HELM_RELEASE_NAME` 精确一致；�
 
 ## RDS 容量告警与阈值校准
 
-每个 RDS DB instance 都使用 `DBInstanceIdentifier` 维度创建七类容量告警：
+每个 RDS DB instance 都创建 8 个原生单指标容量告警、2 个读写合计 metric-math 容量告警，并从
+PostgreSQL 导出日志创建 1 个死锁事件告警：
 
 - `CPUUtilization`、`DatabaseConnections` 和 `DiskQueueDepth` 监测计算、连接与 I/O 排队压力；
-- `FreeableMemory`、`FreeStorageSpace` 监测可用内存和存储安全余量；
-- `ReadLatency`、`WriteLatency` 监测数据库端平均 I/O 延迟。
+- `FreeableMemory`、`FreeStorageSpace` 监测可用内存和存储安全余量，`SwapUsage` 监测持续换页压力；
+- `ReadLatency`、`WriteLatency` 监测数据库端平均 I/O 延迟；
+- `TotalIOPS = ReadIOPS + WriteIOPS` 使用 `Count/Second`；总吞吐由
+  `ReadThroughput + WriteThroughput` 得到并使用 `Bytes/Second`。两项 CloudWatch metric-math 告警共享
+  目标 gp3 或实例预算，不能把完整预算分别套给读与写而漏掉混合负载；
+- PostgreSQL DB instance 不发布原生 `AWS/RDS:Deadlocks`。Terraform 在已启用的 `postgresql` 日志导出组上
+  用精确短语 `"deadlock detected"` 创建 CloudWatch Logs metric filter，向低基数
+  `Slots/RDSLogEvents` namespace 发布自定义 `Count` 指标；告警使用 60 秒 `Sum`、阈值 1 和 1/1 窗口。
 
-这些指标来自 `AWS/RDS` namespace，维度与单位以
+12 个底层容量指标来自 `AWS/RDS` namespace，维度与单位以
 [Amazon RDS CloudWatch 指标](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-metrics.html)和
 [DB instance 指标维度](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/metrics_dimensions.html)为准。
-告警均要求 3 个 60 秒窗口中的 2 个越界才触发，并把 ALARM 与 OK 状态发送到值班 SNS topic。
+该实例指标表不包含 `Deadlocks`；不能把 Aurora cluster 指标套到当前单实例 PostgreSQL。容量告警要求
+3 个 60 秒窗口中的 2 个越界才触发；日志派生的 deadlock 指标使用单个 60 秒窗口且单次匹配即告警。
+所有告警把 ALARM 与 OK 状态发送到值班 SNS topic，并显式固定 CloudWatch unit、
+比较方向和 `treat_missing_data=notBreaching`。后者只表示没有指标样本时不把容量状态判成越界，不表示
+采集或告警路由健康。
 SNS policy 只允许同账号且来源 ARN 精确匹配本应用资源的 `cloudwatch.amazonaws.com`、
 `events.rds.amazonaws.com` 和 `backup.amazonaws.com` 发布。加密 topic 使用的 observability KMS key
 也分别授权这三个 event source 的 `kms:GenerateDataKey*`/`kms:Decrypt`，并用同样的账号与来源 ARN
 绑定；`sns.amazonaws.com` 只能在 encryption context 精确等于本 topic ARN 时使用该 key。topic policy
 和 KMS policy 缺一不可，避免出现 CloudWatch/RDS/Backup 显示已发布但加密通知实际无法送达的假健康。
 
-`rds_alarm_thresholds` 是四个环境必须显式填写的非秘密容量合同。示例值只是保守初始保护值，不是
+`rds_alarm_thresholds` 是四个环境必须显式填写的非秘密容量合同。`rds_alarm_contract` 随 Terraform
+delivery 输出 11 个实际 alarm 名称、metric/statistic/unit/threshold/window、metric data queries、SNS topic
+和数据库维度，
+发布前 live gate 会同时用 CloudWatch Logs `describe-metric-filters` 和 CloudWatch `describe-alarms` 回读
+日志组、pattern、自定义 namespace、metric name/value/default/unit、alarm，以及 metric-math 的
+`Metrics`/expression/`ReturnData`/source stat/unit/period/dimension，并拒绝漂移。示例值不是
 目标实例的商用认证结果；正式环境的连接阈值还必须同时覆盖 API/Worker 最大副本、rolling surge、
 迁移器、终止中 Pod、监控/DBA 与故障重连余量，并低于目标实例实测 `max_connections`。CPU、内存、
 存储、延迟和队列阈值必须用目标实例类型、gp3 IOPS/吞吐配置、真实 SQL 与恢复/outbox 混合负载重新
-校准。告警不会自动提高连接池、扩数据库或触发故障转移；值班人员必须先判断查询、锁、写放大和依赖
-恢复洪峰，再执行经批准的容量变更。
+校准。当前 100/200 GiB gp3 dev/staging 示例以 3,000 IOPS、125 MiB/s 基线的 80%（2,400 IOPS、
+100 MiB/s）起步；500 GiB gp3 prod-primary/prod-dr 示例以四卷条带化 12,000 IOPS、500 MiB/s 基线的
+80%（9,600 IOPS、400 MiB/s，即 419430400 B/s）起步。这些阈值应用于读写合计 metric math；上线
+必须由目标实例 class、实际 storage 配置和混合负载 profile 批准。
+告警不会自动提高连接池、扩数据库或触发故障转移；值班人员必须先判断查询、锁、写放大和依赖
+恢复洪峰，再执行经批准的容量变更。`rds_read_replica.enabled` 在全部环境示例中默认 `false`；关闭时
+不会创建副本、reader endpoint 或 `ReplicaLag`/副本容量告警。经目标区域容量评审后，可以显式创建
+一个同区域 PostgreSQL 异步只读副本和独立 `rds_reader_endpoint`。副本使用源实例 ARN、相同私有
+subnet group 和安全组；参数组由 RDS 的同区域副本语义继承并由 live gate 回读。同区域加密由 RDS
+强制继承源 KMS key，Terraform 不接受另一个 key。
+生产环境启用该接口时还必须把 reader 本身设为 Multi-AZ；这只为 reader 增加故障转移 standby，不会
+把 source Multi-AZ standby 变成可读节点。副本还显式启用删除保护、最终快照、与源相同的自动备份保留期、独立日志组，以及 CPU、连接、内存、
+存储、读取延迟、磁盘队列、swap 和 `ReplicaLag` 告警；其中 `ReplicaLag` 缺失按 `breaching` 处理。
+
+`rds_read_scaling_contract` 会把启用状态、reader identity/endpoint、继承期望和 8 个告警交给 live gate；
+门禁通过 `describe-db-instances`/`describe-alarms` 回读源绑定、endpoint、公开访问、KMS、subnet、参数组、
+安全组、备份、删除保护、待应用修改和告警语义。`prevent_destroy` 会让直接把已创建副本开关改回
+`false` 的计划失败，避免无审批销毁或把副本静默提升成独立数据库。该能力不包含应用读写路由、
+PgBouncer、RDS Proxy、自动提升或跨区 DR；合同固定
+`application_routing_adopted=false`、`rds_proxy_implemented=false`、
+`connection_pooler_implemented=false`、`cross_region_dr_implemented=false` 和
+`read_replica_is_backup=false`。主实例 Multi-AZ standby 仍不是可读节点，同区域 read replica 也不能
+替代 `prod-dr` 的跨区域备份/恢复演练。
+
+日志 metric filter 只能证明受控短语的匹配计数越界，不能自动产生事务快照。delivery 中的
+`deadlock_metric_filter` 固定日志组、pattern、自定义指标与默认值；`deadlock_evidence` 仅提供精确 alarm
+名称和 PostgreSQL 日志组，并固定
+`automatic_snapshot_implemented=false`、`external_evidence_consumer_required=true`；平台仍须把受控时间窗
+内的脱敏日志/Performance Insights 证据写入批准的不可变事件库，并完成值班处置演练。
 
 `treat_missing_data=notBreaching` 防止维护/切换期间无数据被误判成容量越界，但它不代表监控健康；
 CloudWatch alarm 状态、SNS 最终接收、RDS event subscription 和通知链路必须另设周期性演练与无数据

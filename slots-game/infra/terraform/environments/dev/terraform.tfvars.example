@@ -48,6 +48,22 @@ configuration = {
   rds_multi_az                  = false
   rds_deletion_protection       = true
   rds_backup_retention_days     = 7
+  # 只读副本默认关闭；必须先完成目标区域容量/延迟评审和应用只读路由改造，才可改为 true。
+  rds_read_replica = {
+    enabled        = false
+    instance_class = "db.t4g.medium"
+    multi_az       = false
+    alarm_thresholds = {
+      replica_lag_seconds      = 30
+      cpu_utilization_percent  = 70
+      database_connections     = 100
+      freeable_memory_bytes    = 268435456
+      free_storage_space_bytes = 21474836480
+      read_latency_seconds     = 0.020
+      disk_queue_depth         = 16
+      swap_usage_bytes         = 268435456
+    }
+  }
   rds_alarm_thresholds = {
     cpu_utilization_percent   = 70
     database_connections     = 100
@@ -56,6 +72,10 @@ configuration = {
     read_latency_seconds     = 0.020
     write_latency_seconds    = 0.020
     disk_queue_depth         = 16
+    deadlocks_per_minute     = 1
+    total_iops_per_second             = 2400
+    total_throughput_bytes_per_second = 104857600
+    swap_usage_bytes                  = 268435456
   }
 
   valkey_engine_version = "7.2"

@@ -210,6 +210,41 @@ variable "rds_backup_retention_days" {
   type        = number
 }
 
+variable "rds_read_replica" {
+  description = "默认关闭的同区域 PostgreSQL 只读副本及独立容量告警配置"
+  type = object({
+    enabled        = bool
+    instance_class = string
+    multi_az       = bool
+    alarm_thresholds = object({
+      replica_lag_seconds      = number
+      cpu_utilization_percent  = number
+      database_connections     = number
+      freeable_memory_bytes    = number
+      free_storage_space_bytes = number
+      read_latency_seconds     = number
+      disk_queue_depth         = number
+      swap_usage_bytes         = number
+    })
+  })
+
+  default = {
+    enabled        = false
+    instance_class = "db.t4g.medium"
+    multi_az       = false
+    alarm_thresholds = {
+      replica_lag_seconds      = 30
+      cpu_utilization_percent  = 80
+      database_connections     = 100
+      freeable_memory_bytes    = 268435456
+      free_storage_space_bytes = 10737418240
+      read_latency_seconds     = 0.1
+      disk_queue_depth         = 64
+      swap_usage_bytes         = 268435456
+    }
+  }
+}
+
 variable "rds_alarm_thresholds" {
   description = "经容量测试批准的 RDS CloudWatch 告警阈值"
   type = object({
@@ -220,6 +255,10 @@ variable "rds_alarm_thresholds" {
     read_latency_seconds     = number
     write_latency_seconds    = number
     disk_queue_depth         = number
+    deadlocks_per_minute     = number
+    total_iops_per_second             = number
+    total_throughput_bytes_per_second = number
+    swap_usage_bytes                  = number
   })
 
   validation {
@@ -238,9 +277,18 @@ variable "rds_alarm_thresholds" {
       var.rds_alarm_thresholds.write_latency_seconds > 0 &&
       var.rds_alarm_thresholds.write_latency_seconds <= 60 &&
       var.rds_alarm_thresholds.disk_queue_depth > 0 &&
-      var.rds_alarm_thresholds.disk_queue_depth <= 1000000
+      var.rds_alarm_thresholds.disk_queue_depth <= 1000000 &&
+      var.rds_alarm_thresholds.deadlocks_per_minute == 1 &&
+      var.rds_alarm_thresholds.total_iops_per_second >= 1 &&
+      var.rds_alarm_thresholds.total_iops_per_second <= 1000000000 &&
+      floor(var.rds_alarm_thresholds.total_iops_per_second) == var.rds_alarm_thresholds.total_iops_per_second &&
+      var.rds_alarm_thresholds.total_throughput_bytes_per_second >= 1 &&
+      var.rds_alarm_thresholds.total_throughput_bytes_per_second <= 1000000000000000 &&
+      floor(var.rds_alarm_thresholds.total_throughput_bytes_per_second) == var.rds_alarm_thresholds.total_throughput_bytes_per_second &&
+      var.rds_alarm_thresholds.swap_usage_bytes >= 1048576 &&
+      floor(var.rds_alarm_thresholds.swap_usage_bytes) == var.rds_alarm_thresholds.swap_usage_bytes
     )
-    error_message = "RDS 告警阈值必须使用有效百分比、正整数连接/字节预算，以及最多 60 秒的正延迟阈值。"
+    error_message = "RDS 告警阈值必须使用有效百分比、整数连接/总 IOPS/总吞吐字节预算、最多 60 秒的正延迟，并固定单次 deadlock 日志匹配即告警。"
   }
 }
 

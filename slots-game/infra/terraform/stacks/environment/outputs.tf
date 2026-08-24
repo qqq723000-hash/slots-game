@@ -55,7 +55,10 @@ output "delivery" {
     regional_acm_certificate_arn              = module.platform.regional_acm_certificate_arn
     rds_endpoint                              = module.platform.rds_endpoint
     rds_port                                  = module.platform.rds_port
+    rds_reader_endpoint                       = module.platform.rds_reader_endpoint
+    rds_read_scaling_contract                 = module.platform.rds_read_scaling_contract
     rds_security_group_id                     = module.platform.rds_security_group_id
+    rds_alarm_contract                        = module.platform.rds_alarm_contract
     secret_sync_role_arn                      = module.platform.secret_sync_role_arn
     valkey_secret_arn                         = module.platform.valkey_secret_arn
     valkey_secret_name                        = module.platform.valkey_secret_name
