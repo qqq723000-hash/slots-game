@@ -45,6 +45,7 @@ readme_file="$script_dir/README.md"
 runtime_smoke_file="$script_dir/ci-runtime-smoke.sh"
 production_smoke_file="$script_dir/ci-runtime-production-smoke.sh"
 rendered_test_file="$script_dir/test-rendered-contract.sh"
+bounded_flush_test_file="$script_dir/test-vector-bounded-flush.sh"
 
 fail() {
   printf '%s\n' "observability contract: $*" >&2
@@ -91,10 +92,14 @@ for required_file in \
   "$runtime_smoke_file" \
   "$production_smoke_file" \
   "$contract_file" \
-  "$rendered_test_file"
+  "$rendered_test_file" \
+  "$bounded_flush_test_file"
 do
   require_file "$required_file"
 done
+
+test -x "$bounded_flush_test_file" || fail 'bounded Vector flush behavior gate must be executable'
+sh -n "$bounded_flush_test_file" || fail 'bounded Vector flush behavior gate is not valid POSIX shell'
 
 command -v ruby >/dev/null 2>&1 || fail 'ruby is required to parse YAML'
 ruby -e '
@@ -109,8 +114,8 @@ ruby -e '
   "$provider_file" "$vector_file" "$local_vector_file" "$retention_file" || fail 'YAML parsing failed'
 ruby -rdigest -e '
   expected = {
-    ARGV.fetch(0) => "66831333691799bc4ce73f25e77bd082512e6ee570ba64469d967098fdaf1872",
-    ARGV.fetch(1) => "06669953cb61f485320043bd2dbaea28f5860549b1c644984f4ee2a37f5edcf0"
+    ARGV.fetch(0) => "076d0814f49ff25373d5437d67735004addf19dc3c2b12446ee698e267687b0e",
+    ARGV.fetch(1) => "a06a34a245806b742a614b45aaecc1dedd06d5f7aeafb0da544334eec9002cdd"
   }
   expected.each do |path, digest|
     abort "reviewed Vector configuration digest drifted: #{path}" unless
@@ -512,17 +517,29 @@ ruby -ryaml -e '
 
   exact_components!(central, {
     "rgs_container_stdout" => {type: "file"},
-    "vector_internal_metrics" => {type: "internal_metrics"}
+    "vector_internal_metrics" => {type: "internal_metrics"},
+    "archive_flush_heartbeat_metric" => {type: "static_metrics"}
   }, "sources")
   exact_components!(central, {
+    "archive_flush_heartbeat_to_log" => {
+      type: "metric_to_log", inputs: ["archive_flush_heartbeat_metric"]
+    },
+    "safe_archive_flush_heartbeat" => {
+      type: "remap", inputs: ["archive_flush_heartbeat_to_log"]
+    },
     "normalize_rgs_json" => {type: "remap", inputs: ["rgs_container_stdout"]},
     "redact_rgs_sensitive_fields" => {type: "remap", inputs: ["normalize_rgs_json"]}
   }, "transforms")
   exact_components!(central, {
-    "approved_https_archive" => {type: "http", inputs: ["redact_rgs_sensitive_fields"]},
+    "approved_https_archive" => {
+      type: "http", inputs: ["redact_rgs_sensitive_fields", "safe_archive_flush_heartbeat"]
+    },
     "vector_internal_prometheus" => {type: "prometheus_exporter", inputs: ["vector_internal_metrics"]}
   }, "sinks")
   exact_consumers!(central, {
+    "archive_flush_heartbeat_metric" => ["archive_flush_heartbeat_to_log"],
+    "archive_flush_heartbeat_to_log" => ["safe_archive_flush_heartbeat"],
+    "safe_archive_flush_heartbeat" => ["approved_https_archive"],
     "rgs_container_stdout" => ["normalize_rgs_json"],
     "normalize_rgs_json" => ["redact_rgs_sensitive_fields"],
     "redact_rgs_sensitive_fields" => ["approved_https_archive"],
@@ -542,8 +559,34 @@ ruby -ryaml -e '
     "scrape_interval_secs" => 15,
     "tags" => {"host_key" => ""}
   }
+  expected_heartbeat = {
+    "type" => "static_metrics",
+    "interval_secs" => 10,
+    "namespace" => "vector",
+    "metrics" => [{
+      "name" => "archive_flush_heartbeat",
+      "kind" => "absolute",
+      "tags" => {},
+      "value" => {"gauge" => {"value" => 1}}
+    }]
+  }
+  abort "central archive heartbeat source drifted" unless
+    central.fetch("sources").fetch("archive_flush_heartbeat_metric") == expected_heartbeat
+  expected_heartbeat_projection = <<~VRL.chomp
+    # 无条件从空对象重建；上游指标名、标签、hostname 或未来新增字段都不能进入归档。
+    . = {
+      "service": "vector",
+      "time": now(),
+      "level": "INFO",
+      "msg": "archive flush heartbeat"
+    }
+  VRL
+  abort "central archive heartbeat projection drifted" unless
+    central.fetch("transforms").fetch("safe_archive_flush_heartbeat").fetch("source") ==
+      expected_heartbeat_projection
   central.fetch("transforms").each do |name, transform|
-    exact_keys!(transform, %w[type inputs source], "central transform #{name}")
+    expected_keys = transform.fetch("type") == "metric_to_log" ? %w[type inputs] : %w[type inputs source]
+    exact_keys!(transform, expected_keys, "central transform #{name}")
   end
   central_sink = central.fetch("sinks").fetch("approved_https_archive")
   exact_keys!(central_sink, %w[type inputs uri method encoding framing batch buffer request tls], "central archive sink")
@@ -571,17 +614,29 @@ ruby -ryaml -e '
 
   exact_components!(local, {
     "rgs_fluent" => {type: "fluent"},
-    "vector_internal_metrics" => {type: "internal_metrics"}
+    "vector_internal_metrics" => {type: "internal_metrics"},
+    "archive_flush_heartbeat_metric" => {type: "static_metrics"}
   }, "sources")
   exact_components!(local, {
+    "archive_flush_heartbeat_to_log" => {
+      type: "metric_to_log", inputs: ["archive_flush_heartbeat_metric"]
+    },
+    "safe_archive_flush_heartbeat" => {
+      type: "remap", inputs: ["archive_flush_heartbeat_to_log"]
+    },
     "normalize_rgs_json" => {type: "remap", inputs: ["rgs_fluent"]},
     "strict_rgs_allowlist" => {type: "remap", inputs: ["normalize_rgs_json"]}
   }, "transforms")
   exact_components!(local, {
-    "local_https_archive" => {type: "http", inputs: ["strict_rgs_allowlist"]},
+    "local_https_archive" => {
+      type: "http", inputs: ["strict_rgs_allowlist", "safe_archive_flush_heartbeat"]
+    },
     "vector_internal_prometheus" => {type: "prometheus_exporter", inputs: ["vector_internal_metrics"]}
   }, "sinks")
   exact_consumers!(local, {
+    "archive_flush_heartbeat_metric" => ["archive_flush_heartbeat_to_log"],
+    "archive_flush_heartbeat_to_log" => ["safe_archive_flush_heartbeat"],
+    "safe_archive_flush_heartbeat" => ["local_https_archive"],
     "rgs_fluent" => ["normalize_rgs_json"],
     "normalize_rgs_json" => ["strict_rgs_allowlist"],
     "strict_rgs_allowlist" => ["local_https_archive"],
@@ -605,8 +660,14 @@ ruby -ryaml -e '
     "scrape_interval_secs" => 15,
     "tags" => {"host_key" => ""}
   }
+  abort "local archive heartbeat source drifted" unless
+    local.fetch("sources").fetch("archive_flush_heartbeat_metric") == expected_heartbeat
+  abort "local archive heartbeat projection drifted" unless
+    local.fetch("transforms").fetch("safe_archive_flush_heartbeat").fetch("source") ==
+      expected_heartbeat_projection
   local.fetch("transforms").each do |name, transform|
-    exact_keys!(transform, %w[type inputs source], "local transform #{name}")
+    expected_keys = transform.fetch("type") == "metric_to_log" ? %w[type inputs] : %w[type inputs source]
+    exact_keys!(transform, expected_keys, "local transform #{name}")
   end
   local_sink = local.fetch("sinks").fetch("local_https_archive")
   exact_keys!(local_sink, %w[type inputs uri method auth encoding framing batch buffer request tls], "local archive sink")
@@ -654,9 +715,12 @@ ruby -ryaml -e '
     log_fields.fetch("log").include?(%q{"route":"operator.launch"})
 ' "$vector_file" "$local_vector_file" || fail 'Vector topology/TLS/Fluent boundary contract failed'
 require_line '      - redact_rgs_sensitive_fields' "$vector_file"
-require_fixed 'inputs: [strict_rgs_allowlist]' "$local_vector_file"
+require_line '      - safe_archive_flush_heartbeat' "$vector_file"
+require_fixed 'inputs: [strict_rgs_allowlist, safe_archive_flush_heartbeat]' "$local_vector_file"
 require_fixed 'extract_from: redact_rgs_sensitive_fields' "$vector_file"
 require_fixed 'extract_from: strict_rgs_allowlist' "$local_vector_file"
+require_fixed 'archive flush heartbeat is rebuilt as a fixed four-field safe log' "$vector_file"
+require_fixed 'local archive flush heartbeat is rebuilt as a fixed four-field safe log' "$local_vector_file"
 if grep -Ei '(authorization:[[:space:]]*"?bearer|bearer_token:[[:space:]]+[^[:space:]#]|token=|password=)' "$vector_file" "$compose_file" "$prometheus_file" >/dev/null; then
   fail 'observability config must not embed credentials'
 fi
@@ -725,6 +789,17 @@ require_fixed 'Alertmanager root CA host source drift was accepted' "$rendered_t
 require_fixed 'missing local-operator promtool credential mount was accepted' "$rendered_test_file"
 require_fixed 'missing release Alertmanager CA promtool mount was accepted' "$rendered_test_file"
 require_fixed 'conditional Vector field leak was accepted' "$rendered_test_file"
+require_fixed 'missing central archive heartbeat was accepted' "$rendered_test_file"
+require_fixed 'unsafe central archive heartbeat projection was accepted' "$rendered_test_file"
+require_fixed 'missing local archive heartbeat input was accepted' "$rendered_test_file"
+
+# 行为门禁必须保留“唯一业务事件 + 实际心跳 + 同一磁盘缓冲”的固定低敏边界。
+require_fixed "expected_vector_image='timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39'" "$bounded_flush_test_file"
+require_fixed "source_name = 'archive_flush_heartbeat_metric'" "$bounded_flush_test_file"
+require_fixed "'count' => 1" "$bounded_flush_test_file"
+require_fixed "'type' => 'disk'" "$bounded_flush_test_file"
+require_fixed "raise 'business probe count mismatch' unless probes.length == 1" "$bounded_flush_test_file"
+require_fixed "raise 'raw metric escaped' if raw_metric" "$bounded_flush_test_file"
 # 发布脚本中的变量引用必须按字面量计数，不能在本次静态检查中展开。
 # shellcheck disable=SC2016
 central_vector_test_marker='"$vector_image" test --dangerously-allow-env-var-interpolation'
@@ -761,7 +836,7 @@ done
 require_fixed '`insecure_skip_verify: false`' "$readme_file"
 # shellcheck disable=SC2016
 require_fixed '`min_version: TLS12`' "$readme_file"
-require_fixed 'local-production 五组' "$readme_file"
+require_fixed '中央归档五组和 local-production 六组' "$readme_file"
 require_fixed 'RGS_CI_RUNTIME_FIXTURE_PROFILE=development' "$runtime_smoke_file"
 require_fixed 'RGS_CI_RUNTIME_FIXTURE_PROFILE=production' "$production_smoke_file"
 require_line 'umask 077' "$runtime_smoke_file"

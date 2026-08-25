@@ -45,6 +45,8 @@ node deploy/local-production/render-observability.mjs "$observability_rendered_d
 docker pull "$PROMETHEUS_IMAGE"
 docker pull "$VECTOR_IMAGE"
 docker pull "$GRAFANA_IMAGE"
+# 发布入口已完成 digest 固定镜像预载；行为门禁禁止自行 pull 或访问宿主端口。
+make test-vector-bounded-flush
 docker run --rm --pull never --network none --read-only \
   --cap-drop ALL --security-opt no-new-privileges:true --user "$(id -u):$(id -g)" \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=8m,mode=1777 \

@@ -33,6 +33,7 @@ trivy_report_sanitizer="$repository_root/deploy/supply-chain/sanitize-trivy-repo
 release_script="$repository_root/deploy/supply-chain/release-sign.sh"
 release_bundle_script="$repository_root/deploy/supply-chain/release-bundle.sh"
 observability_release_workflow_script="$repository_root/deploy/observability/verify-release-workflow.sh"
+vector_bounded_flush_test="$repository_root/deploy/observability/test-vector-bounded-flush.sh"
 web_static_verifier="$repository_root/deploy/supply-chain/verify-web-static-root.mjs"
 aws_web_extractor="$repository_root/deploy/supply-chain/extract-aws-web-static-root.sh"
 exception_file="$repository_root/deploy/supply-chain/vulnerability-exceptions.json"
@@ -89,6 +90,7 @@ for required_file in \
   "$release_script" \
   "$release_bundle_script" \
   "$observability_release_workflow_script" \
+  "$vector_bounded_flush_test" \
   "$web_static_verifier" \
   "$aws_web_extractor" \
   "$exception_file" \
@@ -123,7 +125,18 @@ require_fixed 'HELM_ARCHIVE_SHA256: 3f43c0aa57243852dd542493a0f54f1396c0bc8ec729
 require_fixed 'KUBECONFORM_ARCHIVE_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3' "$deployment_workflow"
 require_line '        run: make verify-deployment-contracts' "$deployment_workflow"
 require_line '        run: make verify-cluster-prometheus-rules' "$deployment_workflow"
+vector_image='timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39'
+require_line "      VECTOR_IMAGE: $vector_image" "$deployment_workflow"
+require_line '        run: docker pull "$VECTOR_IMAGE" >/dev/null' "$deployment_workflow"
+require_line '        run: make test-vector-bounded-flush' "$deployment_workflow"
 require_fixed 'verify-deployment-contracts: verify-cluster-production' "$makefile"
+require_line 'test-vector-bounded-flush:' "$makefile"
+bounded_flush_make_command=$(printf '\t%s' '@./deploy/observability/test-vector-bounded-flush.sh')
+require_line "$bounded_flush_make_command" "$makefile"
+test "$(grep -F -x -c 'test-vector-bounded-flush:' "$makefile" || true)" -eq 1 ||
+  fail 'Makefile must expose exactly one bounded Vector recovery target'
+test "$(grep -F -x -c "$bounded_flush_make_command" "$makefile" || true)" -eq 1 ||
+  fail 'Makefile must invoke the bounded Vector recovery test exactly once'
 require_line 'verify-backend-licenses:' "$makefile"
 require_line 'verify-cluster-image-contract:' "$makefile"
 require_line 'verify-cluster-prometheus-rules:' "$makefile"
@@ -136,6 +149,97 @@ require_fixed '"$runtime_image" RGS_DATABASE_URL /service-probe' "$cluster_image
 require_fixed 'service-probe: unexpected HTTP status 503' "$cluster_image_contract"
 require_fixed 'prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893' "$cluster_prometheus_rule_contract"
 require_fixed 'check rules /rules.yaml' "$cluster_prometheus_rule_contract"
+
+# 低流量磁盘缓冲恢复必须在固定镜像预载后运行真实黑盒门禁；步骤名、命令和顺序都属于
+# 发布合同，不能用注释、可跳过条件或第二条业务事件制造“恢复”假象。
+ruby -ryaml -e '
+  workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  job = workflow.dig("jobs", "verify-deployment-contracts")
+  abort "deployment conformance job missing" unless job.is_a?(Hash)
+  abort "deployment Vector digest drifted" unless
+    job.dig("env", "VECTOR_IMAGE") == ARGV.fetch(1)
+  steps = job.fetch("steps")
+  abort "deployment conformance steps missing" unless steps.is_a?(Array)
+  preload = steps.each_index.select do |index|
+    step = steps.fetch(index)
+    step.is_a?(Hash) && step["name"] == "Preload fixed Vector image"
+  end
+  gate = steps.each_index.select do |index|
+    step = steps.fetch(index)
+    step.is_a?(Hash) && step["name"] == "Verify bounded Vector disk-buffer recovery"
+  end
+  abort "Vector preload step must exist exactly once" unless preload.length == 1
+  abort "bounded Vector gate step must exist exactly once" unless gate.length == 1
+  preload_step = steps.fetch(preload.first)
+  gate_step = steps.fetch(gate.first)
+  abort "Vector preload step keys drifted" unless preload_step.keys.sort == %w[name run]
+  abort "bounded Vector gate step keys drifted" unless gate_step.keys.sort == %w[name run]
+  abort "Vector preload command drifted" unless
+    preload_step["run"] == "docker pull \"$VECTOR_IMAGE\" >/dev/null"
+  abort "bounded Vector gate command drifted" unless
+    gate_step["run"] == "make test-vector-bounded-flush"
+  abort "bounded Vector gate must immediately follow image preload" unless
+    gate.first == preload.first + 1
+' "$deployment_workflow" "$vector_image" ||
+  fail 'deployment bounded Vector recovery workflow semantic contract failed'
+
+test -x "$vector_bounded_flush_test" ||
+  fail 'bounded Vector recovery test must be executable'
+sh -n "$vector_bounded_flush_test" >/dev/null 2>&1 ||
+  fail 'bounded Vector recovery test has invalid shell syntax'
+for bounded_flush_control in \
+  "expected_vector_image='$vector_image'" \
+  'docker image inspect "$vector_image"' \
+  "source_name = 'archive_flush_heartbeat_metric'" \
+  "metric_transform_name = 'archive_flush_heartbeat_to_log'" \
+  "safe_transform_name = 'safe_archive_flush_heartbeat'" \
+  "heartbeat_source['interval_secs'] == 10" \
+  "heartbeat_metric_transform == {" \
+  "heartbeat_safe_transform['inputs'] == [metric_transform_name]" \
+  "'count' => 1" \
+  "'sequence' => false" \
+  'outage_sender_data="$test_directory/outage-sender-data"' \
+  'online_sender_data="$test_directory/online-sender-data"' \
+  "outage_sender = bounded_sender(" \
+  "online_sender = bounded_sender(" \
+  "marker: 'vector-bounded-flush-outage-v1'" \
+  "marker: 'vector-bounded-flush-online-v1'" \
+  "files.any? { |path| File.binread(path).include?(marker) }" \
+  "test \"\$readiness_ready\" -eq 1" \
+  "event.keys.sort == heartbeat_keys" \
+  "raise 'business probe count mismatch' unless probes.length == 1" \
+  "raise 'raw metric escaped' if raw_metric" \
+  "raise 'outage probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-outage-v1' } == 1" \
+  "raise 'online probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-online-v1' } == 1" \
+  'docker network create --internal "$network_name"' \
+  '--pull never' \
+  'sleep 8' \
+  'outage_deadline=$((outage_started_at + 25))' \
+  'online_deadline=$((online_started_at + 25))'
+do
+  require_fixed "$bounded_flush_control" "$vector_bounded_flush_test"
+done
+reject_fixed 'docker pull' "$vector_bounded_flush_test"
+reject_fixed 'docker run -p' "$vector_bounded_flush_test"
+reject_fixed 'docker run --publish' "$vector_bounded_flush_test"
+vector_bounded_flush_sha=$(ruby -rdigest -e \
+  'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$vector_bounded_flush_test")
+test "$vector_bounded_flush_sha" = '248f272074880be00a9c840d389fbeb9e89d7bcc938393c9cfa646653f9971f2' ||
+  fail 'bounded Vector recovery test drifted from the reviewed implementation'
+
+# 两阶段的顺序本身是证据：先在 receiver 不存在时确认磁盘持久化，再停止第一 sender，
+# 通过独立 HTTP->file 控制探针确认 receiver 就绪，最后才启动全新 data_dir 的在线 sender。
+outage_buffer_evidence_line=$(grep -n -F "files.any? { |path| File.binread(path).include?(marker) }" "$vector_bounded_flush_test" | cut -d: -f1)
+receiver_start_line=$(grep -n -F 'run_vector "$receiver_name" "$receiver_config" "$receiver_data"' "$vector_bounded_flush_test" | cut -d: -f1)
+outage_remove_line=$(grep -n -F 'docker rm "$outage_sender_name"' "$vector_bounded_flush_test" | cut -d: -f1)
+readiness_line=$(grep -n -F 'test "$readiness_ready" -eq 1' "$vector_bounded_flush_test" | cut -d: -f1)
+online_start_line=$(grep -n -F 'run_vector "$online_sender_name" "$online_sender_config" "$online_sender_data"' "$vector_bounded_flush_test" | cut -d: -f1)
+test -n "$outage_buffer_evidence_line" && test -n "$receiver_start_line" && \
+  test "$outage_buffer_evidence_line" -lt "$receiver_start_line" ||
+  fail 'bounded Vector recovery must prove disk persistence before starting the receiver'
+test -n "$outage_remove_line" && test -n "$readiness_line" && test -n "$online_start_line" && \
+  test "$outage_remove_line" -lt "$readiness_line" && test "$readiness_line" -lt "$online_start_line" ||
+  fail 'bounded Vector recovery must isolate outage, readiness and online phases in order'
 
 require_cancellable_conformance_concurrency() {
   workflow=$1
@@ -624,9 +728,23 @@ do
 done
 test -x "$observability_release_workflow_script" ||
   fail 'rendered observability release workflow entrypoint must be executable'
+require_line 'docker pull "$VECTOR_IMAGE"' "$observability_release_workflow_script"
+require_line 'make test-vector-bounded-flush' "$observability_release_workflow_script"
+test "$(grep -F -x -c 'docker pull "$VECTOR_IMAGE"' "$observability_release_workflow_script" || true)" -eq 1 ||
+  fail 'rendered observability release entrypoint must preload Vector exactly once'
+test "$(grep -F -x -c 'make test-vector-bounded-flush' "$observability_release_workflow_script" || true)" -eq 1 ||
+  fail 'rendered observability release entrypoint must run the bounded recovery gate exactly once'
+release_vector_pull_line=$(grep -n -F -x 'docker pull "$VECTOR_IMAGE"' "$observability_release_workflow_script" | cut -d: -f1)
+release_bounded_gate_line=$(grep -n -F -x 'make test-vector-bounded-flush' "$observability_release_workflow_script" | cut -d: -f1)
+release_observability_verify_line=$(grep -n -F 'make verify-observability-release' "$observability_release_workflow_script" | cut -d: -f1)
+test -n "$release_vector_pull_line" && test -n "$release_bounded_gate_line" && \
+  test "$release_vector_pull_line" -lt "$release_bounded_gate_line" ||
+  fail 'rendered observability release entrypoint must preload Vector before the bounded recovery gate'
+test -n "$release_observability_verify_line" && test "$release_bounded_gate_line" -lt "$release_observability_verify_line" ||
+  fail 'bounded Vector recovery must pass before rendered release verification'
 observability_release_workflow_sha=$(ruby -rdigest -e \
   'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$observability_release_workflow_script")
-test "$observability_release_workflow_sha" = '0c373fababf4bf808107da025eee5e807cf616e8bcd0f6f60296d9d5e904a871' ||
+test "$observability_release_workflow_sha" = '25d0424e0a12d5faa2274bb5bd0f6bc297a302bb1e40ed3f7f2535fb44751b7b' ||
   fail 'rendered observability release workflow entrypoint drifted from the reviewed implementation'
 ruby -ryaml -rjson -rdigest -e '
   workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)

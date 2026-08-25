@@ -1,4 +1,4 @@
-.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract verify-hardening-stability-50 verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
+.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract test-vector-bounded-flush verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract verify-hardening-stability-50 verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
 
 BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid
 
@@ -80,6 +80,10 @@ verify-observability-contract:
 
 test-observability-rendered-contract:
 	./deploy/observability/test-rendered-contract.sh
+
+# VECTOR_IMAGE 必须已由调用方按 digest 预载；行为门禁自身禁止访问镜像仓库。
+test-vector-bounded-flush:
+	@./deploy/observability/test-vector-bounded-flush.sh
 
 verify-observability-release:
 	test -n "$${OBSERVABILITY_RENDERED_DIR:-}" || { echo "OBSERVABILITY_RENDERED_DIR is required" >&2; exit 2; }

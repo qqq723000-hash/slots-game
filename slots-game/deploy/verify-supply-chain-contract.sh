@@ -26,7 +26,10 @@ env_example="$repository_root/deploy/env.example"
 makefile="$repository_root/Makefile"
 backend_workflow="$workflows_root/backend-conformance.yml"
 frontend_workflow="$workflows_root/frontend-conformance.yml"
+deployment_workflow="$workflows_root/deployment-conformance.yml"
 observability_contract="$repository_root/deploy/observability/verify-static-contract.sh"
+observability_release_workflow="$repository_root/deploy/observability/verify-release-workflow.sh"
+vector_bounded_flush_test="$repository_root/deploy/observability/test-vector-bounded-flush.sh"
 observability_compose="$repository_root/deploy/observability/compose.yml"
 observability_prometheus="$repository_root/deploy/observability/prometheus.yml"
 runtime_smoke="$repository_root/deploy/observability/ci-runtime-smoke.sh"
@@ -75,7 +78,10 @@ for required_file in \
   "$makefile" \
   "$backend_workflow" \
   "$frontend_workflow" \
+  "$deployment_workflow" \
   "$observability_contract" \
+  "$observability_release_workflow" \
+  "$vector_bounded_flush_test" \
   "$observability_compose" \
   "$observability_prometheus" \
   "$runtime_smoke" \
@@ -192,6 +198,8 @@ require_line 'verify-observability-release:' "$makefile"
 # shellcheck disable=SC2016
 require_fixed '--rendered-dir "$${OBSERVABILITY_RENDERED_DIR}"' "$makefile"
 require_regex '^[[:space:]]+\$\(MAKE\) verify-observability-contract$' "$makefile"
+require_line 'test-vector-bounded-flush:' "$makefile"
+require_regex '^[[:space:]]+@\./deploy/observability/test-vector-bounded-flush\.sh$' "$makefile"
 require_line 'smoke-runtime-operations: verify-supply-chain-contract' "$makefile"
 require_regex '^[[:space:]]+\./deploy/observability/ci-runtime-smoke\.sh$' "$makefile"
 require_line 'smoke-runtime-production: verify-supply-chain-contract' "$makefile"
@@ -213,6 +221,44 @@ require_fixed '--build-arg VITE_RGS_HOST_ORIGIN="$${VITE_RGS_HOST_ORIGIN}"' "$ma
 require_fixed '--build-arg WEB_RELEASE_VERSION="$${WEB_RELEASE_VERSION}"' "$makefile"
 require_fixed '--build-arg WEB_RELEASE_REVISION="$${WEB_RELEASE_REVISION}"' "$makefile"
 require_fixed '--secret id=release_asset_approval,src="$${RELEASE_ASSET_APPROVAL_FILE}"' "$makefile"
+
+vector_image='timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39'
+require_line "      VECTOR_IMAGE: $vector_image" "$deployment_workflow"
+require_line '        run: docker pull "$VECTOR_IMAGE" >/dev/null' "$deployment_workflow"
+require_line '        run: make test-vector-bounded-flush' "$deployment_workflow"
+require_line 'docker pull "$VECTOR_IMAGE"' "$observability_release_workflow"
+require_line 'make test-vector-bounded-flush' "$observability_release_workflow"
+test -x "$observability_release_workflow" ||
+  fail 'rendered observability release workflow entrypoint must be executable'
+test -x "$vector_bounded_flush_test" ||
+  fail 'bounded Vector recovery test must be executable'
+sh -n "$vector_bounded_flush_test" >/dev/null 2>&1 ||
+  fail 'bounded Vector recovery test has invalid shell syntax'
+require_fixed "expected_vector_image='$vector_image'" "$vector_bounded_flush_test"
+require_fixed "heartbeat_source['interval_secs'] == 10" "$vector_bounded_flush_test"
+require_fixed "'count' => 1" "$vector_bounded_flush_test"
+require_fixed 'outage_sender_data="$test_directory/outage-sender-data"' "$vector_bounded_flush_test"
+require_fixed 'online_sender_data="$test_directory/online-sender-data"' "$vector_bounded_flush_test"
+require_fixed "files.any? { |path| File.binread(path).include?(marker) }" "$vector_bounded_flush_test"
+require_fixed 'test "$readiness_ready" -eq 1' "$vector_bounded_flush_test"
+require_fixed 'outage_deadline=$((outage_started_at + 25))' "$vector_bounded_flush_test"
+require_fixed 'online_deadline=$((online_started_at + 25))' "$vector_bounded_flush_test"
+require_fixed "event.keys.sort == heartbeat_keys" "$vector_bounded_flush_test"
+require_fixed "raise 'business probe count mismatch' unless probes.length == 1" "$vector_bounded_flush_test"
+require_fixed "raise 'raw metric escaped' if raw_metric" "$vector_bounded_flush_test"
+require_fixed "raise 'outage probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-outage-v1' } == 1" "$vector_bounded_flush_test"
+require_fixed "raise 'online probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-online-v1' } == 1" "$vector_bounded_flush_test"
+if grep -F 'docker pull' "$vector_bounded_flush_test" >/dev/null; then
+  fail 'bounded Vector recovery test must use only the preloaded image'
+fi
+observability_release_workflow_sha=$(ruby -rdigest -e \
+  'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$observability_release_workflow")
+test "$observability_release_workflow_sha" = '25d0424e0a12d5faa2274bb5bd0f6bc297a302bb1e40ed3f7f2535fb44751b7b' ||
+  fail 'rendered observability release workflow entrypoint drifted from the reviewed implementation'
+vector_bounded_flush_sha=$(ruby -rdigest -e \
+  'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$vector_bounded_flush_test")
+test "$vector_bounded_flush_sha" = '248f272074880be00a9c840d389fbeb9e89d7bcc938393c9cfa646653f9971f2' ||
+  fail 'bounded Vector recovery test drifted from the reviewed implementation'
 
 postgres_image='postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193'
 require_line "    image: $postgres_image" "$compose_file"

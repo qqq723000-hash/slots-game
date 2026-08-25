@@ -34,6 +34,14 @@ Prometheus Agent 或 ADOT、AMP、CloudWatch Logs、AMG、公司告警路由及�
   Vector 0.57+ 默认关闭配置环境插值；Compose 只为已校验且明确非秘密的日志 glob 与 HTTPS
   sink URI 启用该能力。发布门禁还会用预载、digest-pinned `VECTOR_IMAGE` 在断网容器内
   执行 `vector validate --no-environment`，版本不认识配置或缓冲约束即拒绝。
+- 当前固定的 Vector 0.57 在低流量、磁盘缓冲链路中存在单事件可能等待后续事件才被读取的唤醒
+  竞态。中央与本机配置每 10 秒生成一次专用 `static_metrics` 心跳，经 `metric_to_log` 后从空对象
+  重建为仅含 `service="vector"`、`time`、`level="INFO"`、`msg="archive flush heartbeat"` 的
+  四字段日志，再与业务日志进入同一磁盘缓冲和 HTTPS sink。持续稳定运行的名义值为每个实例
+  8,640 条固定心跳/日；启动和重启边界可能产生额外事件，接收端容量、保留、费用与合规评审必须
+  另留重启余量。该措施只是在当前固定版本
+  上提供有界推进，不是 Vector 上游修复，也不能作为升级后删除心跳的依据；升级必须先重跑断网恢复、
+  单业务事件交付和低流量行为门禁。
 - 收集器会删除客户端 IP 和常见敏感字段，把未知路径折叠为 `other`，并把无法解析为
   结构化 JSON 的原始行替换为固定脱敏标记，避免第三方错误文本未经字段过滤进入长期出口；
   可能夹带 DSN、端点或业务标识的 `error`/stack 字段也会删除。这是纵深防御，不是允许
@@ -136,8 +144,12 @@ docker compose --file deploy/observability/compose.yml up -d
    `vector_buffer_size_bytes{component_id="approved_https_archive"}` 未接近约 256 MiB，规则组无
    evaluation error；另从编排器确认 `/readyz` 探针持续成功，不能用 scrape up 代替；
 3. Grafana 仪表盘 UID `rgs-release-overview` 可读取但不可 UI 漂移编辑；
-4. 向 RGS stdout 写入不含真实个人数据的合成 JSON 日志，确认接收端存在且
-   `remote_ip`/令牌字段被删除；不要用真实令牌做探针；
+4. 只向 RGS stdout 写入一条不含真实个人数据的合成 JSON 日志，确认它在 25 秒内到达接收端且
+   `remote_ip`/令牌字段被删除；不得再写第二条业务事件唤醒缓冲，也不要用真实令牌做探针；同时确认
+   心跳仍严格为上述四字段，不含原始 metric、标签、hostname 或运行环境数据。本机动态验收只用文件
+   增长和唯一 digest 的精确语义判定这 25 秒边界；sent counter 经过 Vector internal metrics 与
+   Prometheus 两个 15 秒周期，另给最多 35 秒观测，counter 陈旧属于可观测链路失败，不能反向改写
+   已完成的业务交付判定；
 5. 触发不含真实业务数据的合成告警，确认外部 Alertmanager 接收并进入正确值班路由；
    单纯看到 Prometheus `ALERTS` 为 firing 不算完成，并确认外部 dead-man switch 持续
    收到 `RGSObservabilityWatchdog`；
@@ -174,9 +186,13 @@ OBSERVABILITY_RENDERED_DIR=/secure/rendered/observability \
 该生产门禁不会信任宿主 `PATH` 中来源不明的 `promtool` 或 `vector`。发布系统必须提供并
 预加载已经评审的 `PROMETHEUS_IMAGE=name@sha256:<digest>` 与 `VECTOR_IMAGE=name@sha256:<digest>`；
 门禁以 `--pull never --network none --read-only` 启动前者执行 `check config`/`check rules`，再用
-后者解析实际 Vector topology，并分别执行中央归档四组和 local-production 五组
+后者解析实际 Vector topology，并分别执行中央归档五组和 local-production 六组
 `vector test`：嵌套秘密、未知结构化日志、跨消息字段注入、启动字段保留，以及真实 Docker Fluent
-`log` record 的已知 msg/route 语义与容器元数据丢弃。镜像未预加载、
+`log` record 的已知 msg/route 语义与容器元数据丢弃。流水线还运行同一固定镜像的两阶段有界交付
+行为门禁：A 阶段在接收端中断时只产生一条业务探针，先从磁盘缓冲证明它已经持久化，再启动接收端并
+要求 25 秒内精确交付一次；B 阶段先用隔离控制面事件证明接收端就绪，再以全新 sender 和全新
+`data_dir` 只产生另一条在线业务探针，同样要求 25 秒内精确交付一次。两阶段都必须存在安全心跳，
+原始 metric、重复业务记录或控制面/业务事件串线均失败。镜像未预加载、
 Docker daemon 不可用、任一 transform 断言或任一校验失败都会拒绝发布，校验过程不会联网
 拉取替代镜像。Vector 的 `--no-environment` 只用于离线类型/拓扑检查；内置 test 也不能替代
 部署后的 exporter、sink 与合成日志探针。
@@ -206,6 +222,9 @@ Prometheus 同时配置时间和容量上限，两者先达到者生效。Vector
 最小磁盘缓冲 `268435488` bytes（约 256 MiB），只用于短时出口故障，满载时阻塞而不是丢弃；
 sink 保留近无限默认重试，禁止用较小 `retry_attempts` 在短暂中断后丢弃批次。它不是长期归档。
 80% 水位、组件错误、非预期
-丢弃和有输入无发送均由仓库规则失败闭合，发布后仍必须做合成日志与出口中断演练。日志接收端、Prometheus
+丢弃和有输入无发送均由仓库规则失败闭合，发布后仍必须做合成日志与出口中断演练。仓库行为门禁只
+证明隔离容器内当前固定 Vector 版本的 A 阶段 8 秒中断/磁盘恢复和 B 阶段 receiver-ready 后全新
+`data_dir` 在线单事件边界；外部归档的真实 TLS、容量、费用、
+保留、司法辖区合规与长时间故障恢复仍是生产门禁。日志接收端、Prometheus
 卷备份和审计 outbox 必须分别套用获批保留策略，监控磁盘水位，并通过定期 restore
 drill 与删除报告证明策略实际执行。legal hold 生效时，普通自动删除不得越过授权流程。

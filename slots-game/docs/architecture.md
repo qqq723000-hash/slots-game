@@ -106,6 +106,7 @@ slots-game-production
 │   ├── rgs-server 标准输出 → Docker Fluent 日志驱动 → 127.0.0.1:24224
 │   ├── vector
 │   │   ├── 解析结构化 JSON、固定 route、删除凭据/正文/堆栈等敏感字段
+│   │   ├── 每 10 秒生成只含 service/time/level/msg 的固定归档推进心跳
 │   │   ├── 使用有界磁盘缓冲 vector_data
 │   │   └── HTTPS + Bearer → local-operator /logs
 │   └── local-operator /logs → 有界、可轮转的 operator_data/logs 分段文件
@@ -356,7 +357,7 @@ PostgreSQL 或本机 Compose 观测栈。
 | `local-operator` | 本机运营入口、签名钱包、审计/日志接收 | 不接管 RGS 结算 |
 | Web | 校验并展示权威结果 | 不生成网格、派彩或余额 |
 | PostgreSQL | 会话、轮次、nonce、发件箱和恢复权威状态 | 不向公网暴露 |
-| Vector | 收集、脱敏并限流转发结构化日志 | 不持有业务数据库凭据 |
+| Vector | 收集、脱敏并限流转发结构化日志；用固定四字段心跳有界推进低流量磁盘缓冲 | 不持有业务数据库凭据，不把心跳描述成上游竞态已修复 |
 | Prometheus | 通过私网 Bearer 抓取指标并计算告警 | 不访问公共业务端点 |
 
 ## 轮次事务
@@ -417,7 +418,12 @@ sequenceDiagram
 认证 `/readyz` → 入口放量。只有数据库模式清单与数学定义身份均未改变的版本才允许普通滚动启
 动；模式或定义变更须遵守多副本集群运行契约中的协调切换边界。Prometheus 监控就绪、错误率、
 延迟、连接/请求预算、数据库池、钱包恢复和发件箱积压；Alertmanager 经受限代理发送；Vector 使
-用有界磁盘缓冲防止日志故障拖垮业务。
+用有界磁盘缓冲防止日志故障拖垮业务。当前固定 Vector 0.57 的低流量磁盘读取唤醒竞态由每 10 秒一个
+固定 `service/time/level/msg` 四字段心跳缓解；稳定运行名义值为每实例 8,640 条/日，启动和重启可能
+产生额外事件，容量与费用预算必须预留重启余量。这是版本限定的有界推进措施，
+不是上游修复。本机 25 秒交付边界只以精确落盘为准；sent counter 另用最长 35 秒覆盖 Vector internal
+metrics 与 Prometheus 的两个 15 秒传播周期，其新鲜度失败不能冒充业务未交付。发布门禁只证明隔离
+行为，外部归档容量、TLS、保留和合规仍须在目标环境验收。
 
 源码发布门禁包含锁文件安装、全量测试、竞态检测、vet/build、PostgreSQL conformance、生产配置
 smoke、秘密/漏洞扫描、CycloneDX/SPDX SBOM、镜像扫描、来源证明和签名。正式运行手册见：

@@ -327,8 +327,9 @@ verify_operator_log_probe() {
     node "$local_production_directory/verify-operator-log-probe.mjs" "$expected_digest"
 }
 
-# 在触发之前同时记录 sink 累计值和持久文件总字节。唯一安全 request id
-# 仅用于计算日志中的 SHA-256 摘要，不作为业务/租户标识。
+# 在触发之前同时记录 sink 累计值和持久文件总字节。只发送一个业务探针；后续推进
+# 只能来自 Vector 的固定四字段 10 秒心跳，不能再发业务事件掩盖低流量磁盘唤醒问题。
+# 唯一安全 request id 仅用于计算日志中的 SHA-256 摘要，不作为业务/租户标识。
 vector_sink_baseline=$(read_vector_sink_counter)
 operator_log_bytes_baseline=$(read_operator_log_bytes)
 # 模板字符串插值必须由 Node 求值，不能由当前 shell 提前展开。
@@ -351,29 +352,51 @@ test "$log_probe_status" = 401 || {
   exit 1
 }
 unset log_probe_request_id
-sink_ready=0
-attempt=0
-while [ "$attempt" -lt 18 ]; do
-  vector_sink_current=$(read_vector_sink_counter)
+delivery_ready=0
+delivery_attempt=0
+while [ "$delivery_attempt" -le 5 ]; do
   operator_log_bytes_current=$(read_operator_log_bytes)
+  if test "$operator_log_bytes_current" -gt "$operator_log_bytes_baseline" \
+      && verify_operator_log_probe "$log_probe_digest"; then
+    delivery_ready=1
+    break
+  fi
+  delivery_attempt=$((delivery_attempt + 1))
+  if [ "$delivery_attempt" -le 5 ]; then
+    sleep 5
+  fi
+done
+test "$delivery_ready" = 1 || {
+  printf '%s\n' 'Vector HTTPS sink 未在 25 秒内证明单业务探针的文件增长与精确脱敏落盘语义。' >&2
+  exit 1
+}
+printf '%s\n' 'Vector 单业务探针已在 25 秒内完成文件增长与精确脱敏落盘。'
+
+# sent counter 经 Vector internal_metrics 和 Prometheus 两个 15 秒周期传播；它只验证
+# 可观测链路新鲜度，不参与也不推翻上面已经完成的 25 秒业务交付判定。
+counter_ready=0
+counter_attempt=0
+while [ "$counter_attempt" -le 7 ]; do
+  vector_sink_current=$(read_vector_sink_counter)
   if node -e '
 const current=Number(process.argv[1]); const baseline=Number(process.argv[2]);
 process.exit(Number.isFinite(current) && Number.isFinite(baseline) && current > baseline ? 0 : 1);
-' "$vector_sink_current" "$vector_sink_baseline" \
-      && test "$operator_log_bytes_current" -gt "$operator_log_bytes_baseline" \
-      && verify_operator_log_probe "$log_probe_digest"; then
-    sink_ready=1
+' "$vector_sink_current" "$vector_sink_baseline"; then
+    counter_ready=1
     break
   fi
-  attempt=$((attempt + 1))
-  sleep 5
+  counter_attempt=$((counter_attempt + 1))
+  if [ "$counter_attempt" -le 7 ]; then
+    sleep 5
+  fi
 done
-test "$sink_ready" = 1 || {
-  printf '%s\n' 'Vector HTTPS sink 未证明本次安全探针的计数增量与精确脱敏落盘语义。' >&2
+test "$counter_ready" = 1 || {
+  printf '%s\n' '单业务探针已在 25 秒内精确落盘，但 Vector sent counter 未在独立 35 秒观测窗口内刷新。' >&2
   exit 1
 }
 unset log_probe_digest vector_sink_baseline vector_sink_current \
-  operator_log_bytes_baseline operator_log_bytes_current
+  operator_log_bytes_baseline operator_log_bytes_current delivery_ready delivery_attempt \
+  counter_ready counter_attempt
 
 printf '%s\n' '验收阶段：一次性游戏启动会话。'
 admin_token="$(sed -n '1p' "$secrets_root/local-operator-admin.token")"

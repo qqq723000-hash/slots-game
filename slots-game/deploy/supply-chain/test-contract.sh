@@ -44,6 +44,8 @@ reset_fixture() {
   cp "$repository_root/deploy/cluster-production/verify-prometheus-rule-contract.sh" "$fixture/deploy/cluster-production/verify-prometheus-rule-contract.sh"
   cp "$repository_root/deploy/observability/verify-release-workflow.sh" "$fixture/deploy/observability/verify-release-workflow.sh"
   chmod 0755 "$fixture/deploy/observability/verify-release-workflow.sh"
+  cp "$repository_root/deploy/observability/test-vector-bounded-flush.sh" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+  chmod 0755 "$fixture/deploy/observability/test-vector-bounded-flush.sh"
   cp -R "$workflows_root" "$fixture/.github/workflows"
 }
 
@@ -512,6 +514,74 @@ replace_once '        run: make verify-cluster-prometheus-rules' '        run: t
 expect_rejected 'required deployment conformance workflow skipped PromQL parsing'
 
 reset_fixture
+replace_once '        run: docker pull "$VECTOR_IMAGE" >/dev/null' '        run: true # fixed Vector preload removed' "$fixture/.github/workflows/deployment-conformance.yml"
+expect_rejected 'deployment conformance skipped fixed Vector image preload'
+
+reset_fixture
+replace_once '        run: make test-vector-bounded-flush' '        run: true # bounded Vector recovery removed' "$fixture/.github/workflows/deployment-conformance.yml"
+expect_rejected 'deployment conformance skipped bounded Vector disk-buffer recovery'
+
+reset_fixture
+replace_once 'timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39' 'timberio/vector:0.57.0-debian' "$fixture/.github/workflows/deployment-conformance.yml"
+expect_rejected 'deployment conformance Vector image lost its reviewed digest'
+
+reset_fixture
+replace_once 'test-vector-bounded-flush:' 'test-vector-bounded-flush-disabled:' "$fixture/Makefile"
+expect_rejected 'Makefile removed the bounded Vector recovery target'
+
+reset_fixture
+chmod 0644 "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate lost executable mode'
+
+reset_fixture
+replace_once "expected_vector_image='timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39'" "expected_vector_image='timberio/vector:0.57.0-debian'" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate accepted a mutable image tag'
+
+reset_fixture
+replace_once "heartbeat_source['interval_secs'] == 10" "heartbeat_source['interval_secs'] >= 10" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate weakened the fixed heartbeat interval'
+
+reset_fixture
+replace_once "      'count' => 1," "      'count' => 2," "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate injected a second business event'
+
+reset_fixture
+replace_once 'online_sender_data="$test_directory/online-sender-data"' 'online_sender_data="$test_directory/outage-sender-data"' "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate reused the outage disk buffer for the online phase'
+
+reset_fixture
+replace_once "raise 'business event is not durable' unless files.any? { |path| File.binread(path).include?(marker) }" "raise 'business event is not durable' unless true" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate stopped proving pre-recovery disk persistence'
+
+reset_fixture
+replace_once 'test "$readiness_ready" -eq 1 || fail' 'true # receiver readiness proof removed' "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate started its online phase without HTTP readiness evidence'
+
+reset_fixture
+replace_once 'online_deadline=$((online_started_at + 25))' 'online_deadline=$((online_started_at + 90))' "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate weakened the online delivery deadline'
+
+reset_fixture
+replace_once "  event.keys.sort == heartbeat_keys &&" "  event.key?('msg') &&" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate stopped enforcing the safe heartbeat schema'
+
+reset_fixture
+replace_once "raise 'business probe count mismatch' unless probes.length == 1" "raise 'business probe missing' if probes.empty?" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate stopped proving exactly-once business delivery'
+
+reset_fixture
+replace_once "raise 'outage probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-outage-v1' } == 1" "raise 'outage probe missing' unless all.any? { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-outage-v1' }" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate weakened final outage exact-once reconciliation'
+
+reset_fixture
+replace_once "raise 'online probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-online-v1' } == 1" "raise 'online probe missing' unless all.any? { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-online-v1' }" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate weakened final online exact-once reconciliation'
+
+reset_fixture
+replace_once "raise 'raw metric escaped' if raw_metric" ": # raw metric rejection removed" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate accepted raw heartbeat metrics'
+
+reset_fixture
 replace_once 'prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893' 'prom/prometheus:latest' "$fixture/deploy/cluster-production/verify-prometheus-rule-contract.sh"
 expect_rejected 'cluster PromQL parser image became mutable'
 
@@ -737,6 +807,14 @@ expect_rejected 'protected release source conformance step became skippable'
 reset_fixture
 replace_once 'node deploy/local-production/render-observability.mjs "$observability_rendered_dir"' 'true # controlled observability rendering removed' "$fixture/deploy/observability/verify-release-workflow.sh"
 expect_rejected 'protected release skipped controlled observability rendering'
+
+reset_fixture
+replace_once 'docker pull "$VECTOR_IMAGE"' 'true # fixed Vector preload removed' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected release entrypoint skipped fixed Vector image preload'
+
+reset_fixture
+replace_once 'make test-vector-bounded-flush' 'true # bounded Vector recovery removed' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected release entrypoint skipped bounded Vector recovery'
 
 reset_fixture
 ruby -e '

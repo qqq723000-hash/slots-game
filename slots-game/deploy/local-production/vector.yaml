@@ -19,7 +19,37 @@ sources:
     tags:
       host_key: ""
 
+  archive_flush_heartbeat_metric:
+    type: static_metrics
+    # Vector 0.57 的磁盘缓冲在低流量下可能等待下一条事件才提交当前批次；固定心跳
+    # 为归档链路提供有界推进事件，同时不承载用户、请求或运行环境数据。
+    interval_secs: 10
+    namespace: vector
+    metrics:
+      - name: archive_flush_heartbeat
+        kind: absolute
+        tags: {}
+        value:
+          gauge:
+            value: 1
+
 transforms:
+  archive_flush_heartbeat_to_log:
+    type: metric_to_log
+    inputs: [archive_flush_heartbeat_metric]
+
+  safe_archive_flush_heartbeat:
+    type: remap
+    inputs: [archive_flush_heartbeat_to_log]
+    source: |-
+      # 无条件从空对象重建；上游指标名、标签、hostname 或未来新增字段都不能进入归档。
+      . = {
+        "service": "vector",
+        "time": now(),
+        "level": "INFO",
+        "msg": "archive flush heartbeat"
+      }
+
   normalize_rgs_json:
     type: remap
     inputs: [rgs_fluent]
@@ -313,7 +343,7 @@ transforms:
 sinks:
   local_https_archive:
     type: http
-    inputs: [strict_rgs_allowlist]
+    inputs: [strict_rgs_allowlist, safe_archive_flush_heartbeat]
     uri: https://wallet:8443/logs
     method: post
     auth:
@@ -344,6 +374,26 @@ sinks:
     flush_period_secs: 60
 
 tests:
+  - name: local archive flush heartbeat is rebuilt as a fixed four-field safe log
+    inputs:
+      - insert_at: safe_archive_flush_heartbeat
+        type: log
+        log_fields:
+          service: attacker-controlled
+          token: nested-secret
+          labels:
+            player_id: private-player
+    outputs:
+      - extract_from: safe_archive_flush_heartbeat
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(length(keys(.)), 4)
+              assert_eq!(.service, "vector")
+              assert!(is_timestamp(.time))
+              assert_eq!(.level, "INFO")
+              assert_eq!(.msg, "archive flush heartbeat")
+
   - name: Docker Fluent log shape preserves approved RGS request semantics only
     inputs:
       - insert_at: normalize_rgs_json

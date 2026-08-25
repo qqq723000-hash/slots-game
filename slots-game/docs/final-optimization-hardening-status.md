@@ -23,7 +23,7 @@
 | 首屏与资源分发 | 静态 HTML 首屏、分帧初始化、JS 分块预算、桌面/移动资源清单、SHA-256 发布清单、CloudFront OAC、Brotli 协商、immutable release、HTTP/2+3，以及 Big Win、Free Spins、Wheel 真实事件租约延迟加载已有仓库门禁 | `web/index.html`、`web/src/startup/StreamingAssetRuntime.ts`、`web/src/app/AppController.ts`、`web/src/renderer/VerifiedFeatureArtwork.ts`、`web/src/renderer/BigWinView.ts`、`web/scripts/`、`infra/terraform/modules/web-edge/` | Big Win 四项独占首启减少 4,044,706 B。Free Spins 独占 117,536 B；Wheel 目标包独占 1,507,291 B，其中实际从旧首启路径移出的资源为 1,498,108 B（`wheel_hyperspin.skel` 原本未首启加载）。完整事件闭包包含共享 `spine-ui` 和交互音频：Free Spins desktop/mobile 为 8,128,853 B / 7,781,712 B，Wheel 为 9,518,608 B / 9,171,467 B，不能计作独占请求。没有真实弱网/设备 RUM、Brotli level-11 预压缩、边缘预热或目标 Route 53 延迟路由证据 |
 | 前端安全与恢复 | 浏览器只表现权威结果；一次性 Launch Code 清除、内存 token、严格解码、pending ledger、状态查询、ACK、空闲断开、transport generation、运营商 relaunch、CSP、Trusted Types、资源完整性、生命周期清理、运行期全局故障关闭，以及无持久身份的逐请求 W3C `traceparent` 已实现 | `web/src/protocol/`、`web/src/main.ts`、`deploy/web/` | 生产浏览器指标/视觉遥测出口仍未实现；真实 BFCache、多标签页、辅助技术和设备矩阵仍是外部门禁 |
 | 后端资金与并发 | PostgreSQL 权威事务、服务端 RNG、Operation ID 幂等、原子钱包命令、未知结果只查询、持久恢复、Outbox、Valkey 新意图准入、舱壁/熔断、HPA/PDB、日志脱敏、默认关闭的 W3C/OTLP 服务端追踪，以及默认关闭的高额派奖 `RISK_PENDING` 持久审批状态机已有实现 | `server/internal/rgs/`、`server/internal/postgres/`、`server/internal/recovery/`、`server/internal/outbox/`、`server/internal/sharedadmission/`、`server/internal/telemetry/` | Progressive Jackpot 资金账本尚未实现；高额风控的个人 SSO/MFA、职责分离与双人复核仍由外部运营平台交付；正式钱包 conformance、数学/RNG/RTP 认证、真实 collector 父子链和容量/故障演练均未完成 |
-| 数据、AWS 与运维 | 私有 VPC/EKS/RDS/Valkey、Multi-AZ、PITR、KMS、Secrets、Pod Identity、WAF、ECR、S3 Object Lock、跨区备份接口、AMP/CloudWatch、RDS 总 IOPS/总吞吐与日志派生 deadlock 告警、默认关闭的同区域 PostgreSQL read replica/独立 endpoint/ReplicaLag 与容量告警接口、受控 OTLP collector 接口及供应链门禁已有 IaC/契约 | `infra/terraform/`、`deploy/aws-production/`、`deploy/cluster-production/`、`deploy/observability/` | 应用尚未采用 reader endpoint，RDS Proxy/PgBouncer、时间分区、定时 RDS 冷归档和 Bot Control 尚未实现；真实副本/KMS/告警、collector TLS/容量/保留期、Route 53、GuardDuty、共享防火墙和告警到人由企业平台验收 |
+| 数据、AWS 与运维 | 私有 VPC/EKS/RDS/Valkey、Multi-AZ、PITR、KMS、Secrets、Pod Identity、WAF、ECR、S3 Object Lock、跨区备份接口、AMP/CloudWatch、RDS 总 IOPS/总吞吐与日志派生 deadlock 告警、Vector 低流量磁盘归档有界推进门禁、默认关闭的同区域 PostgreSQL read replica/独立 endpoint/ReplicaLag 与容量告警接口、受控 OTLP collector 接口及供应链门禁已有 IaC/契约 | `infra/terraform/`、`deploy/aws-production/`、`deploy/cluster-production/`、`deploy/observability/` | Vector 0.57 方案的稳定运行名义值为每实例 8,640 条固定心跳/日，启动/重启余量另计；它是竞态缓解而非上游修复，外部归档容量/费用/TLS/保留/合规仍待验收；应用尚未采用 reader endpoint，RDS Proxy/PgBouncer、时间分区、定时 RDS 冷归档和 Bot Control 尚未实现；真实副本/KMS/告警、collector TLS/容量/保留期、Route 53、GuardDuty、共享防火墙和告警到人由企业平台验收 |
 | 文档、品牌与视频 | README、架构、运行手册、资产权属分类和精确哈希审批失败关闭门禁存在 | `README.md`、`docs/`、`web/ASSETS.md`、`web/asset-provenance.json` | Iron Colossus 最终品牌替换未完成；Primal 运行素材权利证据未在仓库验证；仓库没有 60 FPS 宣传视频制品。不得通过删除水印或来源声明代替授权和原创替换 |
 
 ## 本轮落地的高优先级补强
@@ -68,6 +68,15 @@
    PostgreSQL Claim 查询，且取得的恢复/风控任务不能留下处理错误。初始连续失败或 poison claim 保持
    不就绪，无任务的成功 pass 也可晋级；晋级后的瞬时故障继续由恢复新鲜度告警负责而不反复摘掉指标
    目标。API 与 combined 角色的基础就绪语义不受该启动门禁影响。
+14. 针对当前固定 Vector 0.57 在低流量磁盘缓冲下可能等待下一事件的读取唤醒竞态，中央和本机配置
+   每 10 秒生成一次从空对象重建的 `service/time/level/msg` 四字段安全心跳，与业务事件进入同一磁盘
+   sink。A 阶段在出口中断时产生一条业务探针并先证明其进入磁盘，B 阶段在接收端就绪后用全新 sender
+   和 `data_dir` 产生另一条在线探针；两阶段都要求各自 25 秒内精确交付一次。静态负测拒绝恢复 90 秒
+   等待、在同一阶段增加第二业务唤醒或把 Prometheus counter 重新耦合进交付判断。文件增长和唯一
+   digest 证明
+   本机 25 秒业务边界；counter 另以最多 35 秒覆盖两个 15 秒传播周期。稳定运行名义值为每实例
+   8,640 条/日，启动/重启余量另计；这不是上游修复，外部 archive 的容量、费用、TLS、保留和合规
+   仍是生产门禁。
 
 ## P0 发布阻断
 
@@ -142,6 +151,11 @@ Terraform/AWS workflow/Cluster/Observability/Supply Chain/Web/本地生产静态
 - 发布契约：供应链正向/负向合同、第三方声明、可观测性静态/渲染合同、34 条 Prometheus 规则、
   Cluster 五套 Helm 渲染与 kubeconform、AWS 渲染/工作流静态合同和完整本地 mock 回读套件均通过。
   Terraform 静态合同通过，183 个危险变体全部被拒绝；21 组/933 项仅名称加固清单及跳过项审计通过。
+- Vector 低流量归档：当前固定 0.57 镜像的隔离行为回归覆盖“A 阶段中断并证明磁盘持久化、B 阶段
+  receiver-ready 后使用全新 sender/data_dir、每阶段各一条业务探针、10 秒四字段心跳、各自 25 秒内
+  精确一次且无原始 metric”；本地完整部署仍须在最终提交
+  上重跑。本机验收已把 25 秒精确落盘与最长 35 秒 sent counter 新鲜度观测分离；外部 archive 实际
+  容量与合规结果不由该隔离测试替代。
 - 本次正式收口按要求没有重新启动 `verify-hardening-stability-50`；此前中止的部分轮次和旧源码上的
   定向循环都不作为当前最终源码的“50/50”证据。当前结论来自上述一次完整回归、独立对抗复核和
   精确负向合同。

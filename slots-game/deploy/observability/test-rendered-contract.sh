@@ -54,6 +54,23 @@ copy_contract_repository() {
     "$destination/server/internal/platform/metrics.go"
 }
 
+# Vector 语义负测必须先刷新复制件中的审阅摘要，避免仅由旧摘要拒绝而未真正覆盖结构断言。
+refresh_reviewed_vector_digest() {
+  contract_root=$1
+  relative_path=$2
+  original_path=$3
+  ruby -rdigest - "$contract_root/deploy/observability/verify-static-contract.sh" \
+    "$contract_root/$relative_path" "$original_path" <<'RUBY'
+contract_path, mutated_path, original_path = ARGV
+contract = File.read(contract_path)
+original_digest = Digest::SHA256.file(original_path).hexdigest
+mutated_digest = Digest::SHA256.file(mutated_path).hexdigest
+changed = contract.sub(original_digest, mutated_digest)
+abort "reviewed Vector digest mutation did not apply" if changed == contract
+File.write(contract_path, changed)
+RUBY
+}
+
 synthetic_digest='sha256:0000000000000000000000000000000000000000000000000000000000000000'
 export PROMETHEUS_IMAGE="example.invalid/prometheus@$synthetic_digest"
 export GRAFANA_IMAGE="example.invalid/grafana@$synthetic_digest"
@@ -1049,12 +1066,66 @@ cp -R "$source_contract" "$local_archive_input_drift_contract"
 ruby -e '
   path = ARGV.fetch(0)
   value = File.read(path)
-  changed = value.sub("inputs: [strict_rgs_allowlist]", "inputs: [normalize_rgs_json]")
+  changed = value.sub(
+    "inputs: [strict_rgs_allowlist, safe_archive_flush_heartbeat]",
+    "inputs: [normalize_rgs_json, safe_archive_flush_heartbeat]"
+  )
   abort "local Vector archive input mutation did not apply" if changed == value
   File.write(path, changed)
 ' "$local_archive_input_drift_contract/deploy/local-production/vector.yaml"
 if "$local_archive_input_drift_contract/deploy/observability/verify-static-contract.sh" >/dev/null 2>&1; then
   printf '%s\n' 'rendered contract test: local Vector archive input drift was accepted' >&2
+  exit 1
+fi
+
+missing_central_heartbeat_contract="$test_root/missing-central-heartbeat-contract"
+cp -R "$source_contract" "$missing_central_heartbeat_contract"
+ruby -ryaml -e '
+  path = ARGV.fetch(0)
+  value = YAML.safe_load(File.read(path), aliases: false)
+  removed = value.fetch("sources").delete("archive_flush_heartbeat_metric")
+  abort "central archive heartbeat mutation did not apply" unless removed
+  File.write(path, YAML.dump(value))
+' "$missing_central_heartbeat_contract/deploy/observability/vector.yaml"
+refresh_reviewed_vector_digest "$missing_central_heartbeat_contract" \
+  'deploy/observability/vector.yaml' "$script_dir/vector.yaml"
+if "$missing_central_heartbeat_contract/deploy/observability/verify-static-contract.sh" >/dev/null 2>&1; then
+  printf '%s\n' 'rendered contract test: missing central archive heartbeat was accepted' >&2
+  exit 1
+fi
+
+unsafe_central_heartbeat_contract="$test_root/unsafe-central-heartbeat-contract"
+cp -R "$source_contract" "$unsafe_central_heartbeat_contract"
+ruby -ryaml -e '
+  path = ARGV.fetch(0)
+  value = YAML.safe_load(File.read(path), aliases: false)
+  transform = value.fetch("transforms").fetch("safe_archive_flush_heartbeat")
+  transform["source"] = ". = {\"service\": \"vector\", \"time\": now(), \"level\": \"INFO\", \"msg\": \"archive flush heartbeat\", \"tags\": .tags}\n"
+  File.write(path, YAML.dump(value))
+' "$unsafe_central_heartbeat_contract/deploy/observability/vector.yaml"
+refresh_reviewed_vector_digest "$unsafe_central_heartbeat_contract" \
+  'deploy/observability/vector.yaml' "$script_dir/vector.yaml"
+if "$unsafe_central_heartbeat_contract/deploy/observability/verify-static-contract.sh" >/dev/null 2>&1; then
+  printf '%s\n' 'rendered contract test: unsafe central archive heartbeat projection was accepted' >&2
+  exit 1
+fi
+
+missing_local_heartbeat_input_contract="$test_root/missing-local-heartbeat-input-contract"
+cp -R "$source_contract" "$missing_local_heartbeat_input_contract"
+ruby -e '
+  path = ARGV.fetch(0)
+  value = File.read(path)
+  changed = value.sub(
+    "inputs: [strict_rgs_allowlist, safe_archive_flush_heartbeat]",
+    "inputs: [strict_rgs_allowlist]"
+  )
+  abort "local archive heartbeat input mutation did not apply" if changed == value
+  File.write(path, changed)
+' "$missing_local_heartbeat_input_contract/deploy/local-production/vector.yaml"
+refresh_reviewed_vector_digest "$missing_local_heartbeat_input_contract" \
+  'deploy/local-production/vector.yaml' "$script_dir/../local-production/vector.yaml"
+if "$missing_local_heartbeat_input_contract/deploy/observability/verify-static-contract.sh" >/dev/null 2>&1; then
+  printf '%s\n' 'rendered contract test: missing local archive heartbeat input was accepted' >&2
   exit 1
 fi
 
@@ -1287,4 +1358,4 @@ if "$missing_local_release_vector_validation_contract/deploy/observability/verif
 fi
 
 printf '%s\n' \
-  'observability rendered bundle regression: central/local profiles accepted; Prometheus remote read/write, extra/relabel/proxy targets, insecure Alertmanager/local-operator, missing local critical alert/dashboard signal, missing RGS/Vector, required alert/dashboard/strict nested-log allowlists and release Vector validation/tests, invalid rules, untrusted promtool, incompatible PostgreSQL/Vector TLS, evicting Valkey, incomplete Lua probe, stale Lua digest, false Lua result, route/message/fixture and request-digest drift rejected'
+  'observability rendered bundle regression: central/local profiles accepted; unsafe or missing archive heartbeat, Prometheus remote read/write, extra/relabel/proxy targets, insecure Alertmanager/local-operator, missing local critical alert/dashboard signal, missing RGS/Vector, required alert/dashboard/strict nested-log allowlists and release Vector validation/tests, invalid rules, untrusted promtool, incompatible PostgreSQL/Vector TLS, evicting Valkey, incomplete Lua probe, stale Lua digest, false Lua result, route/message/fixture and request-digest drift rejected'

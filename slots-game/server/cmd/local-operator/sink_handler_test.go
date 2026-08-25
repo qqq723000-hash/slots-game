@@ -66,7 +66,10 @@ func TestLogSinkAndAlertmanagerAuthUseBearer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := []byte("{\"level\":\"info\",\"message\":\"ready\"}\n")
+	payload := []byte(
+		"{\"service\":\"rgs-server\",\"level\":\"INFO\",\"msg\":\"ready\"}\n" +
+			"{\"service\":\"vector\",\"time\":\"2026-08-25T00:00:00Z\",\"level\":\"INFO\",\"msg\":\"archive flush heartbeat\"}\n",
+	)
 	unauthorized := httptest.NewRecorder()
 	logs.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "https://operator.local/logs", bytes.NewReader(payload)))
 	if unauthorized.Code != http.StatusUnauthorized {
@@ -79,6 +82,13 @@ func TestLogSinkAndAlertmanagerAuthUseBearer(t *testing.T) {
 	logs.ServeHTTP(accepted, request)
 	if accepted.Code != http.StatusNoContent {
 		t.Fatalf("logs status = %d", accepted.Code)
+	}
+	persisted, err := os.ReadFile(filepath.Join(directory, "runtime.ndjson"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(persisted, payload) {
+		t.Fatalf("persisted mixed RGS/heartbeat logs = %q", persisted)
 	}
 
 	auth := alertmanagerAuthHandler(token)

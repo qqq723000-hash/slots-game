@@ -27,6 +27,7 @@ jobs:
       KUBECONFORM_VERSION: 0.7.0
       KUBECONFORM_ARCHIVE_SHA256: c31518ddd122663b3f3aa874cfe8178cb0988de944f29c74a0b9260920d115d3
       TERRAFORM_VERSION: 1.15.9
+      VECTOR_IMAGE: timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39
 
     steps:
       - name: Check out repository
@@ -82,6 +83,12 @@ jobs:
 
       - name: Verify local, cluster and AWS production deployment contracts
         run: make verify-deployment-contracts
+
+      - name: Preload fixed Vector image
+        run: docker pull "$VECTOR_IMAGE" >/dev/null
+
+      - name: Verify bounded Vector disk-buffer recovery
+        run: make test-vector-bounded-flush
 
       - name: Parse rendered cluster alert rules with fixed promtool
         run: make verify-cluster-prometheus-rules

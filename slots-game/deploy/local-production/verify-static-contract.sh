@@ -1,7 +1,7 @@
 #!/bin/sh
 # 在启动容器前验证本机集成验收 Compose、镜像元数据、HSTS 与 Grafana 离线约束。
 # 本文件需精确检索被验收脚本中的字面量 `$...`，且 Node 负向变异不应由 shell 展开。
-# shellcheck disable=SC2016
+# shellcheck disable=SC2016,SC1003
 set -eu
 
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
@@ -242,20 +242,37 @@ done
 
 verify_log_delivery_contract() {
   candidate=$1
-  test "$(grep -Fxc 'vector_sink_baseline=$(read_vector_sink_counter)' "$candidate")" -eq 1 &&
-    test "$(grep -Fxc 'operator_log_bytes_baseline=$(read_operator_log_bytes)' "$candidate")" -eq 1 &&
-    test "$(grep -Fxc 'process.exit(Number.isFinite(current) && Number.isFinite(baseline) && current > baseline ? 0 : 1);' "$candidate")" -eq 1 &&
-    test "$(grep -Fxc "      && test \"\$operator_log_bytes_current\" -gt \"\$operator_log_bytes_baseline\" \\" "$candidate")" -eq 1 &&
-    test "$(grep -Fxc '      && verify_operator_log_probe "$log_probe_digest"; then' "$candidate")" -eq 1 &&
-    test "$(grep -Fxc '    node "$local_production_directory/verify-operator-log-probe.mjs" "$expected_digest"' "$candidate")" -eq 1 &&
-    test "$(grep -Fxc 'const {randomBytes}=require("node:crypto");' "$candidate")" -eq 1 &&
-    test "$(grep -Fxc 'process.stdout.write(`vectorverify${randomBytes(18).toString("hex")}`);' "$candidate")" -eq 1 &&
-    test "$(grep -Fxc '  --header "X-Operator-Id: $operator_id" \' "$candidate")" -eq 1 &&
-    test "$(grep -Fxc 'process.stdout.write(createHash("sha256").update(process.argv[1], "utf8").digest("hex"));' "$candidate")" -eq 1
+  delivery_section=$(sed -n '/^delivery_ready=0$/,/^test "$delivery_ready" = 1 || {$/p' "$candidate")
+  counter_section=$(sed -n '/^counter_ready=0$/,/^test "$counter_ready" = 1 || {$/p' "$candidate")
+  test "$(grep -Fxc 'vector_sink_baseline=$(read_vector_sink_counter)' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc 'operator_log_bytes_baseline=$(read_operator_log_bytes)' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc '  operator_log_bytes_current=$(read_operator_log_bytes)' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc 'process.exit(Number.isFinite(current) && Number.isFinite(baseline) && current > baseline ? 0 : 1);' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc '  if test "$operator_log_bytes_current" -gt "$operator_log_bytes_baseline" \' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc '      && verify_operator_log_probe "$log_probe_digest"; then' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc '    node "$local_production_directory/verify-operator-log-probe.mjs" "$expected_digest"' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc 'const {randomBytes}=require("node:crypto");' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc 'process.stdout.write(`vectorverify${randomBytes(18).toString("hex")}`);' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc '  --header "X-Operator-Id: $operator_id" \' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc 'process.stdout.write(createHash("sha256").update(process.argv[1], "utf8").digest("hex"));' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc 'while [ "$delivery_attempt" -le 5 ]; do' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc '  if [ "$delivery_attempt" -le 5 ]; then' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc 'while [ "$counter_attempt" -le 7 ]; do' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc '  if [ "$counter_attempt" -le 7 ]; then' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc 'test "$delivery_ready" = 1 || {' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc "printf '%s\\n' 'Vector 单业务探针已在 25 秒内完成文件增长与精确脱敏落盘。'" "$candidate")" -eq 1 || return 1
+  test "$(grep -Fxc 'test "$counter_ready" = 1 || {' "$candidate")" -eq 1 || return 1
+  test "$(grep -Fc 'https://rgs.localhost:8443/operator/v1/launches' "$candidate")" -eq 1 || return 1
+  case "$delivery_section" in
+    *vector_sink*) return 1 ;;
+  esac
+  case "$counter_section" in
+    *operator_log*|*log_probe_digest*) return 1 ;;
+  esac
 }
 
 if ! verify_log_delivery_contract "$verify_file"; then
-  printf '%s\n' '本机动态验收必须证明当次 Vector sink 计数增量、文件增长与精确脱敏语义。' >&2
+  printf '%s\n' '本机动态验收必须把 25 秒精确落盘与独立 sent counter 新鲜度观测解耦。' >&2
   exit 1
 fi
 
@@ -320,6 +337,57 @@ if(changed===source) process.exit(1); fs.writeFileSync(path,changed);
 ' "$comment_mutation"
 if verify_log_delivery_contract "$comment_mutation"; then
   printf '%s\n' '本机动态验收负向门禁接受了仅在注释中保留语义探针的回归。' >&2
+  exit 1
+fi
+
+timeout_mutation="$temporary_root/verify-log-timeout-mutation.sh"
+cp "$verify_file" "$timeout_mutation"
+node -e '
+const fs=require("node:fs"); const path=process.argv[1]; const source=fs.readFileSync(path,"utf8");
+const changed=source.replaceAll(`"$delivery_attempt" -le 5`, `"$delivery_attempt" -le 18`);
+if(changed===source) process.exit(1); fs.writeFileSync(path,changed);
+' "$timeout_mutation"
+if verify_log_delivery_contract "$timeout_mutation"; then
+  printf '%s\n' '本机动态验收负向门禁接受了把单业务日志交付上限从 25 秒放宽回 90 秒的回归。' >&2
+  exit 1
+fi
+
+coupled_counter_mutation="$temporary_root/verify-log-coupled-counter-mutation.sh"
+cp "$verify_file" "$coupled_counter_mutation"
+node -e '
+const fs=require("node:fs"); const path=process.argv[1]; const source=fs.readFileSync(path,"utf8");
+const marker="  operator_log_bytes_current=$(read_operator_log_bytes)";
+const changed=source.replace(marker, "  read_vector_sink_counter >/dev/null\n" + marker);
+if(changed===source) process.exit(1); fs.writeFileSync(path,changed);
+' "$coupled_counter_mutation"
+if verify_log_delivery_contract "$coupled_counter_mutation"; then
+  printf '%s\n' '本机动态验收负向门禁接受了把 Prometheus counter 重新耦合到 25 秒交付判定的回归。' >&2
+  exit 1
+fi
+
+short_counter_window_mutation="$temporary_root/verify-log-short-counter-window-mutation.sh"
+cp "$verify_file" "$short_counter_window_mutation"
+node -e '
+const fs=require("node:fs"); const path=process.argv[1]; const source=fs.readFileSync(path,"utf8");
+const changed=source.replace(`while [ "$counter_attempt" -le 7 ]; do`, `while [ "$counter_attempt" -le 2 ]; do`);
+if(changed===source) process.exit(1); fs.writeFileSync(path,changed);
+' "$short_counter_window_mutation"
+if verify_log_delivery_contract "$short_counter_window_mutation"; then
+  printf '%s\n' '本机动态验收负向门禁接受了不足一个完整 scrape 余量的 counter 观测窗口。' >&2
+  exit 1
+fi
+
+second_business_probe_mutation="$temporary_root/verify-second-business-log-probe-mutation.sh"
+cp "$verify_file" "$second_business_probe_mutation"
+node -e '
+const fs=require("node:fs"); const path=process.argv[1]; const source=fs.readFileSync(path,"utf8");
+const marker="test \"$log_probe_status\" = 401 || {";
+const duplicate=`curl --silent --show-error --output /dev/null --cacert "$ca_file" \\\n+  --resolve rgs.localhost:8443:127.0.0.1 --data '{}' \\\n+  https://rgs.localhost:8443/operator/v1/launches\n`;
+const changed=source.replace(marker, duplicate + marker);
+if(changed===source) process.exit(1); fs.writeFileSync(path,changed);
+' "$second_business_probe_mutation"
+if verify_log_delivery_contract "$second_business_probe_mutation"; then
+  printf '%s\n' '本机动态验收负向门禁接受了用第二个业务请求唤醒 Vector 磁盘缓冲的假绿回归。' >&2
   exit 1
 fi
 
