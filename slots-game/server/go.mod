@@ -7,7 +7,7 @@ toolchain go1.26.6
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/valkey-io/valkey-go v1.0.67
+	github.com/valkey-io/valkey-go v1.0.77
 	go.opentelemetry.io/otel v1.45.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.45.0
 	go.opentelemetry.io/otel/sdk v1.45.0
