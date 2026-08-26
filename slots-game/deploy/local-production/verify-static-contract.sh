@@ -225,9 +225,13 @@ require_exact_line \
   "$bootstrap_file" \
   'bootstrap.sh 必须使用 BuildKit mode=max 来源证明构建全部自有镜像。'
 require_exact_line \
-  '  if ! /usr/bin/lockf -s -t 0 9; then' \
+  '    /usr/bin/lockf -s -t 0 9 && lock_acquired=true' \
   "$common_file" \
-  '本机部署必须使用进程退出后自动恢复的 BSD 排他锁。'
+  'macOS 本机部署必须使用进程退出后自动恢复的 BSD 排他锁。'
+require_exact_line \
+  '    /usr/bin/flock -n 9 && lock_acquired=true' \
+  "$common_file" \
+  'Linux 合同环境必须使用同样绑定文件描述符的排他锁。'
 for locked_entrypoint in "$bootstrap_file" "$up_file" "$down_file" "$destroy_file"; do
   require_exact_line \
     'acquire_deployment_lock' \

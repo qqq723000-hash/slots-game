@@ -67,7 +67,12 @@ grep -F '另一个 bootstrap/up/down/destroy 正在操作本机部署' \
 wait "$holder_pid"
 holder_pid=''
 sh "$0" contender "$state_root"
-test "$(stat -f '%Lp' "$state_root/deployment.lock")" = 600
+if lock_mode="$(stat -f '%Lp' "$state_root/deployment.lock" 2>/dev/null)"; then
+  :
+else
+  lock_mode="$(stat -c '%a' -- "$state_root/deployment.lock")"
+fi
+test "$lock_mode" = 600
 
 approval_hash='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 printf '%s\n' \

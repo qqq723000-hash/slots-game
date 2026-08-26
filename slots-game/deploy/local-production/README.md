@@ -40,8 +40,9 @@ Valkey 只加入未发布到宿主机的内部 `admission` 网络，使用固定
 准备阶段记录的前序摘要、保留旧审批备份并原子提交候选。定义提交失败不会污染已提交审批，
 外部运营商审批也不会被自动覆盖。
 
-`bootstrap.sh`、`up.sh`、`down.sh` 与 `destroy.sh` 共用仓库外状态目录中的 BSD `lockf`
-排他锁；进程退出时锁由内核释放，不依赖可陈旧的 PID 文件。bootstrap 先用唯一候选 tag 完成
+`bootstrap.sh`、`up.sh`、`down.sh` 与 `destroy.sh` 共用仓库外状态目录中的内核排他锁；
+macOS 本机部署使用 BSD `lockf`，Linux 合同门禁使用等价的 util-linux `flock`。进程退出时锁由
+内核释放，不依赖可陈旧的 PID 文件。bootstrap 先用唯一候选 tag 完成
 静态检查、来源证明构建和镜像存在性核对，不覆盖 Compose 当前选择的已提交镜像，且自有镜像
 设置 `pull_policy: never`，不会从远端补取本机候选 tag；排空、定义和资源审批提交全部通过后，
 才原子替换 `compose.env` 使下一次启动选择候选 tag。`up.sh` 还会在启动任何容器前核对 Compose

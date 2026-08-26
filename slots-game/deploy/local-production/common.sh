@@ -12,6 +12,24 @@ compose_environment="$secrets_root/compose.env"
 deployment_lock_file="$state_root/deployment.lock"
 node_root="${HOME}/.local/opt/node-v22.22.0"
 
+permission_mode() {
+  if mode="$(stat -f '%Lp' "$1" 2>/dev/null)"; then
+    :
+  elif mode="$(stat -c '%a' -- "$1" 2>/dev/null)"; then
+    :
+  else
+    printf '%s\n' '无法读取本机部署文件权限。' >&2
+    exit 1
+  fi
+  case "$mode" in
+    ''|*[!0-9]*)
+      printf '%s\n' '本机部署文件权限格式无效。' >&2
+      exit 1
+      ;;
+  esac
+  printf '%s\n' "$mode"
+}
+
 require_docker() {
   command -v docker >/dev/null 2>&1 || { printf '%s\n' 'Docker CLI 不可用。' >&2; exit 1; }
   docker info >/dev/null 2>&1 || { printf '%s\n' '请先启动 Docker Desktop。' >&2; exit 1; }
@@ -26,23 +44,19 @@ require_node22() {
 
 require_state() {
   test -s "$compose_environment" || { printf '%s\n' '请先执行 bootstrap.sh。' >&2; exit 1; }
-  test "$(stat -f '%Lp' "$state_root")" = 700 || { printf '%s\n' '状态目录权限必须是 0700。' >&2; exit 1; }
+  test "$(permission_mode "$state_root")" = 700 || { printf '%s\n' '状态目录权限必须是 0700。' >&2; exit 1; }
 }
 
 # bootstrap/up/down/destroy 必须共用同一个内核级排他锁。锁文件本身会保留以保证
-# BSD lockf 的公平顺序；进程退出或被终止时，内核自动释放锁，不依赖清理一个可能
-# 已陈旧的 PID 文件。文件描述符由子脚本继承，因此 bootstrap 的 drain 检查与定义
-# 提交始终处在同一个不可分割的部署窗口内。
+# macOS 使用 BSD lockf，Linux 合同环境使用 util-linux flock；进程退出或被终止时，
+# 内核自动释放锁，不依赖清理一个可能已陈旧的 PID 文件。文件描述符由子脚本继承，
+# 因此 bootstrap 的 drain 检查与定义提交始终处在同一个不可分割的部署窗口内。
 acquire_deployment_lock() {
-  command -v /usr/bin/lockf >/dev/null 2>&1 || {
-    printf '%s\n' '系统缺少 /usr/bin/lockf，无法建立本机部署排他锁。' >&2
-    exit 1
-  }
   test -d "$state_root" && test ! -L "$state_root" || {
     printf '%s\n' '状态目录必须是可验证的真实目录，无法建立部署锁。' >&2
     exit 1
   }
-  test "$(stat -f '%Lp' "$state_root")" = 700 || {
+  test "$(permission_mode "$state_root")" = 700 || {
     printf '%s\n' '状态目录权限必须是 0700，无法建立部署锁。' >&2
     exit 1
   }
@@ -54,7 +68,17 @@ acquire_deployment_lock() {
   }
   chmod 0600 "$deployment_lock_file"
   exec 9>>"$deployment_lock_file"
-  if ! /usr/bin/lockf -s -t 0 9; then
+  lock_acquired=false
+  if command -v /usr/bin/lockf >/dev/null 2>&1; then
+    /usr/bin/lockf -s -t 0 9 && lock_acquired=true
+  elif command -v /usr/bin/flock >/dev/null 2>&1; then
+    /usr/bin/flock -n 9 && lock_acquired=true
+  else
+    exec 9>&-
+    printf '%s\n' '系统缺少 /usr/bin/lockf 或 /usr/bin/flock，无法建立本机部署排他锁。' >&2
+    exit 1
+  fi
+  if [ "$lock_acquired" != true ]; then
     exec 9>&-
     printf '%s\n' '另一个 bootstrap/up/down/destroy 正在操作本机部署，请等待其完成。' >&2
     exit 1
