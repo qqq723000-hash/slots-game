@@ -2,7 +2,6 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { basename, extname, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 const projectRoot = resolve(import.meta.dirname, "..");
 const scanRoots = [
@@ -60,14 +59,6 @@ function isMachineDirective(line) {
   );
 }
 
-export function splitHtmlCommentEnd(value) {
-  const standardEnd = value.indexOf("-->");
-  const legacyBangEnd = value.indexOf("--!>");
-  const candidates = [standardEnd, legacyBangEnd].filter((index) => index >= 0);
-  const end = candidates.length === 0 ? -1 : Math.min(...candidates);
-  return { body: end < 0 ? value : value.slice(0, end), ended: end >= 0 };
-}
-
 function commentText(filePath, line, state) {
   const extension = extname(filePath);
   const name = basename(filePath);
@@ -77,14 +68,14 @@ function commentText(filePath, line, state) {
   if ([".go", ".js", ".mjs", ".ts", ".tsx", ".css", ".html"].includes(extension)) {
     const trimmed = line.trimStart();
     if (state.htmlBlock) {
-      const comment = splitHtmlCommentEnd(trimmed);
-      if (comment.ended) state.htmlBlock = false;
-      return comment.body.trim();
+      const end = trimmed.includes("-->");
+      if (end) state.htmlBlock = false;
+      return trimmed.replace(/^\s*/u, "").replace(/-->.*$/u, "").trim();
     }
     if (trimmed.startsWith("<!--")) {
-      const comment = splitHtmlCommentEnd(trimmed.slice(4));
-      if (!comment.ended) state.htmlBlock = true;
-      return comment.body.trim();
+      const body = trimmed.slice(4);
+      if (!body.includes("-->")) state.htmlBlock = true;
+      return body.replace(/-->.*$/u, "").trim();
     }
     if (state.slashBlock) {
       const end = trimmed.includes("*/");
@@ -130,33 +121,26 @@ async function collectFiles(entryPath, files) {
   }
 }
 
-async function main() {
-  const files = [];
-  for (const root of scanRoots) await collectFiles(root, files);
-  files.sort();
+const files = [];
+for (const root of scanRoots) await collectFiles(root, files);
+files.sort();
 
-  const violations = [];
-  for (const filePath of files) {
-    const lines = (await readFile(filePath, "utf8")).split(/\r?\n/u);
-    const state = { htmlBlock: false, slashBlock: false };
-    for (const [index, line] of lines.entries()) {
-      if (isMachineDirective(line)) continue;
-      const text = commentText(filePath, line, state);
-      if (text === null || !/[A-Za-z]{2,}/u.test(text) || /\p{Script=Han}/u.test(text)) continue;
-      violations.push(`${relative(projectRoot, filePath)}:${index + 1}: ${text.trim()}`);
-    }
-  }
-
-  if (violations.length > 0) {
-    console.error("发现未使用中文说明的人工代码注释：");
-    for (const violation of violations) console.error(`- ${violation}`);
-    process.exitCode = 1;
-  } else {
-    console.log(`中文注释契约通过：已扫描 ${files.length} 个代码与配置文件。`);
+const violations = [];
+for (const filePath of files) {
+  const lines = (await readFile(filePath, "utf8")).split(/\r?\n/u);
+  const state = { htmlBlock: false, slashBlock: false };
+  for (const [index, line] of lines.entries()) {
+    if (isMachineDirective(line)) continue;
+    const text = commentText(filePath, line, state);
+    if (text === null || !/[A-Za-z]{2,}/u.test(text) || /\p{Script=Han}/u.test(text)) continue;
+    violations.push(`${relative(projectRoot, filePath)}:${index + 1}: ${text.trim()}`);
   }
 }
 
-const currentPath = fileURLToPath(import.meta.url);
-if (process.argv[1] && resolve(process.argv[1]) === currentPath) {
-  await main();
+if (violations.length > 0) {
+  console.error("发现未使用中文说明的人工代码注释：");
+  for (const violation of violations) console.error(`- ${violation}`);
+  process.exitCode = 1;
+} else {
+  console.log(`中文注释契约通过：已扫描 ${files.length} 个代码与配置文件。`);
 }

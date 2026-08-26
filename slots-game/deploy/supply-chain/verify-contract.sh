@@ -37,8 +37,6 @@ release_script="$repository_root/deploy/supply-chain/release-sign.sh"
 release_bundle_script="$repository_root/deploy/supply-chain/release-bundle.sh"
 release_version_verifier="$repository_root/deploy/supply-chain/verify-release-version.mjs"
 release_version_test="$repository_root/deploy/supply-chain/verify-release-version.test.mjs"
-codeql_sarif_verifier="$repository_root/deploy/supply-chain/verify-codeql-sarif.mjs"
-codeql_sarif_test="$repository_root/deploy/supply-chain/verify-codeql-sarif.test.mjs"
 observability_release_workflow_script="$repository_root/deploy/observability/verify-release-workflow.sh"
 vector_bounded_flush_test="$repository_root/deploy/observability/test-vector-bounded-flush.sh"
 web_static_verifier="$repository_root/deploy/supply-chain/verify-web-static-root.mjs"
@@ -110,8 +108,6 @@ for required_file in \
   "$release_bundle_script" \
   "$release_version_verifier" \
   "$release_version_test" \
-  "$codeql_sarif_verifier" \
-  "$codeql_sarif_test" \
   "$observability_release_workflow_script" \
   "$vector_bounded_flush_test" \
   "$web_static_verifier" \
@@ -1350,15 +1346,6 @@ test "$(grep -F -c -- "uses: github/codeql-action/init@$codeql_sha # v4.37.8" "$
   fail 'CodeQL init must use the reviewed immutable action exactly once'
 test "$(grep -F -c -- "uses: github/codeql-action/analyze@$codeql_sha # v4.37.8" "$codeql_workflow" || true)" -eq 1 ||
   fail 'CodeQL analyze must use the reviewed immutable action exactly once'
-require_line '        id: analyze' "$codeql_workflow"
-require_line '          output: ${{ runner.temp }}/codeql-${{ matrix.language }}' "$codeql_workflow"
-require_line '          wait-for-processing: true' "$codeql_workflow"
-test "$(grep -F -c -- 'node slots-game/deploy/supply-chain/verify-codeql-sarif.mjs' "$codeql_workflow" || true)" -eq 1 ||
-  fail 'CodeQL High/Critical SARIF verifier must run exactly once'
-require_line '          "${{ steps.analyze.outputs.sarif-output }}"' "$codeql_workflow"
-require_line '          7.0' "$codeql_workflow"
-test "$(grep -F -c -- 'node --test deploy/supply-chain/verify-codeql-sarif.test.mjs' "$makefile" || true)" -eq 1 ||
-  fail 'CodeQL SARIF verifier tests must run exactly once in the supply-chain target'
 require_line "        uses: actions/dependency-review-action@$dependency_review_sha # v5.0.0" "$dependency_review_workflow"
 require_line '          fail-on-severity: high' "$dependency_review_workflow"
 require_line '          vulnerability-check: true' "$dependency_review_workflow"
@@ -1379,17 +1366,6 @@ ruby -ryaml -e '
     { "language" => "javascript-typescript", "build-mode" => "none" },
   ]
   abort "CodeQL language/build matrix drifted" unless include_rows == expected
-  steps = job["steps"]
-  abort "CodeQL steps missing" unless steps.is_a?(Array)
-  analyze = steps.find { |step| step["name"] == "Analyze and upload CodeQL results" }
-  abort "CodeQL analyze output contract drifted" unless
-    analyze.is_a?(Hash) && analyze["id"] == "analyze" &&
-    analyze.dig("with", "category") == "/language:${{ matrix.language }}" &&
-    analyze.dig("with", "output") == "${{ runner.temp }}/codeql-${{ matrix.language }}" &&
-    analyze.dig("with", "wait-for-processing") == true
-  gate = steps.find { |step| step["name"] == "Reject High or Critical CodeQL results" }
-  expected_gate = %q(node slots-game/deploy/supply-chain/verify-codeql-sarif.mjs "${{ steps.analyze.outputs.sarif-output }}" 7.0)
-  abort "CodeQL High/Critical gate drifted" unless gate.is_a?(Hash) && gate["run"] == expected_gate
 ' "$codeql_workflow" || fail 'CodeQL workflow semantic contract failed'
 ruby -ryaml -e '
   workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)

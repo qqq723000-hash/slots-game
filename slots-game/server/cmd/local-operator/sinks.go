@@ -340,7 +340,7 @@ func (s *auditJSONLStore) Append(eventID string, encoded []byte) (bool, error) {
 	if int64(len(line)) > s.fileLimit-s.total {
 		return false, errors.New("audit store capacity is exhausted")
 	}
-	if err := writeFileFull(s.file, line); err != nil {
+	if err := writeFull(s.file, line); err != nil {
 		_ = s.file.Truncate(start)
 		return false, fmt.Errorf("append audit event: %w", err)
 	}
@@ -427,7 +427,7 @@ func (s *appendStore) appendLocked(encoded []byte, uniqueKey string) (bool, erro
 	if int64(len(encoded)) > s.fileLimit-s.total {
 		return false, errors.New("log store capacity is exhausted")
 	}
-	if err := writeFileFull(s.file, encoded); err != nil {
+	if err := writeFull(s.file, encoded); err != nil {
 		_ = s.file.Truncate(position)
 		return false, fmt.Errorf("append log batch: %w", err)
 	}
@@ -529,9 +529,7 @@ func rotateJSONLSegment(file **os.File, path string) error {
 
 func (s *appendStore) Close() error { return s.file.Close() }
 
-// writeFileFull 只接受已安全打开的普通文件；将参数收窄到 *os.File
-// 防止今后误把客户端提交内容写回 HTTP ResponseWriter。
-func writeFileFull(writer *os.File, encoded []byte) error {
+func writeFull(writer io.Writer, encoded []byte) error {
 	for len(encoded) > 0 {
 		written, err := writer.Write(encoded)
 		if err != nil {

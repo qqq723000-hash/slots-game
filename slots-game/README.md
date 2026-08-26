@@ -10,7 +10,7 @@ Demo/`XTS`/无真钱/非概率或 RTP 说明，不读取启动码、钱包、RGS
 生产经济链路的证据。未取得 `PUBLIC-INTERNET` 逐文件精确哈希授权时，工作流失败关闭且不能把
 该地址描述为已上线。
 
-当前源码交付元数据版本为 [`1.2.1`](VERSION)。该版本号必须与变更记录、Web package/lock、
+当前源码交付元数据版本为 [`1.2.0`](VERSION)。该版本号必须与变更记录、Web package/lock、
 Helm Chart 和发布示例一致；正式发布还需要创建同版本受保护 Tag、GitHub Release 说明，并保存
 三个 OCI 制品各自的 SBOM、来源证明、签名和不可变摘要，不能只凭版本文件宣称已经发布。
 
@@ -153,7 +153,7 @@ VITE_RGS_BASE_URL=https://rgs.example.com \
 VITE_RGS_BET_OPTIONS_MINOR=10,20,50,100,200 \
 VITE_RGS_DEFAULT_BET_MINOR=100 \
 VITE_RGS_HOST_ORIGIN=https://slots.example.com \
-WEB_RELEASE_VERSION=1.2.1 \
+WEB_RELEASE_VERSION=1.2.0 \
 WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
   make build-web-release-image
 ```
