@@ -664,6 +664,24 @@ func TestLimiterRejectsMalformedBackendReplyAndReadinessFailure(t *testing.T) {
 	}
 }
 
+func TestLimiterRejectsRetryAfterBeyondBucketTTL(t *testing.T) {
+	fake := &fakeExecutor{result: []int64{
+		0, int64(maximumBucketTTL/time.Millisecond) + 1,
+	}}
+	limiter, err := newLimiter(
+		fake,
+		Config{Timeout: 50 * time.Millisecond, Rate: 1, Burst: 1},
+		[]byte("01234567890123456789012345678901"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := limiter.Admit(context.Background(), "operator:known", time.Time{}); result.Decision != rgsapi.AdmissionBackendUnavailable {
+		t.Fatalf("oversized retry result = %+v", result)
+	}
+}
+
 func TestSecretFilesRequireAbsoluteRestrictedRegularFiles(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "secret")

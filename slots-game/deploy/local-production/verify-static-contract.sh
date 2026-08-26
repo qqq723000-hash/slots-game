@@ -281,6 +281,14 @@ require_exact_line \
   '    /usr/bin/flock -n 9 && lock_acquired=true' \
   "$common_file" \
   'Linux 合同环境必须使用同样绑定文件描述符的排他锁。'
+require_exact_line \
+  'needs_initial_compose_state() {' \
+  "$common_file" \
+  '本地部署必须能识别首次 bootstrap 在选择器提交前中断的恢复状态。'
+require_exact_line \
+  'if needs_initial_compose_state; then' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须按非空 compose.env 而不是密钥目录存在性恢复首次提交。'
 for locked_entrypoint in "$bootstrap_file" "$up_file" "$down_file" "$destroy_file"; do
   require_exact_line \
     'acquire_deployment_lock' \

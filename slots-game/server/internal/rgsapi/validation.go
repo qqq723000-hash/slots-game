@@ -186,13 +186,19 @@ func bindingFromSession(session rgs.Session) sessionBindingRequest {
 }
 
 func spinResultMatches(result rgs.SpinResult, request rgs.SpinRequest) bool {
-	return result.OperatorID == request.OperatorID && result.SessionID == request.SessionID &&
+	expectedCharge := request.BetMinor
+	if request.RoundKind == rgs.RoundKindFreeSpin {
+		expectedCharge = 0
+	}
+	return (request.RoundKind == rgs.RoundKindBase || request.RoundKind == rgs.RoundKindFreeSpin) &&
+		result.OperatorID == request.OperatorID && result.SessionID == request.SessionID &&
 		result.RoundID == request.RoundID && result.GameID == request.GameID &&
 		result.DefinitionVersion == request.DefinitionVersion && result.DefinitionHash == request.DefinitionHash &&
 		result.Currency == request.Currency && result.RoundKind == request.RoundKind &&
 		result.StartRevision == request.StartRevision && result.BetMinor == request.BetMinor &&
-		result.EndRevision <= rgs.MaxStateRevision && result.Sequence <= rgs.MaxClientSequence &&
-		result.ChargedBetMinor >= 0 && result.TotalWinMinor >= 0 && result.BalanceMinor >= 0 &&
+		result.StartRevision < rgs.MaxStateRevision && result.EndRevision == result.StartRevision+1 &&
+		result.Sequence > 0 && result.Sequence <= rgs.MaxClientSequence &&
+		result.ChargedBetMinor == expectedCharge && result.TotalWinMinor >= 0 && result.BalanceMinor >= 0 &&
 		apiIdentifierPattern.MatchString(result.ServerTransactionID) &&
 		apiIdentifierPattern.MatchString(result.WalletTransactionID)
 }

@@ -310,6 +310,18 @@ func TestEconomicAdmissionFailsClosedOnUnknownRouteTimeoutAndMalformedReply(t *t
 	}
 }
 
+func TestEconomicAdmissionRejectsRetryAfterBeyondBucketTTL(t *testing.T) {
+	fake := &fakeEconomicExecutor{result: []int64{
+		0, economicOperatorLimited, int64(maximumBucketTTL/time.Millisecond) + 1,
+	}}
+	admission := testEconomicAdmission(t, fake, []EconomicRoute{{
+		OperatorID: "operator-a", BackendID: "https://wallet.example",
+	}}, nil)
+	if result := admission.admitCost(context.Background(), "operator-a", 1); result.decision != economicBackendUnavailable {
+		t.Fatalf("oversized retry result = %+v", result)
+	}
+}
+
 func TestEconomicAdmissionCostUnitsAreExplicitAndBounded(t *testing.T) {
 	fake := &fakeEconomicExecutor{result: []int64{1, 0, 0}}
 	admission := testEconomicAdmission(t, fake, []EconomicRoute{{

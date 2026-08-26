@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"slots-game/server/internal/launch"
+	"slots-game/server/internal/rgs"
 )
 
 func TestValidateLaunchResultAllowsOnlyBoundedHistoricalReplay(t *testing.T) {
@@ -33,5 +34,48 @@ func TestValidateLaunchResultAllowsOnlyBoundedHistoricalReplay(t *testing.T) {
 	tooOld.ExpiresAt = now.Add(-launch.IdempotencyRetention)
 	if err := validateLaunchResult(tooOld, operatorLaunchRequest{}, now); err == nil {
 		t.Fatal("historical replay outside retention unexpectedly accepted")
+	}
+}
+
+func TestSpinResultMatchesRejectsInvalidCommittedTransition(t *testing.T) {
+	request := validSpinRequest()
+	valid := committedResult(request)
+	if !spinResultMatches(valid, request) {
+		t.Fatal("valid committed transition rejected")
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*rgs.SpinResult)
+	}{
+		{name: "revision does not advance", mutate: func(result *rgs.SpinResult) {
+			result.EndRevision = result.StartRevision
+		}},
+		{name: "zero sequence", mutate: func(result *rgs.SpinResult) {
+			result.Sequence = 0
+		}},
+		{name: "incorrect base charge", mutate: func(result *rgs.SpinResult) {
+			result.ChargedBetMinor = 0
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := valid
+			test.mutate(&result)
+			if spinResultMatches(result, request) {
+				t.Fatalf("invalid committed transition accepted: %+v", result)
+			}
+		})
+	}
+
+	freeSpinRequest := request
+	freeSpinRequest.RoundKind = rgs.RoundKindFreeSpin
+	freeSpin := committedResult(freeSpinRequest)
+	freeSpin.ChargedBetMinor = 0
+	if !spinResultMatches(freeSpin, freeSpinRequest) {
+		t.Fatal("valid free-spin committed transition rejected")
+	}
+	freeSpin.ChargedBetMinor = freeSpin.BetMinor
+	if spinResultMatches(freeSpin, freeSpinRequest) {
+		t.Fatal("charged free-spin committed transition accepted")
 	}
 }

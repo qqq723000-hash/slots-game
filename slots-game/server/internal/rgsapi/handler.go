@@ -840,12 +840,7 @@ func (h *Handler) writeAdmissionResult(writer http.ResponseWriter, requestID str
 	if result.Decision == AdmissionAllowed {
 		return true
 	}
-	retryAfter := result.RetryAfter
-	if retryAfter <= 0 {
-		retryAfter = time.Second
-	}
-	seconds := int64((retryAfter + time.Second - 1) / time.Second)
-	writer.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	writer.Header().Set("Retry-After", retryAfterHeaderValue(result.RetryAfter))
 	if result.Decision == AdmissionCapacityUnavailable {
 		h.writeError(writer, requestID, http.StatusServiceUnavailable, "CAPACITY_UNAVAILABLE", "service capacity is temporarily unavailable")
 		return false
@@ -978,17 +973,25 @@ func (h *Handler) writeError(writer http.ResponseWriter, requestID string, statu
 func (h *Handler) writeMappedError(writer http.ResponseWriter, requestID string, err error) {
 	var economicAdmissionError *rgs.EconomicAdmissionError
 	if errors.As(err, &economicAdmissionError) {
-		retryAfter := economicAdmissionError.RetryAfter
-		if retryAfter <= 0 {
-			retryAfter = time.Second
-		}
-		seconds := int64((retryAfter + time.Second - 1) / time.Second)
-		writer.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+		writer.Header().Set("Retry-After", retryAfterHeaderValue(economicAdmissionError.RetryAfter))
 	} else if errors.Is(err, rgs.ErrWalletUnavailable) {
 		writer.Header().Set("Retry-After", "1")
 	}
 	status, code, message := mapError(err)
 	h.writeError(writer, requestID, status, code, message)
+}
+
+// retryAfterHeaderValue 使用除法和余数向上取整，避免对接近 time.Duration 上限的
+// 依赖返回值执行 retryAfter+1s 而发生有符号整数溢出。非正值保持既有的一秒退避语义。
+func retryAfterHeaderValue(retryAfter time.Duration) string {
+	if retryAfter <= 0 {
+		retryAfter = time.Second
+	}
+	seconds := retryAfter / time.Second
+	if retryAfter%time.Second != 0 {
+		seconds++
+	}
+	return strconv.FormatInt(int64(seconds), 10)
 }
 
 func (h *Handler) writeOperatorNonceError(writer http.ResponseWriter, requestID string, err error) {

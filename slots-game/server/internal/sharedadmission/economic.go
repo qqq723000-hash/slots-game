@@ -330,6 +330,7 @@ func (admission *EconomicAdmission) admitCost(
 	)
 	if err != nil || len(result) != 3 || (result[0] != 0 && result[0] != 1) ||
 		result[1] < 0 || result[1] > 3 || result[2] < 0 ||
+		result[2] > int64(maximumBucketTTL/time.Millisecond) ||
 		(result[0] == 1 && (result[1] != 0 || result[2] != 0)) ||
 		(result[0] == 0 && (result[1] == 0 || result[2] == 0)) {
 		if parent.Err() != nil {

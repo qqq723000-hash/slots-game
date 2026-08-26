@@ -47,6 +47,12 @@ require_state() {
   test "$(permission_mode "$state_root")" = 700 || { printf '%s\n' '状态目录权限必须是 0700。' >&2; exit 1; }
 }
 
+# 密钥创建成功不代表首次 bootstrap 已提交：npm/build/审批等后续阶段仍可能中断。
+# 只有非空 compose.env 才是可启动镜像选择器；缺失或空文件都必须走首次选择器恢复路径。
+needs_initial_compose_state() {
+  test ! -s "$compose_environment"
+}
+
 # bootstrap/up/down/destroy 必须共用同一个内核级排他锁。锁文件本身会保留以保证
 # macOS 使用 BSD lockf，Linux 合同环境使用 util-linux flock；进程退出或被终止时，
 # 内核自动释放锁，不依赖清理一个可能已陈旧的 PID 文件。文件描述符由子脚本继承，

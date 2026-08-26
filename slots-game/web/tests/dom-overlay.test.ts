@@ -89,12 +89,16 @@ describe("game menu responsive navigation", () => {
     });
     const content = { scrollTop: 920 };
     const positions = { settings: 25, paytable: 0, rules: 140 };
+    const settingsButton = { setAttribute: vi.fn() };
+    const paytableButton = { setAttribute: vi.fn() };
     const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
     Object.assign(overlay as unknown as Record<string, unknown>, {
       activeMenuTab: "paytable",
       gameMenu: { dataset: { open: "true" } },
       gameMenuContent: content,
       gameMenuScrollPositions: positions,
+      settingsButton,
+      paytableButton,
       gameMenuTabs: [tab("settings"), tab("paytable"), tab("rules")],
       gameMenuPanels: [panel("settings"), panel("paytable"), panel("rules")],
       panelLifecycle: new UiPanelLifecycle(),
@@ -107,10 +111,14 @@ describe("game menu responsive navigation", () => {
     select("rules");
     expect(positions.paytable).toBe(920);
     expect(content.scrollTop).toBe(140);
+    expect(settingsButton.setAttribute).toHaveBeenLastCalledWith("aria-expanded", "false");
+    expect(paytableButton.setAttribute).toHaveBeenLastCalledWith("aria-expanded", "false");
     content.scrollTop = 510;
     select("paytable");
     expect(positions.rules).toBe(510);
     expect(content.scrollTop).toBe(0);
+    expect(settingsButton.setAttribute).toHaveBeenLastCalledWith("aria-expanded", "false");
+    expect(paytableButton.setAttribute).toHaveBeenLastCalledWith("aria-expanded", "true");
 
     const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
     expect(source).toMatch(/!open && wasOpen[\s\S]*gameMenuScrollPositions\[closingTab\][\s\S]*scrollTop/);

@@ -4059,6 +4059,10 @@ export class DomOverlay {
     const menuOpen = this.gameMenu.dataset.open === "true";
     if (menuOpen) this.gameMenuScrollPositions[previousTab] = this.gameMenuContent.scrollTop;
     this.activeMenuTab = tab;
+    // 两个外部 launcher 分别声明控制 Settings 与 Paytable 面板。菜单内切换标签时也要
+    // 同步它们的展开状态；否则辅助技术会继续把最初打开的面板报告为可见。
+    this.settingsButton.setAttribute("aria-expanded", String(menuOpen && tab === "settings"));
+    this.paytableButton.setAttribute("aria-expanded", String(menuOpen && tab === "paytable"));
     for (const control of this.gameMenuTabs) {
       const selected = control.dataset.menuTab === tab;
       control.classList.toggle("is-active", selected);

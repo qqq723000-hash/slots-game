@@ -12,12 +12,16 @@ acquire_deployment_lock
 new_state=false
 if [ ! -d "$secrets_root" ]; then
   (cd "$repository_root/server" && go run ./cmd/local-production-bootstrap "$secrets_root")
-  new_state=true
 elif [ ! -s "$secrets_root/deployment-metadata.json" ]; then
   printf '%s\n' '密钥目录已存在但不完整，拒绝覆盖。' >&2
   exit 1
 fi
 chmod 0700 "$secrets_root"
+# 首次运行可能已在密钥创建后、compose.env 提交前中断。重跑必须继续首次选择器
+# 路径，否则后面的 require_state 会把可恢复状态永久卡死。
+if needs_initial_compose_state; then
+  new_state=true
+fi
 # 旧版本机状态可能早于生产共享准入门禁。该幂等子命令只在四个 Valkey
 # 专用文件全部缺失时使用既有本地 CA 补齐材料；绝不旋转任何已有密钥。
 (cd "$repository_root/server" && \
