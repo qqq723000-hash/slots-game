@@ -13,6 +13,11 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      static_only:
+        description: 仅执行无云凭据的静态合同，不生成计划也不变更环境
+        required: true
+        default: true
+        type: boolean
       target_environment:
         description: 受保护的 Terraform 目标环境
         required: true
@@ -42,7 +47,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && !inputs.static_only && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: false
 
 jobs:
@@ -82,7 +87,7 @@ jobs:
           slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh
 
   terraform-plan:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.static_only
     needs: static-contract
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -312,7 +317,7 @@ jobs:
         run: rm -f "$TF_BACKEND_FILE" "$TFVARS_FILE" "${TFVARS_FILE}.fingerprinted"
 
   bind-terraform-plan:
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'
+    if: github.event_name == 'workflow_dispatch' && !inputs.static_only && inputs.operation == 'apply'
     needs:
       - static-contract
       - terraform-plan
@@ -351,7 +356,7 @@ jobs:
           rm -f "$metadata"
 
   terraform-apply:
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'
+    if: github.event_name == 'workflow_dispatch' && !inputs.static_only && inputs.operation == 'apply'
     needs:
       - static-contract
       - terraform-plan

@@ -39,7 +39,8 @@ required contexts，确保合并前与进入 `main` 后都得到对应动态检�
 三条 workflow 的 `pull_request` 触发器禁止配置 `paths`、`paths-ignore`、branch 或 event-type 过滤；否则与
 Branch Protection required check 组合时，未命中过滤条件的 PR 会永久停在 Waiting。`push` 到 `main` 仍可保留
 受控路径过滤。所有取得 OIDC、Environment 或 AWS 权限的 job 继续以
-`github.event_name == 'workflow_dispatch'` 失败闭合，因此任意 PR 只执行无凭据 `static-contract` job。
+`github.event_name == 'workflow_dispatch' && !inputs.static_only` 失败闭合，因此任意 PR 以及默认手动验证都只执行无凭据
+`static-contract` job。只有显式取消 `static_only` 并填写完整受保护输入，才能进入环境变更 job。
 
 ## Environment 命名
 
