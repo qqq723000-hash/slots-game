@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,7 +43,8 @@ func prepareMemoryRecoveryRoundWithProfile(
 	request.SessionID = sessionID
 	outcome := payableOutcome(game.EmptyFeatureState())
 	result := SpinResult{
-		OperatorID: operatorID, SessionID: sessionID, RoundID: roundID,
+		ResultSchemaVersion: ResultSchemaPaidFactsV1,
+		OperatorID:          operatorID, SessionID: sessionID, RoundID: roundID,
 		GameID: request.GameID, DefinitionVersion: request.DefinitionVersion,
 		DefinitionHash: request.DefinitionHash, Currency: request.Currency,
 		RoundKind: request.RoundKind, ServerTransactionID: walletOperationID(request),
@@ -663,6 +665,40 @@ func TestRecoveryQuarantinesWalletRouteOrCapabilityDrift(t *testing.T) {
 				t.Fatalf("persisted quarantine = record:%+v error:%v", persisted, getErr)
 			}
 		})
+	}
+}
+
+func TestRecoveryCommitFailurePersistsStableReasonWithoutSecret(t *testing.T) {
+	const secret = "https://wallet-user:password@wallet.internal/player-a/round-a"
+	store := NewMemoryRepository()
+	createTestSession(t, store, baseSession())
+	repository := &commitFailureRepository{
+		Repository: store,
+		failure:    errors.Join(ErrRevisionConflict, errors.New(secret)),
+	}
+	wallet := newTestWallet(10_000)
+	wallet.ambiguousAfterApply = true
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	coordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
+	request := baseRequest("round-recovery-stable-reason", 100, 0)
+
+	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("Spin() error = %v, want ErrWalletPending", err)
+	}
+	if _, err := coordinator.Reconcile(context.Background(), request.Key()); !errors.Is(err, ErrManualReview) {
+		t.Fatalf("Reconcile() error = %v, want ErrManualReview", err)
+	}
+	record, err := store.GetRound(context.Background(), request.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.reason != ManualReviewReasonCommitRevisionConflict ||
+		record.FailureReason != ManualReviewReasonCommitRevisionConflict ||
+		strings.Contains(record.FailureReason, secret) || strings.Contains(record.FailureReason, "password") {
+		t.Fatalf("recovery manual-review reason = wrapper:%q record:%q",
+			repository.reason, record.FailureReason)
 	}
 }
 

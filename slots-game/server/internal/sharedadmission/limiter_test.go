@@ -58,22 +58,51 @@ func TestTokenBucketScriptUsesOneAllowedWriteAndZeroDeniedWrites(t *testing.T) {
 }
 
 type fakeExecutor struct {
+	result          []int64
+	err             error
+	key             string
+	args            []string
+	wait            bool
+	calls           int
+	steps           []fakeExecution
+	keys            []string
+	modes           []string
+	argumentHistory [][]string
+}
+
+type fakeExecution struct {
 	result []int64
 	err    error
-	key    string
-	args   []string
-	ping   error
-	wait   bool
-	calls  int
+}
+
+func (fake *fakeExecutor) EvaluateDirect(ctx context.Context, key string, args []string) ([]int64, error) {
+	return fake.evaluate(ctx, "EVAL", key, args)
 }
 
 func (fake *fakeExecutor) Evaluate(ctx context.Context, key string, args []string) ([]int64, error) {
+	return fake.evaluate(ctx, "EVALSHA", key, args)
+}
+
+func (fake *fakeExecutor) evaluate(
+	ctx context.Context,
+	mode string,
+	key string,
+	args []string,
+) ([]int64, error) {
 	fake.key = key
 	fake.calls++
 	fake.args = append([]string(nil), args...)
+	fake.keys = append(fake.keys, key)
+	fake.modes = append(fake.modes, mode)
+	fake.argumentHistory = append(fake.argumentHistory, append([]string(nil), args...))
 	if fake.wait {
 		<-ctx.Done()
 		return nil, ctx.Err()
+	}
+	if len(fake.steps) != 0 {
+		step := fake.steps[0]
+		fake.steps = fake.steps[1:]
+		return append([]int64(nil), step.result...), step.err
 	}
 	return append([]int64(nil), fake.result...), fake.err
 }
@@ -114,8 +143,168 @@ func TestLimiterBoundsBackendWait(t *testing.T) {
 	}
 }
 
-func (fake *fakeExecutor) Ping(context.Context) error { return fake.ping }
-func (fake *fakeExecutor) Close()                     {}
+func (fake *fakeExecutor) Close() {}
+
+func TestLimiterCheckExecutesAnonymousShortLivedBasicCanaryTwice(t *testing.T) {
+	fake := &fakeExecutor{result: []int64{1, 0}}
+	limiter, err := newLimiter(fake, Config{
+		Timeout: 50 * time.Millisecond,
+		Rate:    20,
+		Burst:   40,
+	}, []byte("01234567890123456789012345678901"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := limiter.Check(context.Background()); err != nil {
+		t.Fatalf("first basic canary: %v", err)
+	}
+	if err := limiter.Check(context.Background()); err != nil {
+		t.Fatalf("second basic canary: %v", err)
+	}
+	if fake.calls != 4 || len(fake.keys) != 4 || len(fake.argumentHistory) != 4 {
+		t.Fatalf("basic canary calls/keys/arguments = %d/%d/%d, want 4/4/4",
+			fake.calls, len(fake.keys), len(fake.argumentHistory))
+	}
+	if fake.keys[0] != fake.keys[1] || fake.keys[2] != fake.keys[3] || fake.keys[0] == fake.keys[2] {
+		t.Fatalf("basic canary key reuse = %#v", fake.keys)
+	}
+	if got := strings.Join(fake.modes, ","); got != "EVAL,EVALSHA,EVAL,EVALSHA" {
+		t.Fatalf("basic canary command order = %q", got)
+	}
+	for _, key := range []string{fake.keys[0], fake.keys[2]} {
+		const marker = "startup-canary:"
+		if !strings.HasPrefix(key, keyPrefix+marker) || !strings.HasSuffix(key, "}") {
+			t.Fatalf("basic canary escaped anonymous namespace: %q", key)
+		}
+		nonce := strings.TrimSuffix(strings.TrimPrefix(key, keyPrefix+marker), "}")
+		if len(nonce) != basicCanaryNonceBytes*2 {
+			t.Fatalf("basic canary nonce length = %d, want %d", len(nonce), basicCanaryNonceBytes*2)
+		}
+		for _, character := range nonce {
+			if !strings.ContainsRune("0123456789abcdef", character) {
+				t.Fatalf("basic canary nonce is not lowercase hexadecimal: %q", nonce)
+			}
+		}
+	}
+	wantArguments := []string{
+		fmt.Sprint(basicCanaryCapacityMilli),
+		fmt.Sprint(basicCanaryRateMilliPerSecond),
+	}
+	for index, arguments := range fake.argumentHistory {
+		if strings.Join(arguments, ",") != strings.Join(wantArguments, ",") {
+			t.Fatalf("basic canary arguments[%d] = %#v, want %#v", index, arguments, wantArguments)
+		}
+	}
+	fillMilliseconds := (basicCanaryCapacityMilli*1_000 + basicCanaryRateMilliPerSecond - 1) /
+		basicCanaryRateMilliPerSecond
+	if ttl := time.Duration(fillMilliseconds+1_000) * time.Millisecond; ttl != 1001*time.Millisecond {
+		t.Fatalf("basic canary expiry = %s, want 1.001s", ttl)
+	}
+}
+
+func TestLimiterCheckRejectsMalformedOrFailedCanaryReply(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		steps     []fakeExecution
+		wantCalls int
+	}{
+		{name: "first reply truncated", steps: []fakeExecution{{result: []int64{1}}}, wantCalls: 1},
+		{name: "first reply denied", steps: []fakeExecution{{result: []int64{0, 1}}}, wantCalls: 1},
+		{name: "second reply malformed", steps: []fakeExecution{
+			{result: []int64{1, 0}}, {result: []int64{1, -1}},
+		}, wantCalls: 2},
+		{name: "second call failed", steps: []fakeExecution{
+			{result: []int64{1, 0}}, {err: errors.New("secret backend endpoint")},
+		}, wantCalls: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &fakeExecutor{steps: test.steps}
+			limiter, err := newLimiter(fake, Config{
+				Timeout: 50 * time.Millisecond, Rate: 1, Burst: 1,
+			}, []byte("01234567890123456789012345678901"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkErr := limiter.Check(context.Background())
+			if checkErr == nil || !strings.Contains(checkErr.Error(), "basic canary") ||
+				strings.Contains(checkErr.Error(), "secret backend endpoint") {
+				t.Fatalf("basic canary error = %v", checkErr)
+			}
+			if fake.calls != test.wantCalls {
+				t.Fatalf("basic canary calls = %d, want %d", fake.calls, test.wantCalls)
+			}
+		})
+	}
+}
+
+func TestLimiterCheckFailsWhenRequiredEvalAndScriptACLCommandsAreBlocked(t *testing.T) {
+	for _, test := range []struct {
+		command   string
+		steps     []fakeExecution
+		wantCalls int
+		wantModes string
+	}{
+		{
+			command: "EVAL",
+			steps: []fakeExecution{{
+				err: errors.New("NOPERM this user has no permissions to run the 'eval' command"),
+			}},
+			wantCalls: 1,
+			wantModes: "EVAL",
+		},
+		{
+			command: "EVALSHA",
+			steps: []fakeExecution{
+				{result: []int64{1, 0}},
+				{err: errors.New("NOPERM this user has no permissions to run the 'evalsha' command")},
+			},
+			wantCalls: 2,
+			wantModes: "EVAL,EVALSHA",
+		},
+		{
+			command: "SET",
+			steps: []fakeExecution{{
+				err: errors.New("NOPERM this user has no permissions to run the 'set' command"),
+			}},
+			wantCalls: 1,
+			wantModes: "EVAL",
+		},
+		{
+			command: "PTTL",
+			steps: []fakeExecution{
+				{result: []int64{1, 0}},
+				{err: errors.New("NOPERM this user has no permissions to run the 'pttl' command")},
+			},
+			wantCalls: 2,
+			wantModes: "EVAL,EVALSHA",
+		},
+	} {
+		t.Run(test.command, func(t *testing.T) {
+			fake := &fakeExecutor{steps: test.steps}
+			limiter, err := newLimiter(fake, Config{
+				Timeout: 50 * time.Millisecond, Rate: 1, Burst: 1,
+			}, []byte("01234567890123456789012345678901"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkErr := limiter.Check(context.Background())
+			if checkErr == nil {
+				t.Fatalf("missing %s ACL permission passed startup", test.command)
+			}
+			if strings.Contains(strings.ToLower(checkErr.Error()), "noperm") ||
+				strings.Contains(checkErr.Error(), test.command) {
+				t.Fatalf("missing %s ACL leaked backend detail: %v", test.command, checkErr)
+			}
+			if fake.calls != test.wantCalls {
+				t.Fatalf("missing %s ACL calls = %d, want %d", test.command, fake.calls, test.wantCalls)
+			}
+			if got := strings.Join(fake.modes, ","); got != test.wantModes {
+				t.Fatalf("missing %s ACL command order = %q, want %q", test.command, got, test.wantModes)
+			}
+		})
+	}
+}
 
 func TestLimiterHashesIdentityAndSeparatesDecisions(t *testing.T) {
 	metrics := &platform.Metrics{}
@@ -154,6 +343,9 @@ func TestLimiterHashesIdentityAndSeparatesDecisions(t *testing.T) {
 	if result.Decision != rgsapi.AdmissionBackendUnavailable || metrics.SharedAdmissionErrors.Load() != 1 {
 		t.Fatalf("result = %+v, error metric = %d", result, metrics.SharedAdmissionErrors.Load())
 	}
+	if got := strings.Join(fake.modes, ","); got != "EVALSHA,EVALSHA,EVALSHA" {
+		t.Fatalf("ordinary Admit left cached EVALSHA path: %q", got)
+	}
 	var exposition bytes.Buffer
 	if err := metrics.WritePrometheus(&exposition); err != nil {
 		t.Fatal(err)
@@ -185,6 +377,83 @@ func TestLimiterCancellationDoesNotOpenGlobalBackendCircuit(t *testing.T) {
 	fake.result = []int64{1, 0}
 	if result := limiter.Admit(context.Background(), "client:operator-b:session-b", time.Time{}); result.Decision != rgsapi.AdmissionAllowed || fake.calls != 2 {
 		t.Fatalf("post-cancellation admission = %+v calls=%d", result, fake.calls)
+	}
+}
+
+func TestLimiterHealthTracksCanaryRuntimeFailureAndCallerCancellation(t *testing.T) {
+	metrics := &platform.Metrics{}
+	fake := &fakeExecutor{result: []int64{1, 0}}
+	limiter, err := newLimiter(fake, Config{Timeout: 50 * time.Millisecond, Rate: 1, Burst: 1},
+		[]byte("01234567890123456789012345678901"), metrics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	limiter.now = func() time.Time { return now }
+
+	assertEconomicAdmissionHealth(t, metrics, 0, 0)
+	if err := limiter.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// 基础 canary 成功仍不能宣称原子经济 Lua 路径已经就绪。
+	assertEconomicAdmissionHealth(t, metrics, 0, 0)
+	metrics.ObserveEconomicAdmissionHealth(true, now.Add(time.Second))
+	assertEconomicAdmissionHealth(t, metrics, 1, now.Unix())
+
+	fake.steps = []fakeExecution{
+		{result: []int64{1, 0}},
+		{err: errors.New("second canary failed")},
+	}
+	if err := limiter.Check(context.Background()); err == nil {
+		t.Fatal("failed basic canary was accepted")
+	}
+	assertEconomicAdmissionHealth(t, metrics, 0, now.Unix())
+
+	fake.steps = nil
+	now = now.Add(2 * time.Second)
+	if err := limiter.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertEconomicAdmissionHealth(t, metrics, 1, now.Add(-time.Second).Unix())
+
+	fake.err = errors.New("backend failed")
+	now = now.Add(time.Second)
+	if result := limiter.Admit(context.Background(), "operator:known", time.Time{}); result.Decision != rgsapi.AdmissionBackendUnavailable {
+		t.Fatalf("failed runtime admission = %+v", result)
+	}
+	assertEconomicAdmissionHealth(t, metrics, 0, now.Add(-2*time.Second).Unix())
+
+	fake.err = nil
+	now = now.Add(2 * time.Second)
+	if result := limiter.Admit(context.Background(), "operator:known", time.Time{}); result.Decision != rgsapi.AdmissionAllowed {
+		t.Fatalf("recovered runtime admission = %+v", result)
+	}
+	assertEconomicAdmissionHealth(t, metrics, 1, now.Add(-4*time.Second).Unix())
+
+	fake.wait = true
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	now = now.Add(time.Second)
+	if result := limiter.Admit(ctx, "operator:known", time.Time{}); result.Decision != rgsapi.AdmissionBackendUnavailable {
+		t.Fatalf("cancelled runtime admission = %+v", result)
+	}
+	// 调用方取消会让本次请求失败闭合，但不应改变依赖健康状态。
+	assertEconomicAdmissionHealth(t, metrics, 1, now.Add(-5*time.Second).Unix())
+}
+
+func assertEconomicAdmissionHealth(t *testing.T, metrics *platform.Metrics, ready, lastSuccessUnix int64) {
+	t.Helper()
+	var exposition bytes.Buffer
+	if err := metrics.WritePrometheus(&exposition); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		fmt.Sprintf("rgs_economic_admission_ready %d", ready),
+		fmt.Sprintf("rgs_economic_admission_last_success_timestamp_seconds %d", lastSuccessUnix),
+	} {
+		if !strings.Contains(exposition.String(), expected) {
+			t.Fatalf("metrics missing %q:\n%s", expected, exposition.String())
+		}
 	}
 }
 
@@ -269,8 +538,15 @@ func (executor *concurrentKeyExecutor) Evaluate(
 	return []int64{1, 0}, nil
 }
 
-func (*concurrentKeyExecutor) Ping(context.Context) error { return nil }
-func (*concurrentKeyExecutor) Close()                     {}
+func (executor *concurrentKeyExecutor) EvaluateDirect(
+	ctx context.Context,
+	key string,
+	args []string,
+) ([]int64, error) {
+	return executor.Evaluate(ctx, key, args)
+}
+
+func (*concurrentKeyExecutor) Close() {}
 
 func TestLimiterSeparatesOperatorAndSessionBucketsUnderConcurrency(t *testing.T) {
 	executor := &concurrentKeyExecutor{keys: make(map[string]int)}
@@ -374,7 +650,7 @@ func TestSharedAdmissionSourcePinsBoundedSynchronousPool(t *testing.T) {
 }
 
 func TestLimiterRejectsMalformedBackendReplyAndReadinessFailure(t *testing.T) {
-	fake := &fakeExecutor{result: []int64{9}, ping: errors.New("ping failed")}
+	fake := &fakeExecutor{result: []int64{9}}
 	metrics := &platform.Metrics{}
 	limiter, err := newLimiter(fake, Config{Timeout: 50 * time.Millisecond, Rate: 1, Burst: 1}, []byte("01234567890123456789012345678901"), metrics)
 	if err != nil {
@@ -383,7 +659,7 @@ func TestLimiterRejectsMalformedBackendReplyAndReadinessFailure(t *testing.T) {
 	if result := limiter.Admit(context.Background(), "operator:known", time.Time{}); result.Decision != rgsapi.AdmissionBackendUnavailable {
 		t.Fatalf("malformed result = %+v", result)
 	}
-	if err := limiter.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "ping") {
+	if err := limiter.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "canary") {
 		t.Fatalf("readiness error = %v", err)
 	}
 }

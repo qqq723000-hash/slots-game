@@ -15,6 +15,7 @@ var (
 	ErrSessionNotFound = errors.New("rgs: session not found")
 	ErrSessionExists   = errors.New("rgs: session already exists")
 	ErrSessionExpired  = errors.New("rgs: session expired")
+	ErrSessionTimeout  = errors.New("rgs: session timed out from inactivity")
 	// ErrSessionIntegrity 与 ErrManualReview 分离，避免协调器在隔离损坏会话
 	// 时重写仍有经济副作用待决的轮次；HTTP 适配器仍将二者统一暴露为 MANUAL_REVIEW。
 	ErrSessionIntegrity             = errors.New("rgs: session integrity validation failed")
@@ -27,6 +28,8 @@ var (
 	ErrResultDeliveryMismatch       = errors.New("rgs: result delivery receipt mismatch")
 	ErrRoundRejected                = errors.New("rgs: round rejected")
 	ErrManualReview                 = errors.New("rgs: round requires manual review")
+	ErrRiskPending                  = errors.New("rgs: round requires risk approval")
+	ErrRiskDecisionConflict         = errors.New("rgs: risk decision conflicts with existing decision")
 	ErrWalletPending                = errors.New("rgs: wallet result is pending")
 	ErrWalletRejected               = errors.New("rgs: wallet rejected round")
 	ErrWalletReceiptInvalid         = errors.New("rgs: wallet receipt is invalid")
@@ -92,6 +95,7 @@ type RoundStatus string
 
 const (
 	RoundPrepared      RoundStatus = "PREPARED"
+	RoundRiskPending   RoundStatus = "RISK_PENDING"
 	RoundWalletPending RoundStatus = "WALLET_PENDING"
 	RoundCommitted     RoundStatus = "COMMITTED"
 	RoundRejected      RoundStatus = "REJECTED"
@@ -114,26 +118,35 @@ type Session struct {
 	Jurisdiction      string
 	Status            SessionStatus
 	ExpiresAt         time.Time
-	BalanceMinor      int64
-	Revision          uint64
-	Sequence          uint64
-	Feature           game.FeatureState
-	PendingRoundID    string
+	// IdleDisconnectAt 是数据库支持的权威截止时间。传输 keepalive、token refresh
+	// 与结果恢复都不能推进它；只有成功接受的新经济轮次或 operator relaunch 可以。
+	IdleDisconnectAt time.Time
+	IdleDisconnect   time.Duration
+	// TransportGeneration 隔离每个浏览器 token；relaunch 推进后，旧标签 token 永久失效。
+	TransportGeneration uint64
+	// ServerTime 是传输生命周期操作返回的瞬时数据库观测值，绝不持久化为经济会话状态。
+	ServerTime     time.Time
+	BalanceMinor   int64
+	Revision       uint64
+	Sequence       uint64
+	Feature        game.FeatureState
+	PendingRoundID string
 }
 
 // SpinRequest 包含轮次经济身份的全部字段。调用方提供 StartRevision，防止旧客户端
 // 静默使用更新后的特性状态进行求值。
 type SpinRequest struct {
-	OperatorID        string
-	SessionID         string
-	RoundID           string
-	GameID            string
-	DefinitionVersion string
-	DefinitionHash    string
-	Currency          string
-	RoundKind         RoundKind
-	BetMinor          int64
-	StartRevision     uint64
+	OperatorID          string
+	SessionID           string
+	RoundID             string
+	GameID              string
+	DefinitionVersion   string
+	DefinitionHash      string
+	Currency            string
+	RoundKind           RoundKind
+	BetMinor            int64
+	StartRevision       uint64
+	TransportGeneration uint64
 }
 
 type RoundKey struct {
@@ -148,6 +161,10 @@ func (r SpinRequest) Key() RoundKey {
 
 // SpinResult 是可规范重放的结果模型；BalanceMinor 只能在提交时由已验证钱包回执填入。
 type SpinResult struct {
+	// ResultSchemaVersion 绑定持久化的经济表示。空值专用于在名义奖励与已支付奖励
+	// 拆分前写入的历史结果；所有新准备的结果都必须使用当前模式。
+	// omitempty 可保持历史 JSON 和哈希投影完全不变。
+	ResultSchemaVersion string `json:",omitempty"`
 	OperatorID          string
 	SessionID           string
 	RoundID             string
@@ -165,10 +182,13 @@ type SpinResult struct {
 	ChargedBetMinor     int64
 	BalanceMinor        int64
 	TotalWinMinor       int64
-	Grid                game.Grid
-	Wins                []game.Win
-	Events              []game.Event
-	FeatureState        game.FeatureState
+	// IdleDisconnectAt 是只在 HTTP 边界填充的传输元数据；排除在规范经济 JSON 之外，
+	// 才能保持全部历史 hash 不变。
+	IdleDisconnectAt time.Time `json:"-"`
+	Grid             game.Grid
+	Wins             []game.Win
+	Events           []game.Event
+	FeatureState     game.FeatureState
 }
 
 // ResultDelivery 是等待客户端消费回执的权威已提交结果。回执只证明客户端接受了规范载荷，
@@ -188,11 +208,12 @@ type ResultDelivery struct {
 
 // ResultDeliveryAcknowledgement 将消费回执绑定到完整已提交结果身份；幂等确认要求全部字段存在。
 type ResultDeliveryAcknowledgement struct {
-	OperatorID string
-	SessionID  string
-	RoundID    string
-	Sequence   uint64
-	ResultHash string
+	OperatorID          string
+	SessionID           string
+	RoundID             string
+	Sequence            uint64
+	ResultHash          string
+	TransportGeneration uint64
 }
 
 // RoundRecord 是可恢复聚合；调用 ApplyRound 前必须先写入预备结果与钱包命令。
@@ -252,6 +273,11 @@ func validateSession(session Session) error {
 	}
 	if session.ExpiresAt.IsZero() {
 		return fmt.Errorf("%w: session expiry is required", ErrInvalidRequest)
+	}
+	if session.IdleDisconnect < time.Second || session.IdleDisconnect > 24*time.Hour ||
+		session.IdleDisconnectAt.IsZero() || session.IdleDisconnectAt.After(session.ExpiresAt) ||
+		session.TransportGeneration == 0 || session.TransportGeneration > MaxStateRevision {
+		return fmt.Errorf("%w: invalid idle-disconnect state", ErrInvalidRequest)
 	}
 	if session.BalanceMinor < 0 {
 		return fmt.Errorf("%w: negative balance", ErrInvalidRequest)
@@ -325,6 +351,9 @@ func validateSpinRequest(request SpinRequest) error {
 	if request.StartRevision > MaxStateRevision {
 		return fmt.Errorf("%w: starting revision exceeds the persistent protocol limit", ErrInvalidRequest)
 	}
+	if request.TransportGeneration == 0 || request.TransportGeneration > MaxStateRevision {
+		return fmt.Errorf("%w: invalid transport generation", ErrInvalidRequest)
+	}
 	if request.RoundKind != RoundKindBase && request.RoundKind != RoundKindFreeSpin && request.RoundKind != RoundKindBonus {
 		return fmt.Errorf("%w: invalid round kind", ErrInvalidRequest)
 	}
@@ -342,6 +371,7 @@ func ValidateResultDeliveryAcknowledgement(receipt ResultDeliveryAcknowledgement
 		!identifierPattern.MatchString(receipt.SessionID) ||
 		!identifierPattern.MatchString(receipt.RoundID) ||
 		receipt.Sequence == 0 || receipt.Sequence > MaxClientSequence ||
+		receipt.TransportGeneration == 0 || receipt.TransportGeneration > MaxStateRevision ||
 		!digestPattern.MatchString(receipt.ResultHash) {
 		return fmt.Errorf("%w: invalid result delivery acknowledgement", ErrInvalidRequest)
 	}
@@ -352,6 +382,9 @@ func ValidateResultDeliveryAcknowledgement(receipt ResultDeliveryAcknowledgement
 // 恢复方不得使用已推进的会话或局后 FeatureState 反推该输入。
 func ValidateResultDelivery(delivery ResultDelivery) error {
 	result := delivery.Result
+	if err := NormalizePersistedSpinResult(&result); err != nil {
+		return fmt.Errorf("%w: invalid result schema", ErrInvalidRequest)
+	}
 	if !identifierPattern.MatchString(delivery.OperatorID) ||
 		!identifierPattern.MatchString(delivery.SessionID) ||
 		!identifierPattern.MatchString(delivery.RoundID) ||

@@ -697,6 +697,7 @@ describe("VisualFixtureGateway", () => {
         id: "continue-prism-wild-x5-four-boxes",
         symbol: "PRISM",
         ways: 2,
+        nominalAmountMinor: "500",
         amountMinor: "500",
         multiplier: 5,
         cells: [
@@ -714,6 +715,7 @@ describe("VisualFixtureGateway", () => {
             ],
             multiplier: 5,
             baseAmountMinor: "50",
+            nominalAmountMinor: "250",
             amountMinor: "250",
           },
           {
@@ -724,6 +726,7 @@ describe("VisualFixtureGateway", () => {
             ],
             multiplier: 5,
             baseAmountMinor: "50",
+            nominalAmountMinor: "250",
             amountMinor: "250",
           },
         ],
@@ -732,6 +735,7 @@ describe("VisualFixtureGateway", () => {
         id: "continue-orbit-plain-sentinel",
         symbol: "ORBIT",
         ways: 1,
+        nominalAmountMinor: "300",
         amountMinor: "300",
         multiplier: 1,
         cells: [
@@ -745,9 +749,10 @@ describe("VisualFixtureGateway", () => {
             { reel: 1, row: 1 },
             { reel: 2, row: 2 },
           ],
-          multiplier: 1,
-          baseAmountMinor: "300",
-          amountMinor: "300",
+            multiplier: 1,
+            baseAmountMinor: "300",
+            nominalAmountMinor: "300",
+            amountMinor: "300",
         }],
       },
     ]);
@@ -807,6 +812,7 @@ describe("VisualFixtureGateway", () => {
       id: "jet-path",
       symbol: "CIRCUIT",
       ways: 1,
+      nominalAmountMinor: "200",
       amountMinor: "200",
       cells: [
         { reel: 0, row: 0 },
@@ -821,6 +827,7 @@ describe("VisualFixtureGateway", () => {
         ],
         multiplier: 1,
         baseAmountMinor: "200",
+        nominalAmountMinor: "200",
         amountMinor: "200",
       }],
     }]);
@@ -1177,6 +1184,7 @@ describe("VisualFixtureGateway", () => {
       "vault.awarded",
       "vault.awarded",
       "vault.awarded",
+      "win_cap.reached",
     ]);
     expect(ladderRound.events.filter(({ type }) => type === "vaults.upgrade.started"))
       .toEqual([
@@ -1207,32 +1215,37 @@ describe("VisualFixtureGateway", () => {
         row,
         prize: "GRAND",
         multiplier: 1_000,
-        amountMinor: "100000",
+        amountMinor: row === 2 ? "50000" : "100000",
       })));
+    expect(ladderRound.events.at(-1)).toEqual({
+      type: "win_cap.reached",
+      multiplier: 2_500,
+      cumulativeWinMinor: "250000",
+    });
     expect(ladderRound).toMatchObject({
       sequence: 3,
       chargedBetMinor: "0",
-      totalWinMinor: "300000",
-      balanceMinor: "399900",
+      totalWinMinor: "250000",
+      balanceMinor: "349900",
       featureState: {
         mode: "OVERDRIVE",
         freeSpinsRemaining: 6,
         freeSpinsPlayed: 2,
         baseBetMinor: "100",
-        freeSpinsWinMinor: "300000",
+        freeSpinsWinMinor: "250000",
       },
     });
     expect(terminal).toMatchObject({
       sequence: 9,
       chargedBetMinor: "0",
       totalWinMinor: "0",
-      balanceMinor: "399900",
+      balanceMinor: "349900",
       featureState: { mode: "BASE", freeSpinsRemaining: 0 },
       events: [{
         type: "free_spins.completed",
         mode: "OVERDRIVE",
         awarded: 8,
-        cumulativeWinMinor: "300000",
+        cumulativeWinMinor: "250000",
       }],
     });
     expect(results.slice(1, 8).map(({ featureState }) => (

@@ -66,6 +66,7 @@ output "edge_security_contract" {
     origin_type                  = "private-s3-oac"
     origin_public_access_blocked = true
     api_proxy                    = false
+    viewer_http_version          = "http2and3"
     web_acl_arn                  = var.waf_web_acl_arn
     web_acl_scope                = "CLOUDFRONT"
     waf_ownership                = "enterprise-platform"

@@ -273,6 +273,95 @@ if [ "$valkey_ready" != 1 ]; then
   exit 1
 fi
 
+# PING 只证明 TLS/ACL 认证可用。这里用独立、无业务身份且同 slot 的 CI-only key，
+# 通过 EVAL 和缓存后的 EVALSHA 各执行一次生产两类 Lua 所需命令的并集；不发 HTTP
+# 业务请求，也不复用匿名 20rps 桶。写入先受 1 秒 TTL 约束，再确认已经自然清理。
+shared_admission_lua_probe_key_a='rgs:shared-admission:v2:{ci-only-acl-lua}:state-a'
+shared_admission_lua_probe_key_b='rgs:shared-admission:v2:{ci-only-acl-lua}:state-b'
+shared_admission_lua_probe="$(printf '%s\n' \
+  "local server_time = redis.call('TIME')" \
+  'local seconds = tonumber(server_time[1])' \
+  'local microseconds = tonumber(server_time[2])' \
+  'if not seconds or not microseconds or seconds < 0 or microseconds < 0 or microseconds >= 1000000 then' \
+  "  return redis.error_reply('ci-only invalid server time')" \
+  'end' \
+  'local ttl_ms = tonumber(ARGV[4])' \
+  'if not ttl_ms or ttl_ms ~= math.floor(ttl_ms) or ttl_ms < 1 or ttl_ms > 1000 then' \
+  "  return redis.error_reply('ci-only invalid ttl')" \
+  'end' \
+  "redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl_ms)" \
+  "local first_value = redis.call('GET', KEYS[1])" \
+  "local first_ttl = redis.call('PTTL', KEYS[1])" \
+  'if first_value ~= ARGV[1] or first_ttl < 1 or first_ttl > ttl_ms then' \
+  "  return redis.error_reply('ci-only basic command probe failed')" \
+  'end' \
+  "redis.call('MSET', KEYS[1], ARGV[2], KEYS[2], ARGV[3])" \
+  "local expiry_a = redis.call('PEXPIRE', KEYS[1], ttl_ms)" \
+  "local expiry_b = redis.call('PEXPIRE', KEYS[2], ttl_ms)" \
+  'if expiry_a ~= 1 or expiry_b ~= 1 then' \
+  "  return redis.error_reply('ci-only expiry probe failed')" \
+  'end' \
+  "return 'shared-admission-tls-acl-lua-ok'" \
+)"
+# SHA-1 在这里仅是 Valkey SCRIPT 的公开内容地址。常量由上述固定 Lua 字节预计算，
+# 避免 FIPS-only runner 现场调用 SHA-1；任何脚本文本漂移都会让后续 EVALSHA 以
+# NOSCRIPT 失败，不能把错误常量判绿。
+shared_admission_lua_probe_sha='ff334ac492bc06b8421d59494098b485d59dd00d'
+
+if ! shared_admission_lua_eval_result="$(
+  docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
+    valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
+      --user rgs-api -h 127.0.0.1 -p 18445 --raw \
+      EVAL "$shared_admission_lua_probe" 2 \
+      "$shared_admission_lua_probe_key_a" "$shared_admission_lua_probe_key_b" \
+      ci-only-before ci-only-after-a ci-only-after-b 1000 \
+      2>"$fixture_root/valkey-lua-probe.raw.log"
+)"; then
+  printf '%s\n' 'production smoke: CI-only Valkey EVAL command execution failed' >&2
+  exit 1
+fi
+test "$shared_admission_lua_eval_result" = 'shared-admission-tls-acl-lua-ok' || {
+  printf '%s\n' 'production smoke: CI-only Valkey EVAL command probe failed' >&2
+  exit 1
+}
+
+if ! shared_admission_lua_evalsha_result="$(
+  docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
+    valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
+      --user rgs-api -h 127.0.0.1 -p 18445 --raw \
+      EVALSHA "$shared_admission_lua_probe_sha" 2 \
+      "$shared_admission_lua_probe_key_a" "$shared_admission_lua_probe_key_b" \
+      ci-only-before ci-only-after-a ci-only-after-b 1000 \
+      2>>"$fixture_root/valkey-lua-probe.raw.log"
+)"; then
+  printf '%s\n' 'production smoke: CI-only Valkey EVALSHA command execution failed' >&2
+  exit 1
+fi
+test "$shared_admission_lua_evalsha_result" = 'shared-admission-tls-acl-lua-ok' || {
+  printf '%s\n' 'production smoke: CI-only Valkey EVALSHA command probe failed' >&2
+  exit 1
+}
+
+sleep 2
+for shared_admission_lua_probe_key in \
+  "$shared_admission_lua_probe_key_a" "$shared_admission_lua_probe_key_b"; do
+  if ! shared_admission_lua_probe_residue="$(
+    docker exec -e REDISCLI_AUTH="$valkey_password" "$valkey_container" \
+      valkey-cli --tls --cacert /run/rgs-production-smoke/postgres-root-ca.pem \
+        --user rgs-api -h 127.0.0.1 -p 18445 --raw \
+        GET "$shared_admission_lua_probe_key" \
+        2>>"$fixture_root/valkey-lua-probe.raw.log"
+  )"; then
+    printf '%s\n' 'production smoke: CI-only Valkey TTL cleanup command execution failed' >&2
+    exit 1
+  fi
+  test -z "$shared_admission_lua_probe_residue" || {
+    printf '%s\n' 'production smoke: CI-only Valkey Lua probe key was not cleaned by TTL' >&2
+    exit 1
+  }
+done
+shared_admission_tls_acl_and_lua=true
+
 runtime_image="${RGS_RUNTIME_SMOKE_RUNTIME_IMAGE:-slots-rgs-runtime:conformance}"
 migrator_image="${RGS_RUNTIME_SMOKE_MIGRATOR_IMAGE:-slots-rgs-migrator:conformance}"
 mkdir -p "$artifact_dir"
@@ -379,6 +468,47 @@ runtime_security=(
   --security-opt no-new-privileges:true --pids-limit 128 --memory 256m --cpus 1
 )
 
+# 生产启动日志只允许固定低基数信封。负向 gate 已由输入夹具精确限定，运行态既要退出，
+# 也不能为了测试重新暴露配置原文、文件路径或第三方错误。精确原因由同一工作流先前的
+# Go 配置/审批单测覆盖；这里验证真实进程边界的退出和脱敏合同。
+verify_safe_startup_failure() {
+  startup_log=$1
+  failure_case=$2
+  if ! python3 - "$startup_log" 2>"$fixture_root/safe-startup-envelope.raw.log" <<'PYEOF'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if path.stat().st_size > 16 * 1024:
+    raise SystemExit(1)
+lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+if len(lines) != 1:
+    raise SystemExit(1)
+event = json.loads(lines[0])
+allowed_keys = {"time", "level", "msg", "error_class"}
+if set(event) != allowed_keys:
+    raise SystemExit(1)
+if event.get("level") != "ERROR" or event.get("msg") != "rgs server stopped":
+    raise SystemExit(1)
+if event.get("error_class") != "internal":
+    raise SystemExit(1)
+for forbidden in (
+    "RGS_OPERATIONS_BEARER_TOKEN_FILE",
+    "rgs-definition-approval-v2",
+    "/run/rgs-production-smoke",
+    "postgres://",
+    "postgresql://",
+):
+    if forbidden in lines[0]:
+        raise SystemExit(1)
+PYEOF
+  then
+    printf '%s\n' "production smoke: $failure_case did not produce the unique safe startup failure envelope" >&2
+    exit 1
+  fi
+}
+
 # 负向 1：production 即使绑定 loopback，也不能缺少独立 operations token 文件。
 missing_token_log="$fixture_root/missing-token.log"
 if docker run --rm "${runtime_security[@]}" \
@@ -387,7 +517,7 @@ if docker run --rm "${runtime_security[@]}" \
   printf '%s\n' 'production smoke: runtime started without operations token' >&2
   exit 1
 fi
-grep -F 'RGS_OPERATIONS_BEARER_TOKEN_FILE is required in production' "$missing_token_log" >/dev/null
+verify_safe_startup_failure "$missing_token_log" 'missing-operations-token'
 
 # 负向 2：development v1/demo approval 即使被放进其余 production 配置，也必须拒绝启动。
 cp -R "$fixture_dir" "$negative_fixture_dir"
@@ -404,7 +534,7 @@ if docker run --rm "${runtime_security[@]}" \
   printf '%s\n' 'production smoke: runtime accepted v1/demo approval' >&2
   exit 1
 fi
-grep -F 'production requires rgs-definition-approval-v2' "$v1_log" >/dev/null
+verify_safe_startup_failure "$v1_log" 'development-definition-approval'
 
 # 本地 TLS sink 只验证 production HTTPS/CA 配置与 outbox readiness；没有事件时不会伪造审计记录。
 openssl s_server -accept 18443 -cert "$fixture_dir/audit-server.pem" \
@@ -497,13 +627,16 @@ grep -F -x 'rgs_ready 1' "$artifact_dir/metrics-production-ci-only.prom" >/dev/n
 grep -F '# TYPE rgs_outbox_claimed_total counter' "$artifact_dir/metrics-production-ci-only.prom" >/dev/null
 
 runtime_image_id="$(docker image inspect --format '{{.Id}}' "$runtime_image")"
-python3 - "$artifact_dir/result-production-ci-only.json" "$runtime_image_id" <<'PYEOF'
+python3 - "$artifact_dir/result-production-ci-only.json" "$runtime_image_id" \
+  "$shared_admission_tls_acl_and_lua" <<'PYEOF'
 import datetime
 import json
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
+if sys.argv[3] != "true":
+    raise SystemExit("shared admission TLS/ACL/Lua probe did not pass")
 result = {
     "schemaVersion": 1,
     "status": "passed",
@@ -514,6 +647,7 @@ result = {
         "missingOperationsTokenRejected": True,
         "developmentApprovalRejected": True,
         "databaseTLSVerifyFull": True,
+        "sharedAdmissionTLSACLAndLua": True,
         "localHTTPSAuditSinkConfigured": True,
         "outboxReadiness": True,
         "rgsReady": 1,
@@ -522,5 +656,7 @@ result = {
 }
 path.write_text(json.dumps(result, separators=(",", ":")) + "\n", encoding="utf-8")
 PYEOF
+grep -F '"sharedAdmissionTLSACLAndLua":true' \
+  "$artifact_dir/result-production-ci-only.json" >/dev/null
 
-printf '%s\n' 'production smoke: CI-only v2 startup, TLS DB, outbox readiness and negative gates ok'
+printf '%s\n' 'production smoke: CI-only v2 startup, TLS DB, shared-admission TLS/ACL/Lua, outbox readiness and negative gates ok'

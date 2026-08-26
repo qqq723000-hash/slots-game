@@ -15,6 +15,8 @@ const BASE_POLICY_SPECIFICATION = Object.freeze([
   Object.freeze(["object-src", Object.freeze(["'none'"])]),
   Object.freeze(["base-uri", Object.freeze(["'self'"])]),
   Object.freeze(["form-action", Object.freeze(["'none'"])]),
+  Object.freeze(["trusted-types", Object.freeze(["slots-game-static-html"])]),
+  Object.freeze(["require-trusted-types-for", Object.freeze(["'script'"])]),
   Object.freeze(["frame-ancestors", Object.freeze(["'self'"])]),
 ]);
 
@@ -37,8 +39,8 @@ function serializeSpecification(specification) {
 
 export const BASE_CONTENT_SECURITY_POLICY = serializeSpecification(BASE_POLICY_SPECIFICATION);
 
-// 浏览器门禁在文档创建前安装此探针；诊断只保留公开 directive 与 blocked origin，
-// 不复制 URL 的路径、查询参数或 fragment。
+// 浏览器门禁在文档创建前安装此探针；诊断只保留公开 directive、blocked origin、
+// 同源公开资产 basename、坐标与不含赋值内容的 sink 名，不复制 URL 路径/query/fragment。
 export const CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE = `(() => {
   const violations = [];
   const safeBlockedTarget = (value) => {
@@ -54,6 +56,23 @@ export const CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE = `(() => {
       return '无法解析的目标';
     }
   };
+  const safeSourceFile = (value) => {
+    try {
+      const parsed = new URL(String(value ?? ''), location.origin);
+      if (parsed.origin !== location.origin) return null;
+      const basename = parsed.pathname.split('/').at(-1) ?? '';
+      return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(basename) ? basename : null;
+    } catch {
+      return null;
+    }
+  };
+  const safeTrustedTypesSink = (value) => {
+    const name = String(value ?? '').split('|', 1)[0].trim();
+    return /^[A-Za-z][A-Za-z0-9 ._-]{0,63}$/.test(name) ? name : null;
+  };
+  const safeCoordinate = (value) => Number.isSafeInteger(value) && value >= 0 && value <= 10_000_000
+    ? value
+    : null;
   const probe = {};
   Object.defineProperty(probe, 'violations', {
     enumerable: true,
@@ -66,11 +85,19 @@ export const CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE = `(() => {
   });
   globalThis.addEventListener('securitypolicyviolation', (event) => {
     if (violations.length >= 16) return;
+    const sourceFile = safeSourceFile(event.sourceFile);
+    const lineNumber = safeCoordinate(event.lineNumber);
+    const columnNumber = safeCoordinate(event.columnNumber);
+    const trustedTypesSink = safeTrustedTypesSink(event.sample);
     violations.push({
       effectiveDirective: String(event.effectiveDirective ?? '').slice(0, 64),
       violatedDirective: String(event.violatedDirective ?? '').slice(0, 64),
       disposition: String(event.disposition ?? '').slice(0, 32),
       blockedTarget: safeBlockedTarget(event.blockedURI),
+      ...(sourceFile === null ? {} : { sourceFile }),
+      ...(lineNumber === null ? {} : { lineNumber }),
+      ...(columnNumber === null ? {} : { columnNumber }),
+      ...(trustedTypesSink === null ? {} : { trustedTypesSink }),
     });
   }, true);
 })();`;

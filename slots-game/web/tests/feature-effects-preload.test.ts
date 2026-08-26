@@ -21,22 +21,13 @@ vi.mock("../src/renderer/spine/PrimalSpineAssets", async (importOriginal) => {
 
 import { loadFeatureTextures } from "../src/renderer/FeatureEffects";
 
-const REQUIRED_FEATURE_SPINES = Object.freeze([
-  "wheel",
-  "trail",
-  "wheelPopupStart",
-  "wheelSummaryFreespins",
-  "wheelSummaryJackpot",
-  "freeSpinIntroKongQuest",
-  "freeSpinIntroKingSpin",
-  "freeSpinSummary",
-] as const);
+const REQUIRED_INTERACTION_SPINES = Object.freeze(["trail"] as const);
 
 describe("strict authored feature preload", () => {
-  it("fails the entry-critical gate on a required Wheel Spine error and remains retryable", async () => {
+  it("loads only the shared interaction trail at startup and remains retryable", async () => {
     vi.spyOn(Texture, "fromURL").mockResolvedValue(Texture.EMPTY);
     spineLoader.loadSet
-      .mockRejectedValueOnce(new Error("wheel atlas corrupt"))
+      .mockRejectedValueOnce(new Error("interaction atlas corrupt"))
       .mockImplementationOnce(async (keys: readonly string[]) => Object.fromEntries(
         keys.map((key) => [key, { testSpineData: key }]),
       ));
@@ -50,13 +41,17 @@ describe("strict authored feature preload", () => {
     }]);
 
     await expect(gate.run((event) => progress.push(event))).rejects.toThrow(
-      'Preload task "entry-critical-resources" failed: wheel atlas corrupt',
+      'Preload task "entry-critical-resources" failed: interaction atlas corrupt',
     );
     expect(progress.every((event) => event.progress < 1)).toBe(true);
     expect(progress.every((event) => event.status !== "complete")).toBe(true);
-    expect(spineLoader.loadSet).toHaveBeenNthCalledWith(1, REQUIRED_FEATURE_SPINES);
+    expect(spineLoader.loadSet).toHaveBeenNthCalledWith(1, REQUIRED_INTERACTION_SPINES);
 
     await expect(loadFeatureTextures()).resolves.toBeUndefined();
-    expect(spineLoader.loadSet).toHaveBeenNthCalledWith(2, REQUIRED_FEATURE_SPINES);
+    expect(spineLoader.loadSet).toHaveBeenNthCalledWith(2, REQUIRED_INTERACTION_SPINES);
+    expect(Texture.fromURL).toHaveBeenCalledTimes(2);
+    expect(Texture.fromURL).not.toHaveBeenCalledWith(
+      expect.stringMatching(/1002(?:3|6|7)\.png$/),
+    );
   });
 });

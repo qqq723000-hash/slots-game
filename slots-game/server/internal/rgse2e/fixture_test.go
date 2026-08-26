@@ -357,6 +357,7 @@ func newFixture(scenario string) (*fixture, error) {
 		GameID: definition.GameID, DefinitionVersion: definition.DefinitionVersion,
 		DefinitionHash: digest, Currency: "USD", CurrencyExponent: 2,
 		Jurisdiction: "GB", BalanceMinor: 10_000, SessionTTL: time.Hour,
+		IdleDisconnect: 20 * time.Minute,
 	})
 	if err != nil {
 		unstarted.Close()

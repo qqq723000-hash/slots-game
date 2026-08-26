@@ -1,6 +1,12 @@
 // @ts-nocheck -- 该测试直接验证 Node 侧 Chrome Fetch 夹具，不进入浏览器类型域。
 import { describe, expect, it } from "vitest";
-import { createControlledRgsTransactionFixture } from "../scripts/production-browser-transaction-fixture.mjs";
+import {
+  assertSessionStatusCadence,
+  BROWSER_FIXTURE_ENGINE_RULES_VERSION,
+  createControlledRgsTransactionFixture,
+  economicTransactionStateEqual,
+  MIN_SESSION_STATUS_INTERVAL_MS,
+} from "../scripts/production-browser-transaction-fixture.mjs";
 
 const baseOptions = Object.freeze({
   baseUrl: "https://rgs.ci.invalid",
@@ -10,7 +16,7 @@ const baseOptions = Object.freeze({
   sessionId: "browser-smoke",
   initialBalanceMinor: "1000",
   betMinor: "200",
-  finalBalanceMinor: "800",
+  finalBalanceMinor: "850",
 });
 
 const binding = Object.freeze({
@@ -51,6 +57,44 @@ function decodedBody(response: { body?: string }): Record<string, unknown> {
   return JSON.parse(response.body) as Record<string, unknown>;
 }
 
+function exchangeFixture(fixture: ReturnType<typeof createControlledRgsTransactionFixture>): string {
+  const response = fixture.responseForPausedRequest(paused(
+    "https://rgs.ci.invalid/client/v1/sessions/exchange",
+    "POST",
+    {
+      launchCode: baseOptions.launchCode,
+      operatorId: baseOptions.operatorId,
+      sessionId: baseOptions.sessionId,
+    },
+  ));
+  return (decodedBody(response).data as { accessToken: string }).accessToken;
+}
+
+function probeSessionStatus(
+  fixture: ReturnType<typeof createControlledRgsTransactionFixture>,
+  token: string,
+): void {
+  fixture.responseForPausedRequest(paused(
+    "https://rgs.ci.invalid/client/v1/sessions/status",
+    "POST",
+    binding,
+    `Bearer ${token}`,
+  ));
+}
+
+function cadenceSnapshot(timestamps: readonly number[]): Record<string, unknown> {
+  let index = 0;
+  const fixture = createControlledRgsTransactionFixture({
+    ...baseOptions,
+    now: () => timestamps[index++],
+  });
+  const token = exchangeFixture(fixture);
+  for (let probe = 1; probe < timestamps.length; probe += 1) {
+    probeSessionStatus(fixture, token);
+  }
+  return fixture.snapshot();
+}
+
 describe("production browser transaction fixture", () => {
   it("requires the exact exchange, spin and result acknowledgement order", () => {
     const fixture = createControlledRgsTransactionFixture(baseOptions);
@@ -64,7 +108,25 @@ describe("production browser transaction fixture", () => {
         sessionId: baseOptions.sessionId,
       },
     ));
-    const token = (decodedBody(exchange).data as { accessToken: string }).accessToken;
+    const exchangeData = decodedBody(exchange).data as {
+      accessToken: string;
+      session: { engineRulesVersion: string };
+    };
+    const token = exchangeData.accessToken;
+    expect(exchangeData.session.engineRulesVersion).toBe(BROWSER_FIXTURE_ENGINE_RULES_VERSION);
+    const sessionStatus = fixture.responseForPausedRequest(paused(
+      `${root}/sessions/status`,
+      "POST",
+      binding,
+      `Bearer ${token}`,
+    ));
+    expect(decodedBody(sessionStatus).data).toEqual({
+      operatorId: baseOptions.operatorId,
+      sessionId: baseOptions.sessionId,
+      status: "ACTIVE",
+      idleDisconnectAt: "2098-12-31T23:30:00Z",
+      serverTime: "2026-08-21T08:00:00Z",
+    });
     const spin = fixture.responseForPausedRequest(paused(
       `${root}/spins`,
       "POST",
@@ -82,6 +144,12 @@ describe("production browser transaction fixture", () => {
       sequence: string;
       resultHash: string;
       balanceMinor: string;
+      totalWinMinor: string;
+      wins: Array<{
+        nominalAmountMinor: string;
+        amountMinor: string;
+        pathAwards: Array<{ nominalAmountMinor: string; amountMinor: string }>;
+      }>;
     };
     fixture.responseForPausedRequest(paused(
       `${root}/results/acknowledgements`,
@@ -95,9 +163,21 @@ describe("production browser transaction fixture", () => {
       `Bearer ${token}`,
     ));
 
-    expect(result.balanceMinor).toBe("800");
+    expect(result.balanceMinor).toBe("850");
+    expect(result.totalWinMinor).toBe("50");
+    expect(result.wins).toEqual([
+      expect.objectContaining({
+        nominalAmountMinor: "50",
+        amountMinor: "50",
+        pathAwards: [expect.objectContaining({
+          nominalAmountMinor: "50",
+          amountMinor: "50",
+        })],
+      }),
+    ]);
     expect(fixture.snapshot()).toMatchObject({
       exchangeCount: 1,
+      sessionStatusCount: 1,
       spinCount: 1,
       acknowledgementCount: 1,
       order: ["session-exchange", "spin", "result-acknowledgement"],
@@ -127,8 +207,13 @@ describe("production browser transaction fixture", () => {
       name: "Access-Control-Allow-Origin",
       value: baseOptions.pageOrigin,
     });
+    expect(response.responseHeaders).toContainEqual({
+      name: "Access-Control-Allow-Headers",
+      value: "Authorization, Content-Type, Traceparent, X-Operator-Id, X-Request-Id",
+    });
     expect(fixture.snapshot()).toMatchObject({
       exchangeCount: 0,
+      sessionStatusCount: 0,
       spinCount: 0,
       acknowledgementCount: 0,
       order: [],
@@ -137,5 +222,38 @@ describe("production browser transaction fixture", () => {
       "https://rgs.ci.invalid/client/v1/undeclared",
       "OPTIONS",
     ))).toThrow(/未声明路径/);
+  });
+
+  it("separates read-only status probes from the economic transaction state", () => {
+    let now = 1_000;
+    const fixture = createControlledRgsTransactionFixture({ ...baseOptions, now: () => now });
+    const token = exchangeFixture(fixture);
+    const before = fixture.snapshot();
+    now += MIN_SESSION_STATUS_INTERVAL_MS;
+    probeSessionStatus(fixture, token);
+    const after = fixture.snapshot();
+
+    expect(economicTransactionStateEqual(before, after)).toBe(true);
+    expect(() => assertSessionStatusCadence(after)).not.toThrow();
+    expect(economicTransactionStateEqual(before, { ...after, spinCount: 1 })).toBe(false);
+    expect(economicTransactionStateEqual(before, {
+      ...after,
+      order: ["session-exchange", "spin"],
+    })).toBe(false);
+    expect(economicTransactionStateEqual(before, {
+      ...after,
+      acknowledgementCount: 1,
+    })).toBe(false);
+  });
+
+  it("rejects first and subsequent status probes below the 25 second cadence", () => {
+    expect(() => assertSessionStatusCadence(cadenceSnapshot([1_000, 25_999])))
+      .toThrow(/短于 25 秒/);
+    expect(() => assertSessionStatusCadence(cadenceSnapshot([1_000, 26_000])))
+      .not.toThrow();
+    expect(() => assertSessionStatusCadence(cadenceSnapshot([1_000, 26_000, 50_999])))
+      .toThrow(/短于 25 秒/);
+    expect(() => assertSessionStatusCadence(cadenceSnapshot([1_000, 26_000, 51_000])))
+      .not.toThrow();
   });
 });

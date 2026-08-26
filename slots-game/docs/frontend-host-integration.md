@@ -20,7 +20,11 @@ RGS 首会话在 15 秒内未建立，或 exchange 在此之前失败时，客�
 
 ```ts
 interface OperatorSessionRequest {
-  reason: "initial-session-timeout" | "initial-session-failed";
+  reason:
+    | "initial-session-timeout"
+    | "initial-session-failed"
+    | "session-timeout"
+    | "committed-result-recovery-required";
   code: "SESSION_TIMEOUT" | "OPERATOR_SESSION_REQUIRED";
   correlationId?: string;
 }
@@ -41,6 +45,23 @@ window.addEventListener("slots-game:operator-session-required", (event) => {
 `onOperatorSessionRequired(request)` 回调；回调和 DOM 事件表达同一个契约，宿主应做
 幂等去重。
 
+## 空闲会话终止与 EXIT
+
+在线且前台的客户端会以只读方式周期调用 `POST /client/v1/sessions/status`，并用响应体中的
+`serverTime`、单调浏览器时钟和 `idleDisconnectAt` 校准绝对空闲截止时间。服务端返回
+`SESSION_TIMEOUT` 或绝对截止时间到达后，旧 transport 立即终止投注、自动播放、表现和音频，
+但不会清除可能已提交轮次的本地 durable ledger，也不会在页面内自动刷新、重连或重放旧
+`launchCode`。
+
+超时弹窗出现时不会立即通知宿主。只有玩家按下唯一的 `EXIT` 后，客户端才发送
+`reason="session-timeout"`、`code="SESSION_TIMEOUT"` 的白名单消息。宿主必须换发新的浏览器
+授权和一次性 `launchCode`，同时让后端恢复同一个 durable server session；如有未 ACK 轮次，
+新 transport 应通过既有 pending-result/ledger 流程继续，而不是再次运行 spin/RNG。
+
+顶层同源部署可在受控构建中把 `VITE_OPERATOR_RETURN_URL` 设置为同源绝对路径（例如
+`/operator/`）。该兜底同样只在 EXIT 后执行；相对路径、协议相对 URL、跨源 URL、query/hash
+以及 framed 页面都会拒绝自导航，iframe 仍只使用精确 origin 的宿主消息。
+
 ## 已提交结果恢复
 
 会话 exchange 返回的 `sequence` 已推进、但浏览器没有本地 round ledger 时，客户端会先调用
@@ -53,8 +74,9 @@ Free Spins 状态。
 完整结果完成展示（或既有的表现失败兜底提交）后，客户端才向
 `POST /client/v1/results/acknowledgements` 发送精确 round/sequence/resultHash。ACK 重试保持幂等，
 且不会修改余额、revision、特性状态或钱包事实。目标 RGS/CORS 必须允许精确游戏 origin 的
-`GET`、`Authorization`、`X-Operator-Id`、`X-Request-Id`，并拒绝未列入的 origin；不要允许
-credentials/cookie 模式代替 Bearer token。
+`GET`、`Authorization`、`X-Operator-Id`、`X-Request-Id`、`traceparent`，并拒绝未列入的 origin；
+不要允许 credentials/cookie 模式代替 Bearer token。浏览器为每个请求生成独立且不持久化的
+随机 Trace Context；它不包含玩家、会话、轮次或设备标识，随机源不可用时会省略而不会阻断权威请求。
 
 ACK 遇到断网、`202`、`429` 或 `5xx` 时会自动重试同一 tuple；默认指数退避从 500 ms 开始，
 单次最多 30 秒、最多 8 次逻辑尝试，并受 120 秒页内硬截止约束。`Retry-After` 只接受规范的

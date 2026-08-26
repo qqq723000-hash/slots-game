@@ -138,6 +138,47 @@ spec:
           annotations:
             summary: RGS 钱包成本准入持续故障
             description: Valkey 双桶脚本、静态 operator/backend 路由或返回协议持续失败；新 Spin 已失败关闭，status/result/ACK 与 Worker 恢复必须继续可用。
+        - alert: SlotsRGSEconomicAdmissionUnavailable
+          expr: |
+            (
+              rgs_economic_admission_ready{job="slots-rgs",namespace="{{ .Release.Namespace }}"} == 0
+              and on (job, namespace, instance)
+              rgs_ready{job="slots-rgs",namespace="{{ .Release.Namespace }}"} == 1
+            )
+            or
+            (
+              rgs_ready{job="slots-rgs",namespace="{{ .Release.Namespace }}"} == 1
+              unless on (job, namespace, instance)
+              rgs_economic_admission_ready{job="slots-rgs",namespace="{{ .Release.Namespace }}"}
+            )
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: RGS API 仍就绪但经济准入不可用
+            description: 基础状态、结果恢复和确认 API 仍可用，但 shared PING/基础脚本与经济 Lua 的组合健康连续失败或指标缺失；停止新经济意图并检查 Valkey TLS、ACL、Lua 与网络。
+        - alert: SlotsRGSEconomicAdmissionObservationStale
+          expr: |
+            (
+              (
+                rgs_economic_admission_last_success_age_seconds{job="slots-rgs",namespace="{{ .Release.Namespace }}"} < 0
+                or rgs_economic_admission_last_success_age_seconds{job="slots-rgs",namespace="{{ .Release.Namespace }}"} > 900
+              )
+              and on (job, namespace, instance)
+              rgs_ready{job="slots-rgs",namespace="{{ .Release.Namespace }}"} == 1
+            )
+            or
+            (
+              rgs_ready{job="slots-rgs",namespace="{{ .Release.Namespace }}"} == 1
+              unless on (job, namespace, instance)
+              rgs_economic_admission_last_success_age_seconds{job="slots-rgs",namespace="{{ .Release.Namespace }}"}
+            )
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: RGS 经济准入成功证据陈旧
+            description: API 仍就绪，但 shared 与 economic 两条路径中至少一条超过十五分钟没有成功观测，或年龄指标缺失；核查真实流量、PING/Lua canary 接线与 Valkey 可用性。
         - alert: SlotsRGSAuthReplay
           expr: |
             sum(increase(rgs_auth_replays_total{job="slots-rgs",namespace="{{ .Release.Namespace }}"}[5m])) > 0
@@ -155,6 +196,14 @@ spec:
           annotations:
             summary: RGS 重复安全 WARN 持续被有界抑制
             description: 权威安全事件计数仍完整，但固定物理 WARN 写入预算连续耗尽；应关联认证重放、边缘防护和认证失败判断攻击或错误重试，禁止用阻塞请求线程换取完整重复日志。
+        - alert: SlotsRGSTraceExportFailures
+          expr: |
+            sum(increase(rgs_trace_export_failures_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: RGS 分布式追踪导出失败
+            description: API 或 Worker 的 OTLP exporter 在有界重试后仍失败；资金请求保持失败开放，应检查 collector TLS、NetworkPolicy、容量和接收状态。
         - alert: SlotsRGSWalletUnknownOutcome
           expr: |
             sum(increase(rgs_wallet_unknown_outcomes_total{job=~"slots-rgs|slots-rgs-worker",namespace="{{ .Release.Namespace }}"}[5m])) > 0

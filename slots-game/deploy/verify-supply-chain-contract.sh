@@ -18,6 +18,7 @@ fi
 
 server_dockerfile="$repository_root/deploy/Dockerfile"
 web_dockerfile="$repository_root/deploy/web/Dockerfile"
+nginx_openssl_patch_verifier="$repository_root/deploy/supply-chain/verify-nginx-openssl-patch.sh"
 web_release_renderer="$repository_root/deploy/web/render-release-nginx.mjs"
 web_release_renderer_test="$repository_root/deploy/web/render-release-nginx.test.mjs"
 web_package_json="$repository_root/web/package.json"
@@ -26,7 +27,10 @@ env_example="$repository_root/deploy/env.example"
 makefile="$repository_root/Makefile"
 backend_workflow="$workflows_root/backend-conformance.yml"
 frontend_workflow="$workflows_root/frontend-conformance.yml"
+deployment_workflow="$workflows_root/deployment-conformance.yml"
 observability_contract="$repository_root/deploy/observability/verify-static-contract.sh"
+observability_release_workflow="$repository_root/deploy/observability/verify-release-workflow.sh"
+vector_bounded_flush_test="$repository_root/deploy/observability/test-vector-bounded-flush.sh"
 observability_compose="$repository_root/deploy/observability/compose.yml"
 observability_prometheus="$repository_root/deploy/observability/prometheus.yml"
 runtime_smoke="$repository_root/deploy/observability/ci-runtime-smoke.sh"
@@ -67,6 +71,7 @@ require_regex() {
 for required_file in \
   "$server_dockerfile" \
   "$web_dockerfile" \
+  "$nginx_openssl_patch_verifier" \
   "$web_release_renderer" \
   "$web_release_renderer_test" \
   "$web_package_json" \
@@ -75,7 +80,10 @@ for required_file in \
   "$makefile" \
   "$backend_workflow" \
   "$frontend_workflow" \
+  "$deployment_workflow" \
   "$observability_contract" \
+  "$observability_release_workflow" \
+  "$vector_bounded_flush_test" \
   "$observability_compose" \
   "$observability_prometheus" \
   "$runtime_smoke" \
@@ -88,6 +96,10 @@ for required_file in \
 do
   require_file "$required_file"
 done
+
+test -x "$nginx_openssl_patch_verifier" || fail 'Nginx OpenSSL patch verifier must be executable'
+"$nginx_openssl_patch_verifier" web "$web_dockerfile" >/dev/null \
+  || fail 'Nginx OpenSSL patch contract failed'
 
 require_line 'ARG GO_IMAGE=golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36' "$server_dockerfile"
 require_line 'ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a' "$server_dockerfile"
@@ -103,13 +115,29 @@ test "$(grep -F -x -c "$backend_notice_copy" "$server_dockerfile" || true)" -eq 
 require_fixed 'var productionTargets = []string{"./cmd/rgs-server", "./cmd/rgs-migrator"}' "$backend_notice_generator"
 require_fixed 'TestCollectProductionModulesExcludesTestOnlyDependencies' "$backend_notice_test"
 require_fixed '"name": "NOTICE"' "$backend_notice_policy"
-require_fixed '生产第三方模块数量：8' "$backend_notice"
+require_fixed '生产第三方模块数量：27' "$backend_notice"
 if grep -F 'github.com/DATA-DOG/go-sqlmock' "$backend_notice" >/dev/null; then
   fail 'test-only Go dependency leaked into production third-party notice'
 fi
 
 require_regex '^ARG NODE_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$web_dockerfile"
 require_regex '^ARG NGINX_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$web_dockerfile"
+require_line 'ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:bcf91d2c73ab64fa1c4ac7fbac5ac523057c8af7d553ab9251c7aef38c260979' "$web_dockerfile"
+require_line 'FROM scratch AS openssl-patches' "$web_dockerfile"
+require_line 'ADD --checksum=sha256:161223a16f042b8e469e9441291e071464fd91d4f4bbe6f496ee8d0abd4e0701 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk /x86_64/libcrypto3.apk' "$web_dockerfile"
+require_line 'ADD --checksum=sha256:aca521e5ae4a321322a9d47ed64a1775f5ab1ffd215d1e9fc0433c58f7bfd037 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk /x86_64/libssl3.apk' "$web_dockerfile"
+require_line 'ADD --checksum=sha256:35b892813c23664a3592e4fc8c12a03538a22c579057655361c7043305272a9a https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libcrypto3-3.5.8-r0.apk /aarch64/libcrypto3.apk' "$web_dockerfile"
+require_line 'ADD --checksum=sha256:d6ec970cc10e01539e41626f720c4e0ac69016eaa2079a10ef776ffd3243db5b https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libssl3-3.5.8-r0.apk /aarch64/libssl3.apk' "$web_dockerfile"
+test "$(grep -F -c -- '--mount=type=bind,from=openssl-patches,source=/,target=/patches,readonly' "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must use the digest-bound OpenSSL patch mount'
+test "$(grep -F -c -- 'apk add --no-network --no-cache --repositories-file /dev/null "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk"' "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must install the offline OpenSSL patch pair'
+test "$(grep -F -c -- 'case "$openssl_patch_arch" in x86_64|aarch64) ;; *) exit 1 ;; esac' "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must reject unreviewed patch architectures'
+test "$(grep -F -c -- "apk info -e 'libcrypto3=3.5.8-r0'" "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must prove fixed libcrypto3'
+test "$(grep -F -c -- "apk info -e 'libssl3=3.5.8-r0'" "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must prove fixed libssl3'
 require_line '# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e' "$web_dockerfile"
 # Docker ARG 在这里按 Dockerfile 字面量校验，不能让当前 shell 展开。
 # shellcheck disable=SC2016
@@ -176,7 +204,10 @@ require_line 'RUN --network=none nginx -t' "$web_dockerfile"
 last_web_stage=$(awk '/^FROM[[:space:]]+/ { stage = $NF } END { print stage }' "$web_dockerfile")
 test "$last_web_stage" = runtime || fail 'web runtime must remain the default final Docker target'
 require_line '    "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",' "$web_package_json"
-require_line 'verify-supply-chain-contract:' "$makefile"
+require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' "$makefile"
+require_line 'verify-hardening-checklist:' "$makefile"
+require_regex '^[[:space:]]+node --test scripts/verify-hardening-checklist\.test\.mjs$' "$makefile"
+require_regex '^[[:space:]]+node scripts/verify-hardening-checklist\.mjs$' "$makefile"
 require_regex '^[[:space:]]+sh \./deploy/verify-supply-chain-contract\.sh$' "$makefile"
 require_line 'verify-backend-licenses:' "$makefile"
 require_regex '^[[:space:]]+cd server && go run \./scripts/third-party-notices --check$' "$makefile"
@@ -189,6 +220,8 @@ require_line 'verify-observability-release:' "$makefile"
 # shellcheck disable=SC2016
 require_fixed '--rendered-dir "$${OBSERVABILITY_RENDERED_DIR}"' "$makefile"
 require_regex '^[[:space:]]+\$\(MAKE\) verify-observability-contract$' "$makefile"
+require_line 'test-vector-bounded-flush:' "$makefile"
+require_regex '^[[:space:]]+@\./deploy/observability/test-vector-bounded-flush\.sh$' "$makefile"
 require_line 'smoke-runtime-operations: verify-supply-chain-contract' "$makefile"
 require_regex '^[[:space:]]+\./deploy/observability/ci-runtime-smoke\.sh$' "$makefile"
 require_line 'smoke-runtime-production: verify-supply-chain-contract' "$makefile"
@@ -210,6 +243,44 @@ require_fixed '--build-arg VITE_RGS_HOST_ORIGIN="$${VITE_RGS_HOST_ORIGIN}"' "$ma
 require_fixed '--build-arg WEB_RELEASE_VERSION="$${WEB_RELEASE_VERSION}"' "$makefile"
 require_fixed '--build-arg WEB_RELEASE_REVISION="$${WEB_RELEASE_REVISION}"' "$makefile"
 require_fixed '--secret id=release_asset_approval,src="$${RELEASE_ASSET_APPROVAL_FILE}"' "$makefile"
+
+vector_image='timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39'
+require_line "      VECTOR_IMAGE: $vector_image" "$deployment_workflow"
+require_line '        run: docker pull "$VECTOR_IMAGE" >/dev/null' "$deployment_workflow"
+require_line '        run: make test-vector-bounded-flush' "$deployment_workflow"
+require_line 'docker pull "$VECTOR_IMAGE"' "$observability_release_workflow"
+require_line 'make test-vector-bounded-flush' "$observability_release_workflow"
+test -x "$observability_release_workflow" ||
+  fail 'rendered observability release workflow entrypoint must be executable'
+test -x "$vector_bounded_flush_test" ||
+  fail 'bounded Vector recovery test must be executable'
+sh -n "$vector_bounded_flush_test" >/dev/null 2>&1 ||
+  fail 'bounded Vector recovery test has invalid shell syntax'
+require_fixed "expected_vector_image='$vector_image'" "$vector_bounded_flush_test"
+require_fixed "heartbeat_source['interval_secs'] == 10" "$vector_bounded_flush_test"
+require_fixed "'count' => 1" "$vector_bounded_flush_test"
+require_fixed 'outage_sender_data="$test_directory/outage-sender-data"' "$vector_bounded_flush_test"
+require_fixed 'online_sender_data="$test_directory/online-sender-data"' "$vector_bounded_flush_test"
+require_fixed "files.any? { |path| File.binread(path).include?(marker) }" "$vector_bounded_flush_test"
+require_fixed 'test "$readiness_ready" -eq 1' "$vector_bounded_flush_test"
+require_fixed 'outage_deadline=$((outage_started_at + 25))' "$vector_bounded_flush_test"
+require_fixed 'online_deadline=$((online_started_at + 25))' "$vector_bounded_flush_test"
+require_fixed "event.keys.sort == heartbeat_keys" "$vector_bounded_flush_test"
+require_fixed "raise 'business probe count mismatch' unless probes.length == 1" "$vector_bounded_flush_test"
+require_fixed "raise 'raw metric escaped' if raw_metric" "$vector_bounded_flush_test"
+require_fixed "raise 'outage probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-outage-v1' } == 1" "$vector_bounded_flush_test"
+require_fixed "raise 'online probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-online-v1' } == 1" "$vector_bounded_flush_test"
+if grep -F 'docker pull' "$vector_bounded_flush_test" >/dev/null; then
+  fail 'bounded Vector recovery test must use only the preloaded image'
+fi
+observability_release_workflow_sha=$(ruby -rdigest -e \
+  'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$observability_release_workflow")
+test "$observability_release_workflow_sha" = '25d0424e0a12d5faa2274bb5bd0f6bc297a302bb1e40ed3f7f2535fb44751b7b' ||
+  fail 'rendered observability release workflow entrypoint drifted from the reviewed implementation'
+vector_bounded_flush_sha=$(ruby -rdigest -e \
+  'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$vector_bounded_flush_test")
+test "$vector_bounded_flush_sha" = '248f272074880be00a9c840d389fbeb9e89d7bcc938393c9cfa646653f9971f2' ||
+  fail 'bounded Vector recovery test drifted from the reviewed implementation'
 
 postgres_image='postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193'
 require_line "    image: $postgres_image" "$compose_file"
@@ -266,7 +337,10 @@ require_fixed "grep -F -x 'rgs_ready 1' \"\$artifact_dir/metrics.prom\" >/dev/nu
 require_fixed 'RGS_CI_RUNTIME_FIXTURE=1 RGS_CI_RUNTIME_FIXTURE_PROFILE=production' "$runtime_production_smoke"
 require_fixed 'RGS_ENVIRONMENT=production' "$runtime_production_smoke"
 require_fixed 'sslmode=verify-full' "$runtime_production_smoke"
-require_fixed 'production requires rgs-definition-approval-v2' "$runtime_production_smoke"
+require_fixed 'verify_safe_startup_failure "$missing_token_log"' "$runtime_production_smoke"
+require_fixed 'verify_safe_startup_failure "$v1_log"' "$runtime_production_smoke"
+require_fixed 'allowed_keys = {"time", "level", "msg", "error_class"}' "$runtime_production_smoke"
+require_fixed 'safe-startup-envelope.raw.log' "$runtime_production_smoke"
 require_fixed 'RGS_OPERATIONS_BEARER_TOKEN_FILE=/run/rgs-production-smoke/operations.token' "$runtime_production_smoke"
 require_fixed 'expect_status 404 http://127.0.0.1:18180/metrics' "$runtime_production_smoke"
 require_fixed "grep -F -x 'rgs_ready 1' \"\$artifact_dir/metrics-production-ci-only.prom\" >/dev/null" "$runtime_production_smoke"

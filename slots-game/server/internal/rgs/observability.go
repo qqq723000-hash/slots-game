@@ -3,6 +3,10 @@ package rgs
 import (
 	"context"
 	"errors"
+
+	"go.opentelemetry.io/otel/trace"
+
+	"slots-game/server/internal/telemetry"
 )
 
 // RoundObserver 接收有界基数业务事件。实现不得将运营商、玩家、会话、轮次或交易标识附加为标签。
@@ -44,21 +48,27 @@ func NewObservedWallet(next WalletPort, observer WalletObserver) (*ObservedWalle
 	return &ObservedWallet{next: next, nextResolution: resolution, observer: observer}, nil
 }
 
-func (w *ObservedWallet) ApplyRound(ctx context.Context, command WalletRound) (WalletReceipt, error) {
+func (w *ObservedWallet) ApplyRound(ctx context.Context, command WalletRound) (receipt WalletReceipt, err error) {
+	ctx, span := telemetry.Start(ctx, "rgs.wallet.apply", trace.WithSpanKind(trace.SpanKindClient))
+	defer func() { telemetry.End(span, err) }()
 	notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletCall() })
-	receipt, err := w.next.ApplyRound(ctx, command)
+	receipt, err = w.next.ApplyRound(ctx, command)
 	if unknownWalletApplyOutcome(err) {
 		notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletUnknownOutcome() })
 	}
 	return receipt, err
 }
 
-func (w *ObservedWallet) Lookup(ctx context.Context, operatorID, operationID string) (WalletReceipt, bool, error) {
+func (w *ObservedWallet) Lookup(ctx context.Context, operatorID, operationID string) (receipt WalletReceipt, found bool, err error) {
+	ctx, span := telemetry.Start(ctx, "rgs.wallet.lookup", trace.WithSpanKind(trace.SpanKindClient))
+	defer func() { telemetry.End(span, err) }()
 	notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletCall() })
 	return w.next.Lookup(ctx, operatorID, operationID)
 }
 
-func (w *ObservedWallet) Rollback(ctx context.Context, rollback WalletRollback) (WalletReceipt, error) {
+func (w *ObservedWallet) Rollback(ctx context.Context, rollback WalletRollback) (receipt WalletReceipt, err error) {
+	ctx, span := telemetry.Start(ctx, "rgs.wallet.rollback", trace.WithSpanKind(trace.SpanKindClient))
+	defer func() { telemetry.End(span, err) }()
 	notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletCall() })
 	return w.next.Rollback(ctx, rollback)
 }
@@ -71,26 +81,34 @@ func (w *ObservedWallet) ProfileFor(operatorID string) (Profile, error) {
 }
 
 func (w *ObservedWallet) SubmitRound(ctx context.Context, command WalletRound) Resolution {
+	ctx, span := telemetry.Start(ctx, "rgs.wallet.submit", trace.WithSpanKind(trace.SpanKindClient))
 	if w == nil || w.nextResolution == nil {
-		return Resolution{Status: ResolutionNotSent, Cause: ErrWalletUnavailable}
+		result := Resolution{Status: ResolutionNotSent, Cause: ErrWalletUnavailable}
+		telemetry.End(span, result.Cause)
+		return result
 	}
 	notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletCall() })
 	result := w.nextResolution.SubmitRound(ctx, command)
 	if result.Status == ResolutionUnknown {
 		notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletUnknownOutcome() })
 	}
+	telemetry.End(span, result.Cause)
 	return result
 }
 
 func (w *ObservedWallet) Resolve(ctx context.Context, reference OperationRef) Resolution {
+	ctx, span := telemetry.Start(ctx, "rgs.wallet.resolve", trace.WithSpanKind(trace.SpanKindClient))
 	if w == nil || w.nextResolution == nil {
-		return Resolution{Status: ResolutionNotSent, Cause: ErrWalletUnavailable}
+		result := Resolution{Status: ResolutionNotSent, Cause: ErrWalletUnavailable}
+		telemetry.End(span, result.Cause)
+		return result
 	}
 	notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletCall() })
 	result := w.nextResolution.Resolve(ctx, reference)
 	if result.Status == ResolutionUnknown {
 		notifyWalletObserver(w.observer, func(observer WalletObserver) { observer.WalletUnknownOutcome() })
 	}
+	telemetry.End(span, result.Cause)
 	return result
 }
 

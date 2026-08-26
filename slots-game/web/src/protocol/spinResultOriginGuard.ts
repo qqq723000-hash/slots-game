@@ -7,6 +7,7 @@ import type {
   WheelAwardedEvent,
 } from "../app/state/types";
 import {
+  PRIMAL_MAX_WIN_MULTIPLIER,
   WHEEL_INSTANT_MULTIPLIER_BY_TIER,
   type WheelJackpotTier,
 } from "./protocolConstants";
@@ -54,6 +55,7 @@ function isCanonicalMoney(value: unknown): value is MoneyMinor {
 function validateInstantWheelAward(
   event: WheelAwardedEvent,
   betMinor: MoneyMinor,
+  capped: boolean,
 ): void {
   const raw = wheelAwardRecord(event);
   const prize = raw.prize;
@@ -73,10 +75,58 @@ function validateInstantWheelAward(
   if (expectedAmount > MAX_SIGNED_INT64) {
     throw new SpinResultOriginError("INSTANT amount exceeds the signed-int64 money domain");
   }
-  if (BigInt(raw.amountMinor) !== expectedAmount) {
+  if (BigInt(raw.amountMinor) > expectedAmount
+    || (!capped && BigInt(raw.amountMinor) !== expectedAmount)) {
     throw new SpinResultOriginError(
-      "INSTANT amountMinor must equal betMinor multiplied by multiplier",
+      "INSTANT amountMinor must equal its nominal award unless win-capped",
     );
+  }
+}
+
+function validateWinCapAgainstOrigin(
+  origin: Readonly<FeatureState>,
+  result: Readonly<SpinResult>,
+): void {
+  const capEvents = eventsOfType(result.events, "win_cap.reached");
+  if (capEvents.length > 1) {
+    throw new SpinResultOriginError("Result must not contain duplicate win_cap.reached events");
+  }
+  const expectedCap = BigInt(result.betMinor) * BigInt(PRIMAL_MAX_WIN_MULTIPLIER);
+  if (expectedCap > MAX_SIGNED_INT64) {
+    throw new SpinResultOriginError("Whole-game win cap exceeds the signed-int64 money domain");
+  }
+  const prior = origin.mode === "BASE" ? 0n : BigInt(origin.freeSpinsWinMinor ?? "-1");
+  if (prior < 0n || prior > expectedCap) {
+    throw new SpinResultOriginError("Origin feature win is outside the whole-game cap");
+  }
+  const cycleWin = prior + BigInt(result.totalWinMinor);
+  if (cycleWin > expectedCap) {
+    throw new SpinResultOriginError("Settled whole-game win exceeds the definition cap");
+  }
+  const capEvent = capEvents[0];
+  const hasClippedWays = result.wins.some((win) => (
+    BigInt(win.amountMinor) < BigInt(win.nominalAmountMinor)
+  ));
+  if (!capEvent) {
+    if (cycleWin === expectedCap && (BigInt(result.totalWinMinor) > 0n || hasClippedWays)) {
+      throw new SpinResultOriginError("A reached whole-game cap requires win_cap.reached");
+    }
+    return;
+  }
+  const hasNominalAward = result.wins.some((win) => BigInt(win.nominalAmountMinor) > 0n)
+    || result.events.some((event) => (
+      (event.type === "wheel.awarded" && event.outcome === "INSTANT")
+      || event.type === "vault.awarded"
+    ));
+  if (!hasNominalAward) {
+    throw new SpinResultOriginError(
+      "win_cap.reached requires a positive mathematical award in this result",
+    );
+  }
+  if (capEvent.multiplier !== PRIMAL_MAX_WIN_MULTIPLIER
+    || BigInt(capEvent.cumulativeWinMinor) !== expectedCap
+    || cycleWin !== expectedCap) {
+    throw new SpinResultOriginError("win_cap.reached does not match the whole-game cap facts");
   }
 }
 
@@ -196,6 +246,7 @@ export function validateVaultEventsAgainstOrigin(
   origin: Readonly<FeatureState>,
   result: Readonly<Pick<SpinResult, "grid" | "events" | "betMinor">>,
 ): void {
+  const winCapped = result.events.some((event) => event.type === "win_cap.reached");
   const positions = positionsForSymbol(result, "VAULT");
   const positionKeys = new Set(positions.map(positionKey));
   const semanticEvents = result.events.filter((event) => VAULT_SEMANTIC_TYPES.has(event.type));
@@ -281,7 +332,8 @@ export function validateVaultEventsAgainstOrigin(
       const key = position ? positionKey(position) : "";
       if (!positionKeys.has(key)
         || !Number.isSafeInteger(event.multiplier) || event.multiplier <= 0
-        || !isCanonicalMoney(event.amountMinor) || BigInt(event.amountMinor) <= 0n
+        || !isCanonicalMoney(event.amountMinor)
+        || (!winCapped && BigInt(event.amountMinor) <= 0n)
         || typeof event.prize !== "string" || event.prize.length === 0
         || (origin.mode !== "OVERDRIVE"
           && (index <= unlockStartedIndex || index >= unlockCompletedIndex))
@@ -339,9 +391,27 @@ export function validateVaultEventsAgainstOrigin(
     if (firstAwardIndex <= unlockCompletedIndex) {
       throw new SpinResultOriginError("King Spin Vault awards must follow unlock and upgrades");
     }
+    let lastAwardIndex = firstAwardIndex;
+    for (let index = firstAwardIndex + 1; index < result.events.length; index += 1) {
+      if (result.events[index]?.type === "vault.awarded") lastAwardIndex = index;
+    }
+    const winCapIndex = result.events.findIndex((event) => event.type === "win_cap.reached");
+    const completionIndex = result.events.findIndex((event) => event.type === "free_spins.completed");
+    if (winCapIndex >= 0 && (
+      winCapIndex !== lastAwardIndex + 1
+      || (winCapIndex !== result.events.length - 1
+        && !(completionIndex === result.events.length - 1
+          && winCapIndex === completionIndex - 1))
+    )) {
+      throw new SpinResultOriginError(
+        "King Spin win_cap.reached must immediately follow the final Vault award and terminate the result before completion",
+      );
+    }
     for (let index = firstAwardIndex; index < result.events.length; index += 1) {
       const event = result.events[index];
-      if (event?.type !== "vault.awarded" && event?.type !== "free_spins.completed") {
+      if (event?.type !== "vault.awarded"
+        && event?.type !== "win_cap.reached"
+        && event?.type !== "free_spins.completed") {
         throw new SpinResultOriginError("King Spin final awards must be contiguous");
       }
     }
@@ -396,7 +466,8 @@ export function validateVaultEventsAgainstOrigin(
       const amount = expectedVaultAmount(result.betMinor, award.multiplier);
       if (award.multiplier !== currentMultiplier.get(key)
         || award.prize !== currentPrize.get(key)
-        || BigInt(award.amountMinor) !== amount
+        || BigInt(award.amountMinor) > amount
+        || (!winCapped && BigInt(award.amountMinor) !== amount)
         || cell?.multiplier !== award.multiplier
         || cell.prize !== award.prize) {
         throw new SpinResultOriginError(
@@ -421,7 +492,8 @@ export function validateVaultEventsAgainstOrigin(
       if (reveal.prize !== award.prize
         || reveal.multiplier !== award.multiplier
         || award.prize !== vaultPrizeName(award.multiplier, false)
-        || BigInt(award.amountMinor) !== amount
+        || BigInt(award.amountMinor) > amount
+        || (!winCapped && BigInt(award.amountMinor) !== amount)
         || cell?.multiplier !== award.multiplier
         || cell.prize !== award.prize) {
         throw new SpinResultOriginError("Vault reveal, final grid, and payable award disagree");
@@ -570,6 +642,8 @@ export function validateSpinResultAgainstOrigin(
   const wheelStarted = eventOfType(result.events, "wheel.started");
   const wheelAwarded = eventOfType(result.events, "wheel.awarded");
 
+  validateWinCapAgainstOrigin(origin, result);
+
   if (origin.mode === "EXPANSION") {
     if (rows < 3 || rows > 8 || result.events[0]?.type !== "grid.expanded" || !expansion) {
       throw new SpinResultOriginError(
@@ -619,7 +693,11 @@ export function validateSpinResultAgainstOrigin(
       if (started) {
         throw new SpinResultOriginError("INSTANT must not start Free Spins");
       }
-      validateInstantWheelAward(wheelAwarded, result.betMinor);
+      validateInstantWheelAward(
+        wheelAwarded,
+        result.betMinor,
+        result.events.some((event) => event.type === "win_cap.reached"),
+      );
       if (result.featureState.mode !== "BASE"
         || result.featureState.freeSpinsRemaining !== 0
         || (result.featureState.freeSpinsPlayed ?? 0) !== 0) {
@@ -648,9 +726,9 @@ export function validateSpinResultAgainstOrigin(
       || result.featureState.freeSpinsRemaining !== 8
       || result.featureState.freeSpinsPlayed !== 0
       || result.featureState.baseBetMinor !== result.betMinor
-      || result.featureState.freeSpinsWinMinor !== "0") {
+      || result.featureState.freeSpinsWinMinor !== result.totalWinMinor) {
       throw new SpinResultOriginError(
-        "Free Spins start must project exactly 8 unplayed spins at the locked bet",
+        "Free Spins start must project exactly 8 unplayed spins and carry this round's paid win at the locked bet",
       );
     }
     return;

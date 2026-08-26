@@ -19,16 +19,54 @@ sources:
     tags:
       host_key: ""
 
+  archive_flush_heartbeat_metric:
+    type: static_metrics
+    # Vector 0.57 的磁盘缓冲在低流量下可能等待下一条事件才提交当前批次；固定心跳
+    # 为归档链路提供有界推进事件，同时不承载用户、请求或运行环境数据。
+    interval_secs: 10
+    namespace: vector
+    metrics:
+      - name: archive_flush_heartbeat
+        kind: absolute
+        tags: {}
+        value:
+          gauge:
+            value: 1
+
 transforms:
+  archive_flush_heartbeat_to_log:
+    type: metric_to_log
+    inputs: [archive_flush_heartbeat_metric]
+
+  safe_archive_flush_heartbeat:
+    type: remap
+    inputs: [archive_flush_heartbeat_to_log]
+    source: |-
+      # 无条件从空对象重建；上游指标名、标签、hostname 或未来新增字段都不能进入归档。
+      . = {
+        "service": "vector",
+        "time": now(),
+        "level": "INFO",
+        "msg": "archive flush heartbeat"
+      }
+
   normalize_rgs_json:
     type: remap
     inputs: [rgs_fluent]
     source: |-
-      raw = string(.message) ?? ""
-      app, app_err = parse_json(raw)
-      if app_err == null && is_object(app) {
-        . = merge(., object!(app))
-        del(.message)
+      # Docker fluentd logging driver 把 stdout 正文放在 `log`，Vector fluent source 保留
+      # record 原键；`message` 只用于兼容受控的直接 Fluent 生产者。超长/非字符串一律降格。
+      raw = string(.log) ?? string(.message) ?? ""
+      if length(raw) <= 65536 {
+        app, app_err = parse_json(raw)
+        if app_err == null && is_object(app) {
+          . = merge(., object!(app))
+          del(.message)
+          del(.log)
+        } else {
+          .message = "unparseable-log-redacted"
+          .parse_error = true
+        }
       } else {
         .message = "unparseable-log-redacted"
         .parse_error = true
@@ -45,6 +83,63 @@ transforms:
       del(.database_url)
       del(.wallet_request)
       del(.wallet_response)
+      del(.remote_addr)
+      del(.client_ip)
+      del(.x_forwarded_for)
+      del(.headers)
+      del(.request_headers)
+      del(.response_headers)
+      del(.query)
+      del(.query_string)
+      del(.url)
+      del(.uri)
+      del(.body)
+      del(.request_body)
+      del(.response_body)
+      del(.password)
+      del(.passwd)
+      del(.secret)
+      del(.token)
+      del(.bearer_token)
+      del(.id_token)
+      del(.api_key)
+      del(.client_secret)
+      del(.launch_code)
+      del(.operator_id)
+      del(.player_id)
+      del(.session_id)
+      del(.round_id)
+      del(.operation_id)
+      del(.wallet_account_id)
+      del(.wallet_session_id)
+      del(.wallet_session_ref)
+      del(.remoteAddr)
+      del(.clientIp)
+      del(.xForwardedFor)
+      del(.requestHeaders)
+      del(.responseHeaders)
+      del(.queryString)
+      del(.requestBody)
+      del(.responseBody)
+      del(.accessToken)
+      del(.refreshToken)
+      del(.bearerToken)
+      del(.idToken)
+      del(.apiKey)
+      del(.clientSecret)
+      del(.privateKey)
+      del(.databaseUrl)
+      del(.walletRequest)
+      del(.walletResponse)
+      del(.launchCode)
+      del(.operatorId)
+      del(.playerId)
+      del(.sessionId)
+      del(.roundId)
+      del(.operationId)
+      del(.walletAccountId)
+      del(.walletSessionId)
+      del(.walletSessionRef)
       del(.error)
       del(.stack)
       del(.stacktrace)
@@ -61,10 +156,194 @@ transforms:
         if !includes(allowed, path) { .path = "other" }
       }
 
+  strict_rgs_allowlist:
+    type: remap
+    inputs: [normalize_rgs_json]
+    source: |-
+      # Fluent 元数据和已解析 JSON 都是不可信输入。最终事件从空对象重建，因此未知
+      # 顶层/嵌套字段永远不会因黑名单漏项进入本地长期归档。
+      event = .
+      . = { "service": "rgs-server" }
+
+      event_time_text = string(event.time) ?? ""
+      event_time, event_time_err = parse_timestamp(event_time_text, format: "%+")
+      if event_time_err == null { .time = event_time }
+
+      level = string(event.level) ?? ""
+      if includes(["DEBUG", "INFO", "WARN", "ERROR"], level) { .level = level }
+
+      message = string(event.msg) ?? ""
+      allowed_messages = [
+        "rgs server stopped",
+        "public RGS listener started",
+        "operations RGS listener started",
+        "security credential cleanup failed",
+        "http request",
+        "http panic recovered",
+        "检测到认证随机数重放",
+        "outbox dispatch pass failed",
+        "outbox publication deferred",
+        "recovery backlog observation failed",
+        "round recovery pass failed"
+      ]
+      known_message = includes(allowed_messages, message)
+      if known_message {
+        .msg = message
+      } else if message != "" {
+        .msg = "unknown-structured-log-redacted"
+      }
+
+      unparseable_message = string(event.message) ?? ""
+      fixed_unparseable = event.parse_error == true && unparseable_message == "unparseable-log-redacted"
+      if fixed_unparseable {
+        .message = "unparseable-log-redacted"
+        .parse_error = true
+      }
+
+      route = string(event.route) ?? ""
+      allowed_routes = [
+        "operator.launch",
+        "operator.round_status",
+        "client.session_exchange",
+        "client.session_refresh",
+        "client.spin",
+        "client.round_status",
+        "client.pending_result",
+        "client.result_ack",
+        "other"
+      ]
+      if includes(allowed_routes, route) { .route = route }
+
+      method = string(event.method) ?? ""
+      if includes(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "OTHER"], method) {
+        .method = method
+      }
+
+      request_id = string(event.request_id) ?? ""
+      if match(request_id, r'^sha256:[0-9a-f]{64}$') {
+        .request_id = request_id
+      }
+
+      if is_integer(event.status) {
+        status = to_int(event.status) ?? -1
+        if status >= 100 && status <= 599 { .status = status }
+      }
+      status_class = string(event.status_class) ?? ""
+      if includes(["1xx", "2xx", "3xx", "4xx", "5xx"], status_class) { .status_class = status_class }
+      if is_integer(event.duration_ms) {
+        duration_ms = to_int(event.duration_ms) ?? -1
+        if duration_ms >= 0 && duration_ms <= 3600000 { .duration_ms = duration_ms }
+      }
+
+      error_class = string(event.error_class) ?? ""
+      if includes(["none", "canceled", "deadline_exceeded", "database", "network_timeout", "network", "internal"], error_class) {
+        .error_class = error_class
+      }
+      security_event = string(event.security_event) ?? ""
+      if security_event == "nonce_replay" { .security_event = security_event }
+      runtime_role = string(event.runtime_role) ?? ""
+      if includes(["combined", "api", "worker"], runtime_role) { .runtime_role = runtime_role }
+      environment = string(event.environment) ?? ""
+      if environment == "production" { .environment = environment }
+
+      game_id = string(event.game_id) ?? ""
+      if match(game_id, r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') { .game_id = game_id }
+      definition_version = string(event.definition_version) ?? ""
+      if match(definition_version, r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+        .definition_version = definition_version
+      }
+      definition_hash = string(event.definition_hash) ?? ""
+      if match(definition_hash, r'^[0-9a-f]{64}$') { .definition_hash = definition_hash }
+
+      if is_integer(event.operators) {
+        operators = to_int(event.operators) ?? -1
+        if operators >= 0 && operators <= 100000 { .operators = operators }
+      }
+      if is_integer(event.connection_limit) {
+        connection_limit = to_int(event.connection_limit) ?? -1
+        if connection_limit >= 1 && connection_limit <= 1000000 { .connection_limit = connection_limit }
+      }
+      if is_boolean(event.outbox_delivery_enabled) {
+        .outbox_delivery_enabled = event.outbox_delivery_enabled
+      }
+      if is_integer(event.claimed) {
+        claimed = to_int(event.claimed) ?? -1
+        if claimed >= 0 && claimed <= 1000000 { .claimed = claimed }
+      }
+      if is_integer(event.published) {
+        published = to_int(event.published) ?? -1
+        if published >= 0 && published <= 1000000 { .published = published }
+      }
+      if is_integer(event.failed) {
+        failed = to_int(event.failed) ?? -1
+        if failed >= 0 && failed <= 1000000 { .failed = failed }
+      }
+      if is_integer(event.lease_lost) {
+        lease_lost = to_int(event.lease_lost) ?? -1
+        if lease_lost >= 0 && lease_lost <= 1000000 { .lease_lost = lease_lost }
+      }
+
+      sanitized = .
+      . = { "service": "rgs-server" }
+      if is_timestamp(sanitized.time) { .time = sanitized.time }
+      if is_string(sanitized.level) { .level = sanitized.level }
+      if fixed_unparseable {
+        .message = "unparseable-log-redacted"
+        .parse_error = true
+      } else if !known_message {
+        .msg = "unknown-structured-log-redacted"
+      } else {
+        .msg = message
+        if message == "http request" {
+          if is_string(sanitized.route) { .route = sanitized.route }
+          if is_string(sanitized.request_id) { .request_id = sanitized.request_id }
+          if is_string(sanitized.method) { .method = sanitized.method }
+          if is_integer(sanitized.status) { .status = sanitized.status }
+          if is_string(sanitized.status_class) { .status_class = sanitized.status_class }
+          if is_integer(sanitized.duration_ms) { .duration_ms = sanitized.duration_ms }
+        } else if message == "http panic recovered" {
+          if is_string(sanitized.request_id) { .request_id = sanitized.request_id }
+          if is_string(sanitized.method) { .method = sanitized.method }
+          if is_integer(sanitized.duration_ms) { .duration_ms = sanitized.duration_ms }
+        } else if message == "public RGS listener started" {
+          if is_string(sanitized.environment) { .environment = sanitized.environment }
+          if is_string(sanitized.runtime_role) { .runtime_role = sanitized.runtime_role }
+          if is_string(sanitized.game_id) { .game_id = sanitized.game_id }
+          if is_string(sanitized.definition_version) { .definition_version = sanitized.definition_version }
+          if is_string(sanitized.definition_hash) { .definition_hash = sanitized.definition_hash }
+          if is_integer(sanitized.operators) { .operators = sanitized.operators }
+          if is_boolean(sanitized.outbox_delivery_enabled) { .outbox_delivery_enabled = sanitized.outbox_delivery_enabled }
+          if is_integer(sanitized.connection_limit) { .connection_limit = sanitized.connection_limit }
+        } else if message == "operations RGS listener started" {
+          if is_string(sanitized.runtime_role) { .runtime_role = sanitized.runtime_role }
+          if is_boolean(sanitized.outbox_delivery_enabled) { .outbox_delivery_enabled = sanitized.outbox_delivery_enabled }
+          if is_integer(sanitized.connection_limit) { .connection_limit = sanitized.connection_limit }
+        } else if includes([
+          "rgs server stopped",
+          "security credential cleanup failed",
+          "recovery backlog observation failed",
+          "round recovery pass failed"
+        ], message) {
+          if is_string(sanitized.error_class) { .error_class = sanitized.error_class }
+        } else if message == "检测到认证随机数重放" {
+          if is_string(sanitized.security_event) { .security_event = sanitized.security_event }
+        } else if message == "outbox dispatch pass failed" {
+          if is_integer(sanitized.claimed) { .claimed = sanitized.claimed }
+          if is_integer(sanitized.published) { .published = sanitized.published }
+          if is_integer(sanitized.failed) { .failed = sanitized.failed }
+          if is_integer(sanitized.lease_lost) { .lease_lost = sanitized.lease_lost }
+          if is_string(sanitized.error_class) { .error_class = sanitized.error_class }
+        } else if message == "outbox publication deferred" {
+          if is_integer(sanitized.claimed) { .claimed = sanitized.claimed }
+          if is_integer(sanitized.published) { .published = sanitized.published }
+          if is_integer(sanitized.failed) { .failed = sanitized.failed }
+        }
+      }
+
 sinks:
   local_https_archive:
     type: http
-    inputs: [normalize_rgs_json]
+    inputs: [strict_rgs_allowlist, safe_archive_flush_heartbeat]
     uri: https://wallet:8443/logs
     method: post
     auth:
@@ -93,3 +372,135 @@ sinks:
     inputs: [vector_internal_metrics]
     address: 0.0.0.0:9598
     flush_period_secs: 60
+
+tests:
+  - name: local archive flush heartbeat is rebuilt as a fixed four-field safe log
+    inputs:
+      - insert_at: safe_archive_flush_heartbeat
+        type: log
+        log_fields:
+          service: attacker-controlled
+          token: nested-secret
+          labels:
+            player_id: private-player
+    outputs:
+      - extract_from: safe_archive_flush_heartbeat
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(length(keys(.)), 4)
+              assert_eq!(.service, "vector")
+              assert!(is_timestamp(.time))
+              assert_eq!(.level, "INFO")
+              assert_eq!(.msg, "archive flush heartbeat")
+
+  - name: Docker Fluent log shape preserves approved RGS request semantics only
+    inputs:
+      - insert_at: normalize_rgs_json
+        type: log
+        log_fields:
+          log: >-
+            {"level":"INFO","msg":"http request","route":"operator.launch","request_id":"sha256:295c30089dbcb988c0988e4ac2ababa72182e0cc2c81d9d6e5b426e98d7d48ee","method":"POST","status":200,"status_class":"2xx","duration_ms":7}
+          container_id: docker-container-secret-id
+          container_name: /slots-game-production-rgs-server-1
+          source: stdout
+    outputs:
+      - extract_from: strict_rgs_allowlist
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(., {
+                "service": "rgs-server",
+                "level": "INFO",
+                "msg": "http request",
+                "route": "operator.launch",
+                "request_id": "sha256:295c30089dbcb988c0988e4ac2ababa72182e0cc2c81d9d6e5b426e98d7d48ee",
+                "method": "POST",
+                "status": 200,
+                "status_class": "2xx",
+                "duration_ms": 7
+              })
+
+  - name: nested secrets cannot cross the local strict RGS allowlist
+    inputs:
+      - insert_at: normalize_rgs_json
+        type: log
+        log_fields:
+          message: >-
+            {"level":"INFO","msg":"http request","route":"client.spin","request_id":"sha256:295c30089dbcb988c0988e4ac2ababa72182e0cc2c81d9d6e5b426e98d7d48ee","method":"POST","status":200,"status_class":"2xx","duration_ms":7,"request":{"headers":{"authorization":"Bearer nested-secret"}},"payload":{"walletSessionId":"nested-wallet-secret","wallet_session_id":"nested-wallet-snake-secret"}}
+    outputs:
+      - extract_from: strict_rgs_allowlist
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(., {
+                "service": "rgs-server",
+                "level": "INFO",
+                "msg": "http request",
+                "route": "client.spin",
+                "request_id": "sha256:295c30089dbcb988c0988e4ac2ababa72182e0cc2c81d9d6e5b426e98d7d48ee",
+                "method": "POST",
+                "status": 200,
+                "status_class": "2xx",
+                "duration_ms": 7
+              })
+  - name: unknown local structured messages cannot smuggle secrets through allowed field names
+    inputs:
+      - insert_at: normalize_rgs_json
+        type: log
+        log_fields:
+          message: >-
+            {"level":"WARN","msg":"third-party dynamic message","game_id":"private-player","request_id":"private-player"}
+    outputs:
+      - extract_from: strict_rgs_allowlist
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(., {
+                "service": "rgs-server",
+                "level": "WARN",
+                "msg": "unknown-structured-log-redacted"
+              })
+  - name: known local security messages cannot borrow unrelated allowed field names
+    inputs:
+      - insert_at: normalize_rgs_json
+        type: log
+        log_fields:
+          message: >-
+            {"level":"WARN","msg":"检测到认证随机数重放","security_event":"nonce_replay","game_id":"private-player","request_id":"private-player"}
+    outputs:
+      - extract_from: strict_rgs_allowlist
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(., {
+                "service": "rgs-server",
+                "level": "WARN",
+                "msg": "检测到认证随机数重放",
+                "security_event": "nonce_replay"
+              })
+  - name: approved local RGS startup identity fields remain observable
+    inputs:
+      - insert_at: normalize_rgs_json
+        type: log
+        log_fields:
+          message: >-
+            {"level":"INFO","msg":"public RGS listener started","environment":"production","runtime_role":"api","game_id":"primalrampage-prod","definition_version":"ci-definition-v2","definition_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","operators":2,"outbox_delivery_enabled":false,"connection_limit":512,"request_id":"private-player"}
+    outputs:
+      - extract_from: strict_rgs_allowlist
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(., {
+                "service": "rgs-server",
+                "level": "INFO",
+                "msg": "public RGS listener started",
+                "environment": "production",
+                "runtime_role": "api",
+                "game_id": "primalrampage-prod",
+                "definition_version": "ci-definition-v2",
+                "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operators": 2,
+                "outbox_delivery_enabled": false,
+                "connection_limit": 512
+              })

@@ -113,6 +113,9 @@ v2 门禁只证明这些引用与精确定义身份/哈希位于可信密钥签�
 - 容量闸门的 503 是身份解析前的通用未签名 transport/admission 响应，不是权威业务结果。调用方
   不得据此推断 nonce、launch 或 round 副作用；必须遵循不确定传输与幂等恢复契约，保留业务 body
   和幂等键、使用新 nonce/请求 ID/签名重试或查询状态，绝不能创建新业务身份绕过背压。
+- 浏览器对每次 RGS HTTP 请求只生成独立的 CSPRNG W3C `traceparent`，设置 Level 2 random flag，
+  不发送 `tracestate`、`baggage`、玩家/会话/轮次或设备标识，也不把 trace 标识写入持久存储。
+  CSPRNG 不可用时仅省略该诊断头，不影响权威请求；服务端仍会对不可信远端 Trace ID 做 keyed sampling。
 - 钱包 HTTP 客户端除请求超时和有界空闲池外，还必须保持每 wallet host 最多 32 个活跃连接、
   32 KiB 响应头上限并禁用透明响应压缩，防止钱包慢响应、异常大 Header 或压缩载荷放大进程资源。
 - 应用浏览器保护：确切 CORS origin、游戏壳的 CSP、无带凭据 URL、`frame-ancestors` 允许列
@@ -125,9 +128,10 @@ v2 门禁只证明这些引用与精确定义身份/哈希位于可信密钥签�
 
 结构化日志需要文档化脱敏策略。绝不记录 access token、launch code、私钥、完整签名 body、原始
 nonce 或不必要玩家/钱包标识符。指标必须用有界标签，绝不按运营商、玩家、会话、轮次或事务 ID
-标签。HTTP 访问日志只允许固定路由类别、语法受限的 request ID、状态、状态类别和耗时；不得写入
-原始 URL、查询串或 RemoteAddr。请求时延必须使用固定桶直方图，连接池只暴露进程级 open/in-use/
-idle/max、wait-count 与 wait-duration。审计导出应防篡改、访问控制并与数据库/发件箱记录对账。
+标签。HTTP 访问日志只允许固定路由类别、request ID 的稳定 SHA-256 摘要、状态、状态类别和耗时；
+不得写入 request ID 原值、原始 URL、查询串或 RemoteAddr。请求时延必须使用固定桶直方图，
+连接池只暴露进程级 open/in-use/idle/max、wait-count 与 wait-duration。审计导出应防篡改、访问控制
+并与数据库/发件箱记录对账。
 每次 `/metrics` 抓取必须在一个总计两秒的预算内复用完整就绪检查，只导出无标签布尔指标
 `rgs_ready`，不得泄漏检查错误或依赖身份。抓取在 `rgs_ready=0` 时仍返回 200，因此必须同时监控
 Prometheus `up`（传输可达）与 `rgs_ready`（流量准入），不得用前者替代后者。

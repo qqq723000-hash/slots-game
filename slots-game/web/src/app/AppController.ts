@@ -20,6 +20,7 @@ import {
 import { PresentationQueue } from "../presentation/PresentationQueue";
 import type {
   GameGateway,
+  GatewaySessionTimeout,
   GatewayStatus,
   ResultDeliveryStage,
 } from "../protocol/GameGateway";
@@ -55,6 +56,7 @@ import {
 } from "../renderer/ResponsiveLayout";
 import { setPrimalRuntimeAssetChannel } from "../assets/primalRuntimeAssets";
 import { DomOverlay } from "../ui/DomOverlay";
+import type { OperatorApprovedGameRulesBundleInput } from "../ui/operatorApprovedGameRules";
 import { createRequestId } from "../protocol/messages";
 import { validateSpinResultAgainstOrigin } from "../protocol/spinResultOriginGuard";
 import { featureLockedBet, selectSessionBet } from "./state/betSelection";
@@ -108,6 +110,7 @@ import {
 } from "./roundAudioPlan";
 import {
   BIG_WIN_CONTROLLER_LEAD_IN_MS,
+  bigWinVerifiedArtworkFromPackage,
   planBigWin,
   type BigWinMilestone,
   type BigWinPlan,
@@ -119,8 +122,11 @@ import {
   type WinRecordPlan,
 } from "../renderer/WinCelebration";
 import {
+  beginStreamingAssetEventLease,
   createStreamingAssetRuntime,
   publishStreamingAssetDiagnostics,
+  streamingFeaturePackageId,
+  type StreamingAssetEventLease,
   type StreamingAssetRuntimePort,
 } from "../startup/StreamingAssetRuntime";
 import {
@@ -140,6 +146,7 @@ import {
 import {
   isWindowFramed,
   notifyOperatorSessionRequired,
+  returnTopLevelSessionToOperator,
 } from "./operatorSessionBridge";
 
 interface RoundFeatureAudioState {
@@ -421,10 +428,15 @@ export interface AppControllerDependencies {
   /** 只启用精确的 capture=1 Base Vault 截图时钟。 */
   readonly vaultUnlockCaptureEnabled?: boolean;
   /**
-   * 非权威的 Pass107 Phase-B 缓存/完整性影子。它绝不阻挡启动或特性表现，
-   * 且只能为生命周期测试注入。
+   * 非权威资源运行时。默认 Big Win 事件租约只门控对应装饰表现，不阻挡启动，
+   * 也不参与结果、金额、ACK 或重连决策；嵌入式宿主可注入等价实现。
    */
   readonly streamingAssetRuntime?: StreamingAssetRuntimePort;
+  /**
+   * 运营商/监管方已经审核的纯玩家规则文案。客户端只做封闭校验和文本投影；
+   * 缺失或无效时 Game Rules 保持中性不可用，不以内部协议说明代替。
+   */
+  readonly operatorApprovedGameRules?: Readonly<OperatorApprovedGameRulesBundleInput>;
   /**
    * 生产 RGS launch code 只能使用一次；宿主收到请求后必须换取新签名会话，
    * 禁止从浏览器历史重放已清除的 code。
@@ -486,40 +498,62 @@ export function mapPreloadToVisibleProgress(
   return Object.freeze({ ...event, progress });
 }
 
-const APPLICATION_SHELL_HTML = `
-  <main class="viewport" data-role="viewport">
-    <div class="game-safe-area" data-role="safe-area">
-      <div class="game-frame" data-role="frame">
-        <div class="canvas-host" data-role="canvas"></div>
-        <div class="dom-overlay" data-role="overlay"></div>
-      </div>
-    </div>
-    <div class="launch-loading-host" data-role="launch-host"></div>
-    <section class="orientation-lock" role="status" aria-hidden="true" aria-label="Landscape orientation required">
-      <span class="orientation-lock__device" aria-hidden="true"><i></i></span>
-      <strong>Rotate to landscape</strong>
-      <span>Primal Rampage uses a wide tactical display</span>
-    </section>
-  </main>
-`;
-
 function mountApplicationShell(root: HTMLElement): ApplicationShell {
-    // 将服务端渲染的加载器保持在视口坐标中。ResponsiveLayout 启动前，游戏画面刻意保持
-    // 1280x720；若将加载器挂到其中，会把手机/平板的首帧推到屏幕外。
+  // 将服务端渲染的加载器保持在视口坐标中。ResponsiveLayout 启动前，游戏画面刻意保持
+  // 1280x720；若将加载器挂到其中，会把手机/平板的首帧推到屏幕外。
   const serverLoader = root.querySelector<HTMLElement>('[data-role="launch-loading"]');
-  root.innerHTML = APPLICATION_SHELL_HTML;
-  const requireRole = (role: string): HTMLElement => {
-    const element = root.querySelector<HTMLElement>(`[data-role="${role}"]`);
-    if (!element) throw new Error(`Missing required UI element: ${role}`);
-    return element;
-  };
+
+  // 小型启动外壳全部通过 DOM API 构造，不经过任何 HTML 解析或 TrustedHTML 铸造边界。
+  const viewport = document.createElement("main");
+  viewport.className = "viewport";
+  viewport.dataset.role = "viewport";
+
+  const safeArea = document.createElement("div");
+  safeArea.className = "game-safe-area";
+  safeArea.dataset.role = "safe-area";
+
+  const frame = document.createElement("div");
+  frame.className = "game-frame";
+  frame.dataset.role = "frame";
+
+  const canvasHost = document.createElement("div");
+  canvasHost.className = "canvas-host";
+  canvasHost.dataset.role = "canvas";
+
+  const overlayHost = document.createElement("div");
+  overlayHost.className = "dom-overlay";
+  overlayHost.dataset.role = "overlay";
+  frame.append(canvasHost, overlayHost);
+  safeArea.append(frame);
+
+  const launchHost = document.createElement("div");
+  launchHost.className = "launch-loading-host";
+  launchHost.dataset.role = "launch-host";
+
+  const orientationLock = document.createElement("section");
+  orientationLock.className = "orientation-lock";
+  orientationLock.setAttribute("role", "status");
+  orientationLock.setAttribute("aria-hidden", "true");
+  orientationLock.setAttribute("aria-label", "Landscape orientation required");
+  const orientationDevice = document.createElement("span");
+  orientationDevice.className = "orientation-lock__device";
+  orientationDevice.setAttribute("aria-hidden", "true");
+  orientationDevice.append(document.createElement("i"));
+  const orientationTitle = document.createElement("strong");
+  orientationTitle.textContent = "Rotate to landscape";
+  const orientationDescription = document.createElement("span");
+  orientationDescription.textContent = "Primal Rampage uses a wide tactical display";
+  orientationLock.append(orientationDevice, orientationTitle, orientationDescription);
+
+  viewport.append(safeArea, launchHost, orientationLock);
+  root.replaceChildren(viewport);
   const shell = {
-    viewport: requireRole("viewport"),
-    safeArea: requireRole("safe-area"),
-    frame: requireRole("frame"),
-    canvasHost: requireRole("canvas"),
-    overlayHost: requireRole("overlay"),
-    launchHost: requireRole("launch-host"),
+    viewport,
+    safeArea,
+    frame,
+    canvasHost,
+    overlayHost,
+    launchHost,
   };
   if (serverLoader) shell.launchHost.appendChild(serverLoader);
   return shell;
@@ -539,9 +573,11 @@ function markStartupAssembly(
   const status = loading?.querySelector<HTMLElement>(".launch-loading__status");
   const value = loading?.querySelector<HTMLElement>(".launch-loading__value");
   const bar = loading?.querySelector<HTMLElement>(".launch-loading__track b");
+  const track = loading?.querySelector<HTMLElement>(".launch-loading__track");
   if (status) status.textContent = "Assembling game scene";
   if (value) value.textContent = `${Math.round(bounded * 100)}%`;
   if (bar) bar.style.transform = `scaleX(${bounded})`;
+  if (track) track.setAttribute("aria-valuenow", String(Math.round(bounded * 100)));
 }
 
 function throwIfStartupAborted(signal: AbortSignal | undefined): void {
@@ -595,6 +631,14 @@ function immutableClone<T>(value: T): T {
   return value;
 }
 
+function bestEffortAppCleanup(cleanup: () => void): void {
+  try {
+    cleanup();
+  } catch {
+    // 一个 owner 的拆卸故障不得阻止其余 observer、RAF、音频、网关与 GPU owner 清理。
+  }
+}
+
 export class AppController {
   private readonly root: HTMLElement;
   private readonly startupFrameRequest?: FrameRequest;
@@ -620,6 +664,13 @@ export class AppController {
   private launchIntroClockMode: GameIntroClockMode = "playback-clock";
   private readonly preload: PreloadGate;
   private readonly streamingAssets: StreamingAssetRuntimePort;
+  private readonly bigWinAssetPackageId: string;
+  private readonly freeSpinsAssetPackageId: string;
+  private readonly wheelAssetPackageId: string;
+  private freeSpinsAssetLease: StreamingAssetEventLease | null = null;
+  private wheelAssetLease: StreamingAssetEventLease | null = null;
+  private freeSpinsArtworkReady: Promise<void> | null = null;
+  private wheelArtworkReady: Promise<void> | null = null;
   private readonly reducedMotion: boolean;
   private readonly reducedMotionMedia: MediaQueryList | null;
   private snapshot: GameSnapshot = {
@@ -661,6 +712,7 @@ export class AppController {
   private initialRgsSessionTimer: ReturnType<typeof setTimeout> | null = null;
   private initialSessionFailure: PlayerFacingError | null = null;
   private operatorSessionRequestSent = false;
+  private sessionTimedOut = false;
   private lastPlayerFacingError: PlayerFacingError | null = null;
   private scatterLandOrdinal = 0;
   private pendingWheelAward: WheelAwardedEvent | null = null;
@@ -816,6 +868,9 @@ export class AppController {
       ?? createStreamingAssetRuntime(assetChannel, import.meta.env, (diagnostics) => {
         publishStreamingAssetDiagnostics(this.root, diagnostics);
       });
+    this.bigWinAssetPackageId = streamingFeaturePackageId(assetChannel, "big-win");
+    this.freeSpinsAssetPackageId = streamingFeaturePackageId(assetChannel, "free-spins");
+    this.wheelAssetPackageId = streamingFeaturePackageId(assetChannel, "wheel");
     this.reelRound.subscribe(({ state, roundId }) => {
       // 稳定的 DOM 接缝让浏览器测试可以观察渲染器/状态同步，同时不让游戏逻辑耦合到调试面板。
       frame.dataset.reelState = state;
@@ -837,6 +892,8 @@ export class AppController {
       this.ui.setResponsiveLayout(snapshot);
       this.renderer.setResponsiveLayout(snapshot);
     });
+    this.ui.onHandModeChange((handMode) => this.layout.setHandMode(handMode));
+    this.ui.setOperatorApprovedGameRules(dependencies.operatorApprovedGameRules);
     this.stops = new StopSequencer(this.renderer.reels, {}, {
       onReelStopStart: ({ reel }) => {
         this.reelRound.transition({ type: "REEL_STOP_STARTED", reel });
@@ -1024,6 +1081,7 @@ export class AppController {
       onResultDeliveryStage: (stage) => this.markRgsResultDeliveryStage(stage),
       onSpinResultAcknowledged: () => this.refreshUi(),
       onOperatorSessionRequired: (error) => this.handleOperatorSessionRequired(error),
+      onSessionTimeout: (timeout) => this.handleSessionTimeout(timeout),
       onError: (error) => this.handleError(error),
     });
     this.ui.onSpin(() => this.requestSpin());
@@ -1133,50 +1191,59 @@ export class AppController {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.stopPostWinIdleRepeat();
-    this.clearInitialRgsSessionTimeout();
-    finishStartupPerformanceMonitor(this.root);
+    bestEffortAppCleanup(() => this.stopPostWinIdleRepeat());
+    bestEffortAppCleanup(() => this.clearInitialRgsSessionTimeout());
+    bestEffortAppCleanup(() => finishStartupPerformanceMonitor(this.root));
     // 若构造过程在启动设置前中断，确保拆卸流程安全。
-    this.preload?.abort();
-    this.streamingAssets?.destroy();
+    bestEffortAppCleanup(() => this.preload?.abort());
+    bestEffortAppCleanup(() => this.releaseFeatureAssetEventLease("wheel"));
+    bestEffortAppCleanup(() => this.releaseFeatureAssetEventLease("free-spins"));
+    bestEffortAppCleanup(() => this.streamingAssets?.destroy());
     if (this.activeObservedFeatureEvents.length > 0) {
       this.activeObservedFeatureEvents.length = 0;
-      this.notifyFeatureEvent(null, null);
+      bestEffortAppCleanup(() => this.notifyFeatureEvent(null, null));
     }
-    this.observePresentationMilestone(null);
-    this.ui?.completeAutoplayStopRound?.(this.activePresentationSequence ?? undefined);
+    bestEffortAppCleanup(() => this.observePresentationMilestone(null));
+    bestEffortAppCleanup(() => (
+      this.ui?.completeAutoplayStopRound?.(this.activePresentationSequence ?? undefined)
+    ));
     this.activePresentationSequence = null;
     this.activeRageCollectionPresentationSequence = null;
     this.activeRageCascadePresentationSequence = null;
-    this.featurePreviewResolver?.();
+    const featurePreviewResolver = this.featurePreviewResolver;
     this.featurePreviewResolver = null;
-    this.initialSessionResolver?.();
+    this.featurePreviewActive = false;
+    bestEffortAppCleanup(() => featurePreviewResolver?.());
+    const initialSessionResolver = this.initialSessionResolver;
     this.initialSessionResolver = null;
+    bestEffortAppCleanup(() => initialSessionResolver?.());
     this.featurePreviewContinuePending = false;
     this.roundOriginFeatureState = null;
     this.bufferedRecoveredSpinResult = null;
-    this.cancelScheduledFreeSpin();
-    this.stopRoundAudio(0);
-    this.audio.stopGameIntro(0);
-    this.stops.cancel();
-    this.reelRound.reset("controller-destroyed");
-    this.renderer.cancelSpinPresentation();
-    this.intro.destroy();
-    this.gateway.close();
-    this.layout.stop();
-    this.reducedMotionMedia?.removeEventListener("change", this.handleReducedMotionChange);
-    this.audio.destroy();
-    this.renderer.setFeaturePresentationMilestoneListener(null);
-    this.renderer.setFeaturePresentationBranchListener(null);
-    this.renderer.setFeaturePresentationInputCheckpointListener(null);
-    this.renderer.setRageCascadePresentationMilestoneListener?.(null);
-    this.renderer.setRageCascadePresentationPaused?.(false);
-    this.renderer.setVaultUnlockPresentationMilestoneListener?.(null);
-    this.renderer.setBigWinMilestoneListener(null);
-    this.renderer.setFeaturePreviewVisible(false);
-    this.ui.clearWheelBonusRoundSummary?.();
-    this.ui.destroy();
-    this.renderer.destroy();
+    bestEffortAppCleanup(() => this.cancelScheduledFreeSpin());
+    bestEffortAppCleanup(() => this.stopRoundAudio(0));
+    bestEffortAppCleanup(() => this.audio.stopGameIntro(0));
+    bestEffortAppCleanup(() => this.stops.cancel());
+    bestEffortAppCleanup(() => this.reelRound.reset("controller-destroyed"));
+    bestEffortAppCleanup(() => this.renderer.cancelSpinPresentation());
+    bestEffortAppCleanup(() => this.intro.destroy());
+    bestEffortAppCleanup(() => this.gateway.close());
+    bestEffortAppCleanup(() => this.layout.stop());
+    bestEffortAppCleanup(() => (
+      this.reducedMotionMedia?.removeEventListener("change", this.handleReducedMotionChange)
+    ));
+    bestEffortAppCleanup(() => this.audio.destroy());
+    bestEffortAppCleanup(() => this.renderer.setFeaturePresentationMilestoneListener(null));
+    bestEffortAppCleanup(() => this.renderer.setFeaturePresentationBranchListener(null));
+    bestEffortAppCleanup(() => this.renderer.setFeaturePresentationInputCheckpointListener(null));
+    bestEffortAppCleanup(() => this.renderer.setRageCascadePresentationMilestoneListener?.(null));
+    bestEffortAppCleanup(() => this.renderer.setRageCascadePresentationPaused?.(false));
+    bestEffortAppCleanup(() => this.renderer.setVaultUnlockPresentationMilestoneListener?.(null));
+    bestEffortAppCleanup(() => this.renderer.setBigWinMilestoneListener(null));
+    bestEffortAppCleanup(() => this.renderer.setFeaturePreviewVisible(false));
+    bestEffortAppCleanup(() => this.ui.clearWheelBonusRoundSummary?.());
+    bestEffortAppCleanup(() => this.ui.destroy());
+    bestEffortAppCleanup(() => this.renderer.destroy());
   }
 
   private async runLaunch(): Promise<void> {
@@ -1184,7 +1251,7 @@ export class AppController {
       await this.preload.run((progress) => {
         this.publishStartupProgress(progress);
       });
-      if (this.destroyed) return;
+      if (this.destroyed || this.sessionTimedOut) return;
       this.throwIfInitialSessionFailed();
       // PreloadGate 此时已写入唯一真实的 100%。在真实绘制边界前保持其可见，
       // 任何启动转换都不得提前将其隐藏。
@@ -1193,7 +1260,7 @@ export class AppController {
         this.root.dataset.startupReadinessCompleteAt = String(startupClockNow());
       }
       await waitForPaintedFrame(this.startupFrameRequest);
-      if (this.destroyed) return;
+      if (this.destroyed || this.sessionTimedOut) return;
       if (this.root?.dataset) {
         this.root.dataset.startupReadiness = "complete-painted";
         this.root.dataset.startupReadinessPaintedAt = String(startupClockNow());
@@ -1210,21 +1277,22 @@ export class AppController {
         && (forceFeaturePreview || !this.ui.isFeaturePreviewDismissed())) {
         this.launchIntroClockMode = "playback-clock";
         await this.waitForFeaturePreview();
+        if (this.destroyed || this.sessionTimedOut) return;
         this.throwIfInitialSessionFailed();
       } else {
       // 复刻的 showSplash=false 仍会等待重连，然后在介绍前发出相同的
       // SPLASH_HIDE/BaseGameMusicStart 边界。
         await this.waitForInitialSession();
-        if (this.destroyed) return;
+        if (this.destroyed || this.sessionTimedOut) return;
         this.throwIfInitialSessionFailed();
         this.launchIntroClockMode = "wall-clock";
         this.launchClock?.resetToWall?.();
         this.syncGameMusic();
       }
-      if (this.destroyed) return;
+      if (this.destroyed || this.sessionTimedOut) return;
       this.syncLaunchUi();
       await this.intro.play();
-      if (this.destroyed) return;
+      if (this.destroyed || this.sessionTimedOut) return;
       // Base 音乐已在 Continue/SPLASH_HIDE 时启动。GameReady 没有第二套 SoundStage 程序，
       // 因此 Intro 完成时不得重写淡化效果。
       this.launch.transition({ type: "INTRO_COMPLETE" });
@@ -1233,16 +1301,16 @@ export class AppController {
       // syncLaunchUi 会先移除启动界面。恢复的已提交结果此时可开始其唯一一次可见重放，
       // 而不会在启动界面背后播放动画。
       this.releaseBufferedRecoveredSpinResult();
-      // Phase B 只在未经改动的严格预加载和制作好的介绍完成后开始。故障由协调器内部吞掉，
+      // shadow 模式只在严格首启资源和制作好的介绍完成后开始。故障由协调器内部吞掉，
       // 绝不能改变启动、输入、结果或特性事件顺序。自定义/嵌入式协调器同样不具权威性；
       // 即使宿主实现有缺陷，也不得进入启动失败的 catch。
       try {
         this.streamingAssets.scheduleFeatureShadowPrefetch();
       } catch {
-      // 影子诊断尽力而为；严格预加载已验证可见游戏所需的每项资源。
+      // 影子诊断尽力而为；按需 Big Win 包仍由其真实事件租约独立校验。
       }
     } catch (error) {
-      if (this.destroyed) return;
+      if (this.destroyed || this.sessionTimedOut) return;
       finishStartupPerformanceMonitor(this.root);
       this.completeLaunchFailure(this.initialSessionFailure
         ?? playerFacingErrorFor(error, "launch"));
@@ -1262,6 +1330,7 @@ export class AppController {
   }
 
   private requestSpin(): void {
+    if (this.sessionTimedOut) return;
     // CAPLIMIT 只在制作好的 733.3ms 显示后开放 CONTINUE_SPIN。该有界栅栏激活期间，
     // 它的优先级高于所有特性/转轴操作，并且绝不提交另一权威轮次。
     if (this.renderer.requestFreeSpinCapContinue?.()) return;
@@ -1368,6 +1437,8 @@ export class AppController {
   }
 
   private handleStatus(status: GatewayStatus): void {
+    // SESSION_TIMEOUT 是不可逆终态；任何已排队的状态回调都不得重新发布 online。
+    if (this.sessionTimedOut) return;
     this.connectionStatus = status;
     this.ui.setConnection(status);
     if (status === "recovering") this.ui.clearWheelBonusRoundSummary?.();
@@ -1378,6 +1449,7 @@ export class AppController {
   }
 
   private handleSession(session: SessionOpened): void {
+    if (this.sessionTimedOut) return;
     // 一次性 RGS code 已进入“向宿主索取新会话”状态时，迟到回调不得复活旧会话。
     if (this.initialSessionFailure && this.requiresOperatorSessionRecovery()) return;
     if (!this.acceptSessionMoneyBinding(session)) return;
@@ -1470,6 +1542,8 @@ export class AppController {
     result: SpinResult,
     recoveredOriginFeatureState?: Readonly<FeatureState>,
   ): void {
+    // 网关保留未完成轮次的 ledger 供新会话恢复；旧页面不得消费迟到结果。
+    if (this.sessionTimedOut) return;
     this.markRgsResultDeliveryStage("callback");
     if (recoveredOriginFeatureState !== undefined) {
       this.bufferRecoveredSpinResult(result, recoveredOriginFeatureState);
@@ -1510,7 +1584,6 @@ export class AppController {
       this.rejectSpinResult(error);
       return;
     }
-
     let needsVisualSpinStart = false;
     this.markRgsResultDeliveryStage("buffer-reel-guard");
     const reelSnapshot = this.reelRound.snapshot;
@@ -1607,6 +1680,12 @@ export class AppController {
       this.rejectSpinResult(error);
       return;
     }
+    // v6 保留 nominal 审计 Win，即使整场 cap 已把其实际支付裁为 0；这些记录必须留在
+    // 权威 result 中，但不得触发玩家可见的 Win 动画、音频或空闲重复。
+    const presentedWins = result.wins.filter((win) => BigInt(win.amountMinor) > 0n);
+    // 校验通过后的第一条副作用就是启动事件资源租约；此时尚未进入 reel/feature/game
+    // 状态转换。租约不参与结果选择，只与后续制作表现并行获取、校验和解码。
+    this.primeAuthoritativeFeatureAssetLeases(result, previousFeatureState);
     // 只有上述权威形状/来源守卫成功后，请求侧计数器减量才会永久生效。
     // 恢复的 Free Spins 和 Wheel 输入没有付费预留，因此这里对它们不执行任何操作。
     this.markRgsResultDeliveryStage("autoplay-finalize");
@@ -1622,7 +1701,7 @@ export class AppController {
       roundId: result.roundId,
       totalWinMinor: result.totalWinMinor,
       balanceMinor: result.balanceMinor,
-      winCount: result.wins.length,
+      winCount: presentedWins.length,
     });
     this.markRgsResultDeliveryStage("reel-transition");
     this.reelRound.transition({
@@ -1662,7 +1741,7 @@ export class AppController {
       const featureAudioState: RoundFeatureAudioState = {
         rageLevel: previousFeatureState.rageLevel,
         wasFreeSpins: previousFeatureState.mode !== "BASE",
-        vaultTeaseExtraHold: result.wins.length === 0 && result.events.some((event) => (
+        vaultTeaseExtraHold: presentedWins.length === 0 && result.events.some((event) => (
           event.type === "vaults.locked"
         )),
         vaultCells: vaultLandedEvent?.type === "vaults.landed" ? vaultLandedEvent.cells : [],
@@ -1714,10 +1793,10 @@ export class AppController {
         // 普通 GameWinLogic START 拥有一个从语义上的末轴停止起计时的 300ms 栅栏。
         // Result_Show 的首个 16ms 渲染帧在这段前置时间内运行，而不是再额外等待 300ms。
         // Big Win 刻意没有前置栅栏：完整 Big Win 程序离开后，其普通视图才开始新的前置等待。
-        const settledWaysWinMinor = result.wins.length > 0
-          ? authoritativeWaysWinTotal(result.wins)
+        const settledWaysWinMinor = presentedWins.length > 0
+          ? authoritativeWaysWinTotal(presentedWins)
           : "0";
-        ordinaryWinStartBarrier = result.wins.length > 0
+        ordinaryWinStartBarrier = presentedWins.length > 0
           && this.createBigWinPlan(settledWaysWinMinor, result.betMinor) === null
           ? this.presentationDelay(300)
           : null;
@@ -1750,15 +1829,15 @@ export class AppController {
       // 官方 STOP_ANY 在 WIN 流程开始时求值，早于普通计数器、Big Win 或特性 Continue
       // 排入另一输入。
       this.ui?.reachAutoplayStopBoundary?.(result.sequence, "any-win");
-      this.ui.beginResultPresentation(result.wins.length > 0);
-      const roundWaysWinMinor = result.wins.length > 0
-        ? authoritativeWaysWinTotal(result.wins)
+      this.ui.beginResultPresentation(presentedWins.length > 0);
+      const roundWaysWinMinor = presentedWins.length > 0
+        ? authoritativeWaysWinTotal(presentedWins)
         : "0";
       this.audio.recordBaseMusicRoundOutcome?.(roundWaysWinMinor);
       if (previousFeatureState.mode !== "BASE" && result.featureState.mode !== "BASE") {
         this.renderer.updateFreeSpinHud(featureAudioState.hudState ?? result.featureState);
       }
-      if (result.wins.length > 0) {
+      if (presentedWins.length > 0) {
         const waysWinMinor = roundWaysWinMinor;
         const freeSpinCompletion = result.events.find(
           (event) => event.type === "free_spins.completed",
@@ -1782,23 +1861,39 @@ export class AppController {
         const bigWinPlan = this.createBigWinPlan(waysWinMinor, result.betMinor);
         const bigWinMode = bigWinPlan !== null;
         if (bigWinPlan) {
-          await this.presentationDelay(
-            reducedMotion ? 40 : BIG_WIN_CONTROLLER_LEAD_IN_MS,
-          );
-          this.bigWinInFreeSpins = previousFeatureState.mode !== "BASE";
-          // 原始音乐控制器根据 Big Win START 时的模式确定此边界。因此终局 Free Spins 结果
-          // 会短暂恢复 FS 循环；之后的 SUMMARY 事件拥有其 1.5s 退场。
-          this.bigWinMusicResume = previousFeatureState.mode !== "BASE"
-            ? "free-spins"
-            : "ambient";
-          this.ui.showBigWinCongratulations();
-          this.ui.setSpinMode("big-win-skip");
+          // 权威结果达到阈值后立即启动事件租约，使清单/大小/SHA-256 校验与制作好的
+          // lead-in 重叠；它不参与阈值、金额或任何服务端状态决策。
+          const assetLease = this.beginBigWinAssetEventLease();
           try {
-            await this.presentEffect(async () => {
-              await this.renderer.bigWin.present(bigWinPlan);
-            });
+            await this.presentationDelay(
+              reducedMotion ? 40 : BIG_WIN_CONTROLLER_LEAD_IN_MS,
+            );
+            this.bigWinInFreeSpins = previousFeatureState.mode !== "BASE";
+            // 原始音乐控制器根据 Big Win START 时的模式确定此边界。因此终局 Free Spins 结果
+            // 会短暂恢复 FS 循环；之后的 SUMMARY 事件拥有其 1.5s 退场。
+            this.bigWinMusicResume = previousFeatureState.mode !== "BASE"
+              ? "free-spins"
+              : "ambient";
+            this.ui.showBigWinCongratulations();
+            this.ui.setSpinMode("big-win-skip");
+            try {
+              await this.presentEffect(async () => {
+                const verifiedArtwork = assetLease
+                  ? bigWinVerifiedArtworkFromPackage((await assetLease.ready).package)
+                  : undefined;
+                // 租约保持到 Spine 解析、PNG 解码/采用、金币池初始化及整个展示结束；
+                // BigWinView 不再对四项独占资源按 URL 二次加载。
+                await this.renderer.bigWin.present(
+                  bigWinPlan,
+                  assetLease?.signal,
+                  verifiedArtwork,
+                );
+              });
+            } finally {
+              if (!this.destroyed) this.ui.setSpinMode("waiting");
+            }
           } finally {
-            if (!this.destroyed) this.ui.setSpinMode("waiting");
+            assetLease?.release();
           }
           await this.presentationDelay(reducedMotion ? 40 : 2_000);
           // 通用 WinLogic 只在完整 Big Win 处理器（包括叠层后的 2s 延迟）离开后
@@ -1817,7 +1912,7 @@ export class AppController {
         }
         this.presentRoundWinCharacterAudio(winPresentation);
         const roundWinReaction = this.presentEffect(() => this.renderer.reactToWin(
-          result.wins,
+          presentedWins,
           winPresentation,
         ));
         if (!bigWinMode) {
@@ -1847,9 +1942,9 @@ export class AppController {
           // 随后该里程碑拥有符号表现和首次显示音频。只有在这段精确 START 调用栈之后，
           // 才启动聚合计数器。
           const normalRecordsPresentation = (async () => {
-            for (const [index, win] of result.wins.entries()) {
+            for (const [index, win] of presentedWins.entries()) {
               const recordHoldDurationMs = primalWinRecordHoldDurationMs(win, {
-                recordCount: result.wins.length,
+                recordCount: presentedWins.length,
                 counterDurationMs,
                 postBigWin: bigWinMode,
                 fastPlay: roundFastPlay,
@@ -1858,7 +1953,7 @@ export class AppController {
               // 第六个参数告诉渲染器，此次隐藏是否为零延迟交接到下一条权威记录。
               const restoreSymbolsAtHoldBoundary = !bigWinMode
                 && winPresentation === "base"
-                && result.wins.length === 1
+                && presentedWins.length === 1
                 && !(Number.isSafeInteger(win.multiplier) && (win.multiplier ?? 0) > 1);
               await this.presentEffect(() => this.renderer.winCelebration.present(
                 [win],
@@ -1889,7 +1984,7 @@ export class AppController {
                     type: `win-record.${milestone}`,
                     sequence: result.sequence,
                     index,
-                    count: result.wins.length,
+                    count: presentedWins.length,
                     id: record.id,
                     symbol: record.symbol,
                     amountMinor: record.amountMinor,
@@ -1903,7 +1998,7 @@ export class AppController {
                   });
                 },
                 restoreSymbolsAtHoldBoundary,
-                index < result.wins.length - 1,
+                index < presentedWins.length - 1,
               ));
               if (this.normalWinFinishRequested) break;
             }
@@ -1946,7 +2041,7 @@ export class AppController {
       }
       // 停轴后的 Rage/Wheel/Vault/Free Spins 表现归宏观游戏状态所有，而非转轴运动生命周期。
       this.reelRound.transition({ type: "ROUND_COMPLETE" });
-      if (result.wins.length > 0 && presentationPhases.postWinEvents.length > 0) {
+      if (presentedWins.length > 0 && presentationPhases.postWinEvents.length > 0) {
         await this.presentationDelay(reducedMotion ? 40 : 350);
       }
       await this.presentPostReelFeatureEvents(
@@ -1983,6 +2078,7 @@ export class AppController {
       // 真实 RGS 在此 ACK 前始终保持 hasPendingSpin=true。
       // 投影最终就绪 UI 前清除该权威待处理状态。
       this.acknowledgePresentedSpinResult(result);
+      this.releaseCompletedFeatureAssetLeases(result);
       this.refreshUi();
       this.schedulePostWinIdleRepeat(result, previousFeatureState, reducedMotion, roundFastPlay);
       this.activeRoundFeatureAudioState = null;
@@ -1999,7 +2095,10 @@ export class AppController {
         this.activePresentationSequence = null;
       }
     }).catch((error: unknown) => {
-      if (this.destroyed) return;
+      // SESSION_TIMEOUT 把旧轮次 ledger 留给新会话恢复；取消异常不是“表现失败”，
+      // 绝不能在终态后补 applyResult、ACK、toast 或状态机完成事件。
+      if (this.destroyed || this.sessionTimedOut
+        || error instanceof RoundPresentationCancelledError) return;
       this.activeRoundFeatureAudioState = null;
       this.audio.endBaseMusicRound?.();
       this.stopRoundAudio(35);
@@ -2026,6 +2125,7 @@ export class AppController {
       this.reportPlayerError(error, "presentation");
       if (this.machine.phase === "presenting") this.machine.transition({ type: "PRESENTATION_COMPLETE" });
       this.acknowledgePresentedSpinResult(result);
+      this.releaseCompletedFeatureAssetLeases(result);
       this.refreshUi();
       this.observeRoundPresentationState("failed");
       this.ui?.completeAutoplayStopRound?.(result.sequence);
@@ -2094,6 +2194,17 @@ export class AppController {
     reducedMotion: boolean,
     audioState: RoundFeatureAudioState,
   ): Promise<void> {
+    const artworkKind = event.type === "wheel.started" || event.type === "wheel.awarded"
+      ? "wheel"
+      : event.type === "free_spins.started"
+        || event.type === "free_spin.awarded"
+        || event.type === "free_spin.cap_reached"
+        || event.type === "free_spins.completed"
+        ? "free-spins"
+        : null;
+    const featureArtworkReady = artworkKind
+      ? await this.awaitVerifiedFeatureArtwork(artworkKind)
+      : true;
     const activeSequence = this.activePresentationSequence;
     // BONUSWIN 与 FREESPIN_INTRO 是独立复刻的控制器边界。在任一制作好的特性可以显示
     // （或自动消费）其 Continue 控件前，停止外层付费 Auto Play 运行。
@@ -2156,12 +2267,12 @@ export class AppController {
     }
     if (event.type === "free_spin.awarded") {
       await this.presentFreeSpinAwardBatch([event], featureState, reducedMotion, audioState);
-    } else if (event.type === "free_spin.cap_reached") {
+    } else if (event.type === "free_spin.cap_reached" && featureArtworkReady) {
       await this.presentEffect(() => this.renderer.presentFreeSpinCap(
         event,
         audioState.hudState ?? featureState,
       ));
-    } else if (route.visual !== "none"
+    } else if (featureArtworkReady && route.visual !== "none"
       && (event.type !== "free_spins.completed" || audioState.showFreeSpinSummary)) {
       await this.presentEffect(() => this.renderer.featureEffects.presentAfterReels(event, reducedMotion));
     }
@@ -2183,7 +2294,9 @@ export class AppController {
     }
     if (event.type === "free_spins.started") {
       audioState.hudState = { ...featureState };
-      await this.presentEffect(() => this.renderer.showFreeSpinHud(featureState));
+      if (featureArtworkReady) {
+        await this.presentEffect(() => this.renderer.showFreeSpinHud(featureState));
+      }
     }
     if (event.type === "wheel.awarded") {
       this.renderer.completeWheelPresentation(featureState);
@@ -2456,18 +2569,138 @@ export class AppController {
     try {
       await effect();
     } catch (error) {
-      if (this.destroyed) throw new RoundPresentationCancelledError();
+      if (this.destroyed || this.sessionTimedOut
+        || error instanceof RoundPresentationCancelledError) {
+        throw new RoundPresentationCancelledError();
+      }
       // 装饰性故障绝不能阻止权威网格和余额达到已结算表现状态。
       this.reportPlayerError(error, "feature-presentation");
     }
     this.assertRoundPresentationActive();
   }
 
+  private beginBigWinAssetEventLease(): StreamingAssetEventLease | null {
+    const source = this.streamingAssets;
+    const acquirePackage = source?.acquirePackage;
+    const packageId = this.bigWinAssetPackageId;
+    if (!acquirePackage || !packageId) return null;
+    try {
+      if (source.diagnostics().mode === "off") return null;
+    } catch {
+      // 格式错误的嵌入式诊断端口退回现有 BigWinView 直接加载；不得中断结果表现。
+      return null;
+    }
+    return beginStreamingAssetEventLease({
+      acquirePackage: (id, signal) => acquirePackage.call(source, id, signal),
+    }, packageId);
+  }
+
+  private primeAuthoritativeFeatureAssetLeases(
+    result: Readonly<SpinResult>,
+    previousFeatureState: Readonly<FeatureState>,
+  ): void {
+    const events = result.events;
+    const needsFreeSpins = previousFeatureState.mode !== "BASE"
+      || result.featureState.mode !== "BASE"
+      || events.some((event) => event.type === "free_spins.started"
+        || event.type === "free_spin.awarded"
+        || event.type === "free_spin.cap_reached"
+        || event.type === "free_spins.completed");
+    if (needsFreeSpins) this.ensureFeatureAssetEventLease("free-spins");
+    if (events.some((event) => event.type === "wheel.started" || event.type === "wheel.awarded")) {
+      this.ensureFeatureAssetEventLease("wheel");
+    }
+  }
+
+  private ensureFeatureAssetEventLease(kind: "free-spins" | "wheel"): void {
+    if (kind === "free-spins" ? this.freeSpinsAssetLease : this.wheelAssetLease) return;
+    // 旧嵌入式/确定性宿主可能只实现历史 PixiRenderer 表面；它们继续使用组件自身
+    // 的按需 URL 回退，不能因为缺少新消费者端口而向宿主 origin 请求生产清单。
+    if (typeof this.renderer?.adoptVerifiedFeatureArtwork !== "function") return;
+    const source = this.streamingAssets;
+    const acquirePackage = source?.acquirePackage;
+    if (!acquirePackage) return;
+    try {
+      if (source.diagnostics().mode === "off") return;
+    } catch {
+      return;
+    }
+    const packageId = kind === "free-spins"
+      ? this.freeSpinsAssetPackageId
+      : this.wheelAssetPackageId;
+    const lease = beginStreamingAssetEventLease({
+      acquirePackage: (id, signal) => acquirePackage.call(source, id, signal),
+    }, packageId);
+    const ready = lease.ready.then((acquired) => this.renderer.adoptVerifiedFeatureArtwork(
+      kind,
+      acquired.package,
+      lease.signal,
+    ));
+    // 获取在前置时间内并行运行；真正的事件边界仍 await 同一个 Promise。提前登记拒绝
+    // 观察者，避免弱网/完整性失败成为 unhandledrejection。
+    void ready.catch(() => undefined);
+    if (kind === "free-spins") {
+      this.freeSpinsAssetLease = lease;
+      this.freeSpinsArtworkReady = ready;
+    } else {
+      this.wheelAssetLease = lease;
+      this.wheelArtworkReady = ready;
+    }
+  }
+
+  private async awaitVerifiedFeatureArtwork(
+    kind: "free-spins" | "wheel",
+  ): Promise<boolean> {
+    const ready = kind === "free-spins"
+      ? this.freeSpinsArtworkReady
+      : this.wheelArtworkReady;
+    // 显式 off/旧宿主保留原有按需 URL 回退；生产默认 on-demand 会走验证包。
+    if (!ready) return true;
+    try {
+      await ready;
+      return true;
+    } catch (error) {
+      if (this.destroyed || this.sessionTimedOut
+        || error instanceof RoundPresentationCancelledError) {
+        throw new RoundPresentationCancelledError();
+      }
+      this.reportPlayerError(error, "feature-presentation");
+      return false;
+    }
+  }
+
+  private releaseFeatureAssetEventLease(kind: "free-spins" | "wheel"): void {
+    const lease = kind === "free-spins" ? this.freeSpinsAssetLease : this.wheelAssetLease;
+    if (kind === "free-spins") {
+      this.freeSpinsAssetLease = null;
+      this.freeSpinsArtworkReady = null;
+    } else {
+      this.wheelAssetLease = null;
+      this.wheelArtworkReady = null;
+    }
+    lease?.release();
+    if (typeof this.renderer?.releaseVerifiedFeatureArtwork === "function") {
+      this.renderer.releaseVerifiedFeatureArtwork(kind);
+    }
+  }
+
+  private releaseCompletedFeatureAssetLeases(result: Readonly<SpinResult>): void {
+    if (this.wheelAssetLease && result.events.some((event) => (
+      event.type === "wheel.started" || event.type === "wheel.awarded"
+    ))) {
+      this.releaseFeatureAssetEventLease("wheel");
+    }
+    if (this.freeSpinsAssetLease && result.featureState.mode === "BASE") {
+      this.releaseFeatureAssetEventLease("free-spins");
+    }
+  }
+
   private assertRoundPresentationActive(): void {
-    if (this.destroyed) throw new RoundPresentationCancelledError();
+    if (this.destroyed || this.sessionTimedOut) throw new RoundPresentationCancelledError();
   }
 
   private handleError(error: ServerError | Error): void {
+    if (this.sessionTimedOut) return;
     if (this.requiresOperatorSessionRecovery()) {
       this.failInitialRgsSession(
         playerFacingErrorFor(error, "initial-rgs-session"),
@@ -2617,6 +2850,12 @@ export class AppController {
       request,
       this.gateway.operatorHostOrigin,
     );
+    if (reason === "session-timeout") {
+      returnTopLevelSessionToOperator(
+        typeof window === "undefined" ? undefined : window,
+        import.meta.env.VITE_OPERATOR_RETURN_URL,
+      );
+    }
   }
 
   private handleOperatorSessionRequired(cause: ServerError | Error): void {
@@ -2658,6 +2897,55 @@ export class AppController {
     this.refreshUi();
   }
 
+  private handleSessionTimeout(timeout: Readonly<GatewaySessionTimeout>): void {
+    if (this.destroyed || this.sessionTimedOut || timeout.code !== "SESSION_TIMEOUT") return;
+    this.sessionTimedOut = true;
+    this.connectionStatus = "offline";
+    delete this.root.dataset.rgsSession;
+    this.root.dataset.rgsSessionTimeout = "true";
+    this.root.dataset.rgsSessionTimeoutCode = timeout.code;
+    this.clearInitialRgsSessionTimeout();
+    this.cancelScheduledFreeSpin();
+    this.stopPostWinIdleRepeat();
+    this.normalWinFinishRequested = true;
+    const normalWinDelayResolver = this.normalWinDelayResolver;
+    this.normalWinDelayResolver = null;
+    bestEffortAppCleanup(() => normalWinDelayResolver?.());
+    const featurePreviewResolver = this.featurePreviewResolver;
+    this.featurePreviewResolver = null;
+    this.featurePreviewActive = false;
+    this.featurePreviewContinuePending = false;
+    bestEffortAppCleanup(() => featurePreviewResolver?.());
+    bestEffortAppCleanup(() => this.ui.rollbackAcceptedPaidAutoplaySpin?.());
+    bestEffortAppCleanup(() => this.ui.completeAutoplayStopRound?.(
+      this.activePresentationSequence ?? undefined,
+    ));
+    bestEffortAppCleanup(() => this.stopRoundAudio(0));
+    bestEffortAppCleanup(() => this.audio.stopGameIntro(0));
+    bestEffortAppCleanup(() => this.stops.cancel());
+    bestEffortAppCleanup(() => this.renderer.cancelSpinPresentation());
+    bestEffortAppCleanup(() => this.intro.destroy());
+    bestEffortAppCleanup(() => this.renderer.setFeaturePreviewVisible(false));
+    bestEffortAppCleanup(() => this.reelRound.reset("session-timeout"));
+    bestEffortAppCleanup(() => this.releaseFeatureAssetEventLease("wheel"));
+    bestEffortAppCleanup(() => this.releaseFeatureAssetEventLease("free-spins"));
+    bestEffortAppCleanup(() => this.preload?.abort());
+    bestEffortAppCleanup(() => this.streamingAssets?.destroy());
+    this.roundOriginFeatureState = null;
+    this.bufferedRecoveredSpinResult = null;
+    this.activePresentationSequence = null;
+    this.activeRageCollectionPresentationSequence = null;
+    this.activeRageCascadePresentationSequence = null;
+    bestEffortAppCleanup(() => this.machine.transition({ type: "FATAL_ERROR" }));
+    bestEffortAppCleanup(() => this.audio.destroy());
+    this.ui.setConnection("offline");
+    this.ui.setControls(false, false);
+    this.ui.showSessionTimeout(() => {
+      const error = playerFacingError(PLAYER_FACING_ERROR_CODES.SESSION_TIMEOUT);
+      this.requestOperatorSession(error, "session-timeout");
+    });
+  }
+
   private dispatchSafeWindowEvent<T extends object>(name: string, detail: T): void {
     if (typeof window === "undefined" || typeof window.dispatchEvent !== "function"
       || typeof CustomEvent !== "function") return;
@@ -2676,7 +2964,7 @@ export class AppController {
   private refreshUi(): void {
     this.renderer.setJackpotBet(this.snapshot.selectedBetMinor);
     const freeSpinLocked = this.snapshot.featureState.freeSpinsRemaining > 0;
-    const canSpin = canEnableSpin({
+    const canSpin = !this.sessionTimedOut && canEnableSpin({
       launchReady: this.launch.canEnterGame,
       gameReady: this.machine.canSpin,
       online: this.connectionStatus === "online",
@@ -2910,6 +3198,9 @@ export class AppController {
         // 控制器将所有额外旋转轨迹批量处理，并且只播放一次。
         return;
       case "free_spin.cap_reached":
+        return;
+      case "win_cap.reached":
+        // 纯经济边界事实，不拥有声音。
         return;
       case "free_spins.completed":
         // 终局事件启动 Free Spins 尾段。FREESPIN_END/Base 恢复在总结隐藏时开始；
@@ -3560,9 +3851,10 @@ export class AppController {
     fastPlay: boolean,
   ): void {
     this.clearPostWinIdleRepeatTimer();
+    const paidWins = result.wins.filter((win) => BigInt(win.amountMinor) > 0n);
     const returnedBaseWin = previousFeatureState.mode === "BASE"
       && result.featureState.mode === "BASE"
-      && result.wins.length > 0;
+      && paidWins.length > 0;
     const wheelOwnsReturnedRecord = result.events.some((event) => (
       event.type === "wheel.started" || event.type === "wheel.awarded"
     ));
@@ -3573,7 +3865,7 @@ export class AppController {
       : 0;
     const generation = previousGeneration + 1;
     this.postWinIdleRepeatGeneration = generation;
-    const wins = result.wins.map((win) => immutableClone(win));
+    const wins = paidWins.map((win) => immutableClone(win));
     this.postWinIdleRepeatTimer = setTimeout(() => {
       this.postWinIdleRepeatTimer = null;
       if (this.destroyed || generation !== this.postWinIdleRepeatGeneration) return;

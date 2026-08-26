@@ -12,7 +12,10 @@ import (
 	"strings"
 )
 
-var definitionVersionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+var (
+	gameIdentifierPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	definitionVersionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+)
 
 const (
 	DefinitionApprovalSchemaV1 = "rgs-definition-approval-v1"

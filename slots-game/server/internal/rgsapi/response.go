@@ -12,13 +12,15 @@ func makeSessionResponse(session rgs.Session) sessionResponse {
 	return sessionResponse{
 		OperatorID: session.OperatorID, SessionID: session.SessionID,
 		GameID: session.GameID, DefinitionVersion: session.DefinitionVersion,
-		DefinitionHash: session.DefinitionHash, Currency: session.Currency,
+		DefinitionHash: session.DefinitionHash, EngineRulesVersion: game.EngineRulesVersion,
+		Currency:         session.Currency,
 		CurrencyExponent: session.CurrencyExponent, Jurisdiction: session.Jurisdiction,
 		Status: session.Status, ExpiresAt: formatTime(session.ExpiresAt),
-		BalanceMinor: strconv.FormatInt(session.BalanceMinor, 10),
-		Revision:     strconv.FormatUint(session.Revision, 10),
-		Sequence:     strconv.FormatUint(session.Sequence, 10),
-		Feature:      makeFeatureStateResponse(session.Feature),
+		IdleDisconnectAt: formatTime(session.IdleDisconnectAt),
+		BalanceMinor:     strconv.FormatInt(session.BalanceMinor, 10),
+		Revision:         strconv.FormatUint(session.Revision, 10),
+		Sequence:         strconv.FormatUint(session.Sequence, 10),
+		Feature:          makeFeatureStateResponse(session.Feature),
 	}
 }
 
@@ -37,14 +39,16 @@ func makeSpinResultResponse(result rgs.SpinResult) (spinResultResponse, error) {
 			copy(pathCells, award.Cells)
 			pathAwards[pathIndex] = pathAwardResponse{
 				Cells: pathCells, Multiplier: strconv.FormatInt(award.Multiplier, 10),
-				BaseAmountMinor: strconv.FormatInt(award.BaseAmountMinor, 10),
-				AmountMinor:     strconv.FormatInt(award.AmountMinor, 10),
+				BaseAmountMinor:    strconv.FormatInt(award.BaseAmountMinor, 10),
+				NominalAmountMinor: strconv.FormatInt(award.AmountMinor, 10),
+				AmountMinor:        strconv.FormatInt(award.PaidAmountMinor, 10),
 			}
 		}
 		wins[index] = winResponse{
 			ID: win.ID, Symbol: win.Symbol, Ways: win.Ways,
-			AmountMinor: strconv.FormatInt(win.AmountMinor, 10),
-			Cells:       cells, PathAwards: pathAwards,
+			NominalAmountMinor: strconv.FormatInt(win.AmountMinor, 10),
+			AmountMinor:        strconv.FormatInt(win.PaidAmountMinor, 10),
+			Cells:              cells, PathAwards: pathAwards,
 		}
 		if multiplier, uniform := win.UniformPathMultiplier(); uniform {
 			wins[index].Multiplier = strconv.FormatInt(multiplier, 10)
@@ -76,7 +80,7 @@ func makeSpinResultResponse(result rgs.SpinResult) (spinResultResponse, error) {
 		grid[reel] = make([]game.Cell, len(result.Grid[reel]))
 		copy(grid[reel], result.Grid[reel])
 	}
-	return spinResultResponse{
+	response := spinResultResponse{
 		OperatorID: result.OperatorID, SessionID: result.SessionID,
 		RoundID: result.RoundID, GameID: result.GameID,
 		DefinitionVersion: result.DefinitionVersion, DefinitionHash: result.DefinitionHash,
@@ -93,7 +97,11 @@ func makeSpinResultResponse(result rgs.SpinResult) (spinResultResponse, error) {
 		TotalWinMinor:       strconv.FormatInt(result.TotalWinMinor, 10),
 		Grid:                grid, Wins: wins, Events: events,
 		Feature: makeFeatureStateResponse(result.FeatureState),
-	}, nil
+	}
+	if !result.IdleDisconnectAt.IsZero() {
+		response.IdleDisconnectAt = formatTime(result.IdleDisconnectAt)
+	}
+	return response, nil
 }
 
 func makeFeatureStateResponse(feature game.FeatureState) featureStateResponse {

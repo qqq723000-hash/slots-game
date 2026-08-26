@@ -1,22 +1,38 @@
 // @ts-expect-error Vitest 在 Node 中运行，而浏览器 tsconfig 故意不声明 Node 内置模块。
 import { readFileSync } from "node:fs";
+import { TextureAtlas, Vector2 } from "@pixi-spine/base";
+import {
+  AnimationState,
+  AnimationStateData,
+  AtlasAttachmentLoader,
+  Skeleton,
+  SkeletonBinary,
+} from "@pixi-spine/runtime-4.1";
+import { BaseTexture } from "pixi.js";
 import { describe, expect, it, vi } from "vitest";
 import {
   FREE_SPIN_HUD_ANIMATION,
   FREE_SPIN_HUD_ANIMATION_MS,
   FREE_SPIN_CAP_COPY,
+  FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X,
+  FREE_SPIN_HUD_DESKTOP_CONTAINMENT_INSET_X,
+  FREE_SPIN_HUD_DESKTOP_CORE_REGION_X,
   FREE_SPIN_HUD_DESKTOP_LAYOUT,
   FREE_SPIN_HUD_MOBILE_LAYOUTS,
   FREE_SPIN_HUD_REDUCED_MOTION_MS,
   FREE_SPIN_HUD_TEXT_SLOTS,
   FREE_SPIN_HUD_TRACK,
   FreeSpinHudView,
+  freeSpinHudDesktopCounterLayout,
   freeSpinHudResponsiveLayout,
   formatFreeSpinCounter,
   projectFreeSpinHud,
   type FreeSpinHudFeatureState,
 } from "../src/renderer/FreeSpinHudView";
-import { computeResponsiveLayoutSnapshot } from "../src/renderer/ResponsiveLayout";
+import {
+  computeResponsiveLayoutSnapshot,
+  resolveResponsiveMinBound,
+} from "../src/renderer/ResponsiveLayout";
 import {
   PRIMAL_SPINE_SPECS,
   primalSpineSkeletonUrl,
@@ -120,6 +136,18 @@ async function flushMicrotasks(): Promise<void> {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
 }
 
+function loadFreeSpinAtlas(text: string): Promise<TextureAtlas> {
+  return new Promise((resolveAtlas, reject) => {
+    new TextureAtlas(
+      text,
+      (_page, complete) => complete(new BaseTexture()),
+      (atlas) => atlas
+        ? resolveAtlas(atlas)
+        : reject(new Error("Free Spin Spine atlas parse failed")),
+    );
+  });
+}
+
 describe("native Free Spins HUD", () => {
   it("registers the two captured Spine 4.1 skeletons", () => {
     expect(PRIMAL_SPINE_SPECS.freeSpinCounter).toEqual({
@@ -173,6 +201,95 @@ describe("native Free Spins HUD", () => {
       counter: { x: 260, y: 124, scale: 0.8 },
       retrigger: { x: 640, y: 280, scale: 0.8 },
     });
+  });
+
+  it("contains the verified stop core at the 1440x900 crop without containing VFX bleed", async () => {
+    const atlas = await loadFreeSpinAtlas(readFileSync(
+      new URL(
+        "../public/assets/primal-runtime/spine/spine_ui/spine_ui.atlas",
+        import.meta.url,
+      ),
+      "utf8",
+    ));
+    try {
+      const bytes = readFileSync(new URL(
+        "../public/assets/primal-runtime/spine/spine_ui/freespin_counter.skel",
+        import.meta.url,
+      ));
+      const data = new SkeletonBinary(new AtlasAttachmentLoader(atlas))
+        .readSkeletonData(new Uint8Array(bytes));
+      const animationBounds = (animation: "stop" | "Glow_loop") => {
+        const skeleton = new Skeleton(data);
+        const state = new AnimationState(new AnimationStateData(data));
+        state.setAnimation(0, animation, animation === "Glow_loop");
+        state.apply(skeleton);
+        skeleton.updateWorldTransform();
+        const offset = new Vector2();
+        const size = new Vector2();
+        skeleton.getBounds(offset, size, []);
+        return { left: offset.x, right: offset.x + size.x };
+      };
+
+      const stop = animationBounds("stop");
+      expect(stop.left).toBeCloseTo(FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X.left, 10);
+      expect(stop.right).toBeCloseTo(FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X.right, 10);
+
+      const canonical = freeSpinHudDesktopCounterLayout(0);
+      const previousStopLeft = canonical.x + stop.left * canonical.scale;
+      expect(previousStopLeft).toBeCloseTo(149.79584185582576, 10);
+      expect(canonical).toBe(FREE_SPIN_HUD_DESKTOP_LAYOUT.counter);
+
+      const croppedSnapshot = computeResponsiveLayoutSnapshot(1_440, 900, {
+        channel: "desktop",
+      });
+      expect(croppedSnapshot.frame.visibleInsetX)
+        .toBe(FREE_SPIN_HUD_DESKTOP_CONTAINMENT_INSET_X);
+      const cropped = freeSpinHudResponsiveLayout(croppedSnapshot).counter;
+      const stopLeft = cropped.x + stop.left * cropped.scale;
+      const stopRight = cropped.x + stop.right * cropped.scale;
+      expect(cropped.x).toBeCloseTo(270.20415814417424, 10);
+      expect(stopLeft).toBeCloseTo(FREE_SPIN_HUD_DESKTOP_CORE_REGION_X.left, 10);
+      expect(stopRight).toBeCloseTo(387.39200474697255, 10);
+      expect(stopRight).toBeLessThanOrEqual(FREE_SPIN_HUD_DESKTOP_CORE_REGION_X.right);
+
+      const glow = animationBounds("Glow_loop");
+      const glowLeft = cropped.x + glow.left * cropped.scale;
+      expect(glowLeft).toBeCloseTo(133.28272293255442, 10);
+      expect(glowLeft).toBeLessThan(FREE_SPIN_HUD_DESKTOP_CORE_REGION_X.left);
+    } finally {
+      atlas.dispose();
+    }
+  });
+
+  it("adopts desktop core containment continuously and leaves mobile projection untouched", () => {
+    const canonical = freeSpinHudDesktopCounterLayout(0);
+    const half = freeSpinHudDesktopCounterLayout(
+      FREE_SPIN_HUD_DESKTOP_CONTAINMENT_INSET_X / 2,
+    );
+    const contained = freeSpinHudDesktopCounterLayout(
+      FREE_SPIN_HUD_DESKTOP_CONTAINMENT_INSET_X,
+    );
+    const severeCrop = freeSpinHudDesktopCounterLayout(160);
+
+    expect(canonical).toEqual({ x: 260, y: 124, scale: 0.8 });
+    expect(half.x).toBeCloseTo((canonical.x + contained.x) / 2, 10);
+    expect(contained.x).toBeCloseTo(270.20415814417424, 10);
+    expect(severeCrop).toEqual(contained);
+    for (const layout of [half, contained, severeCrop]) {
+      expect(layout.y).toBe(canonical.y);
+      expect(layout.scale).toBe(canonical.scale);
+    }
+
+    const mobile = computeResponsiveLayoutSnapshot(390, 844, { channel: "mobile" });
+    const officialMobile = officialFreeSpinNode("pt", "right", "fsCounter");
+    expect(freeSpinHudResponsiveLayout(mobile).counter).toEqual(
+      resolveResponsiveMinBound(
+        mobile.gameplayRegion,
+        officialMobile.minBound,
+        officialMobile.horizontalAlign,
+        officialMobile.verticalAlign,
+      ),
+    );
   });
 
   it("projects the captured mobile HUD nodes into every continuous gameplay surface", () => {
@@ -258,6 +375,17 @@ describe("native Free Spins HUD", () => {
       expect(hud.visible).toBe(true);
       expect(counterHost.visible).toBe(true);
     }
+
+    const croppedDesktop = computeResponsiveLayoutSnapshot(1_440, 900, {
+      channel: "desktop",
+    });
+    hud.setResponsiveLayout(croppedDesktop);
+    expect(counterHost.position.x).toBeCloseTo(270.20415814417424, 10);
+    expect(counterHost.position.y).toBe(124);
+    expect(counterHost.scale).toMatchObject({ x: 0.8, y: 0.8 });
+    expect(retriggerHost.position).toMatchObject({ x: 640, y: 280 });
+    expect(hud.projection).toBe(projection);
+    expect(counterHost.visible).toBe(true);
 
     hud.setResponsiveLayout(computeResponsiveLayoutSnapshot(1_280, 720));
     expect(counterHost.position).toMatchObject({ x: 260, y: 124 });

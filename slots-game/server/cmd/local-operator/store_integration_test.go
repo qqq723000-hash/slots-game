@@ -49,6 +49,29 @@ func TestPostgresWalletStorePersistsConcurrentIdempotency(t *testing.T) {
 	if err := store.Ping(ctx); err != nil {
 		t.Fatalf("wallet schema readiness: %v", err)
 	}
+	expiredNonce := "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJC"
+	expiredConsumed, err := store.Consume(
+		ctx,
+		"HTTP_REQUEST\x00local-operator\x00wallet-key",
+		expiredNonce,
+		time.Now().UTC().Add(-time.Minute),
+	)
+	if err != nil {
+		t.Fatalf("consume database-expired nonce: %v", err)
+	}
+	if expiredConsumed {
+		t.Fatal("database-expired nonce was consumed")
+	}
+	var expiredNonceRows int
+	if err := database.QueryRowContext(ctx, `
+		SELECT count(*) FROM local_operator_nonces
+		WHERE operator_id='local-operator' AND key_id='wallet-key'`,
+	).Scan(&expiredNonceRows); err != nil {
+		t.Fatalf("count database-expired nonce tombstones: %v", err)
+	}
+	if expiredNonceRows != 0 {
+		t.Fatalf("database-expired nonce tombstones = %d, want 0", expiredNonceRows)
+	}
 	if err := store.EnsureAccount(ctx, accountSeed{
 		OperatorID: "local-operator", WalletAccountID: "wallet-1",
 		Currency: "CNY", BalanceMinor: 10_000,

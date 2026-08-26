@@ -577,6 +577,23 @@ func (s *memoryWalletStore) RegisterWalletSession(_ context.Context, seed wallet
 	s.sessions[key] = seed
 	return nil
 }
+func (s *memoryWalletStore) FindReusableWalletSession(
+	_ context.Context,
+	operatorID, playerID, walletAccountID, gameID, definitionVersion, definitionHash, currency string,
+) (walletSessionSeed, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	for _, seed := range s.sessions {
+		if seed.OperatorID == operatorID && seed.PlayerID == playerID &&
+			seed.WalletAccountID == walletAccountID && seed.GameID == gameID &&
+			seed.DefinitionVersion == definitionVersion && seed.DefinitionHash == definitionHash &&
+			seed.Currency == currency && seed.ExpiresAt.After(now) {
+			return seed, true, nil
+		}
+	}
+	return walletSessionSeed{}, false, nil
+}
 func (s *memoryWalletStore) Ping(context.Context) error { return nil }
 
 func (s *memoryWalletStore) snapshot() (int64, int) {

@@ -22,6 +22,7 @@ import (
 	"slots-game/server/internal/operator"
 	"slots-game/server/internal/platform"
 	"slots-game/server/internal/rgsapi"
+	"slots-game/server/internal/safelog"
 )
 
 func TestRuntimeDatabaseReadinessChecksIncludeSchemaAndPrivileges(t *testing.T) {
@@ -37,6 +38,78 @@ func TestRuntimeDatabaseReadinessChecksIncludeSchemaAndPrivileges(t *testing.T) 
 		if checks[index].Name() != name {
 			t.Fatalf("checks[%d].Name() = %q, want %q", index, checks[index].Name(), name)
 		}
+	}
+}
+
+func TestRuntimeFailureLogDoesNotExposeStartupErrorText(t *testing.T) {
+	t.Parallel()
+	const secret = "postgres://runtime:password@database.internal/rgs /run/secrets/private-key"
+	var output bytes.Buffer
+	logRuntimeFailure(slog.New(slog.NewJSONHandler(&output, nil)), errors.New(secret))
+	logOutput := output.String()
+	if strings.Contains(logOutput, secret) || strings.Contains(logOutput, "password") ||
+		strings.Contains(logOutput, "private-key") || !strings.Contains(logOutput, `"error_class":"internal"`) {
+		t.Fatalf("unsafe runtime failure log: %s", logOutput)
+	}
+}
+
+type startupReadinessCheckFunc func(context.Context) error
+
+func (check startupReadinessCheckFunc) Check(ctx context.Context) error { return check(ctx) }
+
+func TestSharedAdmissionCanaryFailureStopsStartupBeforeListenerConstruction(t *testing.T) {
+	t.Parallel()
+	canaryFailure := errors.New("basic canary failed")
+	checkCalls := 0
+	listenerConstructed := false
+	start := func(checker startupReadinessChecker) error {
+		if err := checkSharedAdmissionStartup(context.Background(), checker); err != nil {
+			return err
+		}
+		listenerConstructed = true
+		return nil
+	}
+	err := start(startupReadinessCheckFunc(func(context.Context) error {
+		checkCalls++
+		return canaryFailure
+	}))
+	if !errors.Is(err, canaryFailure) || !strings.Contains(err.Error(), "shared admission startup readiness") {
+		t.Fatalf("startup canary error = %v", err)
+	}
+	if checkCalls != 1 || listenerConstructed {
+		t.Fatalf("startup ordering = checks:%d listener_constructed:%v", checkCalls, listenerConstructed)
+	}
+}
+
+func TestRecoveryStartupReadinessOnlyGatesDedicatedWorker(t *testing.T) {
+	t.Parallel()
+	base := []platform.DependencyCheck{&platform.LifecycleReadiness{}}
+	for _, role := range []platform.RuntimeRole{platform.RuntimeRoleAPI, platform.RuntimeRoleCombined} {
+		checks, readiness := withRecoveryStartupReadiness(role, append([]platform.DependencyCheck(nil), base...))
+		if readiness != nil || len(checks) != len(base) {
+			t.Fatalf("role %q unexpectedly changed API readiness: checks=%d readiness=%v",
+				role, len(checks), readiness)
+		}
+	}
+
+	checks, readiness := withRecoveryStartupReadiness(
+		platform.RuntimeRoleWorker,
+		append([]platform.DependencyCheck(nil), base...),
+	)
+	if readiness == nil || len(checks) != len(base)+1 || checks[len(checks)-1] != readiness {
+		t.Fatalf("worker startup readiness assembly = checks:%d readiness:%v", len(checks), readiness)
+	}
+	handler := platform.Readiness{Checks: checks, Timeout: time.Second}
+	before := httptest.NewRecorder()
+	handler.ServeHTTP(before, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if before.Code != http.StatusServiceUnavailable {
+		t.Fatalf("worker readiness before recovery pass = %d, want 503", before.Code)
+	}
+	readiness.MarkSuccessfulPass()
+	after := httptest.NewRecorder()
+	handler.ServeHTTP(after, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if after.Code != http.StatusOK {
+		t.Fatalf("worker readiness after recovery pass = %d, want 200", after.Code)
 	}
 }
 
@@ -157,6 +230,40 @@ func TestRuntimeRoleSelectsOnlyOwnedHTTPServers(t *testing.T) {
 	servers := roleHTTPServers(platform.RuntimeRoleWorker, public, operations)
 	if len(servers) != 1 || servers[0] != operations {
 		t.Fatalf("worker servers = %#v", servers)
+	}
+}
+
+func TestRuntimeShutdownStartsAllListenersBeforeOneFinishesDraining(t *testing.T) {
+	t.Parallel()
+	firstRelease := make(chan struct{})
+	first := &concurrentShutdownRecorder{
+		entered: make(chan struct{}),
+		release: firstRelease,
+	}
+	second := &concurrentShutdownRecorder{entered: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		done <- shutdownHTTPServers(context.Background(), first, second)
+	}()
+
+	select {
+	case <-first.entered:
+	case <-time.After(time.Second):
+		t.Fatal("first listener did not begin shutdown")
+	}
+	select {
+	case <-second.entered:
+	case <-time.After(time.Second):
+		t.Fatal("second listener waited for the first listener to finish draining")
+	}
+	close(firstRelease)
+	if err := <-done; err != nil {
+		t.Fatalf("concurrent listener shutdown: %v", err)
+	}
+	if first.shutdownCalls != 1 || second.shutdownCalls != 1 ||
+		first.closeCalls != 0 || second.closeCalls != 0 {
+		t.Fatalf("listener shutdown calls = first:%d/%d second:%d/%d",
+			first.shutdownCalls, first.closeCalls, second.shutdownCalls, second.closeCalls)
 	}
 }
 
@@ -456,9 +563,12 @@ func TestObserveRequestsLogsOnlyNormalizedSafeFields(t *testing.T) {
 	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
 		t.Fatalf("decode log entry: %v: %s", err, logs.String())
 	}
-	if entry["route"] != "other" || entry["request_id"] != "req_safe-1" ||
+	if entry["route"] != "other" || entry["request_id"] != safelog.CorrelationIDDigest("req_safe-1") ||
 		entry["status"] != float64(http.StatusTeapot) || entry["status_class"] != "4xx" {
 		t.Fatalf("normalized log entry = %#v", entry)
+	}
+	if response.Header().Get("X-Request-Id") != "req_safe-1" || strings.Contains(logs.String(), "req_safe-1") {
+		t.Fatalf("request ID response/log boundary drifted: headers:%v log:%s", response.Header(), logs.String())
 	}
 	if entry["level"] != "WARN" {
 		t.Fatalf("4xx log level = %#v, want WARN", entry["level"])
@@ -469,6 +579,208 @@ func TestObserveRequestsLogsOnlyNormalizedSafeFields(t *testing.T) {
 	if _, exists := entry["path"]; exists || entry["remote_ip"] != nil ||
 		strings.Contains(logs.String(), "not-a-real-route") || strings.Contains(logs.String(), "203.0.113.9") {
 		t.Fatalf("log leaks raw routing or IP data: %s", logs.String())
+	}
+}
+
+func TestObserveRequestsPreservesResponseControllerFlush(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	var flushErr error
+	var deadlineErr error
+	deadline := time.Unix(1_800_000_000, 0)
+	handler := observeRequests(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		&platform.Metrics{},
+		1_000_000,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			controller := http.NewResponseController(writer)
+			deadlineErr = controller.SetReadDeadline(deadline)
+			flushErr = controller.Flush()
+			writer.WriteHeader(http.StatusTeapot)
+		}),
+	)
+	response := &rgsResponseControllerRecorder{ResponseRecorder: httptest.NewRecorder()}
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, rgsapi.ClientPendingResultPath, nil))
+	if deadlineErr != nil || !response.readDeadline.Equal(deadline) {
+		t.Fatalf("ResponseController.SetReadDeadline() through access middleware = %v, deadline:%v", deadlineErr, response.readDeadline)
+	}
+	if flushErr != nil {
+		t.Fatalf("ResponseController.Flush() through access middleware = %v", flushErr)
+	}
+	if response.Code != http.StatusOK || !response.Flushed {
+		t.Fatalf("flushed response = status:%d flushed:%v", response.Code, response.Flushed)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode flushed access log: %v: %s", err, logs.String())
+	}
+	if entry["status"] != float64(http.StatusOK) {
+		t.Fatalf("flushed access log status = %#v, want 200", entry["status"])
+	}
+}
+
+func TestObserveRequestsKeepsImplicitWriteStatusAfterLateHeader(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	handler := observeRequests(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		&platform.Metrics{},
+		1_000_000,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			_, _ = writer.Write([]byte(`{"ok":true}`))
+			writer.WriteHeader(http.StatusInternalServerError)
+		}),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, rgsapi.ClientPendingResultPath, nil))
+	if response.Code != http.StatusOK || response.Body.String() != `{"ok":true}` {
+		t.Fatalf("implicit response = status:%d body:%q", response.Code, response.Body.String())
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode implicit-write access log: %v: %s", err, logs.String())
+	}
+	if entry["status"] != float64(http.StatusOK) || entry["status_class"] != "2xx" {
+		t.Fatalf("implicit-write access log status = %#v", entry)
+	}
+}
+
+type rgsResponseControllerRecorder struct {
+	*httptest.ResponseRecorder
+	readDeadline time.Time
+}
+
+func (recorder *rgsResponseControllerRecorder) SetReadDeadline(deadline time.Time) error {
+	recorder.readDeadline = deadline
+	return nil
+}
+
+type rgsMultiStageResponseWriter struct {
+	header        http.Header
+	informational []int
+	status        int
+	body          bytes.Buffer
+}
+
+type rgsCommittedFlushErrorWriter struct {
+	*rgsMultiStageResponseWriter
+	flushErr error
+}
+
+func (writer *rgsCommittedFlushErrorWriter) FlushError() error {
+	if writer.status == 0 {
+		writer.WriteHeader(http.StatusOK)
+	}
+	return writer.flushErr
+}
+
+func (writer *rgsMultiStageResponseWriter) Header() http.Header {
+	if writer.header == nil {
+		writer.header = make(http.Header)
+	}
+	return writer.header
+}
+
+func (writer *rgsMultiStageResponseWriter) WriteHeader(status int) {
+	if writer.status != 0 {
+		return
+	}
+	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
+		writer.informational = append(writer.informational, status)
+		return
+	}
+	writer.status = status
+}
+
+func (writer *rgsMultiStageResponseWriter) Write(encoded []byte) (int, error) {
+	if writer.status == 0 {
+		writer.status = http.StatusOK
+	}
+	return writer.body.Write(encoded)
+}
+
+func TestObserveRequestsPreservesInformationalThenFinalStatus(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	handler := observeRequests(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		&platform.Metrics{},
+		1_000_000,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusEarlyHints)
+			writer.WriteHeader(http.StatusNoContent)
+		}),
+	)
+	response := &rgsMultiStageResponseWriter{}
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, rgsapi.ClientPendingResultPath, nil))
+	if len(response.informational) != 1 || response.informational[0] != http.StatusEarlyHints ||
+		response.status != http.StatusNoContent {
+		t.Fatalf("multi-stage response = informational:%v final:%d", response.informational, response.status)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode multi-stage access log: %v: %s", err, logs.String())
+	}
+	if entry["status"] != float64(http.StatusNoContent) {
+		t.Fatalf("multi-stage access log status = %#v, want 204", entry["status"])
+	}
+}
+
+func TestObserveRequestsDoesNotCommitStatusForUnsupportedFlush(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	var flushErr error
+	handler := observeRequests(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		&platform.Metrics{},
+		1_000_000,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			flushErr = http.NewResponseController(writer).Flush()
+			writer.WriteHeader(http.StatusTeapot)
+		}),
+	)
+	response := &rgsMultiStageResponseWriter{}
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, rgsapi.ClientPendingResultPath, nil))
+	if !errors.Is(flushErr, http.ErrNotSupported) || response.status != http.StatusTeapot {
+		t.Fatalf("unsupported flush = error:%v final:%d", flushErr, response.status)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode unsupported-flush access log: %v: %s", err, logs.String())
+	}
+	if entry["status"] != float64(http.StatusTeapot) {
+		t.Fatalf("unsupported-flush access log status = %#v, want 418", entry["status"])
+	}
+}
+
+func TestObserveRequestsRecordsCommittedStatusWhenFlushFails(t *testing.T) {
+	t.Parallel()
+	var logs bytes.Buffer
+	flushFailure := errors.New("flush network failure")
+	var flushErr error
+	handler := observeRequests(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		&platform.Metrics{},
+		1_000_000,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			flushErr = http.NewResponseController(writer).Flush()
+			writer.WriteHeader(http.StatusTeapot)
+		}),
+	)
+	response := &rgsCommittedFlushErrorWriter{
+		rgsMultiStageResponseWriter: &rgsMultiStageResponseWriter{},
+		flushErr:                    flushFailure,
+	}
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, rgsapi.ClientPendingResultPath, nil))
+	if !errors.Is(flushErr, flushFailure) || response.status != http.StatusOK {
+		t.Fatalf("failed flush = error:%v final:%d", flushErr, response.status)
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode failed-flush access log: %v: %s", err, logs.String())
+	}
+	if entry["status"] != float64(http.StatusOK) {
+		t.Fatalf("failed-flush access log status = %#v, want 200", entry["status"])
 	}
 }
 
@@ -525,6 +837,52 @@ func TestObserveRequestsSamplesOnlySuccessfulAccessLogs(t *testing.T) {
 				t.Fatalf("access log = %#v", entry)
 			}
 		})
+	}
+}
+
+func TestObserveRequestsHashesLoggedRequestIDWithoutChangingSamplingInput(t *testing.T) {
+	const samplePerMillion = 500_000
+	const route = "client.spin"
+	requestID := ""
+	for index := 0; index < 10_000; index++ {
+		candidate := "req-sampling-secret-" + strconv.Itoa(index)
+		if shouldEmitSuccessfulAccessLog(samplePerMillion, route, candidate) &&
+			!shouldEmitSuccessfulAccessLog(samplePerMillion, route, safelog.CorrelationIDDigest(candidate)) {
+			requestID = candidate
+			break
+		}
+	}
+	if requestID == "" {
+		t.Fatal("could not find deterministic raw/digest sampling discriminator")
+	}
+
+	var logs bytes.Buffer
+	metrics := &platform.Metrics{}
+	handler := observeRequests(
+		slog.New(slog.NewJSONHandler(&logs, nil)),
+		metrics,
+		samplePerMillion,
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("X-Request-Id", requestID)
+			writer.WriteHeader(http.StatusNoContent)
+		}),
+	)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil))
+
+	if got := response.Header().Get("X-Request-Id"); got != requestID {
+		t.Fatalf("response request ID = %q, want original %q", got, requestID)
+	}
+	if metrics.AccessLogsEmitted.Load() != 1 || metrics.AccessLogsDropped.Load() != 0 {
+		t.Fatalf("sampling used transformed ID: emitted:%d dropped:%d",
+			metrics.AccessLogsEmitted.Load(), metrics.AccessLogsDropped.Load())
+	}
+	var entry map[string]any
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+		t.Fatalf("decode sampled access log: %v: %s", err, logs.String())
+	}
+	if entry["request_id"] != safelog.CorrelationIDDigest(requestID) || strings.Contains(logs.String(), requestID) {
+		t.Fatalf("sampled access log exposes or mis-hashes request ID: %#v", entry)
 	}
 }
 
@@ -1109,6 +1467,32 @@ type shutdownOrderRecorder struct {
 	shutdownSawReady bool
 	shutdownCalls    int
 	closeCalls       int
+}
+
+type concurrentShutdownRecorder struct {
+	entered       chan struct{}
+	release       <-chan struct{}
+	shutdownCalls int
+	closeCalls    int
+}
+
+func (recorder *concurrentShutdownRecorder) Shutdown(ctx context.Context) error {
+	recorder.shutdownCalls++
+	close(recorder.entered)
+	if recorder.release == nil {
+		return nil
+	}
+	select {
+	case <-recorder.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (recorder *concurrentShutdownRecorder) Close() error {
+	recorder.closeCalls++
+	return nil
 }
 
 func (recorder *shutdownOrderRecorder) Shutdown(ctx context.Context) error {

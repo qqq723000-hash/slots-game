@@ -14,10 +14,12 @@ import {
 } from "../src/ui/DomOverlay";
 import {
   PRIMAL_HELP_ADVERTISED_LOCALES,
+  PRIMAL_HELP_AUTHOR_Y,
   PRIMAL_HELP_AUTHORING,
   PRIMAL_HELP_LOCALE_BUNDLES,
   PRIMAL_HELP_PACKAGED_FONT_FAMILIES,
   PRIMAL_HELP_REQUIRED_LOCALE_KEYS,
+  PRIMAL_HELP_SEPARATOR_AUTHOR_Y,
   PRIMAL_HELP_SECTIONS,
   PRIMAL_PRESENTATION_DEFINITION_BINDINGS,
   PRIMAL_PRESENTATION_RULES,
@@ -60,8 +62,9 @@ describe("official Primal Rampage help copy", () => {
   it("publishes the captured 750px authoring and final composed typography contract", () => {
     expect(PRIMAL_HELP_AUTHORING).toEqual({
       logicalWidthPx: 750,
+      logicalHeightPx: 7565,
       title: {
-        fontFamily: "ROBOTO_CONDENSED_BOLD",
+        fontFamily: "KANIT_BOLD",
         fontSizePx: 45,
         lineHeightPx: 60,
         gradientColors: ["#ff250a", "#ff710a"],
@@ -77,6 +80,26 @@ describe("official Primal Rampage help copy", () => {
         textAlign: "center",
       },
     });
+  });
+
+  it("pins the complete 750px authored PAYTABLE timeline and all nine atlas boundaries", () => {
+    expect(PRIMAL_HELP_AUTHOR_Y).toEqual({
+      maximumWinTop: 51.5,
+      wild: 176,
+      vault: 868,
+      rage: 1718.25,
+      primalWheel: 2384.1,
+      kongQuestPage1: 3178.15,
+      kongQuestPage2: 3902.2,
+      kingSpinPage1: 4735.9,
+      kingSpinPage2: 5563.85,
+      payingSymbols: 6153.65,
+      wayWins: 6848.9,
+      maximumWinBottom: 7445,
+    });
+    expect(PRIMAL_HELP_SEPARATOR_AUTHOR_Y).toEqual([
+      159, 858.05, 1699.3, 2371.5, 3154.45, 4720.6, 6131.35, 6825.75, 7527.6,
+    ]);
   });
 
   it("keeps the captured chapter order and en_GB PT1-PT24 copy exact", () => {
@@ -163,6 +186,7 @@ describe("official Primal Rampage help copy", () => {
       "way-wins",
     ]);
     expect([
+      "IDS_WINUPTO_YOURBET",
       ...PRIMAL_HELP_SECTIONS.flatMap(({ titleKey, paragraphKeys }) => [
         titleKey,
         ...paragraphKeys,
@@ -196,11 +220,15 @@ describe("official Primal Rampage help copy", () => {
     expect(PAYTABLE_WILD_ENTRIES.map(({ label }) => String(label))).not.toContain("X1");
   });
 
-  it("does not publish the removed maximum-win or math-policy claims", () => {
+  it("publishes both exact maximum-win statements only inside the bound official-help surface", () => {
     const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
-    expect(source).not.toMatch(/Win up to 2500x your bet!/i);
+    expect(PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_WINUPTO_YOURBET)
+      .toBe("Win up to 2500x your bet!");
+    expect(source).toContain('appendOfficialMaximumWin(parent, "top"');
+    expect(source).toContain('appendOfficialMaximumWin(parent, "bottom"');
+    expect(source).toContain('class="official-help-viewport"');
+    expect(source).toMatch(/official-help-viewport[\s\S]*data-role="presentation-rules-content"[\s\S]*hidden/);
     expect(source).not.toMatch(/RTP, volatility, reel weights/i);
-    expect(source).not.toMatch(/probability|probabilities/i);
   });
 });
 
@@ -224,7 +252,7 @@ describe("official help locale release contract", () => {
   it("advertises only the complete authoritative en_GB bundle and every required official key", () => {
     expect(PRIMAL_HELP_ADVERTISED_LOCALES).toEqual(["en_GB"]);
     expect(Object.keys(PRIMAL_HELP_LOCALE_BUNDLES)).toEqual(["en_GB"]);
-    expect(PRIMAL_HELP_REQUIRED_LOCALE_KEYS).toHaveLength(33);
+    expect(PRIMAL_HELP_REQUIRED_LOCALE_KEYS).toHaveLength(34);
     expect(validatePrimalHelpLocaleBundle(
       PRIMAL_HELP_LOCALE_BUNDLES.en_GB,
       PRIMAL_HELP_PACKAGED_FONT_FAMILIES,
@@ -233,9 +261,9 @@ describe("official help locale release contract", () => {
       [...PRIMAL_HELP_REQUIRED_LOCALE_KEYS].sort(),
     );
     expect(PRIMAL_HELP_LOCALE_BUNDLES.en_GB.fontRoute).toEqual({
-      titleFamily: "ROBOTO_CONDENSED_BOLD",
+      titleFamily: "KANIT_BOLD",
       bodyFamily: "ROBOTO_CONDENSED_REGULAR",
-      requiredFamilies: ["ROBOTO_CONDENSED_BOLD", "ROBOTO_CONDENSED_REGULAR"],
+      requiredFamilies: ["KANIT_BOLD", "ROBOTO_CONDENSED_BOLD", "ROBOTO_CONDENSED_REGULAR"],
       cssFallbacks: ["Arial Narrow", "sans-serif"],
     });
     const source = readFileSync(new URL("../src/ui/presentationRules.ts", import.meta.url), "utf8");
@@ -320,7 +348,7 @@ describe("presentationRules session binding", () => {
     });
     expect(PRIMAL_PRESENTATION_RULES).toMatchObject({
       schema: "slots-game-presentation-rules-v1",
-      version: "primal-rampage-help-en-gb-v2",
+      version: "primal-rampage-help-en-gb-v3",
       locale: "en_GB",
       sourceRevision: "1.2.1-primalrampage.471",
     });
@@ -384,7 +412,9 @@ describe("presentationRules session binding", () => {
     const exchange: DecodedRgsExchange = {
       requestId: "request-rgs-help",
       accessToken: "token",
+      serverTime: "2029-12-31T23:00:00Z",
       session: {
+        engineRulesVersion: ENGINE_RULES_VERSION,
         binding: {
           operatorId: "operator-help",
           sessionId: "session-help",
@@ -396,7 +426,8 @@ describe("presentationRules session binding", () => {
           jurisdiction: "GB",
         },
         status: "ACTIVE",
-        expiresAt: "2030-01-01T00:00:00Z",
+      expiresAt: "2030-01-01T00:00:00Z",
+      idleDisconnectAt: "2029-12-31T23:30:00Z",
         balanceMinor: "10000",
         revision: "0",
         sequence: 0,
@@ -451,24 +482,45 @@ describe("PC, phone, and tablet help layout", () => {
     expect(PRIMAL_HELP_AUTHORING.title).toMatchObject({ fontSizePx: 45, lineHeightPx: 60 });
   });
 
-  it("uses a desktop sidebar but top tabs for phone and tablet", () => {
+  it("upscales the immutable author surface once to the captured PC content slot", () => {
+    const geometry = officialHelpProjectionGeometry(908.8, 7_565);
+    expect(geometry.scaleX).toBeCloseTo(908.8 / 750, 8);
+    expect(geometry.scaleY).toBe(geometry.scaleX);
+    expect(geometry.projectedWidthPx).toBeCloseTo(908.8, 8);
+    expect(geometry.scrollWidthPx).toBeCloseTo(908.8, 8);
+  });
+
+  it("uses top tabs in portrait and the captured left rail in mobile landscape", () => {
     const css = readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
     expect(css).toMatch(/\.game-menu\s*\{[^}]*grid-template-columns:\s*128px 1fr;/s);
     expect(css).toMatch(
       /\.game-frame\[data-channel="mobile"\] \.game-menu\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*grid-template-columns:\s*none;/s,
     );
-    expect(css).toMatch(/\.official-help\s*\{[^}]*width:\s*750px;[^}]*max-width:\s*none;/s);
     expect(css).toMatch(
-      /\.official-help__section\s*>\s*h4\s*\{[^}]*ROBOTO_CONDENSED_BOLD[^}]*font-size:\s*45px;[^}]*line-height:\s*60px;/s,
+      /\[data-mobile-layout="ls"\] \.game-menu__tabs\s*\{[^}]*top:\s*2\.6066cqw;[^}]*left:\s*2\.6066cqw;[^}]*width:\s*12\.9147cqw;[^}]*flex-direction:\s*column;/s,
+    );
+    expect(css).toMatch(
+      /\[data-mobile-layout="ls"\] \.game-menu__content\s*\{[^}]*width:\s*calc\(100% - 21\.4455cqw\);[^}]*margin-left:\s*21\.4455cqw;/s,
+    );
+    expect(css).toMatch(/\.official-help\s*\{[^}]*width:\s*750px;[^}]*max-width:\s*none;/s);
+    expect(css).toMatch(/\.official-help\s*\{[^}]*height:\s*7565px;/s);
+    expect(css).toMatch(
+      /\.official-help__section\s*>\s*h4\s*\{[^}]*top:\s*3\.3px;[^}]*KANIT_BOLD[^}]*font-size:\s*45px;[^}]*line-height:\s*60px;/s,
     );
     expect(css).toMatch(
       /\.official-help__copy p\s*\{[^}]*height:\s*var\(--official-help-line-box-height,\s*40px\);[^}]*ROBOTO_CONDENSED_REGULAR[^}]*font-size:\s*30px;[^}]*line-height:\s*40px;/s,
     );
+    expect(css).toMatch(/\.official-help__copy--way-wins p\s*\{[^}]*width:\s*740px;[^}]*letter-spacing:\s*0;/s);
     expect(css).toMatch(/linear-gradient\(180deg,\s*#ff250a,\s*#ff710a\)/i);
-    expect(css).toMatch(/-webkit-text-stroke:\s*10px\s+#5c0001/i);
-    expect(css).toMatch(
-      /\.official-help__artwork img\s*\{[^}]*width:\s*var\(--official-help-art-width\);[^}]*height:\s*var\(--official-help-art-height\);/s,
-    );
+    expect(css).toMatch(/-webkit-text-stroke:\s*5px\s+#5c0001/i);
+    expect(css).toMatch(/\.official-help__positioned-art\s*\{[^}]*position:\s*absolute;/s);
+    expect(css).toMatch(/\.official-help__title-fill\s*\{[^}]*color:\s*#ff710a;[^}]*linear-gradient\(180deg,\s*#ff250a,\s*#ff710a\)/is);
+    expect(css).toMatch(/\.official-help__title-stroke\s*\{[^}]*-webkit-text-stroke:\s*5px\s+#5c0001/is);
+    expect(css).toMatch(/\.official-help__atlas-frame--t0ab\s*\{[^}]*-530px\s+-1815px/s);
+    expect(css).toMatch(/\.official-help__atlas-frame--t0qb\s*\{/);
+    expect(css).toMatch(/\.official-help__atlas-frame--t0rb\s*\{/);
+    expect(css).toMatch(/\.official-help__atlas-frame--t0db\s*\{/);
+    expect(css).toMatch(/\.official-help__atlas-frame--t0eb\s*\{/);
     expect(css).toMatch(
       /\.official-help\s*\{[^}]*transform:\s*scale\(var\(--official-help-scale,\s*1\)\);[^}]*transform-origin:\s*top left;/s,
     );

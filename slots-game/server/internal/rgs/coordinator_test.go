@@ -10,9 +10,60 @@ import (
 	"testing"
 	"time"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"slots-game/server/internal/game"
 	"slots-game/server/internal/rng"
+	"slots-game/server/internal/telemetry"
 )
+
+func TestCoordinatorAndObservedWalletPreserveTraceParentWithoutBusinessAttributes(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSpanProcessor(recorder),
+	)
+	defer provider.Shutdown(context.Background())
+	runtime := telemetry.NewWithProvider(provider)
+	repository := NewMemoryRepository()
+	createTestSession(t, repository, baseSession())
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	observedWallet, err := NewObservedWallet(newTestWallet(10_000), &testWalletObserver{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator := newTestCoordinator(t, repository, observedWallet, spinner, time.Second)
+	ctx, root := telemetry.Start(runtime.Context(context.Background()), "test.public_request")
+	if _, err := coordinator.Spin(ctx, baseRequest("round-tracing", 100, 0)); err != nil {
+		t.Fatalf("Spin() error = %v", err)
+	}
+	root.End()
+
+	spans := recorder.Ended()
+	byName := make(map[string]sdktrace.ReadOnlySpan, len(spans))
+	for _, span := range spans {
+		byName[span.Name()] = span
+		if len(span.Attributes()) != 0 {
+			t.Fatalf("business boundary span %q exported attributes: %#v", span.Name(), span.Attributes())
+		}
+	}
+	rootSpan, rootOK := byName["test.public_request"]
+	coordinatorSpan, coordinatorOK := byName["rgs.coordinator.spin"]
+	reconcileSpan, reconcileOK := byName["rgs.coordinator.wallet_reconcile"]
+	walletSpan, walletOK := byName["rgs.wallet.submit"]
+	if !rootOK || !coordinatorOK || !reconcileOK || !walletOK {
+		t.Fatalf("trace spans = %#v", byName)
+	}
+	if coordinatorSpan.Parent().SpanID() != rootSpan.SpanContext().SpanID() ||
+		reconcileSpan.Parent().SpanID() != coordinatorSpan.SpanContext().SpanID() ||
+		walletSpan.Parent().SpanID() != reconcileSpan.SpanContext().SpanID() {
+		t.Fatalf("trace hierarchy root=%v coordinator-parent=%v reconcile-parent=%v wallet-parent=%v",
+			rootSpan.SpanContext(), coordinatorSpan.Parent(), reconcileSpan.Parent(), walletSpan.Parent())
+	}
+}
 
 func TestConcurrentIdenticalRoundEvaluatesAndAppliesWalletOnce(t *testing.T) {
 	repository := NewMemoryRepository()
@@ -551,6 +602,68 @@ func TestWalletIntegrityFailuresBlockSessionForManualReview(t *testing.T) {
 	}
 }
 
+func TestCommitManualReviewReasonUsesStableLowCardinalityCodes(t *testing.T) {
+	t.Parallel()
+	const secret = "postgres://wallet:password@private/player-a/round-a"
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "wallet receipt",
+			err:  errors.Join(ErrWalletReceiptInvalid, errors.New(secret)),
+			want: ManualReviewReasonWalletReceiptInvalid,
+		},
+		{
+			name: "revision conflict",
+			err:  errors.Join(ErrRevisionConflict, errors.New(secret)),
+			want: ManualReviewReasonCommitRevisionConflict,
+		},
+		{
+			name: "state integrity",
+			err:  errors.Join(ErrManualReview, errors.New(secret)),
+			want: ManualReviewReasonCommitStateIntegrity,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := commitManualReviewReason(test.err)
+			if got != test.want || strings.Contains(got, secret) || strings.Contains(got, "password") {
+				t.Fatalf("commitManualReviewReason() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCommitFailurePersistsStableReasonInMemoryRepository(t *testing.T) {
+	const secret = "postgres://wallet:password@private/player-a/round-a"
+	store := NewMemoryRepository()
+	createTestSession(t, store, baseSession())
+	repository := &commitFailureRepository{
+		Repository: store,
+		failure:    errors.Join(ErrWalletReceiptInvalid, errors.New(secret)),
+	}
+	spinner := &countingSpinner{spin: func(game.SpinInput) (game.SpinOutcome, error) {
+		return payableOutcome(game.EmptyFeatureState()), nil
+	}}
+	coordinator := newTestCoordinator(t, repository, newTestWallet(10_000), spinner, time.Second)
+	request := baseRequest("round-stable-manual-review", 100, 0)
+
+	if _, err := coordinator.Spin(context.Background(), request); !errors.Is(err, ErrManualReview) {
+		t.Fatalf("Spin() error = %v, want ErrManualReview", err)
+	}
+	record, err := store.GetRound(context.Background(), request.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.reason != ManualReviewReasonWalletReceiptInvalid ||
+		record.FailureReason != ManualReviewReasonWalletReceiptInvalid ||
+		strings.Contains(record.FailureReason, secret) || strings.Contains(record.FailureReason, "password") {
+		t.Fatalf("persisted manual-review reason = wrapper:%q record:%q",
+			repository.reason, record.FailureReason)
+	}
+}
+
 func TestReconcileQuarantinesPersistedIntegrityFailureBeforeWalletCall(t *testing.T) {
 	key := RoundKey{OperatorID: "operator-a", SessionID: "session-a", RoundID: "round-corrupt"}
 	repository := &integrityFaultRepository{Repository: NewMemoryRepository(), key: key}
@@ -930,8 +1043,10 @@ func TestFreeSpinStateSurvivesAmbiguousWalletAndCoordinatorRestart(t *testing.T)
 		outcome := payableOutcome(nextFeature)
 		outcome.TotalWinMinor = 1_000
 		outcome.Wins[0].AmountMinor = 1_000
+		outcome.Wins[0].PaidAmountMinor = 1_000
 		outcome.Wins[0].PathAwards[0].BaseAmountMinor = 1_000
 		outcome.Wins[0].PathAwards[0].AmountMinor = 1_000
+		outcome.Wins[0].PathAwards[0].PaidAmountMinor = 1_000
 		return outcome, nil
 	}}
 	wallet := newTestWallet(5_000)
@@ -990,6 +1105,87 @@ func TestFreeSpinStateSurvivesAmbiguousWalletAndCoordinatorRestart(t *testing.T)
 	}
 	if spinner.calls.Load() != 1 || wallet.applyCalls.Load() != 1 || wallet.economicApplyCount() != 1 {
 		t.Fatalf("free recovery repeated effects: engine=%d wallet=%d economic=%d", spinner.calls.Load(), wallet.applyCalls.Load(), wallet.economicApplyCount())
+	}
+}
+
+func TestMaxWinCapSurvivesWalletAmbiguityRestartAndIdempotentReplay(t *testing.T) {
+	repository := NewMemoryRepository()
+	session := baseSession()
+	session.Revision = 7
+	session.Sequence = 12
+	session.BalanceMinor = 500_000
+	session.Feature = game.FeatureState{
+		Mode: game.FeatureExpansion, Remaining: 2, Awarded: 8, BetMinor: 100,
+		WinMinor: 240_000, RageLevel: game.DefaultRageLevel,
+	}
+	createTestSession(t, repository, session)
+
+	config := game.DemoConfig()
+	config.Reels[0] = []game.WeightedSymbol{{Value: game.SymbolOrbit, Weight: 1}}
+	config.Reels[1] = []game.WeightedSymbol{{Value: game.SymbolVault, Weight: 1}}
+	config.Reels[2] = []game.WeightedSymbol{{Value: game.SymbolOrbit, Weight: 1}}
+	config.VaultMultipliers = []game.WeightedInt{{Value: 1000, Weight: 1}}
+	config.Feature.VaultUnlockChanceBP = 10_000
+	config.Feature.VaultFreeSpinWeight = 0
+	engine, err := game.NewEngine(config, rng.NewSequenceSource(make([]uint64, 96)...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spinner := &countingSpinner{spin: func(input game.SpinInput) (game.SpinOutcome, error) {
+		return engine.Spin(context.Background(), input)
+	}}
+	wallet := newTestWallet(session.BalanceMinor)
+	wallet.ambiguousAfterApply = true
+	wallet.lookupAllowed.Store(false)
+	firstCoordinator := newTestCoordinator(t, repository, wallet, spinner, 12*time.Millisecond)
+	request := baseRequest("round-capped-free-recovery", 100, session.Revision)
+	request.RoundKind = RoundKindFreeSpin
+
+	if _, err := firstCoordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("first capped Free Spin error = %v, want ErrWalletPending", err)
+	}
+	record, err := repository.GetRound(context.Background(), request.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Result.ChargedBetMinor != 0 || record.Result.TotalWinMinor != 10_000 ||
+		record.Result.FeatureState.WinMinor != 250_000 || record.Result.FeatureState.Remaining != 1 {
+		t.Fatalf("prepared capped result = %+v", record.Result)
+	}
+	capEvents := 0
+	for _, event := range record.Result.Events {
+		if event.Type == "win_cap.reached" {
+			capEvents++
+		}
+	}
+	if capEvents != 1 {
+		t.Fatalf("prepared capped events = %+v", record.Result.Events)
+	}
+	if wallet.balanceValue() != 510_000 {
+		t.Fatalf("capped wallet balance = %d, want 510000", wallet.balanceValue())
+	}
+
+	wallet.lookupAllowed.Store(true)
+	secondCoordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
+	recovered, err := secondCoordinator.Reconcile(context.Background(), request.Key())
+	if err != nil {
+		t.Fatalf("recover capped Free Spin: %v", err)
+	}
+	replayed, err := secondCoordinator.Spin(context.Background(), request)
+	if err != nil || !reflect.DeepEqual(replayed, recovered) {
+		t.Fatalf("capped replay = %+v, recovered=%+v, error=%v", replayed, recovered, err)
+	}
+	resumed, err := repository.GetSession(context.Background(), session.OperatorID, session.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.BalanceMinor != 510_000 || resumed.Feature.WinMinor != 250_000 ||
+		resumed.Feature.Remaining != 1 || resumed.PendingRoundID != "" {
+		t.Fatalf("resumed capped session = %+v", resumed)
+	}
+	if spinner.calls.Load() != 1 || wallet.applyCalls.Load() != 1 || wallet.economicApplyCount() != 1 {
+		t.Fatalf("capped recovery repeated effects: engine=%d wallet=%d economic=%d",
+			spinner.calls.Load(), wallet.applyCalls.Load(), wallet.economicApplyCount())
 	}
 }
 
@@ -1153,6 +1349,29 @@ type integrityFaultRepository struct {
 	markedKey RoundKey
 	reason    string
 	markCalls int
+}
+
+type commitFailureRepository struct {
+	Repository
+	failure error
+	reason  string
+}
+
+func (r *commitFailureRepository) CommitClaim(
+	context.Context,
+	WalletRecoveryClaim,
+	WalletReceipt,
+) (RoundRecord, bool, error) {
+	return RoundRecord{}, false, r.failure
+}
+
+func (r *commitFailureRepository) MarkClaimManualReview(
+	ctx context.Context,
+	claim WalletRecoveryClaim,
+	reason string,
+) (RoundRecord, bool, error) {
+	r.reason = reason
+	return r.Repository.MarkClaimManualReview(ctx, claim, reason)
 }
 
 func (r *integrityFaultRepository) GetRound(_ context.Context, key RoundKey) (RoundRecord, error) {
@@ -1436,6 +1655,8 @@ func baseSession() Session {
 		GameID: "game-a", DefinitionVersion: "math-v1", DefinitionHash: strings.Repeat("a", 64),
 		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT", Status: SessionActive,
 		ExpiresAt: time.Now().Add(time.Hour), BalanceMinor: 10_000, Feature: game.EmptyFeatureState(),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().Add(20 * time.Minute),
+		TransportGeneration: 1,
 	}
 }
 
@@ -1448,7 +1669,7 @@ func baseRequest(roundID string, bet int64, revision uint64) SpinRequest {
 		OperatorID: "operator-a", SessionID: "session-a", RoundID: roundID,
 		GameID: "game-a", DefinitionVersion: "math-v1", Currency: "USD",
 		DefinitionHash: strings.Repeat("a", 64), RoundKind: RoundKindBase,
-		BetMinor: bet, StartRevision: revision,
+		BetMinor: bet, StartRevision: revision, TransportGeneration: 1,
 	}
 }
 
@@ -1460,11 +1681,11 @@ func payableOutcome(next game.FeatureState) game.SpinOutcome {
 			{{Symbol: game.SymbolOrbit}, {Symbol: game.SymbolPrism}, {Symbol: game.SymbolNova}},
 		},
 		Wins: []game.Win{{
-			ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 1, AmountMinor: 50,
+			ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 1, AmountMinor: 50, PaidAmountMinor: 50,
 			Cells: []game.Position{{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0}},
 			PathAwards: []game.PathAward{{
 				Cells:      []game.Position{{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0}},
-				Multiplier: 1, BaseAmountMinor: 50, AmountMinor: 50,
+				Multiplier: 1, BaseAmountMinor: 50, AmountMinor: 50, PaidAmountMinor: 50,
 			}},
 		}},
 		Events: []game.Event{{

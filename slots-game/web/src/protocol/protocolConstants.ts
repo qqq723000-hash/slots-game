@@ -58,3 +58,6 @@ export type WheelJackpotTier = keyof typeof WHEEL_INSTANT_MULTIPLIER_BY_TIER;
 export type WheelInstantMultiplier = (
   typeof WHEEL_INSTANT_MULTIPLIER_BY_TIER
 )[WheelJackpotTier];
+
+/** 当前不可变 Primal 数学定义的整场最高赢额倍数。 */
+export const PRIMAL_MAX_WIN_MULTIPLIER = 2_500 as const;

@@ -12,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,16 +37,33 @@ const (
 var testDefinitionHash = strings.Repeat("a", 64)
 
 type fakeLaunchService struct {
-	mu            sync.Mutex
-	create        func(context.Context, LaunchCommand) (LaunchResult, error)
-	exchange      func(context.Context, ExchangeCommand) (ExchangeResult, error)
-	refresh       func(context.Context, RefreshCommand) (ExchangeResult, error)
-	createCalls   int
-	exchangeCalls int
-	refreshCalls  int
-	lastCreate    LaunchCommand
-	lastExchange  ExchangeCommand
-	lastRefresh   RefreshCommand
+	mu             sync.Mutex
+	create         func(context.Context, LaunchCommand) (LaunchResult, error)
+	exchange       func(context.Context, ExchangeCommand) (ExchangeResult, error)
+	refresh        func(context.Context, RefreshCommand) (ExchangeResult, error)
+	authorize      func(context.Context, SessionAuthorizationCommand) (rgs.Session, error)
+	createCalls    int
+	exchangeCalls  int
+	refreshCalls   int
+	authorizeCalls int
+	lastCreate     LaunchCommand
+	lastExchange   ExchangeCommand
+	lastRefresh    RefreshCommand
+	lastAuthorize  SessionAuthorizationCommand
+}
+
+func (f *fakeLaunchService) AuthorizeSession(ctx context.Context, command SessionAuthorizationCommand) (rgs.Session, error) {
+	f.mu.Lock()
+	f.authorizeCalls++
+	f.lastAuthorize = command
+	f.mu.Unlock()
+	if f.authorize != nil {
+		return f.authorize(ctx, command)
+	}
+	session := validSession(time.Now().UTC())
+	session.SessionID = command.Claims.SessionID
+	session.TransportGeneration = command.Claims.TransportGeneration
+	return session, nil
 }
 
 func (f *fakeLaunchService) CreateLaunch(ctx context.Context, command LaunchCommand) (LaunchResult, error) {
@@ -119,6 +138,21 @@ type fakeRoundReader struct {
 	get     func(context.Context, rgs.RoundKey) (rgs.RoundRecord, error)
 	calls   int
 	lastKey rgs.RoundKey
+}
+
+type fakeRiskDecisionService struct {
+	decide  func(context.Context, rgs.RiskDecisionCommand) (rgs.RiskDecisionResult, error)
+	calls   int
+	command rgs.RiskDecisionCommand
+}
+
+func (service *fakeRiskDecisionService) DecideRisk(
+	ctx context.Context,
+	command rgs.RiskDecisionCommand,
+) (rgs.RiskDecisionResult, error) {
+	service.calls++
+	service.command = command
+	return service.decide(ctx, command)
 }
 
 func (f *fakeRoundReader) GetRound(ctx context.Context, key rgs.RoundKey) (rgs.RoundRecord, error) {
@@ -317,11 +351,75 @@ func (f *securityFixture) issueAccessTokenForSession(t *testing.T, sessionID, de
 		SessionID: sessionID, GameID: testGameID,
 		GameDefinitionVersion: testDefinition, GameDefinitionHash: definitionHash,
 		Currency: testCurrency, CurrencyExponent: 2, Jurisdiction: testRegion,
+		TransportGeneration: 1,
 	}, 10*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return token
+}
+
+func TestClientSessionStatusIsFlatReadOnlyAndUsesAuthoritativeClock(t *testing.T) {
+	security := newSecurityFixture(t)
+	deadline := security.now.Add(20 * time.Minute)
+	launches := &fakeLaunchService{authorize: func(_ context.Context, command SessionAuthorizationCommand) (rgs.Session, error) {
+		if command.AllowIdleRecovery {
+			t.Fatal("status probe unexpectedly used recovery authorization")
+		}
+		session := validSession(security.now)
+		session.IdleDisconnectAt = deadline
+		session.ServerTime = security.now
+		return session, nil
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+	body, _ := json.Marshal(sessionBindingRequest{
+		OperatorID: testOperatorID, SessionID: testSessionID,
+		GameID: testGameID, DefinitionVersion: testDefinition,
+		DefinitionHash: testDefinitionHash, Currency: testCurrency,
+		CurrencyExponent: 2, Jurisdiction: testRegion,
+	})
+	request := clientRequest(ClientSessionStatusPath, body, security.issueAccessToken(t, testDefinitionHash))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status response = %d %s", recorder.Code, recorder.Body.Bytes())
+	}
+	var envelope struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Data) != 5 || envelope.Data["operatorId"] != testOperatorID ||
+		envelope.Data["sessionId"] != testSessionID || envelope.Data["status"] != "ACTIVE" ||
+		envelope.Data["idleDisconnectAt"] != formatTime(deadline) ||
+		envelope.Data["serverTime"] != formatTime(security.now) {
+		t.Fatalf("flat status data = %#v", envelope.Data)
+	}
+	if launches.authorizeCalls != 1 || launches.lastAuthorize.AllowIdleRecovery {
+		t.Fatalf("status authorization = calls:%d command:%+v", launches.authorizeCalls, launches.lastAuthorize)
+	}
+}
+
+func TestClientSessionStatusReturnsStableTimeoutCode(t *testing.T) {
+	security := newSecurityFixture(t)
+	launches := &fakeLaunchService{authorize: func(context.Context, SessionAuthorizationCommand) (rgs.Session, error) {
+		return rgs.Session{}, rgs.ErrSessionTimeout
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+	body, _ := json.Marshal(sessionBindingRequest{
+		OperatorID: testOperatorID, SessionID: testSessionID,
+		GameID: testGameID, DefinitionVersion: testDefinition,
+		DefinitionHash: testDefinitionHash, Currency: testCurrency,
+		CurrencyExponent: 2, Jurisdiction: testRegion,
+	})
+	request := clientRequest(ClientSessionStatusPath, body, security.issueAccessToken(t, testDefinitionHash))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusGone ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"SESSION_TIMEOUT"`)) {
+		t.Fatalf("timeout response = %d %s", recorder.Code, recorder.Body.Bytes())
+	}
 }
 
 func TestOperatorLaunchIsAuthenticatedAndResponseSigned(t *testing.T) {
@@ -846,6 +944,9 @@ func TestVerifiedClientAdmissionIsSessionScopedAndIndependentOfProxyAddress(t *t
 		admissionCalls["client:operator-a:session-b"] != 1 || len(admissionCalls) != 2 {
 		t.Fatalf("client admission calls = %#v", admissionCalls)
 	}
+	if launches.authorizeCalls != 2 {
+		t.Fatalf("database authorization calls = %d, want only the two admitted requests", launches.authorizeCalls)
+	}
 }
 
 func TestInvalidClientTokenCannotConsumeClientAdmission(t *testing.T) {
@@ -1006,6 +1107,7 @@ func TestTimedOutOperatorRequestStillReturnsSignedServiceUnavailable(t *testing.
 func TestClientCanDiscoverAndAcknowledgePendingResultWithoutStoredRoundID(t *testing.T) {
 	security := newSecurityFixture(t)
 	token := security.issueAccessToken(t, testDefinitionHash)
+	deadline := security.now.Add(9 * time.Minute)
 	result := committedResult(validSpinRequest())
 	hash, err := rgs.CommittedResultHashFor(result)
 	if err != nil {
@@ -1024,7 +1126,8 @@ func TestClientCanDiscoverAndAcknowledgePendingResultWithoutStoredRoundID(t *tes
 			}, nil
 		},
 		acknowledge: func(_ context.Context, receipt rgs.ResultDeliveryAcknowledgement) (rgs.ResultDelivery, bool, error) {
-			if receipt.RoundID != result.RoundID || receipt.Sequence != result.Sequence || receipt.ResultHash != hash {
+			if receipt.RoundID != result.RoundID || receipt.Sequence != result.Sequence ||
+				receipt.ResultHash != hash || receipt.TransportGeneration != 1 {
 				t.Fatalf("ACK receipt = %+v", receipt)
 			}
 			return rgs.ResultDelivery{
@@ -1034,7 +1137,15 @@ func TestClientCanDiscoverAndAcknowledgePendingResultWithoutStoredRoundID(t *tes
 			}, true, nil
 		},
 	}
-	handler := security.newHandler(t, &fakeLaunchService{}, spins, &fakeRoundReader{})
+	launches := &fakeLaunchService{authorize: func(_ context.Context, command SessionAuthorizationCommand) (rgs.Session, error) {
+		if !command.AllowIdleRecovery {
+			t.Fatal("pending result recovery must remain readable after the idle boundary")
+		}
+		session := validSession(security.now)
+		session.IdleDisconnectAt = deadline
+		return session, nil
+	}}
+	handler := security.newHandler(t, launches, spins, &fakeRoundReader{})
 	discover := httptest.NewRequest(http.MethodGet, "https://rgs.example"+ClientPendingResultPath, nil)
 	discover.Header.Set(operator.HeaderRequestID, "client-request")
 	discover.Header.Set(operator.HeaderOperatorID, testOperatorID)
@@ -1042,7 +1153,8 @@ func TestClientCanDiscoverAndAcknowledgePendingResultWithoutStoredRoundID(t *tes
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, discover)
 	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte(`"resultHash":"`+hash+`"`)) ||
-		!bytes.Contains(recorder.Body.Bytes(), []byte(`"originFeature":{"mode":"NONE"`)) {
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"originFeature":{"mode":"NONE"`)) ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"idleDisconnectAt":"`+formatTime(deadline)+`"`)) {
 		t.Fatalf("discover status=%d body=%s", recorder.Code, recorder.Body.Bytes())
 	}
 
@@ -1155,7 +1267,10 @@ func TestSessionExchangeConsumesCodeThenReturnsVerifiedAccessToken(t *testing.T)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.Bytes())
 	}
-	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"accessToken"`)) || !bytes.Contains(recorder.Body.Bytes(), []byte(`"definitionHash":"`+testDefinitionHash+`"`)) {
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"accessToken"`)) ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"definitionHash":"`+testDefinitionHash+`"`)) ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"idleDisconnectAt":"`+formatTime(session.IdleDisconnectAt)+`"`)) ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"serverTime":"`+formatTime(session.ServerTime)+`"`)) {
 		t.Fatalf("unexpected exchange response: %s", recorder.Body.Bytes())
 	}
 	if launches.exchangeCalls != 1 {
@@ -1208,7 +1323,9 @@ func TestSessionRefreshRotatesTokenForTheBoundActiveSession(t *testing.T) {
 		t.Fatalf("unexpected refresh calls: %d, command: %+v", launches.refreshCalls, launches.lastRefresh)
 	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"accessToken":"`+newToken+`"`)) ||
-		!bytes.Contains(recorder.Body.Bytes(), []byte(`"sessionId":"`+testSessionID+`"`)) {
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"sessionId":"`+testSessionID+`"`)) ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"idleDisconnectAt":"`+formatTime(session.IdleDisconnectAt)+`"`)) ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"serverTime":"`+formatTime(session.ServerTime)+`"`)) {
 		t.Fatalf("unexpected refresh response: %s", recorder.Body.Bytes())
 	}
 }
@@ -1216,10 +1333,18 @@ func TestSessionRefreshRotatesTokenForTheBoundActiveSession(t *testing.T) {
 func TestClientSpinBindsEveryTokenDimension(t *testing.T) {
 	security := newSecurityFixture(t)
 	token := security.issueAccessToken(t, testDefinitionHash)
+	deadline := security.now.Add(17 * time.Minute)
 	coordinator := &fakeCoordinator{spin: func(_ context.Context, request rgs.SpinRequest) (rgs.SpinResult, error) {
+		// PostgreSQL 轮次恢复刻意不在 result_json 持久化纯传输 idle 元数据；HTTP
+		// 边界必须从当前权威会话补齐，且不能改变经济 hash。
 		return committedResult(request), nil
 	}}
-	handler := security.newHandler(t, &fakeLaunchService{}, coordinator, &fakeRoundReader{})
+	launches := &fakeLaunchService{authorize: func(_ context.Context, command SessionAuthorizationCommand) (rgs.Session, error) {
+		session := validSession(security.now)
+		session.IdleDisconnectAt = deadline
+		return session, nil
+	}}
+	handler := security.newHandler(t, launches, coordinator, &fakeRoundReader{})
 	body := clientSpinBody(testDefinitionHash)
 	request := clientRequest(ClientSpinPath, body, token)
 	recorder := httptest.NewRecorder()
@@ -1235,6 +1360,13 @@ func TestClientSpinBindsEveryTokenDimension(t *testing.T) {
 	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"balanceMinor":"10100"`)) {
 		t.Fatalf("minor units were not encoded as strings: %s", recorder.Body.Bytes())
 	}
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"idleDisconnectAt":"`+formatTime(deadline)+`"`)) {
+		t.Fatalf("authoritative idle deadline was not hydrated: %s", recorder.Body.Bytes())
+	}
+	if launches.authorizeCalls != 2 || !launches.lastAuthorize.AllowIdleRecovery {
+		// 第一次授权在经济操作前隔离请求，第二次在提交结果返回后读取续期截止时间。
+		t.Fatalf("spin authorization calls = %d, last = %+v", launches.authorizeCalls, launches.lastAuthorize)
+	}
 
 	tampered := clientRequest(ClientSpinPath, clientSpinBody(strings.Repeat("b", 64)), token)
 	tamperedRecorder := httptest.NewRecorder()
@@ -1244,31 +1376,70 @@ func TestClientSpinBindsEveryTokenDimension(t *testing.T) {
 	}
 }
 
-func TestPendingRoundStatusNeverRevealsPreparedOutcome(t *testing.T) {
+func TestCommittedClientRoundStatusHydratesCurrentIdleDeadline(t *testing.T) {
 	security := newSecurityFixture(t)
-	token := security.issueAccessToken(t, testDefinitionHash)
+	deadline := security.now.Add(11 * time.Minute)
 	requestModel := validSpinRequest()
+	result := committedResult(requestModel)
+	wantHash, err := rgs.CommittedResultHashFor(result)
+	if err != nil {
+		t.Fatal(err)
+	}
 	rounds := &fakeRoundReader{get: func(_ context.Context, key rgs.RoundKey) (rgs.RoundRecord, error) {
-		return rgs.RoundRecord{
-			Key: key, Request: requestModel, Status: rgs.RoundWalletPending,
-			Result: rgs.SpinResult{TotalWinMinor: 987654321},
-		}, nil
+		return rgs.RoundRecord{Key: key, Request: requestModel, Status: rgs.RoundCommitted, Result: result}, nil
 	}}
-	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, rounds)
-	body := roundStatusBody()
-	request := clientRequest(ClientRoundStatusPath, body, token)
+	launches := &fakeLaunchService{authorize: func(_ context.Context, command SessionAuthorizationCommand) (rgs.Session, error) {
+		if !command.AllowIdleRecovery {
+			t.Fatal("round recovery must remain readable after the idle boundary")
+		}
+		session := validSession(security.now)
+		session.IdleDisconnectAt = deadline
+		return session, nil
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, rounds)
 	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, clientRequest(
+		ClientRoundStatusPath,
+		roundStatusBody(),
+		security.issueAccessToken(t, testDefinitionHash),
+	))
 
-	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"idleDisconnectAt":"`+formatTime(deadline)+`"`)) ||
+		!bytes.Contains(recorder.Body.Bytes(), []byte(`"resultHash":"`+wantHash+`"`)) {
+		t.Fatalf("committed recovery response = %d %s", recorder.Code, recorder.Body.Bytes())
+	}
+}
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.Bytes())
-	}
-	if bytes.Contains(recorder.Body.Bytes(), []byte("987654321")) || bytes.Contains(recorder.Body.Bytes(), []byte(`"result"`)) {
-		t.Fatalf("prepared outcome leaked: %s", recorder.Body.Bytes())
-	}
-	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"status":"WALLET_PENDING"`)) {
-		t.Fatalf("missing pending state: %s", recorder.Body.Bytes())
+func TestPendingRoundStatusNeverRevealsPreparedOutcome(t *testing.T) {
+	for _, status := range []rgs.RoundStatus{rgs.RoundRiskPending, rgs.RoundWalletPending} {
+		t.Run(string(status), func(t *testing.T) {
+			security := newSecurityFixture(t)
+			token := security.issueAccessToken(t, testDefinitionHash)
+			requestModel := validSpinRequest()
+			rounds := &fakeRoundReader{get: func(_ context.Context, key rgs.RoundKey) (rgs.RoundRecord, error) {
+				return rgs.RoundRecord{
+					Key: key, Request: requestModel, Status: status,
+					Result: rgs.SpinResult{TotalWinMinor: 987654321},
+				}, nil
+			}}
+			handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, rounds)
+			body := roundStatusBody()
+			request := clientRequest(ClientRoundStatusPath, body, token)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.Bytes())
+			}
+			if bytes.Contains(recorder.Body.Bytes(), []byte("987654321")) || bytes.Contains(recorder.Body.Bytes(), []byte(`"result"`)) {
+				t.Fatalf("prepared outcome leaked: %s", recorder.Body.Bytes())
+			}
+			if !bytes.Contains(recorder.Body.Bytes(), []byte(`"status":"`+string(status)+`"`)) {
+				t.Fatalf("missing pending state: %s", recorder.Body.Bytes())
+			}
+		})
 	}
 }
 
@@ -1319,6 +1490,74 @@ func TestOperatorRoundStatusResponseIsSigned(t *testing.T) {
 	}
 	if !bytes.Contains(responseBody, []byte(`"status":"COMMITTED"`)) || !bytes.Contains(responseBody, []byte(`"result"`)) {
 		t.Fatalf("unexpected response: %s", responseBody)
+	}
+}
+
+func TestOperatorRiskDecisionUsesSignedIdentityAndReturnsNoCandidateResult(t *testing.T) {
+	security := newSecurityFixture(t)
+	decidedAt := security.now.Add(time.Second)
+	service := &fakeRiskDecisionService{decide: func(
+		_ context.Context,
+		command rgs.RiskDecisionCommand,
+	) (rgs.RiskDecisionResult, error) {
+		return rgs.RiskDecisionResult{
+			RoundKey: command.RoundKey, Decision: command.Decision,
+			Status: rgs.RoundPrepared, DecidedAt: decidedAt,
+		}, nil
+	}}
+	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
+	handler.riskDecisions = service
+	body, _ := json.Marshal(map[string]any{
+		"operatorId": testOperatorID, "sessionId": testSessionID, "roundId": "round-risk",
+		"decision": "APPROVE", "reasonCode": "RISK_APPROVED",
+	})
+	request := security.signOperatorRequestWithIdempotency(
+		t, OperatorRiskDecisionPath, body, "risk-decision-a",
+	)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	response := recorder.Result()
+	responseBody, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.StatusCode, responseBody)
+	}
+	if err := security.responseVerifier.Verify(
+		context.Background(), response, responseBody, testOperatorID,
+		request.Header.Get(operator.HeaderRequestID),
+	); err != nil {
+		t.Fatalf("risk response signature failed: %v", err)
+	}
+	if service.calls != 1 || service.command.RoundKey.OperatorID != testOperatorID ||
+		service.command.IdempotencyKey != "risk-decision-a" ||
+		service.command.CredentialKeyID != security.requestSigning.KeyID ||
+		service.command.RequestID != request.Header.Get(operator.HeaderRequestID) {
+		t.Fatalf("decision command = %+v, calls=%d", service.command, service.calls)
+	}
+	if bytes.Contains(responseBody, []byte(`"result"`)) ||
+		!bytes.Contains(responseBody, []byte(`"status":"PREPARED"`)) {
+		t.Fatalf("unexpected risk response: %s", responseBody)
+	}
+}
+
+func TestOperatorRiskDecisionRejectsUnsignedRequestBeforeRepository(t *testing.T) {
+	security := newSecurityFixture(t)
+	service := &fakeRiskDecisionService{decide: func(
+		context.Context,
+		rgs.RiskDecisionCommand,
+	) (rgs.RiskDecisionResult, error) {
+		return rgs.RiskDecisionResult{}, nil
+	}}
+	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
+	handler.riskDecisions = service
+	body := []byte(`{"operatorId":"operator-a","sessionId":"session-a","roundId":"round-risk","decision":"REJECT","reasonCode":"RISK_REJECTED"}`)
+	request := httptest.NewRequest(http.MethodPost, "https://rgs.example"+OperatorRiskDecisionPath, bytes.NewReader(body))
+	request.Header.Set("Content-Type", operator.SignedContentType)
+	request.Header.Set(operator.HeaderOperatorID, testOperatorID)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized || service.calls != 0 {
+		t.Fatalf("status=%d calls=%d body=%s", recorder.Code, service.calls, recorder.Body.Bytes())
 	}
 }
 
@@ -1481,6 +1720,173 @@ func TestPendingResultRejectsUnknownLengthGETBodyAndClosesConnection(t *testing.
 	}
 }
 
+func TestPendingResultAcceptsReverseProxyEmptyEOFBodyWrapper(t *testing.T) {
+	security := newSecurityFixture(t)
+	token := security.issueAccessToken(t, testDefinitionHash)
+	launches := &fakeLaunchService{authorize: func(context.Context, SessionAuthorizationCommand) (rgs.Session, error) {
+		return validSession(security.now), nil
+	}}
+	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+	bodyObserved := make(chan *scriptedGETBody, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		// 模拟 Nginx/反向代理为零长度 GET 安装的 EOF 包装器，而不是 http.NoBody。
+		body := &scriptedGETBody{readErr: io.EOF}
+		request.Body = body
+		request.ContentLength = 0
+		handler.ServeHTTP(writer, request)
+		bodyObserved <- body
+	}))
+	defer upstream.Close()
+	target, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewServer(httputil.NewSingleHostReverseProxy(target))
+	defer proxy.Close()
+
+	request, err := http.NewRequest(http.MethodGet, proxy.URL+ClientPendingResultPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set(operator.HeaderOperatorID, testOperatorID)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := proxy.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusNoContent || len(responseBody) != 0 {
+		t.Fatalf("proxied pending response = %d %q", response.StatusCode, responseBody)
+	}
+	body := <-bodyObserved
+	if body.reads != 1 || !body.closed {
+		t.Fatalf("EOF wrapper reads/closed = %d/%t, want 1/true", body.reads, body.closed)
+	}
+}
+
+func TestPendingResultRejectsGETEntitySignalsAndProbeFailures(t *testing.T) {
+	security := newSecurityFixture(t)
+	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
+	readFailure := errors.New("GET body read failed")
+	closeFailure := errors.New("GET body close failed")
+	tests := []struct {
+		name      string
+		configure func(*http.Request, *scriptedGETBody)
+		wantReads int
+	}{
+		{
+			name: "actual byte despite zero content length",
+			configure: func(_ *http.Request, body *scriptedGETBody) {
+				body.payload = []byte("x")
+			},
+			wantReads: 1,
+		},
+		{
+			name: "body read failure",
+			configure: func(_ *http.Request, body *scriptedGETBody) {
+				body.readErr = readFailure
+			},
+			wantReads: 1,
+		},
+		{
+			name:      "zero byte read without EOF",
+			configure: func(_ *http.Request, _ *scriptedGETBody) {},
+			wantReads: 1,
+		},
+		{
+			name: "EOF wrapper close failure",
+			configure: func(_ *http.Request, body *scriptedGETBody) {
+				body.readErr = io.EOF
+				body.closeErr = closeFailure
+			},
+			wantReads: 1,
+		},
+		{
+			name: "positive content length",
+			configure: func(request *http.Request, body *scriptedGETBody) {
+				request.ContentLength = 1
+				body.readErr = io.EOF
+			},
+		},
+		{
+			name: "unknown content length",
+			configure: func(request *http.Request, body *scriptedGETBody) {
+				request.ContentLength = -1
+				body.readErr = io.EOF
+			},
+		},
+		{
+			name: "transfer encoding",
+			configure: func(request *http.Request, body *scriptedGETBody) {
+				request.TransferEncoding = []string{"chunked"}
+				body.readErr = io.EOF
+			},
+		},
+		{
+			name: "content type",
+			configure: func(request *http.Request, body *scriptedGETBody) {
+				request.Header.Set("Content-Type", "application/json")
+				body.readErr = io.EOF
+			},
+		},
+		{
+			name: "content encoding",
+			configure: func(request *http.Request, body *scriptedGETBody) {
+				request.Header.Set("Content-Encoding", "gzip")
+				body.readErr = io.EOF
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := &scriptedGETBody{}
+			request := httptest.NewRequest(http.MethodGet, ClientPendingResultPath, nil)
+			request.Body = body
+			request.ContentLength = 0
+			test.configure(request, body)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusBadRequest || !request.Close ||
+				!bytes.Contains(recorder.Body.Bytes(), []byte(`"code":"INVALID_REQUEST"`)) {
+				t.Fatalf("GET rejection response/connection = %d/%t body:%s",
+					recorder.Code, request.Close, recorder.Body.String())
+			}
+			if body.reads != test.wantReads {
+				t.Fatalf("GET body reads = %d, want %d", body.reads, test.wantReads)
+			}
+		})
+	}
+}
+
+type scriptedGETBody struct {
+	payload  []byte
+	readErr  error
+	closeErr error
+	reads    int
+	closed   bool
+}
+
+func (body *scriptedGETBody) Read(destination []byte) (int, error) {
+	body.reads++
+	if len(body.payload) != 0 {
+		read := copy(destination, body.payload)
+		body.payload = body.payload[read:]
+		return read, nil
+	}
+	return 0, body.readErr
+}
+
+func (body *scriptedGETBody) Close() error {
+	body.closed = true
+	return body.closeErr
+}
+
 func TestRequestBodyLimitsAreRouteSpecificBeforeJSONAndCrypto(t *testing.T) {
 	security := newSecurityFixture(t)
 	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, &fakeRoundReader{})
@@ -1530,7 +1936,7 @@ func TestMaximumSchemaValidBodiesFitCompleteEdgeInspectionWindow(t *testing.T) {
 				SessionID: id, GameID: id, DefinitionVersion: id,
 				DefinitionHash: digest, Currency: "EUR", CurrencyExponent: 6,
 				Jurisdiction: strings.Repeat("A", 16), BalanceMinor: "9223372036854775807",
-				SessionTTLSeconds: 86400,
+				SessionTTLSeconds: 86400, IdleDisconnectSeconds: 86400,
 			},
 			limit: maxPublicRequestBytes,
 			validate: func(body []byte) error {
@@ -1949,6 +2355,7 @@ func operatorLaunchBody(balance string) []byte {
 		"definitionHash": testDefinitionHash, "currency": testCurrency,
 		"currencyExponent": 2, "jurisdiction": testRegion,
 		"balanceMinor": balance, "sessionTtlSeconds": 3600,
+		"idleDisconnectSeconds": 1200,
 	}
 	encoded, _ := json.Marshal(payload)
 	return encoded
@@ -2019,6 +2426,8 @@ func validSession(now time.Time) rgs.Session {
 		DefinitionVersion: testDefinition, DefinitionHash: testDefinitionHash,
 		Currency: testCurrency, CurrencyExponent: 2, Jurisdiction: testRegion,
 		Status: rgs.SessionActive, ExpiresAt: now.Add(time.Hour), BalanceMinor: 10000,
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: now.Add(20 * time.Minute),
+		TransportGeneration: 1, ServerTime: now,
 		Feature: game.EmptyFeatureState(),
 	}
 }

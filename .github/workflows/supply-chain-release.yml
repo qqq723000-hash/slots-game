@@ -181,6 +181,21 @@ jobs:
       - name: Parse rendered cluster alert rules with fixed promtool
         run: make verify-cluster-prometheus-rules
 
+      - name: Validate rendered observability release with fixed images
+        shell: bash
+        env:
+          PROMETHEUS_IMAGE: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
+          VECTOR_IMAGE: timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39
+          GRAFANA_IMAGE: grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
+          RGS_LOG_SINK_URI: https://logs.release.invalid/v1/ingest
+          RGS_CONTAINER_LOG_GLOB: /var/log/containers/rgs-server-*.log
+          PROMETHEUS_RENDER_PROFILE: local-production
+          RGS_OPERATIONS_TARGET: rgs-server:8081
+          ALERTMANAGER_TARGET: alert-proxy:8443
+          ALERTMANAGER_CA_FILE: /run/secrets/alertmanager_root_ca.pem
+          ALERTMANAGER_SERVER_NAME: alert-proxy
+        run: ./deploy/observability/verify-release-workflow.sh
+
       - name: Install exact frontend dependency lock
         working-directory: slots-game/web
         run: npm ci

@@ -26,9 +26,29 @@ const generatorPath = join(
 const channels = ["desktop", "mobile"] as const;
 const PHASE_B_MAX_OPERATION_BYTES = 16 * 1024 * 1024;
 const expectedFeatureClosureBytes = {
-  desktop: 12_499_819,
-  mobile: 12_152_678,
+  desktop: 13_680_850,
+  mobile: 13_333_709,
 } as const;
+const EXPECTED_BIG_WIN_EXCLUSIVE_BYTES = 4_044_706;
+const expectedBigWinClosureBytes = {
+  desktop: 5_411_960,
+  mobile: 5_050_531,
+} as const;
+const EXPECTED_WHEEL_EXCLUSIVE_BYTES = 1_507_291;
+const EXPECTED_FREE_SPINS_EXCLUSIVE_BYTES = 117_536;
+const expectedWheelClosureBytes = {
+  desktop: 9_518_608,
+  mobile: 9_171_467,
+} as const;
+const expectedFreeSpinsClosureBytes = {
+  desktop: 8_128_853,
+  mobile: 7_781_712,
+} as const;
+const WHEEL_REFERENCE_URLS = Object.freeze([
+  "/assets/primal-reference/10023.png",
+  "/assets/primal-reference/10026.png",
+  "/assets/primal-reference/10027.png",
+]);
 
 function loadPackageManifest(
   channel: (typeof channels)[number],
@@ -42,7 +62,7 @@ function loadPackageManifest(
 }
 
 function filePath(publicUrl: string): string {
-  expect(publicUrl).toMatch(/^\/assets\/primal-runtime\//);
+  expect(publicUrl).toMatch(/^\/assets\/(?:primal-runtime|primal-reference)\//);
   const path = resolve(publicDirectory, `.${publicUrl}`);
   expect(path.startsWith(`${publicDirectory}/`)).toBe(true);
   return path;
@@ -122,6 +142,7 @@ describe("checked-in streaming package manifests", () => {
           ...runtime.mobile.interface.files.map((entry) => entry.publicUrl),
         );
       }
+      expected.push(...WHEEL_REFERENCE_URLS);
 
       expect(actual.size).toBe(expected.length);
       expect([...actual].sort()).toEqual([...expected].sort());
@@ -200,6 +221,9 @@ describe("checked-in streaming package manifests", () => {
         wheel.resources.filter((entry) => entry.url.endsWith(".skel")),
       ).toHaveLength(5);
       expect(
+        wheel.resources.filter((entry) => WHEEL_REFERENCE_URLS.includes(entry.url)),
+      ).toHaveLength(3);
+      expect(
         freeSpins.resources.filter((entry) => entry.url.endsWith(".skel")),
       ).toHaveLength(5);
       expect(
@@ -224,6 +248,30 @@ describe("checked-in streaming package manifests", () => {
       expect(bigWin.dependsOn).toEqual([
         `${channel}-spine-ui-shared`,
       ]);
+
+      const exclusiveBytes = (entry: typeof wheel): number => entry.resources.reduce(
+        (total, resource) => total + resource.bytes,
+        0,
+      );
+      expect(exclusiveBytes(wheel)).toBe(EXPECTED_WHEEL_EXCLUSIVE_BYTES);
+      expect(exclusiveBytes(freeSpins)).toBe(EXPECTED_FREE_SPINS_EXCLUSIVE_BYTES);
+
+      const closureBytes = (id: string): number => {
+        const selected = new Set<string>();
+        const visit = (packageId: string): void => {
+          if (selected.has(packageId)) return;
+          const entry = packages.get(packageId)!;
+          for (const dependency of entry.dependsOn ?? []) visit(dependency);
+          selected.add(packageId);
+        };
+        visit(id);
+        return [...selected].reduce(
+          (total, packageId) => total + exclusiveBytes(packages.get(packageId)!),
+          0,
+        );
+      };
+      expect(closureBytes(wheel.id)).toBe(expectedWheelClosureBytes[channel]);
+      expect(closureBytes(freeSpins.id)).toBe(expectedFreeSpinsClosureBytes[channel]);
     },
   );
 
@@ -281,7 +329,12 @@ describe("checked-in streaming package manifests", () => {
         ),
         0,
       );
-      expect(bytes).toBeGreaterThan(0);
+      const exclusiveBytes = byId.get(`${channel}-feature-big-win`)!.resources.reduce(
+        (total, resource) => total + resource.bytes,
+        0,
+      );
+      expect(exclusiveBytes).toBe(EXPECTED_BIG_WIN_EXCLUSIVE_BYTES);
+      expect(bytes).toBe(expectedBigWinClosureBytes[channel]);
       expect(bytes).toBeLessThan(expectedFeatureClosureBytes[channel]);
     },
   );

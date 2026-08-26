@@ -161,6 +161,16 @@ spec:
       ports:
         - port: {{ .Values.networkPolicy.egress.wallet.port }}
           protocol: TCP
+    {{- if .Values.observability.tracing.enabled }}
+    - to:
+        {{- range .Values.networkPolicy.egress.tracing.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.networkPolicy.egress.tracing.port }}
+          protocol: TCP
+    {{- end }}
 ---
 # 共享准入出口只属于 API Pod；Worker 不挂载凭据，也不能建立 Valkey 连接。
 apiVersion: networking.k8s.io/v1

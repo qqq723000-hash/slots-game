@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"slots-game/server/internal/outbox"
+	"slots-game/server/internal/safelog"
 )
 
 type Config struct {
@@ -201,7 +202,7 @@ func (runtime *Runtime) observe(result outbox.BatchResult, err error) {
 			"outbox dispatch pass failed",
 			"claimed", result.Claimed, "published", result.Published,
 			"failed", result.Failed, "lease_lost", result.LeaseLost,
-			"error", err,
+			"error_class", safelog.ErrorClass(err),
 		)
 		return
 	}

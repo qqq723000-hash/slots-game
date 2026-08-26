@@ -3,6 +3,7 @@ package platform
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func lookup(values map[string]string) EnvLookup {
@@ -29,14 +30,111 @@ func TestDevelopmentConfigHasSafeBoundedDefaults(t *testing.T) {
 		config.MaxConnectionsPerListener != 1_024 ||
 		config.PreAuthRatePerSecond != 5_000 || config.PreAuthRateBurst != 10_000 ||
 		config.SuccessAccessLogSamplePerMillion != 1_000_000 ||
+		config.TraceEndpoint != "" || config.TraceSampleRatio != 0.01 ||
+		config.TraceBatchTimeout.String() != "1s" || config.TraceExportTimeout.String() != "3s" ||
+		config.TraceShutdownTimeout.String() != "5s" || config.TraceMaxQueueSize != 1_024 ||
+		config.TraceMaxExportBatchSize != 256 ||
 		config.EconomicOperatorRatePerSecond != 20 || config.EconomicOperatorRateBurst != 40 ||
 		config.EconomicBackendRatePerSecond != 100 || config.EconomicBackendRateBurst != 200 ||
 		config.OperationsHTTPAddress != "127.0.0.1:8081" ||
 		config.RuntimeRole != RuntimeRoleCombined {
 		t.Fatalf("unexpected defaults: %+v", config)
 	}
+	if config.HighValueRiskEnabled || config.HighValueRiskThresholdMinor != 0 ||
+		config.HighValueRiskPolicyVersion != "" || config.HighValueRiskReviewTTL != 0 ||
+		config.HighValueRiskExpiryPolicy != "" || config.HighValueRiskExpiryBatchSize != 0 {
+		t.Fatalf("development default unexpectedly enables risk review: %+v", config)
+	}
 	if config.OutboxEndpointURL != "" {
 		t.Fatalf("development default unexpectedly enables external delivery: %q", config.OutboxEndpointURL)
+	}
+}
+
+func TestTracingConfigurationIsOptionalExplicitAndBounded(t *testing.T) {
+	valid := map[string]string{
+		"RGS_OTEL_TRACES_ENDPOINT":       "https://collector.example/v1/traces",
+		"RGS_OTEL_TRACE_SAMPLE_RATIO":    "0.125",
+		"RGS_OTEL_BATCH_TIMEOUT":         "250ms",
+		"RGS_OTEL_EXPORT_TIMEOUT":        "2s",
+		"RGS_OTEL_SHUTDOWN_TIMEOUT":      "4s",
+		"RGS_OTEL_MAX_QUEUE_SIZE":        "512",
+		"RGS_OTEL_MAX_EXPORT_BATCH_SIZE": "128",
+	}
+	config, err := LoadConfigFrom(lookup(valid))
+	if err != nil {
+		t.Fatalf("valid tracing config rejected: %v", err)
+	}
+	if config.TraceEndpoint != valid["RGS_OTEL_TRACES_ENDPOINT"] ||
+		config.TraceSampleRatio != 0.125 || config.TraceBatchTimeout != 250*time.Millisecond ||
+		config.TraceExportTimeout != 2*time.Second || config.TraceShutdownTimeout != 4*time.Second ||
+		config.TraceMaxQueueSize != 512 || config.TraceMaxExportBatchSize != 128 {
+		t.Fatalf("tracing config = %+v", config)
+	}
+
+	invalid := []map[string]string{
+		{"RGS_OTEL_TRACES_ENDPOINT": "https://collector.example"},
+		{"RGS_OTEL_TRACES_ENDPOINT": "https://collector.example/v1/traces/"},
+		{"RGS_OTEL_TRACES_ENDPOINT": "https://user@collector.example/v1/traces"},
+		{"RGS_OTEL_TRACES_ENDPOINT": "https://collector.example/v1/traces?token=secret"},
+		{"RGS_OTEL_TRACES_ENDPOINT": "https://collector.example/v1/traces#fragment"},
+		{"RGS_OTEL_TRACES_ENDPOINT": "grpc://collector.example/v1/traces"},
+		{"RGS_OTEL_TRACE_SAMPLE_RATIO": "NaN"},
+		{"RGS_OTEL_TRACE_SAMPLE_RATIO": "+Inf"},
+		{"RGS_OTEL_TRACE_SAMPLE_RATIO": "-0.01"},
+		{"RGS_OTEL_TRACE_SAMPLE_RATIO": "1.01"},
+		{"RGS_OTEL_BATCH_TIMEOUT": "99ms"},
+		{"RGS_OTEL_EXPORT_TIMEOUT": "31s"},
+		{"RGS_OTEL_SHUTDOWN_TIMEOUT": "0s"},
+		{"RGS_OTEL_MAX_QUEUE_SIZE": "0"},
+		{"RGS_OTEL_MAX_QUEUE_SIZE": "8193"},
+		{"RGS_OTEL_MAX_EXPORT_BATCH_SIZE": "0"},
+		{"RGS_OTEL_MAX_EXPORT_BATCH_SIZE": "1025"},
+		{"RGS_OTEL_MAX_QUEUE_SIZE": "64", "RGS_OTEL_MAX_EXPORT_BATCH_SIZE": "65"},
+	}
+	for index, values := range invalid {
+		if _, err := LoadConfigFrom(lookup(values)); err == nil {
+			t.Fatalf("unsafe tracing config %d unexpectedly accepted: %#v", index, values)
+		}
+	}
+}
+
+func TestHighValueRiskConfigurationIsExplicitCompleteAndBounded(t *testing.T) {
+	valid := map[string]string{
+		"RGS_HIGH_VALUE_RISK_ENABLED":           "true",
+		"RGS_HIGH_VALUE_RISK_THRESHOLD_MINOR":   "100000",
+		"RGS_HIGH_VALUE_RISK_POLICY_VERSION":    "payout-review-v1",
+		"RGS_HIGH_VALUE_RISK_REVIEW_TTL":        "30m",
+		"RGS_HIGH_VALUE_RISK_EXPIRY_POLICY":     "REJECT",
+		"RGS_HIGH_VALUE_RISK_EXPIRY_BATCH_SIZE": "50",
+	}
+	config, err := LoadConfigFrom(lookup(valid))
+	if err != nil {
+		t.Fatalf("valid risk config rejected: %v", err)
+	}
+	if !config.HighValueRiskEnabled || config.HighValueRiskThresholdMinor != 100_000 ||
+		config.HighValueRiskPolicyVersion != "payout-review-v1" ||
+		config.HighValueRiskReviewTTL != 30*time.Minute ||
+		config.HighValueRiskExpiryPolicy != "REJECT" || config.HighValueRiskExpiryBatchSize != 50 {
+		t.Fatalf("risk config = %+v", config)
+	}
+	for name, mutate := range map[string]func(map[string]string){
+		"disabled dormant":  func(values map[string]string) { values["RGS_HIGH_VALUE_RISK_ENABLED"] = "false" },
+		"missing threshold": func(values map[string]string) { delete(values, "RGS_HIGH_VALUE_RISK_THRESHOLD_MINOR") },
+		"missing version":   func(values map[string]string) { delete(values, "RGS_HIGH_VALUE_RISK_POLICY_VERSION") },
+		"short ttl":         func(values map[string]string) { values["RGS_HIGH_VALUE_RISK_REVIEW_TTL"] = "59s" },
+		"unknown expiry":    func(values map[string]string) { values["RGS_HIGH_VALUE_RISK_EXPIRY_POLICY"] = "ALLOW" },
+		"unbounded batch":   func(values map[string]string) { values["RGS_HIGH_VALUE_RISK_EXPIRY_BATCH_SIZE"] = "1001" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			values := make(map[string]string, len(valid))
+			for key, value := range valid {
+				values[key] = value
+			}
+			mutate(values)
+			if _, err := LoadConfigFrom(lookup(values)); err == nil {
+				t.Fatal("incomplete risk configuration unexpectedly accepted")
+			}
+		})
 	}
 }
 
@@ -188,6 +286,19 @@ func TestProductionConfigFailsClosed(t *testing.T) {
 	if config.Environment != Production || config.PublicBaseURL != values["RGS_PUBLIC_BASE_URL"] {
 		t.Fatalf("unexpected production config: %+v", config)
 	}
+	values["RGS_OTEL_TRACES_ENDPOINT"] = "http://collector.internal/v1/traces"
+	if _, err := LoadConfigFrom(lookup(values)); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("production plaintext remote trace endpoint error = %v", err)
+	}
+	values["RGS_OTEL_TRACES_ENDPOINT"] = "http://127.0.0.1:4318/v1/traces"
+	if _, err := LoadConfigFrom(lookup(values)); err != nil {
+		t.Fatalf("production loopback collector rejected: %v", err)
+	}
+	values["RGS_OTEL_TRACES_ENDPOINT"] = "https://collector.internal/v1/traces"
+	if _, err := LoadConfigFrom(lookup(values)); err != nil {
+		t.Fatalf("production TLS collector rejected: %v", err)
+	}
+	delete(values, "RGS_OTEL_TRACES_ENDPOINT")
 	missingOperationsBearer := make(map[string]string, len(values)-1)
 	for key, value := range values {
 		if key != "RGS_OPERATIONS_BEARER_TOKEN_FILE" {

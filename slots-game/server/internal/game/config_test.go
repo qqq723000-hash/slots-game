@@ -1,6 +1,7 @@
 package game
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,9 @@ func TestDemoConfigUsesCapturedPaytableAndExplicitCleanRoomWeights(t *testing.T)
 	}
 	if config.Bet.PayUnitMinor != 100 {
 		t.Fatalf("pay unit = %d minor, want 1.00 reference wager", config.Bet.PayUnitMinor)
+	}
+	if config.MaxWinMultiplier != 2_500 {
+		t.Fatalf("max win multiplier = %d, want authoritative 2500x", config.MaxWinMultiplier)
 	}
 	for reelIndex, reel := range config.Reels {
 		totalWeight := 0
@@ -71,6 +75,74 @@ func TestConfigValidateRejectsInvalidBetOptions(t *testing.T) {
 		mutate      func(*Config)
 		wantMessage string
 	}{
+		{
+			name: "missing engine rules version",
+			mutate: func(config *Config) {
+				config.EngineRulesVersion = ""
+			},
+			wantMessage: "engine rules version",
+		},
+		{
+			name: "foreign engine rules version",
+			mutate: func(config *Config) {
+				config.EngineRulesVersion = "slots-game-ways3-features-v999"
+			},
+			wantMessage: "engine rules version",
+		},
+		{
+			name: "raw Ways liability can overflow before cap",
+			mutate: func(config *Config) {
+				config.Paytable[SymbolOrbit] = math.MaxInt64
+			},
+			wantMessage: "Ways liability overflows",
+		},
+		{
+			name: "combined Ways Vault and Wheel liability can overflow before cap",
+			mutate: func(config *Config) {
+				config.Bet.MaxMinor = math.MaxInt64 / 10_000
+				config.Bet.PayUnitMinor = 1
+				config.WildMultipliers = []WeightedInt{{Value: 1, Weight: 1}}
+				for symbol := range config.Paytable {
+					config.Paytable[symbol] = 1
+				}
+			},
+			wantMessage: "combined raw spin liability overflows",
+		},
+		{
+			name: "missing max win multiplier",
+			mutate: func(config *Config) {
+				config.MaxWinMultiplier = 0
+			},
+			wantMessage: "max win multiplier must equal 2500",
+		},
+		{
+			name: "foreign max win multiplier requires a new engine rules version",
+			mutate: func(config *Config) {
+				config.MaxWinMultiplier = 3_000
+			},
+			wantMessage: "max win multiplier must equal 2500",
+		},
+		{
+			name: "max win overflows maximum bet",
+			mutate: func(config *Config) {
+				config.Bet.MaxMinor = math.MaxInt64/PrimalMaxWinMultiplier + 1
+			},
+			wantMessage: "invalid max win multiplier",
+		},
+		{
+			name: "game id is not a protocol identifier",
+			mutate: func(config *Config) {
+				config.GameID = "游戏/secret"
+			},
+			wantMessage: "invalid game id",
+		},
+		{
+			name: "game id exceeds protocol identifier limit",
+			mutate: func(config *Config) {
+				config.GameID = strings.Repeat("g", 129)
+			},
+			wantMessage: "invalid game id",
+		},
 		{
 			name: "missing pay unit",
 			mutate: func(config *Config) {

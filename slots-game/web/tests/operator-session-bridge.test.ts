@@ -5,6 +5,7 @@ import {
   OPERATOR_SESSION_HOST_MESSAGE_VERSION,
   notifyOperatorSessionRequired,
   parseExactHttpsHostOrigin,
+  returnTopLevelSessionToOperator,
 } from "../src/app/operatorSessionBridge";
 import { OPERATOR_SESSION_REQUIRED_EVENT } from "../src/app/playerFacingError";
 
@@ -206,5 +207,72 @@ describe("operator session host bridge", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("allowlists the terminal idle-timeout handoff for the exact parent origin", () => {
+    const postMessage = vi.fn();
+    const dispatchEvent = vi.fn();
+    const windowValue = {
+      parent: { postMessage },
+      dispatchEvent,
+    } as unknown as Window;
+    vi.stubGlobal("CustomEvent", TestCustomEvent);
+    try {
+      notifyOperatorSessionRequired(windowValue, {
+        reason: "session-timeout",
+        code: "SESSION_TIMEOUT",
+      }, "https://operator.example");
+
+      expect(postMessage).toHaveBeenCalledWith({
+        type: OPERATOR_SESSION_HOST_MESSAGE_TYPE,
+        version: OPERATOR_SESSION_HOST_MESSAGE_VERSION,
+        reason: "session-timeout",
+        code: "SESSION_TIMEOUT",
+      }, "https://operator.example");
+      expect(dispatchEvent).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("returns only a top-level page to an explicitly configured same-origin absolute path", () => {
+    const assign = vi.fn();
+    const topWindow = {
+      location: {
+        href: "https://game.example/game/index.html",
+        origin: "https://game.example",
+        assign,
+      },
+    } as unknown as Window & { parent: Window };
+    Object.defineProperty(topWindow, "parent", { value: topWindow });
+
+    expect(returnTopLevelSessionToOperator(topWindow, "/operator/")).toBe(true);
+    expect(assign).toHaveBeenCalledWith("https://game.example/operator/");
+
+    for (const target of [
+      "operator/",
+      "//evil.example/operator/",
+      "https://evil.example/operator/",
+      "/operator/?session=secret",
+      "/operator/#resume",
+    ]) {
+      expect(returnTopLevelSessionToOperator(topWindow, target), target).toBe(false);
+    }
+    expect(assign).toHaveBeenCalledTimes(1);
+  });
+
+  it("never self-navigates a framed game", () => {
+    const assign = vi.fn();
+    const framedWindow = {
+      parent: {},
+      location: {
+        href: "https://game.example/game/",
+        origin: "https://game.example",
+        assign,
+      },
+    } as unknown as Window;
+
+    expect(returnTopLevelSessionToOperator(framedWindow, "/operator/")).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
   });
 });

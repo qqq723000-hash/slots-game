@@ -41,7 +41,7 @@ function icoSizes(bytes: Buffer): number[] {
   });
 }
 
-describe("Pass 137 official Primal Rampage browser-tab icon", () => {
+describe("Pass 137 official provider browser-tab icon", () => {
   it("declares exactly one root ICO entrypoint", () => {
     expect(indexHtml.match(/rel="icon"/g)).toHaveLength(1);
     expect(indexHtml).toContain(
@@ -57,12 +57,12 @@ describe("Pass 137 official Primal Rampage browser-tab icon", () => {
     );
   });
 
-  it("ships a six-size, 32-bit game favicon instead of the provider logo", () => {
+  it("ships the exact six-size, 32-bit red GO favicon approved by the asset gate", () => {
     expect(favicon.subarray(0, 4)).toEqual(Buffer.from([0x00, 0x00, 0x01, 0x00]));
     expect(icoSizes(favicon).sort((a, b) => a - b)).toEqual([16, 32, 48, 64, 128, 256]);
     expect(favicon.byteLength).toBe(370_070);
     expect(sha256(favicon)).toBe(
-      "609887ffcf28a049f0164000b625932079b5b8493bba520f336166b88263ce77",
+      "9871915e932f969bd5b733083f76dbe80b5e1fa1a36aac18da6411b8da1491ac",
     );
   });
 });

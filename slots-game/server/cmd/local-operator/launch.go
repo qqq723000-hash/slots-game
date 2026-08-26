@@ -20,18 +20,19 @@ import (
 )
 
 type launchPayload struct {
-	PlayerID          string `json:"playerId"`
-	WalletAccountID   string `json:"walletAccountId"`
-	WalletSessionID   string `json:"walletSessionId"`
-	SessionID         string `json:"sessionId"`
-	GameID            string `json:"gameId"`
-	DefinitionVersion string `json:"definitionVersion"`
-	DefinitionHash    string `json:"definitionHash"`
-	Currency          string `json:"currency"`
-	CurrencyExponent  int    `json:"currencyExponent"`
-	Jurisdiction      string `json:"jurisdiction"`
-	BalanceMinor      string `json:"balanceMinor"`
-	SessionTTLSeconds int64  `json:"sessionTtlSeconds"`
+	PlayerID              string `json:"playerId"`
+	WalletAccountID       string `json:"walletAccountId"`
+	WalletSessionID       string `json:"walletSessionId"`
+	SessionID             string `json:"sessionId"`
+	GameID                string `json:"gameId"`
+	DefinitionVersion     string `json:"definitionVersion"`
+	DefinitionHash        string `json:"definitionHash"`
+	Currency              string `json:"currency"`
+	CurrencyExponent      int    `json:"currencyExponent"`
+	Jurisdiction          string `json:"jurisdiction"`
+	BalanceMinor          string `json:"balanceMinor"`
+	SessionTTLSeconds     int64  `json:"sessionTtlSeconds"`
+	IdleDisconnectSeconds int64  `json:"idleDisconnectSeconds"`
 }
 
 type rgsLaunchEnvelope struct {
@@ -154,6 +155,7 @@ type launcherConfig struct {
 	Jurisdiction           string
 	InitialBalanceMinor    int64
 	SessionTTL             time.Duration
+	IdleDisconnect         time.Duration
 	DefaultPlayerID        string
 	DefaultWalletAccountID string
 	AdminToken             []byte
@@ -175,7 +177,8 @@ func newLauncher(config launcherConfig) (http.Handler, error) {
 	if !allIdentifiers(config.OperatorID, config.GameID, config.DefinitionVersion,
 		config.DefaultPlayerID, config.DefaultWalletAccountID) ||
 		!digestPattern.MatchString(config.DefinitionHash) || len(config.AdminToken) < 16 ||
-		config.Store == nil || config.Client == nil {
+		config.IdleDisconnect < time.Second || config.IdleDisconnect > 24*time.Hour ||
+		config.IdleDisconnect%time.Second != 0 || config.Store == nil || config.Client == nil {
 		return nil, errors.New("invalid launcher configuration")
 	}
 	return &launcher{config: config}, nil
@@ -245,28 +248,40 @@ func (h *launcher) create(ctx context.Context, input launchInput) (launchResult,
 	if !allIdentifiers(playerID, walletAccountID) {
 		return launchResult{}, errors.New("invalid launch identity")
 	}
-	sessionID, err := randomID("session")
-	if err != nil {
-		return launchResult{}, err
-	}
-	walletSessionID, err := randomID("wallet-session")
-	if err != nil {
-		return launchResult{}, err
-	}
 	if err := h.config.Store.EnsureAccount(ctx, accountSeed{
 		OperatorID: h.config.OperatorID, WalletAccountID: walletAccountID,
 		Currency: h.config.Currency, BalanceMinor: h.config.InitialBalanceMinor,
 	}); err != nil {
 		return launchResult{}, err
 	}
+	now := time.Now().UTC()
+	reusable, reused, err := h.config.Store.FindReusableWalletSession(
+		ctx, h.config.OperatorID, playerID, walletAccountID, h.config.GameID,
+		h.config.DefinitionVersion, h.config.DefinitionHash, h.config.Currency,
+	)
+	if err != nil {
+		return launchResult{}, err
+	}
+	sessionID, walletSessionID := reusable.SessionID, reusable.WalletSessionRef
+	if !reused {
+		sessionID, err = randomID("session")
+		if err != nil {
+			return launchResult{}, err
+		}
+		walletSessionID, err = randomID("wallet-session")
+		if err != nil {
+			return launchResult{}, err
+		}
+	}
 	payload := launchPayload{
 		PlayerID: playerID, WalletAccountID: walletAccountID, WalletSessionID: walletSessionID,
 		SessionID: sessionID, GameID: h.config.GameID,
 		DefinitionVersion: h.config.DefinitionVersion, DefinitionHash: h.config.DefinitionHash,
 		Currency: h.config.Currency, CurrencyExponent: h.config.CurrencyExponent,
-		Jurisdiction:      h.config.Jurisdiction,
-		BalanceMinor:      strconv.FormatInt(h.config.InitialBalanceMinor, 10),
-		SessionTTLSeconds: int64(h.config.SessionTTL / time.Second),
+		Jurisdiction:          h.config.Jurisdiction,
+		BalanceMinor:          strconv.FormatInt(h.config.InitialBalanceMinor, 10),
+		SessionTTLSeconds:     int64(h.config.SessionTTL / time.Second),
+		IdleDisconnectSeconds: int64(h.config.IdleDisconnect / time.Second),
 	}
 	envelope, err := h.config.Client.Create(ctx, payload)
 	if err != nil {
@@ -274,14 +289,17 @@ func (h *launcher) create(ctx context.Context, input launchInput) (launchResult,
 	}
 	// RGS launch 已成功但尚未把代码交给浏览器；此时先持久化 operator 权威的钱包
 	// 会话绑定，确保任何随后到达的资金命令都不能伪造或串用 walletSessionRef。
-	if err := h.config.Store.RegisterWalletSession(ctx, walletSessionSeed{
-		OperatorID: h.config.OperatorID, WalletSessionRef: walletSessionID,
-		PlayerID: playerID, WalletAccountID: walletAccountID, SessionID: sessionID,
-		GameID: h.config.GameID, DefinitionVersion: h.config.DefinitionVersion,
-		DefinitionHash: h.config.DefinitionHash, Currency: h.config.Currency,
-		ExpiresAt: time.Now().UTC().Add(h.config.SessionTTL),
-	}); err != nil {
-		return launchResult{}, err
+	if !reused {
+		err = h.config.Store.RegisterWalletSession(ctx, walletSessionSeed{
+			OperatorID: h.config.OperatorID, WalletSessionRef: walletSessionID,
+			PlayerID: playerID, WalletAccountID: walletAccountID, SessionID: sessionID,
+			GameID: h.config.GameID, DefinitionVersion: h.config.DefinitionVersion,
+			DefinitionHash: h.config.DefinitionHash, Currency: h.config.Currency,
+			ExpiresAt: now.Add(h.config.SessionTTL),
+		})
+		if err != nil {
+			return launchResult{}, err
+		}
 	}
 	webURL, err := url.Parse(h.config.WebBaseURL)
 	if err != nil {

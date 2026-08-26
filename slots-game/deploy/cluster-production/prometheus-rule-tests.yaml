@@ -161,6 +161,46 @@ tests:
               summary: RGS 钱包成本准入持续故障
               description: Valkey 双桶脚本、静态 operator/backend 路由或返回协议持续失败；新 Spin 已失败关闭，status/result/ACK 与 Worker 恢复必须继续可用。
 
+  - name: API 仍就绪但经济准入不可用时必须告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_ready{job="slots-rgs",namespace="slots-production",instance="api-a"}'
+        values: '1x8'
+      - series: 'rgs_economic_admission_ready{job="slots-rgs",namespace="slots-production",instance="api-a"}'
+        values: '0x8'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SlotsRGSEconomicAdmissionUnavailable
+        exp_alerts:
+          - exp_labels:
+              instance: api-a
+              job: slots-rgs
+              namespace: slots-production
+              severity: critical
+            exp_annotations:
+              summary: RGS API 仍就绪但经济准入不可用
+              description: 基础状态、结果恢复和确认 API 仍可用，但 shared PING/基础脚本与经济 Lua 的组合健康连续失败或指标缺失；停止新经济意图并检查 Valkey TLS、ACL、Lua 与网络。
+
+  - name: 经济准入组合成功证据陈旧时必须告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_ready{job="slots-rgs",namespace="slots-production",instance="api-a"}'
+        values: '1x10'
+      - series: 'rgs_economic_admission_last_success_age_seconds{job="slots-rgs",namespace="slots-production",instance="api-a"}'
+        values: '1000x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SlotsRGSEconomicAdmissionObservationStale
+        exp_alerts:
+          - exp_labels:
+              instance: api-a
+              job: slots-rgs
+              namespace: slots-production
+              severity: warning
+            exp_annotations:
+              summary: RGS 经济准入成功证据陈旧
+              description: API 仍就绪，但 shared 与 economic 两条路径中至少一条超过十五分钟没有成功观测，或年龄指标缺失；核查真实流量、PING/Lua canary 接线与 Valkey 可用性。
+
   - name: 重复安全日志只有持续被抑制才告警
     interval: 1m
     input_series:
@@ -178,6 +218,36 @@ tests:
             exp_annotations:
               summary: RGS 重复安全 WARN 持续被有界抑制
               description: 权威安全事件计数仍完整，但固定物理 WARN 写入预算连续耗尽；应关联认证重放、边缘防护和认证失败判断攻击或错误重试，禁止用阻塞请求线程换取完整重复日志。
+
+  - name: API 追踪导出失败必须告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_trace_export_failures_total{job="slots-rgs",namespace="slots-production"}'
+        values: '0 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SlotsRGSTraceExportFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: RGS 分布式追踪导出失败
+              description: API 或 Worker 的 OTLP exporter 在有界重试后仍失败；资金请求保持失败开放，应检查 collector TLS、NetworkPolicy、容量和接收状态。
+
+  - name: Worker 追踪导出失败必须告警
+    interval: 1m
+    input_series:
+      - series: 'rgs_trace_export_failures_total{job="slots-rgs-worker",namespace="slots-production"}'
+        values: '0 0 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SlotsRGSTraceExportFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: RGS 分布式追踪导出失败
+              description: API 或 Worker 的 OTLP exporter 在有界重试后仍失败；资金请求保持失败开放，应检查 collector TLS、NetworkPolicy、容量和接收状态。
 
   - name: 钱包隔离拒绝必须触发告警
     interval: 1m

@@ -76,6 +76,10 @@ reject_mutation omit-eks-pod-identity-read contracts/landing-zone-interface.v1.y
   'eks:DescribePodIdentityAssociation' 'eks:GetPodIdentityAssociation'
 reject_mutation omit-eks-pod-identity-list contracts/landing-zone-interface.v1.yaml \
   'eks:ListPodIdentityAssociations' 'eks:GetPodIdentityAssociations'
+reject_mutation omit-rds-reader-live-read contracts/landing-zone-interface.v1.yaml \
+  'rds:DescribeDBInstances' 'rds:GetDBInstances'
+reject_mutation omit-rds-deadlock-filter-live-read contracts/landing-zone-interface.v1.yaml \
+  'logs:DescribeMetricFilters' 'logs:GetMetricFilters'
 reject_mutation reset-autoscaled-desired-size modules/eks/main.tf \
   'ignore_changes = [scaling_config[0].desired_size]' 'ignore_changes = []'
 reject_mutation ignore-autoscaler-boundaries modules/eks/main.tf \
@@ -182,6 +186,40 @@ reject_mutation mismatched-rds-parameter-family modules/rds/main.tf \
   'var.parameter_group_family == "postgres${split(".", var.engine_version)[0]}"' 'var.parameter_group_family != "postgres${split(".", var.engine_version)[0]}"'
 reject_mutation disable-rds-cpu-capacity-alarm modules/rds/main.tf \
   'metric_name = "CPUUtilization"' 'metric_name = "CPUUtilizationDisabled"'
+reject_mutation use-nonexistent-native-rds-deadlock-metric modules/rds/main.tf \
+  'metric_name         = local.deadlock_metric_name' 'metric_name         = "Deadlocks"'
+reject_mutation corrupt-rds-deadlock-filter-pattern modules/rds/main.tf \
+  'deadlock_filter_pattern   = "\"deadlock detected\""' 'deadlock_filter_pattern   = "\"deadlock_detected\""'
+reject_mutation detach-rds-deadlock-filter-log-group modules/rds/main.tf \
+  'log_group_name = aws_cloudwatch_log_group.this["postgresql"].name' 'log_group_name = aws_cloudwatch_log_group.this["upgrade"].name'
+reject_mutation corrupt-rds-deadlock-custom-namespace modules/rds/main.tf \
+  'deadlock_metric_namespace = "Slots/RDSLogEvents"' 'deadlock_metric_namespace = "AWS/RDS"'
+reject_mutation disable-rds-deadlock-filter-count modules/rds/main.tf \
+  'value         = "1"' 'value         = "0"'
+reject_mutation corrupt-rds-deadlock-filter-default modules/rds/main.tf \
+  'default_value = 0' 'default_value = 1'
+reject_mutation misunit-rds-deadlock-filter modules/rds/main.tf \
+  'unit          = "Count"' 'unit          = "Bytes"'
+reject_mutation defer-single-rds-deadlock modules/rds/main.tf \
+  'evaluation_periods  = 1' 'evaluation_periods  = 3'
+reject_mutation misunit-rds-iops modules/rds/main.tf \
+  'unit        = "Count/Second"' 'unit        = "Count"'
+reject_mutation disable-rds-swap-usage modules/rds/main.tf \
+  'metric_name = "SwapUsage"' 'metric_name = "SwapUsageDisabled"'
+reject_mutation fabricate-rds-replica-lag modules/rds/main.tf \
+  'metric_name = "ReadIOPS"' 'metric_name = "ReplicaLag"'
+reject_mutation drop-rds-total-iops-write-side modules/rds/main.tf \
+  'expression  = "m1 + m2"' 'expression  = "m1"'
+reject_mutation disable-rds-total-expression-return-data modules/rds/main.tf \
+  'return_data = true' 'return_data = false'
+reject_mutation enable-rds-total-source-return-data modules/rds/main.tf \
+  'return_data = false' 'return_data = true'
+reject_mutation corrupt-rds-total-source-period modules/rds/main.tf \
+  'period      = 60' 'period      = 300'
+reject_mutation corrupt-rds-total-source-statistic modules/rds/main.tf \
+  'stat        = "Average"' 'stat        = "Sum"'
+reject_mutation corrupt-rds-total-source-namespace modules/rds/main.tf \
+  'namespace   = "AWS/RDS"' 'namespace   = "AWS/EC2"'
 reject_mutation disable-rds-high-capacity-alarm-set modules/rds/main.tf \
   'for_each = local.capacity_high_alarm_metrics' 'for_each = {}'
 reject_mutation corrupt-rds-high-capacity-namespace modules/rds/main.tf \
@@ -196,10 +234,63 @@ reject_mutation remove-rds-capacity-recovery-notification modules/rds/main.tf \
   'ok_actions          = [var.alert_topic_arn]' 'ok_actions          = []'
 reject_mutation bypass-rds-connection-threshold-validation modules/rds/variables.tf \
   'var.alarm_thresholds.database_connections <= 1000000' 'true'
+reject_mutation weaken-rds-deadlock-threshold-validation modules/rds/variables.tf \
+  'var.alarm_thresholds.deadlocks_per_minute == 1' 'var.alarm_thresholds.deadlocks_per_minute >= 1'
+reject_mutation weaken-rds-total-iops-threshold-validation modules/rds/variables.tf \
+  'floor(var.alarm_thresholds.total_iops_per_second) == var.alarm_thresholds.total_iops_per_second' 'true'
 reject_mutation omit-explicit-rds-connection-threshold environments/dev/terraform.tfvars.example \
-  'database_connections     = 100' 'removed_connections        = 100'
+  '  rds_alarm_thresholds = {
+    cpu_utilization_percent   = 70
+    database_connections     = 100' \
+  '  rds_alarm_thresholds = {
+    cpu_utilization_percent   = 70
+    removed_connections      = 100'
+reject_mutation omit-explicit-rds-throughput-threshold environments/dev/terraform.tfvars.example \
+  'total_throughput_bytes_per_second = 104857600' 'removed_total_throughput            = 104857600'
+reject_mutation understate-prod-rds-gp3-iops-threshold environments/prod-primary/terraform.tfvars.example \
+  'total_iops_per_second             = 9600' 'total_iops_per_second             = 2400'
+reject_mutation understate-prod-rds-gp3-throughput-threshold environments/prod-dr/terraform.tfvars.example \
+  'total_throughput_bytes_per_second = 419430400' 'total_throughput_bytes_per_second = 104857600'
 reject_mutation omit-rds-alarm-threshold-wiring stacks/application-platform/main.tf \
   'alarm_thresholds          = var.rds_alarm_thresholds' 'removed_alarm_thresholds  = var.rds_alarm_thresholds'
+reject_mutation claim-automatic-rds-deadlock-snapshot modules/rds/outputs.tf \
+  'automatic_snapshot_implemented      = false' 'automatic_snapshot_implemented      = true'
+reject_mutation omit-rds-alarm-delivery stacks/environment/outputs.tf \
+  'rds_alarm_contract                        = module.platform.rds_alarm_contract' \
+  'rds_alarm_contract                        = {}'
+reject_mutation enable-unreviewed-prod-rds-reader environments/prod-primary/terraform.tfvars.example \
+  '  rds_read_replica = {
+    enabled        = false' \
+  '  rds_read_replica = {
+    enabled        = true'
+reject_mutation force-rds-reader-when-disabled modules/rds/main.tf \
+  'count = var.read_replica.enabled ? 1 : 0' 'count = 1'
+reject_mutation allow-single-az-production-rds-reader stacks/application-platform/main.tf \
+  '(!var.rds_read_replica.enabled || var.rds_read_replica.multi_az)' 'true'
+reject_mutation weaken-same-region-rds-reader-source modules/rds/main.tf \
+  'replicate_source_db = aws_db_instance.this.arn' 'replicate_source_db = aws_db_instance.this.identifier'
+reject_mutation detach-rds-reader-vpc-security-group modules/rds/main.tf \
+  '  db_subnet_group_name   = aws_db_subnet_group.this.name
+  vpc_security_group_ids = [aws_security_group.this.id]' \
+  '  db_subnet_group_name   = aws_db_subnet_group.this.name
+  vpc_security_group_ids = []'
+reject_mutation detach-rds-reader-security-group modules/rds/main.tf \
+  'DBInstanceIdentifier = aws_db_instance.reader[0].identifier' \
+  'DBInstanceIdentifier = aws_db_instance.this.identifier'
+reject_mutation remove-rds-reader-version-backup-gate modules/rds/main.tf \
+  'tonumber(split(".", var.engine_version)[0]) > 14' 'true'
+reject_mutation allow-rds-reader-lag-silence modules/rds/main.tf \
+  'treat_missing_data  = "breaching"' 'treat_missing_data  = "notBreaching"'
+reject_mutation claim-rds-reader-application-routing modules/rds/outputs.tf \
+  'application_routing_adopted     = false' 'application_routing_adopted     = true'
+reject_mutation claim-rds-reader-cross-region-dr modules/rds/outputs.tf \
+  'cross_region_dr_implemented     = false' 'cross_region_dr_implemented     = true'
+reject_mutation misdeclare-rds-reader-storage-type modules/rds/outputs.tf \
+  'storage_type                    = var.read_replica.enabled ? "gp3" : null' \
+  'storage_type                    = var.read_replica.enabled ? "gp2" : null'
+reject_mutation omit-rds-read-scaling-delivery stacks/environment/outputs.tf \
+  'rds_read_scaling_contract                 = module.platform.rds_read_scaling_contract' \
+  'rds_read_scaling_contract                 = {}'
 reject_mutation omit-cloudwatch-alarm-sns-principal modules/observability/main.tf \
   'identifiers = ["cloudwatch.amazonaws.com"]' 'identifiers = ["events.amazonaws.com"]'
 reject_mutation broaden-cloudwatch-alarm-sns-source modules/observability/main.tf \
@@ -361,6 +452,8 @@ reject_mutation disable-hpa-condition-alert-source contracts/cluster-addons-inte
   'requiredForHpaConditionAlerts: true' 'requiredForHpaConditionAlerts: false'
 reject_mutation public-web-bucket modules/web-edge/main.tf \
   'block_public_acls       = true' 'block_public_acls       = false'
+reject_mutation disable-cloudfront-http3 modules/web-edge/main.tf \
+  'http_version        = "http2and3"' 'http_version        = "http2"'
 reject_mutation writable-archive-marker modules/archive/main.tf \
   'AutomatedExportReady = "false"' 'AutomatedExportReady = "true"'
 reject_mutation public-account-provider environments/dev/main.tf \

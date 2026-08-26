@@ -19,6 +19,17 @@
 禁止把令牌、审批编号、内部目录、人员信息或 Secret 填入版本参数。素材审批文件只作为
 BuildKit Secret 参与门禁，不会进入镜像、标签或 HTTP 响应。
 
+## 基础镜像安全补丁
+
+Nginx 基础镜像与架构清单均固定 SHA-256。由于该上游镜像仍携带 OpenSSL `3.5.7-r0`，
+会命中 `CVE-2026-14456`，Dockerfile 对 amd64、arm64 分别从 Alpine v3.24 官方稳定仓库
+取得 `libcrypto3`、`libssl3` 的 `3.5.8-r0` APK，并通过 Dockerfile `ADD --checksum` 绑定
+每个包的完整内容摘要。安装阶段断网、只读挂载补丁包，并在每个 Nginx 目标内精确检查
+两个已安装版本；APK 不进入最终层的文件系统。
+
+补丁不构成漏洞豁免。CI 仍使用当次下载并记录摘要的 Trivy 数据库，对最终 Web 镜像执行
+HIGH/CRITICAL fail-closed 扫描；任一补丁摘要、版本、架构选择或扫描结果漂移都必须重新审查。
+
 ## 第三方许可交付
 
 `web/public/THIRD_PARTY_NOTICES.txt` 由锁文件中的非 `dev` 生产依赖和已安装 npm 包内许可原文

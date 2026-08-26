@@ -35,7 +35,9 @@ import (
 	"slots-game/server/internal/rgs"
 	"slots-game/server/internal/rgsapi"
 	"slots-game/server/internal/rng"
+	"slots-game/server/internal/safelog"
 	"slots-game/server/internal/sharedadmission"
+	"slots-game/server/internal/telemetry"
 	"slots-game/server/internal/wallet"
 )
 
@@ -47,12 +49,66 @@ const (
 	failureAccessLogBurst         = 100
 )
 
+func traceServiceName(role platform.RuntimeRole) string {
+	switch role {
+	case platform.RuntimeRoleAPI:
+		return telemetry.ServiceNameAPI
+	case platform.RuntimeRoleWorker:
+		return telemetry.ServiceNameWorker
+	default:
+		return telemetry.ServiceNameCombined
+	}
+}
+
+func traceEnvironment(environment platform.Environment) string {
+	if environment == platform.Production {
+		return telemetry.EnvironmentProd
+	}
+	// 资源属性刻意只保留 production/development 两个低基数值；当前 staging
+	// 运行策略归入非生产，而不是透传任意部署字符串。
+	return telemetry.EnvironmentDev
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(logger); err != nil {
-		logger.Error("rgs server stopped", "error", err)
+		logRuntimeFailure(logger, err)
 		os.Exit(1)
 	}
+}
+
+func logRuntimeFailure(logger *slog.Logger, err error) {
+	if logger != nil {
+		// 启动错误可能嵌套 DSN、密钥路径、代理地址或证书名；不直接写入长期日志。
+		logger.Error("rgs server stopped", "error_class", safelog.ErrorClass(err))
+	}
+}
+
+type startupReadinessChecker interface {
+	Check(context.Context) error
+}
+
+func checkSharedAdmissionStartup(ctx context.Context, checker startupReadinessChecker) error {
+	if checker == nil {
+		return errors.New("shared admission startup checker is required")
+	}
+	if err := checker.Check(ctx); err != nil {
+		return fmt.Errorf("shared admission startup readiness: %w", err)
+	}
+	return nil
+}
+
+func withRecoveryStartupReadiness(
+	role platform.RuntimeRole,
+	checks []platform.DependencyCheck,
+) ([]platform.DependencyCheck, *recovery.StartupReadiness) {
+	// combined 角色同时服务客户端 API；不能用后台恢复首轮改变 API
+	// readyz。生产拆分的 worker 才使用这个一次性启动门。
+	if role != platform.RuntimeRoleWorker {
+		return checks, nil
+	}
+	readiness := recovery.NewStartupReadiness()
+	return append(checks, readiness), readiness
 }
 
 func run(logger *slog.Logger) error {
@@ -108,6 +164,15 @@ func run(logger *slog.Logger) error {
 	if err := validateLoadedDefinitionIdentity(config, definition, definitionHash); err != nil {
 		return err
 	}
+	if _, err := postgres.CheckDefinitionContinuity(
+		startupContext,
+		database,
+		definition.GameID,
+		definition.DefinitionVersion,
+		definitionHash,
+	); err != nil {
+		return fmt.Errorf("verify game definition continuity before startup: %w", err)
+	}
 	operatorOptions := make([]bootstrap.OperatorLoadOption, 0, 1)
 	if config.Environment == platform.Development {
 		operatorOptions = append(operatorOptions, bootstrap.AllowInsecureWalletHTTPForDevelopment())
@@ -157,6 +222,32 @@ func run(logger *slog.Logger) error {
 
 	metrics := &platform.Metrics{}
 	metrics.SetDatabasePool(database)
+	traceRuntime, traceErr := telemetry.New(startupContext, telemetry.Config{
+		Endpoint:           config.TraceEndpoint,
+		ServiceName:        traceServiceName(config.RuntimeRole),
+		Environment:        traceEnvironment(config.Environment),
+		SampleRatio:        config.TraceSampleRatio,
+		BatchTimeout:       config.TraceBatchTimeout,
+		ExportTimeout:      config.TraceExportTimeout,
+		MaxQueueSize:       config.TraceMaxQueueSize,
+		MaxExportBatchSize: config.TraceMaxExportBatchSize,
+		Observer:           metrics,
+	})
+	if traceErr != nil {
+		// 已通过配置语法校验但 exporter 初始化失败时，追踪失败开放；资金
+		// 正确性与服务启动不依赖遥测后端，日志只保留固定错误类别。
+		if logger != nil {
+			logger.Warn("distributed tracing disabled", "error_class", safelog.ErrorClass(traceErr))
+		}
+		traceRuntime = telemetry.NewWithProvider(nil)
+	}
+	defer func() {
+		shutdownContext, cancel := context.WithTimeout(context.Background(), config.TraceShutdownTimeout)
+		defer cancel()
+		if shutdownErr := traceRuntime.Shutdown(shutdownContext); shutdownErr != nil && logger != nil {
+			logger.Warn("distributed tracing shutdown failed", "error_class", safelog.ErrorClass(shutdownErr))
+		}
+	}()
 	cryptographicCapacity := newServerCryptographicCapacity(
 		config.MaxCryptoInFlight,
 		metrics,
@@ -177,11 +268,23 @@ func run(logger *slog.Logger) error {
 			return fmt.Errorf("configure shared admission: %w", err)
 		}
 		defer sharedLimiter.Close()
-		if err := sharedLimiter.Check(startupContext); err != nil {
-			return fmt.Errorf("shared admission startup readiness: %w", err)
+		if err := checkSharedAdmissionStartup(startupContext, sharedLimiter); err != nil {
+			return err
 		}
 	}
-	repository, err := postgres.NewRepository(database, metrics)
+	riskPolicy := rgs.HighValueRiskPolicy{}
+	if config.HighValueRiskEnabled {
+		riskPolicy = rgs.HighValueRiskPolicy{
+			Enabled: true, ThresholdMinor: config.HighValueRiskThresholdMinor,
+			PolicyVersion: config.HighValueRiskPolicyVersion,
+			ReviewTTL:     config.HighValueRiskReviewTTL,
+			ExpiryPolicy:  rgs.RiskExpiryPolicy(config.HighValueRiskExpiryPolicy),
+		}
+	}
+	repository, err := postgres.NewRepositoryWithOptions(database, postgres.RepositoryOptions{
+		IntegrityObserver: metrics,
+		RiskPolicy:        riskPolicy,
+	})
 	if err != nil {
 		return err
 	}
@@ -337,6 +440,10 @@ func run(logger *slog.Logger) error {
 		lifecycleReadiness,
 		repository,
 	}
+	readinessChecks, recoveryStartupReadiness := withRecoveryStartupReadiness(
+		config.RuntimeRole,
+		readinessChecks,
+	)
 	readinessChecks = append(readinessChecks, databaseReadiness...)
 	readinessChecks = append(
 		readinessChecks,
@@ -368,7 +475,7 @@ func run(logger *slog.Logger) error {
 	)
 	operationsHandler := newOperationsHandler(readinessChecks, metrics, operationsBearerToken)
 
-	ctx, stop := context.WithCancel(context.Background())
+	ctx, stop := context.WithCancel(traceRuntime.Context(context.Background()))
 	defer stop()
 	shutdownSignals := make(chan os.Signal, 1)
 	signal.Notify(shutdownSignals, os.Interrupt, syscall.SIGTERM)
@@ -378,7 +485,8 @@ func run(logger *slog.Logger) error {
 		recoveryWorker, err = recovery.New(recovery.Config{
 			Interval: 2 * time.Second, StaleAfter: time.Second,
 			AttemptTimeout: config.WalletTimeout + 2*time.Second,
-			BatchSize:      100, MaxParallel: 8,
+			BatchSize:      100, MaxParallel: 8, StartupReadiness: recoveryStartupReadiness,
+			RiskExpiryBatchSize: config.HighValueRiskExpiryBatchSize,
 		}, repository, coordinator, logger, metrics)
 		if err != nil {
 			return err
@@ -405,13 +513,17 @@ func run(logger *slog.Logger) error {
 		close(backgroundDone)
 	}()
 
+	tracedPublicHandler := publicHandler
+	if config.RuntimeRole.ServesPublicAPI() {
+		tracedPublicHandler = traceRuntime.WrapPublicHTTP(publicHandler, normalizedPublicRoute)
+	}
 	publicServer := newHTTPServer(
 		config.HTTPAddress,
 		observeRequests(
 			logger,
 			metrics,
 			config.SuccessAccessLogSamplePerMillion,
-			withRequestTimeout(config.RequestTimeout, publicHandler),
+			withRequestTimeout(config.RequestTimeout, tracedPublicHandler),
 		),
 		config,
 	)
@@ -456,6 +568,7 @@ func run(logger *slog.Logger) error {
 				"definition_hash", definitionHash,
 				"operators", len(operators.Operators),
 				"outbox_delivery_enabled", auditRuntime.Enabled(),
+				"tracing_enabled", traceRuntime.Enabled(),
 				"connection_limit", config.MaxConnectionsPerListener,
 			)
 			if config.TLSCertFile != "" {
@@ -582,6 +695,8 @@ func newRGSAPIHandler(
 	launchManager, err := application.NewLaunchManager(application.LaunchManagerConfig{
 		PublicBaseURL: config.PublicBaseURL, LaunchHMACKey: launchHMACKey,
 		AccessTokenTTL: config.AccessTokenTTL, GameID: gameID,
+		IdleDisconnectMin: config.SessionIdleDisconnectMin,
+		IdleDisconnectMax: config.SessionIdleDisconnectMax,
 		DefinitionVersion: definitionVersion, DefinitionHash: definitionHash,
 	}, repository, launchService, accessIssuers)
 	if err != nil {
@@ -616,6 +731,9 @@ func newRGSAPIHandler(
 		NewIntentCapacity:     newIntentCapacity,
 		SecurityEvents:        newSecurityEventObserver(logger, metrics),
 		MaxRequestBytes:       config.MaxRequestBytes, ResponseSignatureTTL: time.Minute,
+	}
+	if config.HighValueRiskEnabled {
+		handlerConfig.RiskDecisions = repository
 	}
 	return rgsapi.NewHandler(withSharedAdmissions(handlerConfig, launchAdmission))
 }
@@ -897,17 +1015,33 @@ func drainAndShutdownHTTPServers(
 }
 
 func shutdownHTTPServers(ctx context.Context, servers ...httpServerShutdowner) error {
-	var shutdownErrors []error
-	for _, server := range servers {
+	errorsByServer := make([][]error, len(servers))
+	var group sync.WaitGroup
+	for index, server := range servers {
 		if server == nil {
 			continue
 		}
-		if err := server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			shutdownErrors = append(shutdownErrors, fmt.Errorf("shutdown HTTP server: %w", err))
-			if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
-				shutdownErrors = append(shutdownErrors, fmt.Errorf("force-close HTTP server: %w", closeErr))
+		group.Add(1)
+		go func(index int, server httpServerShutdowner) {
+			defer group.Done()
+			if err := server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errorsByServer[index] = append(
+					errorsByServer[index],
+					fmt.Errorf("shutdown HTTP server: %w", err),
+				)
+				if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+					errorsByServer[index] = append(
+						errorsByServer[index],
+						fmt.Errorf("force-close HTTP server: %w", closeErr),
+					)
+				}
 			}
-		}
+		}(index, server)
+	}
+	group.Wait()
+	shutdownErrors := make([]error, 0, len(servers)*2)
+	for _, serverErrors := range errorsByServer {
+		shutdownErrors = append(shutdownErrors, serverErrors...)
 	}
 	return errors.Join(shutdownErrors...)
 }
@@ -1181,7 +1315,10 @@ func runSecurityMaintenance(
 			)
 			cancel()
 			if maintenanceErr != nil && !errors.Is(maintenanceErr, context.Canceled) {
-				logger.Error("security credential cleanup failed", "error", maintenanceErr)
+				logger.Error(
+					"security credential cleanup failed",
+					"error_class", safelog.ErrorClass(maintenanceErr),
+				)
 			}
 		}
 	}
@@ -1192,10 +1329,32 @@ type responseStatusRecorder struct {
 	status int
 }
 
-func (writer *responseStatusRecorder) WriteHeader(status int) {
-	if writer.status == 0 {
-		writer.status = status
+// Unwrap 让 http.ResponseController 穿过访问日志包装器访问底层 Flush、Hijack
+// 与 deadline 能力；记录状态不能改变 handler 可见的标准传输契约。
+func (writer *responseStatusRecorder) Unwrap() http.ResponseWriter { return writer.ResponseWriter }
+
+// FlushError 在底层执行刷新路径后记录已隐式提交的 200，即使网络刷新失败；
+// ErrNotSupported 没有提交响应，不能提前锁死后续 handler 仍可提交的错误状态。
+func (writer *responseStatusRecorder) FlushError() error {
+	err := http.NewResponseController(writer.ResponseWriter).Flush()
+	if !errors.Is(err, http.ErrNotSupported) && writer.status == 0 {
+		writer.status = http.StatusOK
 	}
+	return err
+}
+
+func (writer *responseStatusRecorder) WriteHeader(status int) {
+	// 103 等临时响应可以在最终状态前重复发送；101 协议切换本身是最终提交。
+	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
+		if writer.status == 0 {
+			writer.ResponseWriter.WriteHeader(status)
+		}
+		return
+	}
+	if writer.status != 0 {
+		return
+	}
+	writer.status = status
 	writer.ResponseWriter.WriteHeader(status)
 }
 
@@ -1263,12 +1422,13 @@ func observeRequests(
 			}
 			if logger != nil {
 				requestID := loggedRequestID(request, recorder.Header())
-				// 访问日志会长期保留：只记录固定路由枚举和语法受限的 request_id 字段。
+				logRequestID := safelog.CorrelationIDDigest(requestID)
+				// 访问日志会长期保留：只记录固定路由枚举和 request_id 的稳定单向摘要。
 				// 绝不写入原始 URL、未知路径、查询参数、RemoteAddr 或经济/玩家标识，
 				// 以免不可信输入扩大隐私暴露面或污染日志检索索引。
 				arguments := []any{
 					"route", route,
-					"request_id", requestID,
+					"request_id", logRequestID,
 					"status", status,
 					"status_class", httpStatusClass(status),
 					"duration_ms", duration.Milliseconds(),
@@ -1361,6 +1521,8 @@ func normalizedPublicRoute(request *http.Request) string {
 		return "operator.launch"
 	case rgsapi.OperatorRoundStatusPath:
 		return "operator.round_status"
+	case rgsapi.OperatorRiskDecisionPath:
+		return "operator.risk_decision"
 	case rgsapi.ClientSessionExchangePath:
 		return "client.session_exchange"
 	case rgsapi.ClientSessionRefreshPath:

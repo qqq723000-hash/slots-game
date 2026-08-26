@@ -194,6 +194,13 @@
           "legendFormat": "capacity rejected",
           "range": true,
           "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(rgs_new_intent_capacity_rejected_total[5m]))",
+          "legendFormat": "new intent capacity rejected",
+          "range": true,
+          "refId": "D"
         }
       ],
       "title": "请求速率",
@@ -418,7 +425,7 @@
         "type": "prometheus",
         "uid": "rgs-prometheus"
       },
-      "description": "任一完整性隔离、人工复核或钱包未知结果都应进入值班流程。",
+      "description": "任一完整性隔离、人工复核、钱包未知结果或认证重放都应进入值班流程。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -487,6 +494,13 @@
           "legendFormat": "integrity quarantine",
           "range": true,
           "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(rgs_auth_replays_total[5m]))",
+          "legendFormat": "authentication replay",
+          "range": true,
+          "refId": "D"
         }
       ],
       "title": "关键业务安全事件",
@@ -741,7 +755,7 @@
         },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 21},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 21},
       "id": 10,
       "options": {
         "legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true},
@@ -768,10 +782,134 @@
           "legendFormat": "economic admission errors",
           "range": true,
           "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(rgs_shared_admission_errors_total[5m]))",
+          "legendFormat": "shared admission errors",
+          "range": true,
+          "refId": "D"
         }
       ],
       "title": "EDoS 钱包成本准入",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rgs-prometheus"
+      },
+      "description": "只表示新经济意图能力；基础 /readyz、status/result/ACK 与 Worker 恢复不会因该值为 0 而被摘除。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {
+              "options": {
+                "0": {"color": "red", "text": "UNAVAILABLE"},
+                "1": {"color": "green", "text": "READY"}
+              },
+              "type": "value"
+            }
+          ],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 21},
+      "id": 11,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "min(rgs_economic_admission_ready{job=\"rgs\"}) or vector(0)",
+          "legendFormat": "economic admission",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "经济准入能力",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rgs-prometheus"
+      },
+      "description": "年龄与时间戳都基于 shared/economic 两条路径最近成功时间的较早值；单侧新成功不会刷新另一侧陈旧证据。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "min": -1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 0},
+              {"color": "yellow", "value": 600},
+              {"color": "red", "value": 900}
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byFrameRefID", "options": "B"},
+            "properties": [{"id": "unit", "value": "dateTimeAsIso"}]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 21},
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max(rgs_economic_admission_last_success_age_seconds{job=\"rgs\"})",
+          "legendFormat": "oldest component success age",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "min(rgs_economic_admission_last_success_timestamp_seconds{job=\"rgs\"}) * 1000",
+          "legendFormat": "conservative last success",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "经济准入观测新鲜度",
+      "type": "stat"
     }
   ],
   "refresh": "30s",

@@ -1,7 +1,10 @@
 // @ts-expect-error Vitest 在 Node 中运行，而浏览器 tsconfig 故意不声明 Node 全局类型。
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { computeResponsiveLayoutSnapshot } from "../src/renderer/ResponsiveLayout";
+import {
+  computeResponsiveLayoutSnapshot,
+  responsiveControlGeometry,
+} from "../src/renderer/ResponsiveLayout";
 import {
   DomOverlay,
   mobileDomLayoutGeometry,
@@ -29,9 +32,13 @@ describe("fluid mobile DOM layout", () => {
     const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
     const syncMobileDomLayout = vi.fn();
     const syncOfficialHelpProjection = vi.fn();
+    const handModeSwitch = { setAttribute: vi.fn() };
+    const gameMenuTabList = { setAttribute: vi.fn() };
     Object.assign(overlay as unknown as Record<string, unknown>, {
       syncMobileDomLayout,
       syncOfficialHelpProjection,
+      handModeSwitch,
+      gameMenuTabList,
     });
     const snapshot = computeResponsiveLayoutSnapshot(393, 852, { channel: "mobile" });
 
@@ -39,6 +46,133 @@ describe("fluid mobile DOM layout", () => {
 
     expect(syncMobileDomLayout).toHaveBeenCalledExactlyOnceWith(snapshot);
     expect(syncOfficialHelpProjection).toHaveBeenCalledTimes(1);
+    expect(handModeSwitch.setAttribute).toHaveBeenCalledWith("aria-checked", "false");
+    expect(gameMenuTabList.setAttribute).toHaveBeenCalledWith("aria-orientation", "horizontal");
+  });
+
+  it.each([
+    {
+      width: 390,
+      height: 844,
+      utilitySize: 39.37,
+      spinSize: 85.91,
+      utilityLeft: 73.59,
+      utilityTop: 705.23,
+      spinLeft: 152.05,
+      spinTop: 595.41,
+      utilityCadence: 50.87,
+    },
+    {
+      width: 633,
+      height: 844,
+      utilitySize: 39.37,
+      spinSize: 79.59,
+      utilityLeft: 195.09,
+      utilityTop: 705.23,
+      spinLeft: 276.71,
+      spinTop: 598.57,
+      utilityCadence: 50.87,
+    },
+    {
+      width: 844,
+      height: 633,
+      utilitySize: 44.31,
+      spinSize: 85.91,
+      utilityLeft: 20.88,
+      spinLeft: 742.30,
+      spinTop: 261.46,
+    },
+    {
+      width: 844,
+      height: 390,
+      utilitySize: 44.31,
+      spinSize: 85.91,
+      utilityLeft: 20.88,
+      spinTop: 145.75,
+      utilityCadence: 56.72,
+    },
+  ])("matches captured mobile control art at $width×$height", (reference) => {
+    const snapshot = computeResponsiveLayoutSnapshot(reference.width, reference.height, {
+      channel: "mobile",
+    });
+    const geometry = mobileDomLayoutGeometry(
+      snapshot.viewportRegion.width,
+      snapshot.viewportRegion.height,
+      snapshot.gameplayRegion.height,
+      snapshot.statusRegion.height,
+      snapshot.frame.scale,
+    );
+    const utilityFreeSpace = Math.max(
+      0,
+      geometry.utilityWidth - geometry.utilityPadding * 2
+        - geometry.utilityControlSize * 5 - geometry.utilityGap * 4,
+    );
+    const utilitySpaceEvenly = geometry.orientation === "portrait"
+      ? utilityFreeSpace / 6
+      : 0;
+    const utilityLeft = geometry.orientation === "portrait"
+      ? (snapshot.viewportRegion.width - geometry.utilityWidth) / 2
+        + geometry.utilityPadding + utilitySpaceEvenly
+      : geometry.utilityInlineStart + geometry.utilityPadding;
+    const utilityCenter = snapshot.gameplayRegion.height / 2 + geometry.utilityCenterOffset;
+    const controlCenter = snapshot.gameplayRegion.height / 2 + geometry.controlCenterOffset;
+    const utilityTop = geometry.orientation === "portrait"
+      ? snapshot.viewportRegion.height - geometry.utilityBottom
+        - geometry.utilityHeight + geometry.utilityPadding
+      : utilityCenter - geometry.utilityHeight / 2 + geometry.utilityPadding;
+    const spinLeft = geometry.orientation === "portrait"
+      ? (snapshot.viewportRegion.width - geometry.spinSize) / 2
+      : snapshot.viewportRegion.width - geometry.spinInlineEnd - geometry.spinSize;
+    const spinTop = geometry.orientation === "portrait"
+      ? snapshot.viewportRegion.height - geometry.spinBottom - geometry.spinSize
+      : controlCenter - geometry.spinSize / 2;
+
+    expect(geometry.utilityControlSize * snapshot.frame.scale)
+      .toBeCloseTo(reference.utilitySize, 2);
+    expect(geometry.spinSize * snapshot.frame.scale).toBeCloseTo(reference.spinSize, 2);
+    if (reference.utilityLeft !== undefined) {
+      expect(utilityLeft * snapshot.frame.scale).toBeCloseTo(reference.utilityLeft, 1);
+    }
+    if (reference.utilityTop !== undefined) {
+      expect(utilityTop * snapshot.frame.scale).toBeCloseTo(reference.utilityTop, 0);
+    }
+    if (reference.spinLeft !== undefined) {
+      expect(spinLeft * snapshot.frame.scale).toBeCloseTo(reference.spinLeft, 0);
+    }
+    expect(spinTop * snapshot.frame.scale).toBeCloseTo(reference.spinTop, 0);
+    if (reference.utilityCadence !== undefined) {
+      expect((geometry.utilityControlSize + geometry.utilityGap + utilitySpaceEvenly)
+        * snapshot.frame.scale)
+        .toBeCloseTo(reference.utilityCadence, 2);
+    }
+
+    const pointer = responsiveControlGeometry(
+      reference.width,
+      reference.height,
+      snapshot.frame.scale,
+      true,
+    );
+    expect(pointer.utilityHitPhysicalSize).toBeGreaterThanOrEqual(44);
+    expect(pointer.spinHitPhysicalSize).toBeGreaterThanOrEqual(44);
+  });
+
+  it("interpolates control art continuously across the portrait/landscape boundary", () => {
+    const sizes = [843, 844, 845].map((width) => mobileDomLayoutGeometry(
+      width,
+      844,
+      760,
+      84,
+      1,
+    ));
+
+    expect(Math.abs((sizes[1]?.utilityControlSize ?? 0) - (sizes[0]?.utilityControlSize ?? 0)))
+      .toBeLessThan(0.1);
+    expect(Math.abs((sizes[2]?.utilityControlSize ?? 0) - (sizes[1]?.utilityControlSize ?? 0)))
+      .toBeLessThan(0.1);
+    expect(Math.abs((sizes[1]?.spinSize ?? 0) - (sizes[0]?.spinSize ?? 0)))
+      .toBeLessThan(0.1);
+    expect(Math.abs((sizes[2]?.spinSize ?? 0) - (sizes[1]?.spinSize ?? 0)))
+      .toBeLessThan(0.1);
   });
 
   it("coalesces observed and window resize notifications without writing in the callback", () => {
@@ -158,7 +292,15 @@ describe("fluid mobile DOM layout", () => {
       expect(geometry.edge).toBeGreaterThan(0);
       expect(geometry.utilityWidth).toBeLessThanOrEqual(width - geometry.edge * 2);
       expect(geometry.spinSize).toBeLessThanOrEqual(width - geometry.edge * 2);
-      expect(geometry.utilityControlSize * snapshot.frame.scale).toBeGreaterThanOrEqual(44);
+      expect(geometry.utilityControlSize).toBeGreaterThan(0);
+      const pointer = responsiveControlGeometry(
+        physicalWidth,
+        physicalHeight,
+        snapshot.frame.scale,
+        true,
+      );
+      expect(pointer.utilityHitPhysicalSize).toBeGreaterThanOrEqual(44);
+      expect(pointer.spinHitPhysicalSize).toBeGreaterThanOrEqual(44);
 
       if (geometry.orientation === "portrait") {
         const utilityTop = height - geometry.utilityBottom - geometry.utilityHeight;
@@ -172,17 +314,19 @@ describe("fluid mobile DOM layout", () => {
         expect(spinBottom).toBeLessThanOrEqual(utilityTop - geometry.gap + 0.001);
         expect(utilityTop + geometry.utilityHeight).toBeLessThanOrEqual(gameplayHeight);
       } else {
-        const utilityTop = gameplayHeight / 2 - geometry.utilityHeight / 2;
-        const spinTop = gameplayHeight / 2 - geometry.spinSize / 2;
-        const utilityRight = geometry.edge + geometry.utilityWidth;
-        const spinLeft = width - geometry.edge - geometry.spinSize;
+        const utilityCenter = gameplayHeight / 2 + geometry.utilityCenterOffset;
+        const spinCenter = gameplayHeight / 2 + geometry.controlCenterOffset;
+        const utilityTop = utilityCenter - geometry.utilityHeight / 2;
+        const spinTop = spinCenter - geometry.spinSize / 2;
+        const utilityRight = geometry.utilityInlineStart + geometry.utilityWidth;
+        const spinLeft = width - geometry.spinInlineEnd - geometry.spinSize;
 
-        expect(utilityTop).toBeGreaterThanOrEqual(geometry.edge - 0.001);
+        expect(utilityTop).toBeGreaterThanOrEqual(-0.001);
         expect(utilityTop + geometry.utilityHeight)
-          .toBeLessThanOrEqual(gameplayHeight - geometry.edge + 0.001);
-        expect(spinTop).toBeGreaterThanOrEqual(geometry.edge - 0.001);
+          .toBeLessThanOrEqual(gameplayHeight + 0.001);
+        expect(spinTop).toBeGreaterThanOrEqual(-0.001);
         expect(spinTop + geometry.spinSize)
-          .toBeLessThanOrEqual(gameplayHeight - geometry.edge + 0.001);
+          .toBeLessThanOrEqual(gameplayHeight + 0.001);
         expect(utilityRight + geometry.gap).toBeLessThanOrEqual(geometry.roundInlineStart);
         expect(width - geometry.roundInlineEnd + geometry.gap).toBeLessThanOrEqual(spinLeft);
         expect(geometry.roundInlineStart).toBeLessThan(width - geometry.roundInlineEnd);
@@ -261,6 +405,7 @@ describe("fluid mobile DOM layout", () => {
     expect(contract).not.toContain("244px");
     expect(contract).toContain("--mobile-hud-edge");
     expect(contract).toContain("--mobile-utility-width");
+    expect(contract).toContain("--mobile-utility-gap");
     expect(contract).toContain("--mobile-spin-size");
     expect(contract).toMatch(/\.game-menu__content\s*\{[^}]*overflow-x:\s*hidden;/s);
     expect(contract).toMatch(/\.official-help-viewport\s*\{[^}]*overflow-x:\s*clip;/s);
@@ -279,6 +424,18 @@ describe("fluid mobile DOM layout", () => {
     );
     expect(contract).toMatch(
       /\.round-state\[data-variant="win-settled"\],[\s\S]*?\.round-state\[data-variant="wheel-bonus"\]\s*\{[^}]*bottom:\s*var\(--mobile-round-bottom\);/s,
+    );
+    expect(contract).toMatch(
+      /:not\(\[data-mobile-layout="ls"\]\)[\s\S]*?\.status-panel\[data-game-name-visible="true"\] \.status-panel__game\s*\{[^}]*right:\s*auto;[^}]*left:\s*calc\([^}]*text-align:\s*left;/s,
+    );
+    expect(contract).toMatch(
+      /\[data-mobile-layout="ls"\] \.utility-dock\s*\{[^}]*gap:\s*var\(--mobile-utility-gap\);[^}]*background:\s*rgba\(3, 4, 4, 0\.3\);/s,
+    );
+    expect(contract).toMatch(
+      /\[data-mobile-layout="ls"\] \.game-menu__tabs\s*\{[^}]*flex-direction:\s*column;[^}]*gap:\s*1\.4218cqw;/s,
+    );
+    expect(contract).toMatch(
+      /\.setting-row\[data-setting="spacebar"\]\s*\{[^}]*display:\s*none;[^}]*\}[\s\S]*?\.setting-row\[data-setting="hand-mode"\]\s*\{[^}]*display:\s*flex;/s,
     );
   });
 });

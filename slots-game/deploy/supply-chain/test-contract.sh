@@ -32,7 +32,8 @@ fixture="$test_root/repository"
 
 reset_fixture() {
   rm -rf "$fixture"
-  mkdir -p "$fixture/deploy/cluster-production" "$fixture/.github" "$fixture/web" "$fixture/docs"
+  mkdir -p "$fixture/deploy/cluster-production" "$fixture/deploy/observability" \
+    "$fixture/deploy/web" "$fixture/deploy/local-production" "$fixture/.github" "$fixture/web" "$fixture/docs"
   cp "$repository_root/Makefile" "$fixture/Makefile"
   cp "$repository_root/web/package.json" "$fixture/web/package.json"
   cp "$repository_root/docs/aws-production-deployment.md" "$fixture/docs/aws-production-deployment.md"
@@ -42,6 +43,13 @@ reset_fixture() {
   cp "$repository_root/deploy/cluster-production/verify-kubeconform.sh" "$fixture/deploy/cluster-production/verify-kubeconform.sh"
   cp "$repository_root/deploy/cluster-production/verify-image-runtime-contract.sh" "$fixture/deploy/cluster-production/verify-image-runtime-contract.sh"
   cp "$repository_root/deploy/cluster-production/verify-prometheus-rule-contract.sh" "$fixture/deploy/cluster-production/verify-prometheus-rule-contract.sh"
+  cp "$repository_root/deploy/observability/verify-release-workflow.sh" "$fixture/deploy/observability/verify-release-workflow.sh"
+  chmod 0755 "$fixture/deploy/observability/verify-release-workflow.sh"
+  cp "$repository_root/deploy/observability/test-vector-bounded-flush.sh" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+  chmod 0755 "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+  cp "$repository_root/deploy/web/Dockerfile" "$fixture/deploy/web/Dockerfile"
+  cp "$repository_root/deploy/local-production/Dockerfile.web" "$fixture/deploy/local-production/Dockerfile.web"
+  cp "$repository_root/deploy/local-production/Dockerfile.nginx-proxy" "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
   cp -R "$workflows_root" "$fixture/.github/workflows"
 }
 
@@ -61,6 +69,46 @@ replace_once() {
     { print }
   ' "$file" > "$file.tmp"
   mv "$file.tmp" "$file"
+}
+
+replace_last_exact_line() {
+  old=$1
+  new=$2
+  file=$3
+  match_count=$(grep -F -x -c -- "$old" "$file" || true)
+  test "$match_count" -gt 0 || fail "test fixture is missing exact line '$old'"
+  awk -v old="$old" -v new="$new" -v wanted="$match_count" '
+    $0 == old {
+      seen++
+      if (seen == wanted) {
+        print new
+        next
+      }
+    }
+    { print }
+  ' "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+# awk -v 会解释反斜杠转义；内嵌 JavaScript 的 \u0027 必须按原始字节替换，
+# 否则负向夹具可能没有真正改变目标行却继续执行。
+replace_literal_once() {
+  old=$1
+  new=$2
+  file=$3
+  REPLACE_OLD="$old" REPLACE_NEW="$new" REPLACE_FILE="$file" node <<'NODE'
+const { readFileSync, writeFileSync } = require("node:fs");
+const source = readFileSync(process.env.REPLACE_FILE, "utf8");
+const oldValue = process.env.REPLACE_OLD;
+const newValue = process.env.REPLACE_NEW;
+const first = source.indexOf(oldValue);
+if (first < 0 || source.indexOf(oldValue, first + oldValue.length) >= 0) process.exit(1);
+writeFileSync(
+  process.env.REPLACE_FILE,
+  `${source.slice(0, first)}${newValue}${source.slice(first + oldValue.length)}`,
+  "utf8",
+);
+NODE
 }
 
 insert_job_permission() {
@@ -164,6 +212,7 @@ const configurationTargets = [
   ["cluster/chart/templates/web-deployment.yaml", "config", "helm"],
   ["cluster/chart/templates/worker-deployment.yaml", "config", "helm"],
   ["dockerfiles/cluster/Dockerfile.services", "config", "dockerfile"],
+  ["dockerfiles/local-nginx-proxy/Dockerfile.nginx-proxy", "config", "dockerfile"],
   ["dockerfiles/local-services/Dockerfile.services", "config", "dockerfile"],
   ["dockerfiles/local-web/Dockerfile.web", "config", "dockerfile"],
   ["dockerfiles/root/Dockerfile", "config", "dockerfile"],
@@ -445,6 +494,34 @@ replace_once '@sha256:678bfa565b60f747aac0f8e964fe5588a24445b8d0a480e91f6efd7002
 expect_rejected 'mutable Syft image tag'
 
 reset_fixture
+replace_once 'apk add --no-network --no-cache' 'apk add --allow-untrusted --no-network --no-cache' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx APK signature verification allowed untrusted packages'
+
+reset_fixture
+replace_once 'apk add --no-network --no-cache' 'apk add --force-overwrite --no-network --no-cache' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx APK install accepted a force bypass flag'
+
+reset_fixture
+replace_once 'apk add --no-network --no-cache' 'apk add --keys-dir /tmp/apk-keys --no-network --no-cache' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx APK install accepted a custom keys directory'
+
+reset_fixture
+replace_once '# 入口与告警代理共用这个仅修补 Alpine OpenSSL 的 nginxinc 运行镜像。固定远端' 'COPY attacker.rsa.pub /etc/apk/keys/attacker.rsa.pub' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx image accepted a custom APK signing key'
+
+reset_fixture
+replace_once 'libssl3.apk" &&' 'libssl3.apk" curl &&' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx image appended an unreviewed APK to the approved install'
+
+reset_fixture
+replace_last_exact_line 'USER 101:101' 'USER 0:0' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx final effective user regressed to root'
+
+reset_fixture
+replace_once 'USER 101:101' 'USER 0:0' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'web Nginx runtime stage did not restore effective user 101:101'
+
+reset_fixture
 replace_once '--env GOPATH=/tmp/go' '--env GOPATH=/go' "$fixture/deploy/supply-chain/scan.sh"
 expect_rejected 'govulncheck inherited an unwritable image GOPATH'
 
@@ -487,6 +564,74 @@ expect_rejected 'required deployment conformance workflow skipped local and clus
 reset_fixture
 replace_once '        run: make verify-cluster-prometheus-rules' '        run: true # promtool rule parsing removed' "$fixture/.github/workflows/deployment-conformance.yml"
 expect_rejected 'required deployment conformance workflow skipped PromQL parsing'
+
+reset_fixture
+replace_once '        run: docker pull "$VECTOR_IMAGE" >/dev/null' '        run: true # fixed Vector preload removed' "$fixture/.github/workflows/deployment-conformance.yml"
+expect_rejected 'deployment conformance skipped fixed Vector image preload'
+
+reset_fixture
+replace_once '        run: make test-vector-bounded-flush' '        run: true # bounded Vector recovery removed' "$fixture/.github/workflows/deployment-conformance.yml"
+expect_rejected 'deployment conformance skipped bounded Vector disk-buffer recovery'
+
+reset_fixture
+replace_once 'timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39' 'timberio/vector:0.57.0-debian' "$fixture/.github/workflows/deployment-conformance.yml"
+expect_rejected 'deployment conformance Vector image lost its reviewed digest'
+
+reset_fixture
+replace_once 'test-vector-bounded-flush:' 'test-vector-bounded-flush-disabled:' "$fixture/Makefile"
+expect_rejected 'Makefile removed the bounded Vector recovery target'
+
+reset_fixture
+chmod 0644 "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate lost executable mode'
+
+reset_fixture
+replace_once "expected_vector_image='timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39'" "expected_vector_image='timberio/vector:0.57.0-debian'" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate accepted a mutable image tag'
+
+reset_fixture
+replace_once "heartbeat_source['interval_secs'] == 10" "heartbeat_source['interval_secs'] >= 10" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate weakened the fixed heartbeat interval'
+
+reset_fixture
+replace_once "      'count' => 1," "      'count' => 2," "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate injected a second business event'
+
+reset_fixture
+replace_once 'online_sender_data="$test_directory/online-sender-data"' 'online_sender_data="$test_directory/outage-sender-data"' "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate reused the outage disk buffer for the online phase'
+
+reset_fixture
+replace_once "raise 'business event is not durable' unless files.any? { |path| File.binread(path).include?(marker) }" "raise 'business event is not durable' unless true" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate stopped proving pre-recovery disk persistence'
+
+reset_fixture
+replace_once 'test "$readiness_ready" -eq 1 || fail' 'true # receiver readiness proof removed' "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate started its online phase without HTTP readiness evidence'
+
+reset_fixture
+replace_once 'online_deadline=$((online_started_at + 25))' 'online_deadline=$((online_started_at + 90))' "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate weakened the online delivery deadline'
+
+reset_fixture
+replace_once "  event.keys.sort == heartbeat_keys &&" "  event.key?('msg') &&" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate stopped enforcing the safe heartbeat schema'
+
+reset_fixture
+replace_once "raise 'business probe count mismatch' unless probes.length == 1" "raise 'business probe missing' if probes.empty?" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate stopped proving exactly-once business delivery'
+
+reset_fixture
+replace_once "raise 'outage probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-outage-v1' } == 1" "raise 'outage probe missing' unless all.any? { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-outage-v1' }" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate weakened final outage exact-once reconciliation'
+
+reset_fixture
+replace_once "raise 'online probe count mismatch' unless all.count { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-online-v1' } == 1" "raise 'online probe missing' unless all.any? { |event| event['bounded_flush_probe'] == 'vector-bounded-flush-online-v1' }" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate weakened final online exact-once reconciliation'
+
+reset_fixture
+replace_once "raise 'raw metric escaped' if raw_metric" ": # raw metric rejection removed" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+expect_rejected 'bounded Vector recovery gate accepted raw heartbeat metrics'
 
 reset_fixture
 replace_once 'prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893' 'prom/prometheus:latest' "$fixture/deploy/cluster-production/verify-prometheus-rule-contract.sh"
@@ -561,6 +706,10 @@ replace_once 'trivy config /scan' 'trivy config /scan/dockerfiles' "$fixture/dep
 expect_rejected 'Helm production configuration was omitted from the IaC scan'
 
 reset_fixture
+replace_once 'cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.nginx-proxy" /scan/dockerfiles/local-nginx-proxy/Dockerfile.nginx-proxy' ': # local Nginx proxy Dockerfile omitted' "$fixture/deploy/supply-chain/scan.sh"
+expect_rejected 'local Nginx proxy Dockerfile was omitted from the IaC scan'
+
+reset_fixture
 replace_once 'terraform_pathspec=":(glob)$terraform_git_prefix/**/*.tf"' 'terraform_pathspec=":(glob)$terraform_git_prefix/modules/**/*.tf"' "$fixture/deploy/supply-chain/scan.sh"
 expect_rejected 'Terraform tracked inventory was narrowed to modules only'
 
@@ -617,8 +766,16 @@ replace_once '        run: make verify' '        run: make verify-supply-chain-c
 expect_rejected 'release skipped complete source conformance'
 
 reset_fixture
-replace_once 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments test test-race vet build' 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments test vet build' "$fixture/Makefile"
+replace_once 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test test-race vet build' 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test vet build' "$fixture/Makefile"
 expect_rejected 'release verify closure omitted race tests'
+
+reset_fixture
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' 'verify-supply-chain-contract: verify-hardening-stability-contract' "$fixture/Makefile"
+expect_rejected 'ordinary supply-chain CI skipped the hardening checklist gate'
+
+reset_fixture
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' 'verify-supply-chain-contract: verify-hardening-checklist' "$fixture/Makefile"
+expect_rejected 'ordinary supply-chain CI skipped the hardening stability contract gate'
 
 reset_fixture
 replace_once '        run: ./deploy/supply-chain/scan.sh source "$SUPPLY_CHAIN_REPORT_DIR/source"' '        run: true # source security scan removed' "$fixture/.github/workflows/supply-chain-release.yml"
@@ -669,6 +826,81 @@ expect_rejected 'protected release skipped deployment contracts'
 reset_fixture
 replace_once '        run: make verify-cluster-prometheus-rules' '        run: true # promtool rule parsing removed' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'protected release skipped PromQL parsing'
+
+reset_fixture
+replace_once '        run: ./deploy/observability/verify-release-workflow.sh' '        run: true # rendered observability release validation removed' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected release skipped fixed-image rendered observability validation'
+
+reset_fixture
+replace_once '        run: ./deploy/observability/verify-release-workflow.sh' "        run: '# ./deploy/observability/verify-release-workflow.sh'" "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected release commented out rendered observability validation'
+
+reset_fixture
+ruby -e '
+  path = ARGV.fetch(0)
+  source = File.read(path)
+  marker = "      - name: Validate rendered observability release with fixed images\n        shell: bash\n"
+  replacement = "      - name: Validate rendered observability release with fixed images\n        if: ${{ false }}\n        shell: bash\n"
+  changed = source.sub(marker, replacement)
+  abort "observability step if:false mutation did not apply" if changed == source
+  File.write(path, changed)
+' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected release observability validation step became skippable'
+
+reset_fixture
+ruby -ryaml -e '
+  path = ARGV.fetch(0)
+  workflow = YAML.safe_load(File.read(path), aliases: false)
+  step = workflow.dig("jobs", "verify-source-conformance", "steps").find do |candidate|
+    candidate["name"] == "Re-run complete source conformance on this protected tag"
+  end
+  abort "make verify step missing" unless step
+  step["if"] = "${{ false }}"
+  File.write(path, YAML.dump(workflow))
+' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected release source conformance step became skippable'
+
+reset_fixture
+replace_once 'node deploy/local-production/render-observability.mjs "$observability_rendered_dir"' 'true # controlled observability rendering removed' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected release skipped controlled observability rendering'
+
+reset_fixture
+replace_once 'docker pull "$VECTOR_IMAGE"' 'true # fixed Vector preload removed' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected release entrypoint skipped fixed Vector image preload'
+
+reset_fixture
+replace_once 'make test-vector-bounded-flush' 'true # bounded Vector recovery removed' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected release entrypoint skipped bounded Vector recovery'
+
+reset_fixture
+ruby -e '
+  path = ARGV.fetch(0)
+  source = File.read(path)
+  changed = source.sub("umask 077\n", "umask 077\nexit 0\n")
+  abort "observability workflow early-exit mutation did not apply" if changed == source
+  File.write(path, changed)
+' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected release observability entrypoint gained an early success bypass'
+
+reset_fixture
+replace_once 'timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39' 'timberio/vector:0.57.0-debian' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected observability validation lost the reviewed Vector digest'
+
+reset_fixture
+replace_once 'RGS_CONTAINER_LOG_GLOB: /var/log/containers/rgs-server-*.log' 'RGS_CONTAINER_LOG_GLOB: /var/log/containers/*.log' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected observability validation accepted a broad container log glob'
+
+reset_fixture
+replace_once 'PROMETHEUS_RENDER_PROFILE: local-production' 'PROMETHEUS_RENDER_PROFILE: central' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected local observability validation selected the central render profile'
+
+reset_fixture
+replace_once 'ALERTMANAGER_SERVER_NAME: alert-proxy' 'ALERTMANAGER_SERVER_NAME: attacker.invalid' "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected observability validation lost the approved Alertmanager TLS identity'
+
+reset_fixture
+replace_once 'ALERTMANAGER_ROOT_CA_FILE="$observability_rendered_dir/alertmanager-root-ca.pem"' 'ALERTMANAGER_ROOT_CA_FILE=/dev/null' "$fixture/deploy/observability/verify-release-workflow.sh"
+expect_rejected 'protected observability validation stopped binding its generated Alertmanager root CA'
 
 reset_fixture
 replace_once 'postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193' 'postgres:17-alpine' "$fixture/.github/workflows/supply-chain-release.yml"
@@ -826,6 +1058,18 @@ expect_rejected 'Registry push stopped comparing approval expiry with its curren
 reset_fixture
 replace_once 'extracted Web root contains a file outside release-manifest' 'unexpected files are tolerated' "$fixture/deploy/supply-chain/verify-web-static-root.mjs"
 expect_rejected 'AWS static-root verifier no longer failed on extra files'
+
+reset_fixture
+replace_once '["trusted-types", "slots-game-static-html"],' \
+  '["trusted-types", "*"],' \
+  "$fixture/deploy/supply-chain/extract-aws-web-static-root.sh"
+expect_rejected 'AWS CloudFront CSP extraction allowed an unreviewed Trusted Types policy'
+
+reset_fixture
+replace_literal_once '["require-trusted-types-for", "\u0027script\u0027"],' \
+  '["require-trusted-types-for", "*"],' \
+  "$fixture/deploy/supply-chain/extract-aws-web-static-root.sh"
+expect_rejected 'AWS CloudFront CSP extraction lost the exact Trusted Types sink enforcement'
 
 reset_fixture
 replace_once 'aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/"' 'aws s3 sync web/dist/' "$fixture/docs/aws-production-deployment.md"

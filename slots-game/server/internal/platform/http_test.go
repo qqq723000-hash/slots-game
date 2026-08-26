@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"slots-game/server/internal/safelog"
 )
 
 func TestMiddlewareAppliesSecurityCORSAndAdmissionLimits(t *testing.T) {
@@ -30,6 +32,16 @@ func TestMiddlewareAppliesSecurityCORSAndAdmissionLimits(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != "Retry-After" {
 		t.Fatalf("exposed CORS headers = %q, want Retry-After", got)
+	}
+	allowedTraceParent := false
+	for _, header := range strings.Split(recorder.Header().Get("Access-Control-Allow-Headers"), ",") {
+		if strings.EqualFold(strings.TrimSpace(header), "traceparent") {
+			allowedTraceParent = true
+			break
+		}
+	}
+	if !allowedTraceParent {
+		t.Fatalf("CORS request headers omit traceparent: %q", recorder.Header().Get("Access-Control-Allow-Headers"))
 	}
 	second := httptest.NewRecorder()
 	handler.ServeHTTP(second, request)
@@ -164,6 +176,9 @@ func TestMiddlewareLogsOnlySafeRequestMetadata(t *testing.T) {
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("response status = %d, want %d", response.Code, http.StatusNoContent)
 	}
+	if got := response.Header().Get("X-Request-Id"); got != "req_safe-1" {
+		t.Fatalf("response request ID = %q, want original value", got)
+	}
 	assertMiddlewareLogsRedacted(t, logs.String(), "req_safe-1", "OTHER", "/client/v1/private-path", "203.0.113.22")
 }
 
@@ -186,6 +201,9 @@ func TestMiddlewarePanicLogDoesNotLeakRequestLocation(t *testing.T) {
 	if metrics.HTTPFailures.Load() != 1 || metrics.HTTPServerFailures.Load() != 1 {
 		t.Fatalf("panic metrics = total:%d server:%d", metrics.HTTPFailures.Load(), metrics.HTTPServerFailures.Load())
 	}
+	if got := response.Header().Get("X-Request-Id"); got != "req_safe-2" {
+		t.Fatalf("panic response request ID = %q, want original value", got)
+	}
 	assertMiddlewareLogsRedacted(t, logs.String(), "req_safe-2", http.MethodPost, "/client/v1/private-path", "203.0.113.23")
 }
 
@@ -194,9 +212,11 @@ func assertMiddlewareLogsRedacted(
 	output, requestID, method, forbiddenPath, forbiddenAddress string,
 ) {
 	t.Helper()
-	if strings.Contains(output, forbiddenPath) || strings.Contains(output, forbiddenAddress) {
-		t.Fatalf("middleware log leaks raw request location: %s", output)
+	if strings.Contains(output, requestID) || strings.Contains(output, forbiddenPath) ||
+		strings.Contains(output, forbiddenAddress) {
+		t.Fatalf("middleware log leaks raw request metadata: %s", output)
 	}
+	expectedRequestID := safelog.CorrelationIDDigest(requestID)
 	entries := strings.Split(strings.TrimSpace(output), "\n")
 	if len(entries) == 0 || entries[0] == "" {
 		t.Fatal("middleware did not emit a log record")
@@ -206,7 +226,7 @@ func assertMiddlewareLogsRedacted(
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			t.Fatalf("decode middleware log: %v: %s", err, line)
 		}
-		if entry["request_id"] != requestID || entry["method"] != method {
+		if entry["request_id"] != expectedRequestID || entry["method"] != method {
 			t.Fatalf("unsafe or unexpected middleware log fields: %#v", entry)
 		}
 		if _, exists := entry["duration_ms"]; !exists {

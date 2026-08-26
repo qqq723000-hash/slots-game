@@ -1,15 +1,39 @@
 package outbox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestDispatcherFailureLogUsesFixedClassWithoutStoreErrorText(t *testing.T) {
+	t.Parallel()
+	const secret = "event-123 operator-a postgres://user:password@database"
+	var output bytes.Buffer
+	dispatcher, err := NewDispatcher(DispatcherConfig{
+		Owner: "worker-a", Interval: time.Second, LeaseDuration: 3 * time.Second,
+		PublishTimeout: time.Second, BatchSize: 1, MaxParallel: 1,
+		InitialBackoff: time.Second, MaximumBackoff: time.Minute,
+	}, &recordingStore{claimErr: errors.New(secret)}, PublisherFunc(func(context.Context, Event) error {
+		return nil
+	}), slog.New(slog.NewJSONHandler(&output, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatcher.runAndObserve(context.Background())
+	logOutput := output.String()
+	if strings.Contains(logOutput, secret) || strings.Contains(logOutput, "password") ||
+		!strings.Contains(logOutput, `"error_class":"internal"`) {
+		t.Fatalf("unsafe dispatcher log: %s", logOutput)
+	}
+}
 
 func TestDispatcherPublishesAndSchedulesExponentialRetry(t *testing.T) {
 	store := &recordingStore{events: []Event{

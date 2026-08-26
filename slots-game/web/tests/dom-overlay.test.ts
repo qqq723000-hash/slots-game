@@ -23,16 +23,19 @@ import {
   betTickerWindow,
   bigWinCongratulationsPresentation,
   freeSpinConclusionPresentation,
+  gameMenuTabNavigationIndex,
   jackpotValuesForBet,
   isAutoplayFeatureOwnedSpinMode,
   ordinaryWinInformationPresentation,
   nextWheelHyperspinFrame,
+  paytableAwardMinorForBet,
   primarySpinControlPresentation,
   parseAutoPlayStopSettings,
   persistAutoPlayStopSettings,
   roundStatePresentation,
   selectPrimalBaseSpinMessage,
   serializeAutoPlayStopSettings,
+  sessionTimeoutIsolationBranches,
   soundControlPresentation,
   spinControlPresentation,
   spinModeDisabled,
@@ -58,6 +61,76 @@ describe("browser form-field diagnostics", () => {
     for (const field of fields) {
       expect(field).toMatch(/\b(?:id|name)\s*=/);
     }
+  });
+});
+
+describe("game menu responsive navigation", () => {
+  it("uses Left/Right on top tabs and Up/Down on the landscape rail", () => {
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowLeft", "horizontal")).toBe(0);
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowRight", "horizontal")).toBe(2);
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowUp", "horizontal")).toBeNull();
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowUp", "vertical")).toBe(0);
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowDown", "vertical")).toBe(2);
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowRight", "vertical")).toBeNull();
+  });
+
+  it("isolates tab scroll memory and always enters PAYTABLE at author position zero", () => {
+    const tab = (name: "settings" | "paytable" | "rules") => ({
+      dataset: { menuTab: name },
+      classList: { toggle: vi.fn() },
+      setAttribute: vi.fn(),
+      focus: vi.fn(),
+      tabIndex: -1,
+    });
+    const panel = (name: "settings" | "paytable" | "rules") => ({
+      dataset: { menuPanel: name },
+      hidden: false,
+      inert: false,
+    });
+    const content = { scrollTop: 920 };
+    const positions = { settings: 25, paytable: 0, rules: 140 };
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    Object.assign(overlay as unknown as Record<string, unknown>, {
+      activeMenuTab: "paytable",
+      gameMenu: { dataset: { open: "true" } },
+      gameMenuContent: content,
+      gameMenuScrollPositions: positions,
+      gameMenuTabs: [tab("settings"), tab("paytable"), tab("rules")],
+      gameMenuPanels: [panel("settings"), panel("paytable"), panel("rules")],
+      panelLifecycle: new UiPanelLifecycle(),
+      scheduleObservedLayoutSync: vi.fn(),
+    });
+    const select = (overlay as unknown as {
+      selectGameMenuTab(value: "settings" | "paytable" | "rules"): void;
+    }).selectGameMenuTab.bind(overlay);
+
+    select("rules");
+    expect(positions.paytable).toBe(920);
+    expect(content.scrollTop).toBe(140);
+    content.scrollTop = 510;
+    select("paytable");
+    expect(positions.rules).toBe(510);
+    expect(content.scrollTop).toBe(0);
+
+    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
+    expect(source).toMatch(/!open && wasOpen[\s\S]*gameMenuScrollPositions\[closingTab\][\s\S]*scrollTop/);
+    expect(source).toMatch(/if \(open\)[\s\S]*tab === "paytable"[\s\S]*\? 0[\s\S]*gameMenuScrollPositions\[tab\]/);
+  });
+
+  it("keeps Home/End and wrapping on both axes", () => {
+    for (const axis of ["horizontal", "vertical"] as const) {
+      expect(gameMenuTabNavigationIndex(0, 3, "Home", axis)).toBe(0);
+      expect(gameMenuTabNavigationIndex(0, 3, "End", axis)).toBe(2);
+    }
+    expect(gameMenuTabNavigationIndex(0, 3, "ArrowLeft", "horizontal")).toBe(2);
+    expect(gameMenuTabNavigationIndex(2, 3, "ArrowDown", "vertical")).toBe(0);
+  });
+
+  it("renders mobile hand mode separately from the desktop Spacebar setting", () => {
+    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
+    expect(source).toContain('data-setting="hand-mode"');
+    expect(source).toContain("<strong>Left hand mode</strong>");
+    expect(source).toContain('data-setting="spacebar"');
   });
 });
 
@@ -554,7 +627,7 @@ describe("game control configuration", () => {
 
     const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
     expect(source).not.toContain('<select data-role="autoplay-stop-rule"');
-    expect(source).toContain('data-autoplay-stop-boundary="${boundary}"');
+    expect(source).toContain("input.dataset.autoplayStopBoundary = boundary;");
     for (const { label } of AUTO_PLAY_STOP_CONDITIONS) expect(source).toContain(label);
   });
 
@@ -1033,7 +1106,8 @@ describe("game control configuration", () => {
     ));
 
     expect(source).toContain('class="spin-button__autoplay-stop" data-role="spin-autoplay-stop"');
-    expect(source).toContain('src="${PRIMAL_REFERENCE_ROOT}/10004.svg"');
+    expect(source).toContain('"spin-autoplay-stop": `${PRIMAL_REFERENCE_ROOT}/10004.svg`');
+    expect(source).toContain('data-static-image="spin-autoplay-stop"');
     expect(source).toContain('data-role="spin-autoplay-count"');
     expect(source).toContain('this.autoplayButton.dataset.remaining = "";');
     expect(source).toMatch(/if \(this\.autoplayActive\) \{[\s\S]*?this\.stopAutoplay\(false\);[\s\S]*?return;/);
@@ -1050,17 +1124,56 @@ describe("game control configuration", () => {
     expect(new Set(PAYTABLE_WILD_ENTRIES.map(({ asset }) => asset)).size).toBe(8);
   });
 
-  it("publishes the captured Base Ways paytable in ascending award order", () => {
-    expect(BASE_PAYTABLE_ENTRIES.map(({ symbol, label, multiplier }) => ({
-      symbol, label, multiplier,
+  it("publishes PAYING SYMBOLS in captured row order without engine identifiers", () => {
+    expect(BASE_PAYTABLE_ENTRIES.map(({ label, awardTenths, widthPx, heightPx }) => ({
+      label, awardTenths, widthPx, heightPx,
     }))).toEqual([
-      { symbol: "PRISM", label: "Q", multiplier: 0.1 },
-      { symbol: "ORBIT", label: "K", multiplier: 0.3 },
-      { symbol: "PULSE", label: "Helmet", multiplier: 0.8 },
-      { symbol: "NOVA", label: "Radio", multiplier: 1 },
-      { symbol: "TANK", label: "Tank", multiplier: 1.5 },
-      { symbol: "CIRCUIT", label: "Jet", multiplier: 2 },
+      { label: "Jet", awardTenths: 20, widthPx: 150.8, heightPx: 110.2 },
+      { label: "Tank", awardTenths: 15, widthPx: 150.8, heightPx: 110.2 },
+      { label: "Radio", awardTenths: 10, widthPx: 124, heightPx: 111.6 },
+      { label: "Helmet", awardTenths: 8, widthPx: 146.25, heightPx: 112.5 },
+      { label: "K", awardTenths: 3, widthPx: 113.1, heightPx: 128.7 },
+      { label: "Q", awardTenths: 1, widthPx: 106.5, heightPx: 127.8 },
     ]);
+    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
+    const payingSymbols = source.slice(
+      source.indexOf("function appendOfficialPayingSymbols"),
+      source.indexOf("function appendOfficialWayWins"),
+    );
+    expect(payingSymbols).not.toMatch(/PRISM|ORBIT|PULSE|NOVA|CIRCUIT|total bet/i);
+    expect(payingSymbols).not.toContain("entry.label);\n    caption");
+  });
+
+  it("derives every x3 amount from the current bet with integer minor-unit arithmetic", () => {
+    expect(BASE_PAYTABLE_ENTRIES.map(({ awardTenths }) => (
+      paytableAwardMinorForBet("100", awardTenths)
+    ))).toEqual(["200", "150", "100", "80", "30", "10"]);
+    expect(paytableAwardMinorForBet("1", 15)).toBe("2");
+    expect(paytableAwardMinorForBet("900719925474099300", 20))
+      .toBe("1801439850948198600");
+    expect(() => paytableAwardMinorForBet("01", 20)).toThrow(/canonical/);
+  });
+
+  it("updates the visible and accessible PAYING SYMBOLS values when total bet changes", () => {
+    const amounts = BASE_PAYTABLE_ENTRIES.map(() => ({ textContent: "—" }));
+    const labels = BASE_PAYTABLE_ENTRIES.map(() => vi.fn());
+    const figures = BASE_PAYTABLE_ENTRIES.map((_, index) => ({
+      dataset: { paytableEntry: String(index) },
+      querySelector: () => amounts[index],
+      setAttribute: labels[index],
+    }));
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    Object.assign(overlay as unknown as Record<string, unknown>, {
+      bet: { value: "100" },
+      host: { querySelectorAll: () => figures },
+      moneyFormatter: createMinorUnitFormatter({ currency: "EUR", currencyExponent: 2 }),
+    });
+    (overlay as unknown as { syncPaytableAwards(): void }).syncPaytableAwards();
+
+    expect(amounts.map(({ textContent }) => textContent))
+      .toEqual(["2.00", "1.50", "1.00", "0.80", "0.30", "0.10"]);
+    expect(labels[0]).toHaveBeenCalledWith("aria-label", "Jet, x3, 2.00");
+    expect(labels[5]).toHaveBeenCalledWith("aria-label", "Q, x3, 0.10");
   });
 
   it("uses the exact official Way Wins description instead of a derived payline claim", () => {
@@ -1071,12 +1184,12 @@ describe("game control configuration", () => {
 });
 
 describe("captured desktop HUD geometry", () => {
-  it("describes the final 24px footer and authored info-line projection", () => {
+  it("describes the live 16px footer and authored info-line projection", () => {
     const { stageScale, statusbar, infoLine } = PRIMAL_DESKTOP_UI_GEOMETRY;
 
     expect(stageScale).toBe(0.8);
-    expect(statusbar.height).toBe(24);
-    expect(statusbar.fontSize).toBe(14.4);
+    expect(statusbar.height).toBe(16);
+    expect(statusbar.fontSize).toBe(12.8);
     expect(statusbar.gameNameFontSize).toBe(8);
     expect(statusbar.atlasWidth).toBe(1_865);
     expect(statusbar.atlasHeight).toBe(60);
@@ -1157,8 +1270,8 @@ describe("captured desktop HUD geometry", () => {
     expect(720 - dockBottom - dockHeight / 2).toBe(673.5);
 
     expect(finalCascade).toContain("width: var(--utility-hit-size, 35px);");
-    expect(finalCascade).toContain(
-      "var(--mobile-utility-control-size, 44px) + var(--mobile-control-gap, 0px)",
+    expect(finalCascade).toMatch(
+      /var\(--mobile-utility-control-size, 44px\) \+\s*var\(--mobile-utility-gap, var\(--mobile-control-gap, 0px\)\)/,
     );
     expect(finalCascade).toContain("var(--utility-hit-size, 35px) - var(--utility-hit-step)");
     expect(finalCascade).toContain(
@@ -1196,7 +1309,8 @@ describe("captured desktop HUD geometry", () => {
       /<section\s+class="status-panel"[\s\S]*?<\/section>/,
     )?.[0] ?? "";
     expect(statusMarkup.match(/status-panel__provider/g)).toHaveLength(1);
-    expect(statusMarkup).toContain('src="${STATUSBAR_GM_GO}"');
+    expect(statusMarkup).toContain('data-static-image="statusbar-provider"');
+    expect(source).toContain('"statusbar-provider": STATUSBAR_GM_GO');
     expect(statusMarkup).toContain('alt="G\'m GO"');
     expect(statusMarkup).toContain('data-game-name-visible="false"');
     expect(statusMarkup).toContain('class="status-panel__game">Primal Rampage</span>');
@@ -1750,6 +1864,180 @@ describe("sound toggle accessibility", () => {
   });
 });
 
+describe("authoritative session-timeout dialog", () => {
+  it("locks the exact critical alertdialog copy to one non-dismissible EXIT action", () => {
+    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
+    const modal = source.match(/<section\s+class="session-timeout-modal"[\s\S]*?<\/section>/)?.[0];
+
+    expect(modal).toBeDefined();
+    expect(modal).toContain('role="alertdialog"');
+    expect(modal).toContain('aria-modal="true"');
+    expect(modal).toContain('aria-labelledby="session-timeout-title"');
+    expect(modal).toContain('aria-describedby="session-timeout-message"');
+    expect(modal).toContain("Your session has timed out");
+    expect(modal).toContain(
+      "The session has timed out. Please logon again to continue playing.",
+    );
+    expect(modal).toContain(
+      "If you were in the middle of playing a game, your current progress is stored and your game can be continued once you have logged on again.",
+    );
+    expect(modal?.match(/<button\b/g)).toHaveLength(1);
+    expect(modal).toContain("<span>EXIT</span>");
+    expect(source).not.toContain('this.sessionTimeoutScrim.addEventListener("click"');
+    expect(source).toMatch(/if \(this\.sessionTimeoutVisible\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*return;/);
+    expect(source).toContain("if (!this.sessionTimeoutVisible || this.sessionTimeoutExitRequested) return;");
+    expect(source).toContain("for (const element of this.sessionTimeoutBackground ?? []) element.inert = true;");
+    expect(source).toContain("if (this.sessionTimeoutVisible) return this.sessionTimeoutModal;");
+  });
+
+  it("matches the measured official mobile geometry while retaining a 44px target", () => {
+    const css = readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
+    const scrim = css.match(/\.session-timeout-scrim \{[\s\S]*?\n\}/)?.[0];
+    const panel = css.match(/\.session-timeout-modal \{[\s\S]*?\n\}/)?.[0];
+    const title = css.match(/\.session-timeout-modal h2 \{[\s\S]*?\n\}/)?.[0];
+    const exit = css.match(/\.session-timeout-modal__exit \{[\s\S]*?\n\}/)?.[0];
+
+    expect(scrim).toContain("background: #000;");
+    expect(css).toMatch(/\.session-timeout-scrim\[data-open="true"\] \{[\s\S]*?opacity: 0\.5;/);
+    expect(panel).toContain("width: clamp(217.5px, 34cqw, 420px);");
+    expect(panel).toContain("padding: 20px 12px 14.26px;");
+    expect(panel).toContain("border-radius: 10px;");
+    expect(panel).toContain("background: radial-gradient(rgb(51, 51, 51), rgb(23, 28, 24));");
+    expect(title).toContain("color: #e8b31d;");
+    expect(title).toContain("font-size: clamp(21.1px, 2.2cqw, 27px);");
+    expect(title).toContain("margin: 0 -5.15px;");
+    expect(css).toMatch(/\.session-timeout-modal__message \{[\s\S]*?font-size: clamp\(12\.66px,[\s\S]*?line-height: 1\.667;/);
+    expect(exit).toContain("width: 97.89px;");
+    expect(exit).toContain("min-height: 44px;");
+    expect(exit).toContain("line-height: 18.5px;");
+    expect(css).toMatch(/\.session-timeout-modal__exit span \{[\s\S]*?min-height: 28\.94px;[\s\S]*?background: linear-gradient/);
+    expect(css).toContain('.game-frame[data-channel="mobile"] .session-timeout-modal');
+    expect(css).toContain('.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .session-timeout-modal');
+    expect(css).toMatch(/\[data-rgs-session-timeout="true"\] \.launch-loading-host,[\s\S]*?\.orientation-lock \{[\s\S]*?display: none !important;/);
+  });
+
+  it.each([
+    { viewport: "phone portrait", width: 390, height: 844, landscape: false, expectedWidth: 217.503 },
+    { viewport: "phone landscape", width: 844, height: 390, landscape: true, expectedWidth: 261.64 },
+    { viewport: "tablet portrait", width: 768, height: 1_024, landscape: false, expectedWidth: 360 },
+    { viewport: "tablet landscape", width: 1_024, height: 768, landscape: true, expectedWidth: 317.44 },
+  ])("keeps the official panel centered and fully reachable on $viewport", ({
+    width, height, landscape, expectedWidth,
+  }) => {
+    const clamp = (minimum: number, preferred: number, maximum: number): number => (
+      Math.min(maximum, Math.max(minimum, preferred))
+    );
+    const panelWidth = landscape
+      ? clamp(217.5, width * 0.31, 360)
+      : clamp(217.5, width * 0.5577, 360);
+
+    expect(panelWidth).toBeCloseTo(expectedWidth, 3);
+    expect(panelWidth).toBeLessThanOrEqual(width - 24);
+    expect(304.98).toBeLessThanOrEqual(height - (landscape ? 16 : 24));
+    expect((width - panelWidth) / 2).toBeGreaterThanOrEqual(8);
+  });
+
+  it("isolates canvas, launch status, orientation, and outer host siblings without inerting the modal ancestry", () => {
+    class TestElement {
+      readonly children: TestElement[] = [];
+      parentElement: TestElement | null = null;
+      ownerDocument: { body: TestElement } | null = null;
+      inert = false;
+      private readonly attributes = new Map<string, string>();
+
+      append(...elements: TestElement[]): void {
+        for (const element of elements) {
+          element.parentElement = this;
+          element.ownerDocument = this.ownerDocument;
+          this.children.push(element);
+        }
+      }
+
+      getAttribute(name: string): string | null {
+        return this.attributes.get(name) ?? null;
+      }
+
+      setAttribute(name: string, value: string): void {
+        this.attributes.set(name, value);
+      }
+
+      removeAttribute(name: string): void {
+        this.attributes.delete(name);
+      }
+
+      getAttributeNames(): string[] {
+        return [...this.attributes.keys()];
+      }
+    }
+
+    const body = new TestElement();
+    const documentStub = { body };
+    body.ownerDocument = documentStub;
+    const root = new TestElement();
+    const outsideHostControl = new TestElement();
+    body.append(root, outsideHostControl);
+    const viewport = new TestElement();
+    root.append(viewport);
+    const safeArea = new TestElement();
+    const launchStatus = new TestElement();
+    const orientationStatus = new TestElement();
+    orientationStatus.setAttribute("aria-hidden", "true");
+    viewport.append(safeArea, launchStatus, orientationStatus);
+    const frame = new TestElement();
+    safeArea.append(frame);
+    const canvas = new TestElement();
+    const host = new TestElement();
+    frame.append(canvas, host);
+    const hud = new TestElement();
+    const scrim = new TestElement();
+    const modal = new TestElement();
+    host.append(hud, scrim, modal);
+
+    vi.stubGlobal("HTMLElement", TestElement);
+    try {
+      const branches = sessionTimeoutIsolationBranches(
+        host as unknown as HTMLElement,
+        modal as unknown as HTMLElement,
+        scrim as unknown as HTMLElement,
+      );
+      expect(branches).toEqual([hud, canvas, launchStatus, orientationStatus, outsideHostControl]);
+      expect(branches.includes(host as unknown as HTMLElement)).toBe(false);
+      expect(branches.includes(frame as unknown as HTMLElement)).toBe(false);
+      expect(branches.includes(viewport as unknown as HTMLElement)).toBe(false);
+      expect(branches.includes(modal as unknown as HTMLElement)).toBe(false);
+
+      const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+      Object.assign(overlay as unknown as Record<string, unknown>, {
+        sessionTimeoutBackground: branches,
+        sessionTimeoutIsolationState: null,
+      });
+      const isolation = overlay as unknown as {
+        captureSessionTimeoutIsolationState(): void;
+        isolateSessionTimeoutBackground(): void;
+        restoreSessionTimeoutIsolationState(): void;
+      };
+      isolation.captureSessionTimeoutIsolationState();
+      isolation.isolateSessionTimeoutBackground();
+
+      for (const branch of branches as unknown as TestElement[]) {
+        expect(branch.inert).toBe(true);
+        expect(branch.getAttribute("aria-hidden")).toBe("true");
+      }
+      expect(modal.inert).toBe(false);
+      expect(modal.getAttribute("aria-hidden")).toBeNull();
+
+      isolation.restoreSessionTimeoutIsolationState();
+      expect(canvas.inert).toBe(false);
+      expect(canvas.getAttribute("aria-hidden")).toBeNull();
+      expect(launchStatus.inert).toBe(false);
+      expect(launchStatus.getAttribute("aria-hidden")).toBeNull();
+      expect(orientationStatus.getAttribute("aria-hidden")).toBe("true");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("UI panel sound lifecycle", () => {
   it("emits exactly once per real visibility transition, including panel switches", () => {
     const opened = vi.fn();
@@ -1783,11 +2071,11 @@ describe("UI panel sound lifecycle", () => {
   it("wires buttons, scrims, Escape, and menu-tab switches through idempotent setters", () => {
     const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
 
-    expect(source).toContain('this.betClose.addEventListener("click", () => this.setBetPopupOpen(false))');
-    expect(source).toContain('this.betScrim.addEventListener("click", () => this.setBetPopupOpen(false))');
-    expect(source).toContain('this.autoplayClose.addEventListener("click", () => this.setAutoplayModalOpen(false))');
-    expect(source).toContain('this.autoplayScrim.addEventListener("click", () => this.setAutoplayModalOpen(false))');
-    expect(source).toContain('this.gameMenuClose.addEventListener("click", () => this.setGameMenuOpen(false))');
+    expect(source).toContain('this.betClose.addEventListener("click", () => this.setBetPopupOpen(false), eventOptions)');
+    expect(source).toContain('this.betScrim.addEventListener("click", () => this.setBetPopupOpen(false), eventOptions)');
+    expect(source).toContain('this.autoplayClose.addEventListener("click", () => this.setAutoplayModalOpen(false), eventOptions)');
+    expect(source).toContain('this.autoplayScrim.addEventListener("click", () => this.setAutoplayModalOpen(false), eventOptions)');
+    expect(source).toContain('this.gameMenuClose.addEventListener("click", () => this.setGameMenuOpen(false), eventOptions)');
     expect(source).toMatch(/event\.key !== "Escape"[\s\S]+setGameMenuOpen\(false\)[\s\S]+setAutoplayModalOpen\(false\)[\s\S]+setBetPopupOpen\(false\)/);
     expect(source).toContain("this.panelLifecycle.setVisible(previousTab, false)");
     expect(source).toContain("this.panelLifecycle.setVisible(tab, true)");
@@ -1802,6 +2090,41 @@ describe("UI panel sound lifecycle", () => {
 });
 
 describe("dialog accessibility", () => {
+  it("does not let a closed dialog's queued microtask steal focus", async () => {
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    const previewFocus = vi.fn();
+    const previewBlur = vi.fn();
+    const featurePreview = {
+      dataset: { visible: "false" },
+      inert: true,
+      setAttribute: vi.fn(),
+    } as unknown as HTMLElement;
+    Object.assign(overlay as unknown as Record<string, unknown>, {
+      destroyed: false,
+      deferredFocusGeneration: 0,
+      hudInteractive: true,
+      modalBackground: [],
+      featurePreview,
+      previewContinue: { focus: previewFocus, blur: previewBlur },
+      gameMenu: { dataset: { open: "false" }, inert: true },
+      autoplayModal: { dataset: { open: "false" }, inert: true },
+      betPopup: { dataset: { open: "false" }, inert: true },
+    });
+    vi.stubGlobal("document", { activeElement: null });
+    try {
+      overlay.setFeaturePreviewVisible(true);
+      overlay.setFeaturePreviewVisible(false);
+      await Promise.resolve();
+      expect(previewFocus).not.toHaveBeenCalled();
+
+      overlay.setFeaturePreviewVisible(true);
+      await Promise.resolve();
+      expect(previewFocus).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps the interactive HUD inert whenever launch is locked or a dialog is open", () => {
     const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
     const statusPanel = { inert: false } as unknown as HTMLElement;
@@ -1904,5 +2227,94 @@ describe("dialog accessibility", () => {
     expect(css).toMatch(/\.compact-modal__head button \{[\s\S]*width: 44px;[\s\S]*height: 44px;/);
     expect(css).toMatch(/\.bet-popover__close \{[\s\S]*width: 44px;[\s\S]*height: 44px;/);
     expect(css).toMatch(/\.bet-popover \.bet-choice:focus-visible,[\s\S]*outline: 3px solid #fff;/);
+  });
+});
+
+describe("late UI completion guards", () => {
+  it("aborts inline listeners and removes the stale HUD subtree on destroy", () => {
+    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
+    expect(source.match(/addEventListener\(/g)).toHaveLength(29);
+    expect(source.match(/eventOptions\)/g)).toHaveLength(29);
+    expect(source).toContain("const eventOptions = { signal: this.domEventController.signal }");
+
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    const controller = new AbortController();
+    const abort = vi.spyOn(controller, "abort");
+    const staleClick = vi.fn();
+    const staleControl = new EventTarget();
+    staleControl.addEventListener("click", staleClick, { signal: controller.signal });
+    const replaceChildren = vi.fn();
+    const removable = { removeEventListener: vi.fn() };
+    const cancelObservedLayoutSync = vi.fn(() => { throw new Error("RAF cleanup failed"); });
+    const cancelWinCounter = vi.fn();
+    const clearAutoplayTimer = vi.fn();
+    const destroyWheelEffect = vi.fn();
+    const disconnectHelpObserver = vi.fn();
+    Object.assign(overlay as unknown as Record<string, unknown>, {
+      destroyed: false,
+      domEventController: controller,
+      deferredFocusGeneration: 0,
+      featureAnnouncementGeneration: 0,
+      host: { inert: false, replaceChildren },
+      cancelObservedLayoutSync,
+      cancelWinCounter,
+      clearAutoplayTimer,
+      wheelHyperspinEffect: { destroy: destroyWheelEffect },
+      betChoices: removable,
+      gameMenu: removable,
+      autoplayOptions: removable,
+      autoplayStopToggle: removable,
+      autoplayStopConditions: removable,
+      officialHelpResizeObserver: { disconnect: disconnectHelpObserver },
+      toastTimer: 1,
+    });
+    vi.stubGlobal("document", removable);
+    vi.stubGlobal("window", removable);
+    try {
+      expect(() => overlay.destroy()).not.toThrow();
+      overlay.destroy();
+      staleControl.dispatchEvent(new Event("click"));
+
+      expect(abort).toHaveBeenCalledOnce();
+      expect(replaceChildren).toHaveBeenCalledOnce();
+      expect((overlay as unknown as { host: { inert: boolean } }).host.inert).toBe(true);
+      expect(staleClick).not.toHaveBeenCalled();
+      expect(cancelObservedLayoutSync).toHaveBeenCalledOnce();
+      expect(cancelWinCounter).toHaveBeenCalledOnce();
+      expect(clearAutoplayTimer).toHaveBeenCalledOnce();
+      expect(destroyWheelEffect).toHaveBeenCalledOnce();
+      expect(disconnectHelpObserver).toHaveBeenCalledOnce();
+      expect(removable.removeEventListener).toHaveBeenCalled();
+      expect((overlay as unknown as { toastTimer: unknown }).toastTimer).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not let an older semantic announcement hide a newer one", async () => {
+    vi.useFakeTimers();
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    const feature = { textContent: "", dataset: { visible: "false" } };
+    Object.assign(overlay as unknown as Record<string, unknown>, {
+      destroyed: false,
+      featureAnnouncementGeneration: 0,
+      feature,
+    });
+    try {
+      const first = overlay.announceEvent({ type: "wheel.started" } as FeatureEvent, 100);
+      await vi.advanceTimersByTimeAsync(50);
+      const second = overlay.announceEvent({ type: "vaults.locked" } as FeatureEvent, 200);
+
+      await vi.advanceTimersByTimeAsync(50);
+      expect(feature.textContent).toBe("Vaults remain locked");
+      expect(feature.dataset.visible).toBe("true");
+
+      await vi.advanceTimersByTimeAsync(150);
+      expect(feature.dataset.visible).toBe("false");
+      await vi.advanceTimersByTimeAsync(160);
+      await Promise.all([first, second]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

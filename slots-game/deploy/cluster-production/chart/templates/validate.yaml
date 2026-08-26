@@ -1,5 +1,30 @@
 {{- $expectedAPIURL := printf "https://%s" .Values.ingress.apiHost -}}
 {{- $expectedWebOrigin := printf "https://%s" .Values.ingress.webHost -}}
+{{- $tracing := .Values.observability.tracing -}}
+{{- $tracingEgress := .Values.networkPolicy.egress.tracing -}}
+{{- if gt (int $tracing.maxExportBatchSize) (int $tracing.maxQueueSize) -}}
+{{- fail "tracing 单批导出上限不得大于队列上限" -}}
+{{- end -}}
+{{- if $tracing.enabled -}}
+{{- if empty $tracing.endpointURL -}}
+{{- fail "启用 tracing 时必须显式配置完整 HTTPS /v1/traces endpoint" -}}
+{{- end -}}
+{{- if empty $tracingEgress.cidrs -}}
+{{- fail "启用 tracing 时必须显式配置 collector 受控出口 CIDR" -}}
+{{- end -}}
+{{- $collectorAuthority := trimSuffix "/v1/traces" (trimPrefix "https://" $tracing.endpointURL) -}}
+{{- if eq (int $tracingEgress.port) 443 -}}
+{{- if and (contains ":" $collectorAuthority) (not (hasSuffix ":443" $collectorAuthority)) -}}
+{{- fail "tracing endpoint 显式端口必须与出口端口一致" -}}
+{{- end -}}
+{{- else if not (hasSuffix (printf ":%d" (int $tracingEgress.port)) $collectorAuthority) -}}
+{{- fail "tracing endpoint 端口必须与出口端口一致" -}}
+{{- end -}}
+{{- else -}}
+{{- if or (not (empty $tracing.endpointURL)) (not (empty $tracingEgress.cidrs)) -}}
+{{- fail "关闭 tracing 时 endpoint 与专用出口 CIDR 必须保持为空" -}}
+{{- end -}}
+{{- end -}}
 {{- if ne .Values.rgs.publicBaseURL $expectedAPIURL -}}
 {{- fail "rgs.publicBaseURL 必须与 ingress.apiHost 的 HTTPS origin 完全一致" -}}
 {{- end -}}
@@ -36,6 +61,9 @@
 {{- if and .Values.worker.maintenanceQuiesced (not .Values.rgs.maintenanceQuiesced) -}}
 {{- fail "Worker 数据库维护静默必须同时静默 RGS API" -}}
 {{- end -}}
+{{- if gt (int .Values.rgs.runtime.sessionIdleDisconnectMinSeconds) (int .Values.rgs.runtime.sessionIdleDisconnectMaxSeconds) -}}
+{{- fail "RGS 会话空闲断开下限不得大于上限" -}}
+{{- end -}}
 {{- if gt (int .Values.rgs.runtime.databaseMaxIdleConnections) (int .Values.rgs.runtime.databaseMaxOpenConnections) -}}
 {{- fail "RGS 数据库空闲连接上限不得大于总连接上限" -}}
 {{- end -}}
@@ -45,13 +73,17 @@
 {{- if gt (int .Values.worker.runtime.databaseMaxIdleConnections) (int .Values.worker.runtime.databaseMaxOpenConnections) -}}
 {{- fail "Worker 数据库空闲连接上限不得大于总连接上限" -}}
 {{- end -}}
-{{- $requiredTerminationGrace := add (int .Values.rgs.shutdownTimeoutSeconds) (int .Values.rgs.preStopSeconds) 5 -}}
-{{- if lt (int .Values.rgs.terminationGracePeriodSeconds) $requiredTerminationGrace -}}
-{{- fail "RGS 终止宽限必须覆盖应用关闭、preStop 摘流及至少五秒调度余量" -}}
+{{- $traceShutdownSeconds := 0 -}}
+{{- if .Values.observability.tracing.enabled -}}
+{{- $traceShutdownSeconds = div (add (int .Values.observability.tracing.shutdownTimeoutMilliseconds) 999) 1000 -}}
 {{- end -}}
-{{- $requiredWorkerTerminationGrace := add (int .Values.worker.shutdownTimeoutSeconds) (int .Values.worker.preStopSeconds) 5 -}}
+{{- $requiredTerminationGrace := add (int .Values.rgs.shutdownTimeoutSeconds) (int .Values.rgs.preStopSeconds) 5 $traceShutdownSeconds -}}
+{{- if lt (int .Values.rgs.terminationGracePeriodSeconds) $requiredTerminationGrace -}}
+{{- fail "RGS 终止宽限必须覆盖应用关闭、tracing flush、preStop 摘流及至少五秒调度余量" -}}
+{{- end -}}
+{{- $requiredWorkerTerminationGrace := add (int .Values.worker.shutdownTimeoutSeconds) (int .Values.worker.preStopSeconds) 5 $traceShutdownSeconds -}}
 {{- if lt (int .Values.worker.terminationGracePeriodSeconds) $requiredWorkerTerminationGrace -}}
-{{- fail "Worker 终止宽限必须覆盖应用关闭、preStop 摘流及至少五秒调度余量" -}}
+{{- fail "Worker 终止宽限必须覆盖应用关闭、tracing flush、preStop 摘流及至少五秒调度余量" -}}
 {{- end -}}
 {{- $outboxWaves := div (add (int .Values.worker.runtime.outboxBatchSize) (sub (int .Values.worker.runtime.outboxMaxParallel) 1)) (int .Values.worker.runtime.outboxMaxParallel) -}}
 {{- $outboxPublishWindow := mul (int .Values.worker.runtime.outboxPublishTimeoutSeconds) $outboxWaves -}}
@@ -152,6 +184,7 @@
   "slots-game.io/definition-version" .Values.release.definitionIdentity.version
   "slots-game.io/definition-sha256" .Values.release.definitionIdentity.sha256
 -}}
+{{- $expectedAccessTokenProtocol := "RGS-ACCESS-v3" -}}
 {{- $currentByComponent := dict -}}
 {{- $deploymentList := lookup "apps/v1" "Deployment" .Release.Namespace "" -}}
 {{- range $current := dig "items" (list) $deploymentList -}}
@@ -178,6 +211,9 @@
 {{- $current := get $workload "current" -}}
 {{- if not (empty $current) -}}
 {{- $annotations := dig "spec" "template" "metadata" "annotations" (dict) $current -}}
+{{- if and (eq (get $workload "name") "rgs") (ne (get $annotations "slots-game.io/access-token-protocol") $expectedAccessTokenProtocol) (not $.Values.rgs.maintenanceQuiesced) -}}
+{{- fail "现网访问令牌协议与候选不一致；RGS-ACCESS v2/v3 禁止普通 RollingUpdate，必须先静默排空 API 并要求客户端重新 launch" -}}
+{{- end -}}
 {{- range $key, $expected := $expectedDefinition -}}
 {{- if ne (get $annotations $key) $expected -}}
 {{- fail (printf "%s 当前数学定义身份与候选不一致；禁止普通滚动，必须走维护窗口或版本分群" (get $workload "name")) -}}

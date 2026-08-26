@@ -15,6 +15,16 @@ const OUTPUTS = Object.freeze({
   mobile: join(RUNTIME_ROOT, "streaming-packages.mobile.json"),
 });
 
+/**
+ * Wheel 的三张实际展示纹理来自已审查的本地参考资源，而不是旧 runtime-manifest。
+ * 在构建事件清单时现场绑定大小与摘要，避免把它们留在未校验的首启 URL 路径。
+ */
+const WHEEL_REFERENCE_FILES = Object.freeze([
+  Object.freeze({ id: "wheel-blue", publicUrl: "/assets/primal-reference/10023.png" }),
+  Object.freeze({ id: "wheel-red", publicUrl: "/assets/primal-reference/10026.png" }),
+  Object.freeze({ id: "wheel-dual", publicUrl: "/assets/primal-reference/10027.png" }),
+]);
+
 const UI_SKELETON_PACKAGES = Object.freeze({
   base: Object.freeze([
     "grand_jackpot",
@@ -56,7 +66,20 @@ for (const option of argv) {
 
 const runtimeBytes = await readFile(RUNTIME_MANIFEST_PATH);
 const runtimeManifest = JSON.parse(runtimeBytes.toString("utf8"));
-const authorityDigest = createHash("sha256").update(runtimeBytes).digest("hex");
+const wheelReferenceEntries = Object.freeze(await Promise.all(
+  WHEEL_REFERENCE_FILES.map(async (entry) => {
+    const bytes = await readFile(publicPath(entry.publicUrl));
+    return Object.freeze({
+      ...entry,
+      bytes: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+  }),
+));
+const authorityDigest = createHash("sha256")
+  .update(runtimeBytes)
+  .update(JSON.stringify(wheelReferenceEntries))
+  .digest("hex");
 const version = `${requiredString(runtimeManifest?.source?.package, "source.package")}+${authorityDigest.slice(0, 16)}`;
 
 const manifests = Object.freeze({
@@ -178,7 +201,13 @@ function buildChannelManifest(channel, authority, packageVersion) {
     packages.push(assetPackage(
       `${channel}-feature-wheel`,
       "feature-on-demand",
-      selectSkeletons(skeletons, UI_SKELETON_PACKAGES.wheel, channel),
+      [
+        ...selectSkeletons(skeletons, UI_SKELETON_PACKAGES.wheel, channel),
+        ...wheelReferenceEntries.map((entry) => resource(
+          entry,
+          `${channel}:wheel:reference:${slug(entry.id)}`,
+        )),
+      ],
       packageVersion,
       [sharedPackageId, `${channel}-interaction-audio`],
     ));
@@ -330,6 +359,7 @@ function expectedAuthorityUrls(channel, authority) {
       ...authority.mobile.interface.files.map((entry) => entry.publicUrl),
     );
   }
+  urls.push(...wheelReferenceEntries.map((entry) => entry.publicUrl));
   const unique = [...new Set(urls)].sort();
   if (unique.length !== urls.length) throw new Error(`${channel} authority contains duplicate URLs`);
   return unique;

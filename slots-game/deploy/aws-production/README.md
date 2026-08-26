@@ -24,7 +24,7 @@ AWS 正式交付
 │       ├── 默认拒绝 NetworkPolicy
 │       └── ServiceMonitor + PrometheusRule
 └── 外部状态与平台面
-    ├── RDS PostgreSQL Multi-AZ
+    ├── RDS PostgreSQL Multi-AZ writer + 默认关闭的同区域 Multi-AZ read replica 接口
     ├── TLS/ACL Valkey 共享准入状态
     ├── Secrets Manager 同步的版本化 Kubernetes Secret
     ├── 外部钱包与幂等审计接收端
@@ -40,7 +40,8 @@ AWS 正式交付
 - `verify-rendered-contract.rb`：解析实际 YAML，证明 EKS 不包含 Web、Ingress 使用 ALB、TLS 不引用
   Kubernetes Secret、WAF/ACM/安全组/三子网/访问日志已声明、API NetworkPolicy 只接受受控 CIDR。
 - `verify-live-platform-prerequisites.sh`：在受保护私网执行器只读回查实际 Regional/CloudFront WAF、
-  日志、CloudWatch 告警、CloudFront distribution/OAC、EKS add-on/Pod Identity 与应用依赖；其中
+  日志、CloudWatch 告警、RDS writer/可选 reader 的 source/engine/class/storage/KMS/network/backup/
+  deletion protection、CloudFront distribution/OAC、EKS add-on/Pod Identity 与应用依赖；其中
   vpc-cni 必须是 delivery 固定版本、`ACTIVE`、实际 `enableNetworkPolicy=true`，且 aws-node 精确绑定专用
   Pod Identity；CloudWatch Observability 同样必须固定版本、`ACTIVE`、实际启用 container logs/增强
   Container Insights，并证明 cloudwatch-agent 与 fluent-bit DaemonSet 在全部节点就绪。仓库测试只运行

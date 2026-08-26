@@ -69,10 +69,24 @@ describe("mobile channel routing", () => {
     expect(responsiveChannelFromEnvironment()).toBe("desktop");
   });
 
-  it("keeps asset channel routing separate from the live viewport layout channel", () => {
+  it("uses the official mobile launcher hint only inside phone and tablet bounds", () => {
     expect(responsiveLayoutChannel(1_024, 768, {
       search: "?channel=mobile",
       coarsePointer: false,
+      finePointer: true,
+    })).toBe("mobile");
+    expect(responsiveLayoutChannel(390, 844, {
+      search: "?pid=2&channel=MOBILE&practice=1",
+      coarsePointer: false,
+      finePointer: true,
+    })).toBe("mobile");
+    expect(responsiveLayoutChannel(1_920, 1_080, {
+      search: "?channel=mobile",
+      finePointer: true,
+    })).toBe("desktop");
+    expect(responsiveLayoutChannel(1_024, 768, {
+      search: "?pid=2&channel=desktop&practice=1",
+      coarsePointer: true,
     })).toBe("desktop");
     expect(responsiveLayoutChannel(1_024, 768, { coarsePointer: true })).toBe("mobile");
     expect(responsiveLayoutChannel(1_024, 768, { touchPoints: 5 })).toBe("mobile");

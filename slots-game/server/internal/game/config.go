@@ -58,8 +58,12 @@ type FeatureConfig struct {
 }
 
 type Config struct {
-	GameID               string              `json:"gameId"`
-	DefinitionVersion    string              `json:"definitionVersion"`
+	GameID             string `json:"gameId"`
+	DefinitionVersion  string `json:"definitionVersion"`
+	EngineRulesVersion string `json:"engineRulesVersion"`
+	// MaxWinMultiplier 是以触发时总投注为基准表示的权威整场最高赢取上限。
+	// 一次基础旋转及其触发的所有免费旋转共享同一预算；所有结算运算均使用整数最小货币单位。
+	MaxWinMultiplier     int64               `json:"maxWinMultiplier"`
 	Bet                  BetConfig           `json:"bet"`
 	Reels                [3][]WeightedSymbol `json:"reels"`
 	Paytable             map[Symbol]int64    `json:"paytable"`
@@ -72,8 +76,10 @@ type Config struct {
 // DemoConfig 是为净室演示实现原创且刻意未经认证的数学配置，并非复制自任何商业游戏。
 func DemoConfig() Config {
 	return Config{
-		GameID:            "iron-colossus-demo",
-		DefinitionVersion: "demo-2026-07-29.5",
+		GameID:             "iron-colossus-demo",
+		DefinitionVersion:  "demo-2026-07-29.5",
+		EngineRulesVersion: EngineRulesVersion,
+		MaxWinMultiplier:   PrimalMaxWinMultiplier,
 		Bet: BetConfig{
 			MinMinor:     10,
 			MaxMinor:     10_000,
@@ -152,15 +158,24 @@ func DemoConfig() Config {
 }
 
 func (c Config) Validate() error {
-	if c.GameID == "" {
-		return errors.New("game id is required")
+	if !gameIdentifierPattern.MatchString(c.GameID) {
+		return errors.New("invalid game id")
 	}
 	if !definitionVersionPattern.MatchString(c.DefinitionVersion) {
 		return errors.New("invalid game definition version")
 	}
+	if c.EngineRulesVersion != EngineRulesVersion {
+		return errors.New("game definition engine rules version does not match this binary")
+	}
 	if c.Bet.MinMinor <= 0 || c.Bet.MaxMinor < c.Bet.MinMinor ||
 		c.Bet.StepMinor <= 0 || c.Bet.PayUnitMinor <= 0 {
 		return errors.New("invalid bet limits")
+	}
+	if c.MaxWinMultiplier != PrimalMaxWinMultiplier {
+		return fmt.Errorf("max win multiplier must equal %d for engine rules %s", PrimalMaxWinMultiplier, EngineRulesVersion)
+	}
+	if c.Bet.MaxMinor > math.MaxInt64/c.MaxWinMultiplier {
+		return errors.New("invalid max win multiplier")
 	}
 	if len(c.Bet.OptionsMinor) == 0 {
 		return errors.New("at least one bet option is required")
@@ -310,6 +325,101 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate wheel outcome %s", key)
 		}
 		seenWheel[key] = struct{}{}
+	}
+	if err := c.validateSpinArithmeticBounds(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateSpinArithmeticBounds 在定义加载时证明，所有支持的八行 Ways 中间值
+// 以及应用上限前的完整旋转总额均不会超出 int64。
+// 汇总边界会特意合并 Ways 最大结果、八个中轴 Vault 奖励和一次即时 Wheel 奖励。
+// 这些最大值不可能同时出现在同一实际模式中，但已签名定义绝不能把溢出发现
+// 推迟到罕见 RNG 路径或未来功能实现变更时。
+func (c Config) validateSpinArithmeticBounds() error {
+	maxWildMultiplier := int64(1)
+	for _, item := range c.WildMultipliers {
+		value := item.Value
+		if value == 0 {
+			value = 1
+		}
+		if value > maxWildMultiplier {
+			maxWildMultiplier = value
+		}
+	}
+	const maximumWaysPerSymbol = int64(8 * 8 * 8)
+	var rawTotal, scaledTotal int64
+	for _, symbol := range PayingSymbols {
+		raw, err := safeMul(c.Paytable[symbol], maxWildMultiplier)
+		if err != nil {
+			return errors.New("Ways liability overflows int64 before the win cap")
+		}
+		raw, err = safeMul(raw, maximumWaysPerSymbol)
+		if err != nil {
+			return errors.New("Ways liability overflows int64 before the win cap")
+		}
+		rawTotal, err = safeAdd(rawTotal, raw)
+		if err != nil {
+			return errors.New("Ways liability overflows int64 before the win cap")
+		}
+		scaled, err := scaleWaysAward(raw, c.Bet.MaxMinor, c.Bet.PayUnitMinor)
+		if err != nil {
+			return errors.New("scaled Ways liability overflows int64 before the win cap")
+		}
+		scaledTotal, err = safeAdd(scaledTotal, scaled)
+		if err != nil {
+			return errors.New("scaled Ways liability overflows int64 before the win cap")
+		}
+	}
+	if rawTotal <= 0 || scaledTotal <= 0 {
+		return errors.New("invalid Ways liability bound")
+	}
+
+	maxVaultMultiplier := int64(0)
+	for _, item := range c.VaultMultipliers {
+		if item.Value > maxVaultMultiplier {
+			maxVaultMultiplier = item.Value
+		}
+	}
+	for _, item := range c.OverdriveMultipliers {
+		value := item.Value
+		if isBaseJackpotMultiplier(value) {
+			doubled, err := safeMul(value, 2)
+			if err != nil {
+				return errors.New("Vault liability overflows int64 before the win cap")
+			}
+			value = doubled
+		}
+		if value > maxVaultMultiplier {
+			maxVaultMultiplier = value
+		}
+	}
+	const maximumVaultsPerSpin = int64(8)
+	vaultLiability, err := safeMul(c.Bet.MaxMinor, maxVaultMultiplier)
+	if err == nil {
+		vaultLiability, err = safeMul(vaultLiability, maximumVaultsPerSpin)
+	}
+	if err != nil {
+		return errors.New("Vault liability overflows int64 before the win cap")
+	}
+
+	maxWheelMultiplier := int64(0)
+	for _, item := range c.Feature.Wheel {
+		if item.Kind == WheelInstant && item.Multiplier > maxWheelMultiplier {
+			maxWheelMultiplier = item.Multiplier
+		}
+	}
+	wheelLiability, err := safeMul(c.Bet.MaxMinor, maxWheelMultiplier)
+	if err != nil {
+		return errors.New("Wheel liability overflows int64 before the win cap")
+	}
+	combined, err := safeAdd(scaledTotal, vaultLiability)
+	if err == nil {
+		_, err = safeAdd(combined, wheelLiability)
+	}
+	if err != nil {
+		return errors.New("combined raw spin liability overflows int64 before the win cap")
 	}
 	return nil
 }

@@ -263,6 +263,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
 resource "aws_cloudfront_distribution" "web" {
   enabled             = true
   is_ipv6_enabled     = true
+  http_version        = "http2and3"
   comment             = "${var.name_prefix} immutable Web releases"
   default_root_object = "index.html"
   aliases             = [var.domain_name]

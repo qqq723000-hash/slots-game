@@ -6,7 +6,9 @@ sources:
     # 由 Compose 强制注入，仅应匹配 RGS 容器 stdout 文件，不能使用全节点通配符。
     include:
       - "${RGS_CONTAINER_LOG_GLOB}"
-    read_from: end
+    # 新发现的容器日志必须从头读，避免 Vector 晚启动时跳过 startup/fatal/security 行；
+    # 已发现文件仍由持久化 data_dir checkpoint 续读，24 小时上限阻止无限历史重放。
+    read_from: beginning
     ignore_older_secs: 86400
     internal_metrics:
       # 文件路径随容器轮换且基数无界；运行态只保留固定 component_id 标签。
@@ -20,7 +22,39 @@ sources:
       # 容器 hostname 会在重建后变化；禁止它制造无界历史时序。
       host_key: ""
 
+  archive_flush_heartbeat_metric:
+    type: static_metrics
+    # Vector 0.57 的磁盘缓冲在低流量下可能等待下一条事件才提交当前批次；固定心跳
+    # 为归档链路提供有界推进事件，同时不承载用户、请求或运行环境数据。
+    interval_secs: 10
+    namespace: vector
+    metrics:
+      - name: archive_flush_heartbeat
+        kind: absolute
+        tags: {}
+        value:
+          gauge:
+            value: 1
+
 transforms:
+  archive_flush_heartbeat_to_log:
+    type: metric_to_log
+    inputs:
+      - archive_flush_heartbeat_metric
+
+  safe_archive_flush_heartbeat:
+    type: remap
+    inputs:
+      - archive_flush_heartbeat_to_log
+    source: |-
+      # 无条件从空对象重建；上游指标名、标签、hostname 或未来新增字段都不能进入归档。
+      . = {
+        "service": "vector",
+        "time": now(),
+        "level": "INFO",
+        "msg": "archive flush heartbeat"
+      }
+
   normalize_rgs_json:
     type: remap
     inputs:
@@ -65,40 +99,185 @@ transforms:
     inputs:
       - normalize_rgs_json
     source: |-
-      # 防御性最小化：即使未来日志字段扩展，也不能转发凭据、签名、密钥或客户端 IP。
-      del(.remote_ip)
-      del(.authorization)
-      del(.access_token)
-      del(.refresh_token)
-      del(.cookie)
-      del(.signature)
-      del(.private_key)
-      del(.database_url)
-      del(.wallet_request)
-      del(.wallet_response)
-      # error/stack 可能由第三方库拼接 DSN、端点或业务标识，长期出口一律删除。
-      del(.error)
-      del(.stack)
-      del(.stacktrace)
+      # 输出从空对象重建；normalize 即使合入未来未知或任意深度 JSON，也没有字段能
+      # 靠“未命中黑名单”穿过边界。只复制当前 RGS slog 契约中的审核标量。
+      event = .
+      . = { "service": "rgs-server" }
 
-      # 当前路由均为固定模板；未知路径折叠，避免未来路径参数制造 PII/高基数。
-      if exists(.path) {
-        path = string(.path) ?? "other"
-        allowed_paths = [
-          "/operator/v1/launches",
-          "/operator/v1/rounds/status",
-          "/client/v1/sessions/exchange",
-          "/client/v1/sessions/refresh",
-          "/client/v1/spins",
-          "/client/v1/rounds/status",
-          "/client/v1/results/pending",
-          "/client/v1/results/acknowledgements",
-          "/healthz",
-          "/readyz",
-          "/metrics"
-        ]
-        if !includes(allowed_paths, path) {
-          .path = "other"
+      event_time_text = string(event.time) ?? ""
+      event_time, event_time_err = parse_timestamp(event_time_text, format: "%+")
+      if event_time_err == null { .time = event_time }
+
+      level = string(event.level) ?? ""
+      if includes(["DEBUG", "INFO", "WARN", "ERROR"], level) { .level = level }
+
+      message = string(event.msg) ?? ""
+      allowed_messages = [
+        "rgs server stopped",
+        "public RGS listener started",
+        "operations RGS listener started",
+        "security credential cleanup failed",
+        "http request",
+        "http panic recovered",
+        "检测到认证随机数重放",
+        "outbox dispatch pass failed",
+        "outbox publication deferred",
+        "recovery backlog observation failed",
+        "round recovery pass failed"
+      ]
+      known_message = includes(allowed_messages, message)
+      if known_message {
+        .msg = message
+      } else if message != "" {
+        .msg = "unknown-structured-log-redacted"
+      }
+
+      unparseable_message = string(event.message) ?? ""
+      fixed_unparseable = event.parse_error == true && unparseable_message == "unparseable-log-redacted"
+      if fixed_unparseable {
+        .message = "unparseable-log-redacted"
+        .parse_error = true
+      }
+
+      route = string(event.route) ?? ""
+      allowed_routes = [
+        "operator.launch",
+        "operator.round_status",
+        "client.session_exchange",
+        "client.session_refresh",
+        "client.spin",
+        "client.round_status",
+        "client.pending_result",
+        "client.result_ack",
+        "other"
+      ]
+      if includes(allowed_routes, route) { .route = route }
+
+      method = string(event.method) ?? ""
+      if includes(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "OTHER"], method) {
+        .method = method
+      }
+
+      request_id = string(event.request_id) ?? ""
+      if match(request_id, r'^sha256:[0-9a-f]{64}$') {
+        .request_id = request_id
+      }
+
+      if is_integer(event.status) {
+        status = to_int(event.status) ?? -1
+        if status >= 100 && status <= 599 { .status = status }
+      }
+      status_class = string(event.status_class) ?? ""
+      if includes(["1xx", "2xx", "3xx", "4xx", "5xx"], status_class) { .status_class = status_class }
+      if is_integer(event.duration_ms) {
+        duration_ms = to_int(event.duration_ms) ?? -1
+        if duration_ms >= 0 && duration_ms <= 3600000 { .duration_ms = duration_ms }
+      }
+
+      error_class = string(event.error_class) ?? ""
+      if includes(["none", "canceled", "deadline_exceeded", "database", "network_timeout", "network", "internal"], error_class) {
+        .error_class = error_class
+      }
+      security_event = string(event.security_event) ?? ""
+      if security_event == "nonce_replay" { .security_event = security_event }
+      runtime_role = string(event.runtime_role) ?? ""
+      if includes(["combined", "api", "worker"], runtime_role) { .runtime_role = runtime_role }
+      environment = string(event.environment) ?? ""
+      if environment == "production" { .environment = environment }
+
+      game_id = string(event.game_id) ?? ""
+      if match(game_id, r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$') { .game_id = game_id }
+      definition_version = string(event.definition_version) ?? ""
+      if match(definition_version, r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') {
+        .definition_version = definition_version
+      }
+      definition_hash = string(event.definition_hash) ?? ""
+      if match(definition_hash, r'^[0-9a-f]{64}$') { .definition_hash = definition_hash }
+
+      if is_integer(event.operators) {
+        operators = to_int(event.operators) ?? -1
+        if operators >= 0 && operators <= 100000 { .operators = operators }
+      }
+      if is_integer(event.connection_limit) {
+        connection_limit = to_int(event.connection_limit) ?? -1
+        if connection_limit >= 1 && connection_limit <= 1000000 { .connection_limit = connection_limit }
+      }
+      if is_boolean(event.outbox_delivery_enabled) {
+        .outbox_delivery_enabled = event.outbox_delivery_enabled
+      }
+      if is_integer(event.claimed) {
+        claimed = to_int(event.claimed) ?? -1
+        if claimed >= 0 && claimed <= 1000000 { .claimed = claimed }
+      }
+      if is_integer(event.published) {
+        published = to_int(event.published) ?? -1
+        if published >= 0 && published <= 1000000 { .published = published }
+      }
+      if is_integer(event.failed) {
+        failed = to_int(event.failed) ?? -1
+        if failed >= 0 && failed <= 1000000 { .failed = failed }
+      }
+      if is_integer(event.lease_lost) {
+        lease_lost = to_int(event.lease_lost) ?? -1
+        if lease_lost >= 0 && lease_lost <= 1000000 { .lease_lost = lease_lost }
+      }
+
+      # 最后再按固定 msg 映射重建。即使第三方 JSON 伪造了合法形态的 allowlist 字段，
+      # 认证告警也不能携带 game_id，HTTP 日志也不能携带 definition_hash。
+      sanitized = .
+      . = { "service": "rgs-server" }
+      if is_timestamp(sanitized.time) { .time = sanitized.time }
+      if is_string(sanitized.level) { .level = sanitized.level }
+      if fixed_unparseable {
+        .message = "unparseable-log-redacted"
+        .parse_error = true
+      } else if !known_message {
+        .msg = "unknown-structured-log-redacted"
+      } else {
+        .msg = message
+        if message == "http request" {
+          if is_string(sanitized.route) { .route = sanitized.route }
+          if is_string(sanitized.request_id) { .request_id = sanitized.request_id }
+          if is_string(sanitized.method) { .method = sanitized.method }
+          if is_integer(sanitized.status) { .status = sanitized.status }
+          if is_string(sanitized.status_class) { .status_class = sanitized.status_class }
+          if is_integer(sanitized.duration_ms) { .duration_ms = sanitized.duration_ms }
+        } else if message == "http panic recovered" {
+          if is_string(sanitized.request_id) { .request_id = sanitized.request_id }
+          if is_string(sanitized.method) { .method = sanitized.method }
+          if is_integer(sanitized.duration_ms) { .duration_ms = sanitized.duration_ms }
+        } else if message == "public RGS listener started" {
+          if is_string(sanitized.environment) { .environment = sanitized.environment }
+          if is_string(sanitized.runtime_role) { .runtime_role = sanitized.runtime_role }
+          if is_string(sanitized.game_id) { .game_id = sanitized.game_id }
+          if is_string(sanitized.definition_version) { .definition_version = sanitized.definition_version }
+          if is_string(sanitized.definition_hash) { .definition_hash = sanitized.definition_hash }
+          if is_integer(sanitized.operators) { .operators = sanitized.operators }
+          if is_boolean(sanitized.outbox_delivery_enabled) { .outbox_delivery_enabled = sanitized.outbox_delivery_enabled }
+          if is_integer(sanitized.connection_limit) { .connection_limit = sanitized.connection_limit }
+        } else if message == "operations RGS listener started" {
+          if is_string(sanitized.runtime_role) { .runtime_role = sanitized.runtime_role }
+          if is_boolean(sanitized.outbox_delivery_enabled) { .outbox_delivery_enabled = sanitized.outbox_delivery_enabled }
+          if is_integer(sanitized.connection_limit) { .connection_limit = sanitized.connection_limit }
+        } else if includes([
+          "rgs server stopped",
+          "security credential cleanup failed",
+          "recovery backlog observation failed",
+          "round recovery pass failed"
+        ], message) {
+          if is_string(sanitized.error_class) { .error_class = sanitized.error_class }
+        } else if message == "检测到认证随机数重放" {
+          if is_string(sanitized.security_event) { .security_event = sanitized.security_event }
+        } else if message == "outbox dispatch pass failed" {
+          if is_integer(sanitized.claimed) { .claimed = sanitized.claimed }
+          if is_integer(sanitized.published) { .published = sanitized.published }
+          if is_integer(sanitized.failed) { .failed = sanitized.failed }
+          if is_integer(sanitized.lease_lost) { .lease_lost = sanitized.lease_lost }
+          if is_string(sanitized.error_class) { .error_class = sanitized.error_class }
+        } else if message == "outbox publication deferred" {
+          if is_integer(sanitized.claimed) { .claimed = sanitized.claimed }
+          if is_integer(sanitized.published) { .published = sanitized.published }
+          if is_integer(sanitized.failed) { .failed = sanitized.failed }
         }
       }
 
@@ -107,6 +286,7 @@ sinks:
     type: http
     inputs:
       - redact_rgs_sensitive_fields
+      - safe_archive_flush_heartbeat
     # 必须是经过网络与合规审批的 HTTPS/mTLS egress；禁止在 URI 中嵌入用户名或令牌。
     uri: "${RGS_LOG_SINK_URI}"
     method: post
@@ -125,6 +305,9 @@ sinks:
     request:
       timeout_secs: 10
       # 保留 Vector 的近无限默认重试；有限次数会在短时出口故障后丢弃已缓冲批次。
+    tls:
+      verify_certificate: true
+      verify_hostname: true
 
   vector_internal_prometheus:
     type: prometheus_exporter
@@ -134,6 +317,111 @@ sinks:
     # Vector 同时连接受限日志 egress，平台网络策略必须拒绝该网络向 9598 发起连接。
     address: 0.0.0.0:9598
     flush_period_secs: 60
+
+tests:
+  - name: archive flush heartbeat is rebuilt as a fixed four-field safe log
+    inputs:
+      - insert_at: safe_archive_flush_heartbeat
+        type: log
+        log_fields:
+          service: attacker-controlled
+          token: nested-secret
+          labels:
+            player_id: private-player
+    outputs:
+      - extract_from: safe_archive_flush_heartbeat
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(length(keys(.)), 4)
+              assert_eq!(.service, "vector")
+              assert!(is_timestamp(.time))
+              assert_eq!(.level, "INFO")
+              assert_eq!(.msg, "archive flush heartbeat")
+
+  - name: nested secrets cannot cross the strict RGS allowlist
+    inputs:
+      - insert_at: normalize_rgs_json
+        type: log
+        log_fields:
+          message: >-
+            {"level":"INFO","msg":"http request","route":"client.spin","request_id":"sha256:295c30089dbcb988c0988e4ac2ababa72182e0cc2c81d9d6e5b426e98d7d48ee","method":"POST","status":200,"status_class":"2xx","duration_ms":7,"request":{"headers":{"authorization":"Bearer nested-secret"}},"payload":{"walletSessionId":"nested-wallet-secret","wallet_session_id":"nested-wallet-snake-secret"}}
+    outputs:
+      - extract_from: redact_rgs_sensitive_fields
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(., {
+                "service": "rgs-server",
+                "level": "INFO",
+                "msg": "http request",
+                "route": "client.spin",
+                "request_id": "sha256:295c30089dbcb988c0988e4ac2ababa72182e0cc2c81d9d6e5b426e98d7d48ee",
+                "method": "POST",
+                "status": 200,
+                "status_class": "2xx",
+                "duration_ms": 7
+              })
+  - name: unknown structured messages cannot smuggle secrets through allowed field names
+    inputs:
+      - insert_at: normalize_rgs_json
+        type: log
+        log_fields:
+          message: >-
+            {"level":"WARN","msg":"third-party dynamic message","game_id":"private-player","request_id":"private-player"}
+    outputs:
+      - extract_from: redact_rgs_sensitive_fields
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(., {
+                "service": "rgs-server",
+                "level": "WARN",
+                "msg": "unknown-structured-log-redacted"
+              })
+  - name: known security messages cannot borrow unrelated allowed field names
+    inputs:
+      - insert_at: normalize_rgs_json
+        type: log
+        log_fields:
+          message: >-
+            {"level":"WARN","msg":"检测到认证随机数重放","security_event":"nonce_replay","game_id":"private-player","request_id":"private-player"}
+    outputs:
+      - extract_from: redact_rgs_sensitive_fields
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(., {
+                "service": "rgs-server",
+                "level": "WARN",
+                "msg": "检测到认证随机数重放",
+                "security_event": "nonce_replay"
+              })
+  - name: approved RGS startup identity fields remain observable
+    inputs:
+      - insert_at: normalize_rgs_json
+        type: log
+        log_fields:
+          message: >-
+            {"level":"INFO","msg":"public RGS listener started","environment":"production","runtime_role":"api","game_id":"primalrampage-prod","definition_version":"ci-definition-v2","definition_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","operators":2,"outbox_delivery_enabled":false,"connection_limit":512,"request_id":"private-player"}
+    outputs:
+      - extract_from: redact_rgs_sensitive_fields
+        conditions:
+          - type: vrl
+            source: |-
+              assert_eq!(., {
+                "service": "rgs-server",
+                "level": "INFO",
+                "msg": "public RGS listener started",
+                "environment": "production",
+                "runtime_role": "api",
+                "game_id": "primalrampage-prod",
+                "definition_version": "ci-definition-v2",
+                "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "operators": 2,
+                "outbox_delivery_enabled": false,
+                "connection_limit": 512
+              })
 
 # 安全不变量：该配置不决定删除周期。接收端必须按 retention-policy.example.yml
 # 的已批准副本实施保留、legal hold、可审计删除和容量告警。

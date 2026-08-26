@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Slots Game RGS Integration API
-  version: 1.0.0
+  version: 1.2.0
   summary: Operator and player-client contract for the clean-room RGS.
   description: |
     This draft documents the production RGS HTTP boundary implemented under
@@ -12,9 +12,11 @@ info:
 
     Operator routes use the repository's fixed Ed25519 HTTP Message Signature
     profiles for requests and responses. Client routes use a short-lived
-    RGS-ACCESS v2 compact bearer token issued after a one-time launch-code
+    RGS-ACCESS v3 compact bearer token issued after a one-time launch-code
     exchange and replaced only while the prior token and durable session remain
-    valid. Signed endpoints do not accept query strings.
+    valid. Version 3 binds the token to a durable transport generation, so a
+    relaunch permanently fences every older browser token. Signed endpoints do
+    not accept query strings.
 
     Every public POST body has an 8192-byte wire limit, including JSON
     whitespace and escapes; the launch-code exchange has a narrower 4096-byte
@@ -58,7 +60,10 @@ paths:
         revision, or feature state. For an existing session `balanceMinor` and
         `sessionTtlSeconds` are creation-only inputs and do not replace durable
         state. Within the same operator/session scope, reusing a key with
-        different request data is rejected. Every
+        different request data is rejected. `idleDisconnectSeconds` is a
+        signed operator policy input and cannot be supplied by the browser.
+        It replaces the idle deadline only when a newly issued launch code is
+        exchanged; it never changes the absolute session expiry. Every
         response after the pre-authentication capacity gate is signed when a
         tenant response key can be selected. At process capacity, the gate may
         return a generic unsigned, data-free 503 CAPACITY_UNAVAILABLE with
@@ -132,8 +137,8 @@ paths:
       summary: Read a persisted round for reconciliation
       description: |
         POST keeps tenant/session/round identifiers out of query logs. A 200
-        response may contain any persisted status, including WALLET_PENDING or
-        MANUAL_REVIEW. Only COMMITTED includes `result`. Responses follow the
+        response may contain any persisted status, including RISK_PENDING,
+        WALLET_PENDING or MANUAL_REVIEW. Only COMMITTED includes `result`. Responses follow the
         same signing/fail-closed rule as the launch route.
       security:
         - operatorMessageSignature: []
@@ -188,6 +193,77 @@ paths:
         '503':
           $ref: '#/components/responses/OperatorUnavailable'
 
+  /operator/v1/risk-decisions:
+    post:
+      tags: [Operator]
+      operationId: decideHighValueRiskReview
+      summary: Approve or reject one persisted high-value payout candidate
+      description: |
+        This route exists only when the high-value risk policy is explicitly
+        enabled. It uses the same Ed25519 request verification, signed
+        Idempotency-Key, nonce consumption, tenant binding, response signing,
+        and admission boundary as the other operator routes. An approval makes
+        the already-persisted wallet command eligible for a background claim;
+        it does not call the wallet in the HTTP transaction. A rejection never
+        calls the wallet. Exact retries return the original decision time.
+        Candidate grids, wins, events and payout amounts are never returned.
+      security:
+        - operatorMessageSignature: []
+      parameters:
+        - $ref: '#/components/parameters/OperatorId'
+        - $ref: '#/components/parameters/SignedRequestId'
+        - $ref: '#/components/parameters/Nonce'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/ContentDigest'
+        - $ref: '#/components/parameters/SignatureInput'
+        - $ref: '#/components/parameters/Signature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RiskDecisionRequest'
+      responses:
+        '200':
+          description: Decision persisted, or the exact signed idempotent decision replayed.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Content-Digest:
+              $ref: '#/components/headers/ContentDigest'
+            Signature-Input:
+              $ref: '#/components/headers/SignatureInput'
+            Signature:
+              $ref: '#/components/headers/Signature'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskDecisionSuccessEnvelope'
+        '400':
+          $ref: '#/components/responses/SignedError'
+        '401':
+          $ref: '#/components/responses/SignedError'
+        '403':
+          $ref: '#/components/responses/SignedError'
+        '404':
+          $ref: '#/components/responses/SignedError'
+        '409':
+          $ref: '#/components/responses/SignedError'
+        '413':
+          $ref: '#/components/responses/SignedError'
+        '415':
+          $ref: '#/components/responses/SignedError'
+        '405':
+          $ref: '#/components/responses/SignedMethodNotAllowed'
+        '423':
+          $ref: '#/components/responses/SignedError'
+        '429':
+          $ref: '#/components/responses/SignedRateLimited'
+        '500':
+          $ref: '#/components/responses/SignedError'
+        '503':
+          $ref: '#/components/responses/OperatorUnavailable'
+
   /client/v1/sessions/exchange:
     post:
       tags: [Client]
@@ -196,10 +272,15 @@ paths:
       description: |
         The code is stored only as a digest and consumed atomically under its
         operator/session binding. Do not send Authorization on this endpoint.
-        Do not cache or persist the returned bearer token outside memory.
+        Exchanging a new signed handoff for the same durable session advances
+        its transport generation and resets only its idle deadline. Balance,
+        revision, feature state, pending result and absolute expiry are kept.
+        Every token from an older generation remains permanently invalid. Do
+        not cache or persist the returned bearer token outside memory.
       security: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TraceParent'
       requestBody:
         required: true
         content:
@@ -246,18 +327,20 @@ paths:
       operationId: refreshClientSession
       summary: Replace a still-valid access token for an active session
       description: |
-        Requires a currently valid RGS-ACCESS v2 bearer token and the complete
+        Requires a currently valid RGS-ACCESS v3 bearer token and the complete
         session binding. The replacement token remains bound to the same
         operator, player, wallet session, RGS session, game definition hash,
         currency and jurisdiction. Its lifetime is no longer than
         RGS_ACCESS_TOKEN_TTL and is clipped to the durable session expiry.
-        Refresh does not extend the session, unblock MANUAL_REVIEW, or provide
-        a grace path for an expired token. Replace the old in-memory token only
-        after this response succeeds.
+        Refresh does not extend either the idle deadline or absolute session
+        lifetime, unblock MANUAL_REVIEW, or provide a grace path for an expired
+        or idle-timed-out token. Replace the old in-memory token only after this
+        response succeeds.
       security:
         - clientAccessToken: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TraceParent'
       requestBody:
         required: true
         content:
@@ -280,7 +363,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '410':
-          description: The durable RGS session has expired and cannot be refreshed.
+          description: The durable session expired, or idle timeout returned the stable SESSION_TIMEOUT code; neither can be refreshed.
           content:
             application/json:
               schema:
@@ -304,6 +387,68 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
 
+  /client/v1/sessions/status:
+    post:
+      tags: [Client]
+      operationId: getClientSessionStatus
+      summary: Probe the authoritative idle deadline without renewing it
+      description: |
+        Authenticated read-only probe for reconnect and browser clock
+        calibration. The complete token/session binding is required. This
+        route checks the durable transport generation and database clock, but
+        never rotates the token, extends the idle deadline, changes economic
+        state, or enters new-intent/spin admission. Active sessions return the
+        minimal flat response below. An elapsed idle deadline returns HTTP 410
+        with the stable error code SESSION_TIMEOUT. Round status, pending-result
+        recovery and exact result ACK remain available with the current
+        generation so already committed outcomes are never lost or regenerated.
+      security:
+        - clientAccessToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TraceParent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionStatusRequest'
+      responses:
+        '200':
+          description: Current active transport state and authoritative server clock.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatusSuccessEnvelope'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/ClientUnauthorized'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '410':
+          description: The idle deadline elapsed (SESSION_TIMEOUT) or the absolute session lifetime expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '413':
+          $ref: '#/components/responses/Error'
+        '415':
+          $ref: '#/components/responses/Error'
+        '405':
+          $ref: '#/components/responses/ClientMethodNotAllowed'
+        '423':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
   /client/v1/spins:
     post:
       tags: [Client]
@@ -318,6 +463,7 @@ paths:
         - clientAccessToken: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TraceParent'
       requestBody:
         required: true
         content:
@@ -330,7 +476,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SpinSuccessEnvelope'
+                $ref: '#/components/schemas/ClientSpinSuccessEnvelope'
         '202':
           description: Settlement is pending. Query status with the same binding and round ID.
           content:
@@ -374,6 +520,7 @@ paths:
         - clientAccessToken: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TraceParent'
       requestBody:
         required: true
         content:
@@ -386,7 +533,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoundStatusSuccessEnvelope'
+                $ref: '#/components/schemas/ClientRoundStatusSuccessEnvelope'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -427,6 +574,7 @@ paths:
         - clientAccessToken: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TraceParent'
         - $ref: '#/components/parameters/ClientOperatorId'
       responses:
         '200':
@@ -443,6 +591,12 @@ paths:
           $ref: '#/components/responses/ClientUnauthorized'
         '404':
           $ref: '#/components/responses/Error'
+        '410':
+          description: Token transport generation was fenced by relaunch (SESSION_TIMEOUT); use the current launch generation for recovery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '405':
           $ref: '#/components/responses/ClientMethodNotAllowed'
         '423':
@@ -468,6 +622,7 @@ paths:
         - clientAccessToken: []
       parameters:
         - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/TraceParent'
       requestBody:
         required: true
         content:
@@ -491,6 +646,12 @@ paths:
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
+        '410':
+          description: Token transport generation was fenced by relaunch (SESSION_TIMEOUT); the pending cursor is unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '405':
           $ref: '#/components/responses/ClientMethodNotAllowed'
         '423':
@@ -607,8 +768,8 @@ components:
     clientAccessToken:
       type: http
       scheme: bearer
-      bearerFormat: RGS-ACCESS-v2
-      description: Fixed compact Ed25519 v2 token, including game-definition hash; not a general JWT profile.
+      bearerFormat: RGS-ACCESS-v3
+      description: Fixed compact Ed25519 v3 token, including game-definition hash and durable transport generation; not a general JWT profile.
     operationsBearer:
       type: http
       scheme: bearer
@@ -637,6 +798,14 @@ components:
       schema:
         $ref: '#/components/schemas/Identifier'
       description: Optional client correlation ID. The RGS generates one when absent or invalid.
+    TraceParent:
+      name: traceparent
+      in: header
+      required: false
+      schema:
+        type: string
+        pattern: '^00-[0-9a-f]{32}-[0-9a-f]{16}-0[0-3]$'
+      description: Optional W3C Trace Context Level 2 parent. Public ingress strips tracestate and baggage, validates a single bounded lowercase value, and resamples untrusted remote Trace IDs with a process-secret keyed sampler.
     ClientOperatorId:
       name: X-Operator-Id
       in: header
@@ -929,7 +1098,7 @@ components:
       enum: [BASE, FREE_SPIN, BONUS]
     RoundState:
       type: string
-      enum: [PREPARED, WALLET_PENDING, COMMITTED, REJECTED, MANUAL_REVIEW]
+      enum: [PREPARED, RISK_PENDING, WALLET_PENDING, COMMITTED, REJECTED, MANUAL_REVIEW]
 
     SessionBinding:
       type: object
@@ -978,6 +1147,7 @@ components:
         - jurisdiction
         - balanceMinor
         - sessionTtlSeconds
+        - idleDisconnectSeconds
       properties:
         playerId:
           $ref: '#/components/schemas/Identifier'
@@ -1009,6 +1179,11 @@ components:
           minimum: 60
           maximum: 86400
           description: Creation-only lifetime. Relaunch keeps the persisted absolute session expiry and never extends it; retries with one Idempotency-Key must still keep the complete request unchanged.
+        idleDisconnectSeconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+          description: Signed operator policy constrained by the RGS deployment minimum and maximum. It is never accepted from the browser. A relaunch replaces this transport-only deadline at exchange without changing durable economic state or absolute expiry.
 
     ExchangeLaunchRequest:
       type: object
@@ -1027,6 +1202,12 @@ components:
 
     SessionRefreshRequest:
       description: Exact token/session binding required for access-token replacement.
+      unevaluatedProperties: false
+      allOf:
+        - $ref: '#/components/schemas/SessionBinding'
+
+    SessionStatusRequest:
+      description: Exact token/session binding required for the read-only idle probe.
       unevaluatedProperties: false
       allOf:
         - $ref: '#/components/schemas/SessionBinding'
@@ -1056,6 +1237,24 @@ components:
           properties:
             roundId:
               $ref: '#/components/schemas/Identifier'
+
+    RiskDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [operatorId, sessionId, roundId, decision, reasonCode]
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        roundId:
+          $ref: '#/components/schemas/Identifier'
+        decision:
+          type: string
+          enum: [APPROVE, REJECT]
+        reasonCode:
+          type: string
+          enum: [RISK_APPROVED, RISK_POLICY_REJECTED, RISK_FRAUD_SUSPECTED, RISK_OPERATOR_REJECTED]
 
     ResultDeliveryAcknowledgementRequest:
       unevaluatedProperties: false
@@ -1110,7 +1309,11 @@ components:
     ExchangeResponse:
       type: object
       additionalProperties: false
-      required: [accessToken, session]
+      description: >-
+        Session credential bundle. The nested SessionResponse always carries
+        the required engineRulesVersion and clients must validate it before
+        accepting the session.
+      required: [accessToken, session, serverTime]
       properties:
         accessToken:
           type: string
@@ -1118,6 +1321,10 @@ components:
           maxLength: 8192
         session:
           $ref: '#/components/schemas/SessionResponse'
+        serverTime:
+          type: string
+          format: date-time
+          description: Authoritative storage/service time used to calibrate the client before arming the idle deadline.
     SessionResponse:
       type: object
       additionalProperties: false
@@ -1127,11 +1334,13 @@ components:
         - gameId
         - definitionVersion
         - definitionHash
+        - engineRulesVersion
         - currency
         - currencyExponent
         - jurisdiction
         - status
         - expiresAt
+        - idleDisconnectAt
         - balanceMinor
         - revision
         - sequence
@@ -1147,6 +1356,13 @@ components:
           $ref: '#/components/schemas/Identifier'
         definitionHash:
           $ref: '#/components/schemas/Digest'
+        engineRulesVersion:
+          allOf:
+            - $ref: '#/components/schemas/Identifier'
+          description: >-
+            Server-authoritative engine semantics identity bound to the game
+            definition. The client must match this value exactly to its
+            compiled engine/presentation rules before accepting the session.
         currency:
           $ref: '#/components/schemas/Currency'
         currencyExponent:
@@ -1161,6 +1377,10 @@ components:
         expiresAt:
           type: string
           format: date-time
+        idleDisconnectAt:
+          type: string
+          format: date-time
+          description: Current server-authoritative idle deadline, clipped to the immutable absolute expiry.
         balanceMinor:
           $ref: '#/components/schemas/MoneyMinor'
         revision:
@@ -1170,13 +1390,41 @@ components:
         feature:
           $ref: '#/components/schemas/FeatureState'
 
-    SpinSuccessEnvelope:
+    SessionStatusSuccessEnvelope:
       type: object
       additionalProperties: false
       required: [data, requestId]
       properties:
         data:
-          $ref: '#/components/schemas/SpinResult'
+          $ref: '#/components/schemas/SessionStatusResponse'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    SessionStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [operatorId, sessionId, status, idleDisconnectAt, serverTime]
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        status:
+          type: string
+          enum: [ACTIVE]
+        idleDisconnectAt:
+          type: string
+          format: date-time
+        serverTime:
+          type: string
+          format: date-time
+
+    ClientSpinSuccessEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/ClientSpinResult'
         requestId:
           $ref: '#/components/schemas/Identifier'
     RoundStatusSuccessEnvelope:
@@ -1203,6 +1451,63 @@ components:
           $ref: '#/components/schemas/RoundState'
         result:
           $ref: '#/components/schemas/SpinResult'
+
+    ClientRoundStatusSuccessEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/ClientRoundStatusResponse'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    ClientRoundStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [operatorId, sessionId, roundId, status]
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        roundId:
+          $ref: '#/components/schemas/Identifier'
+        status:
+          $ref: '#/components/schemas/RoundState'
+        result:
+          $ref: '#/components/schemas/ClientSpinResult'
+
+    RiskDecisionSuccessEnvelope:
+      type: object
+      additionalProperties: false
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/RiskDecisionResponse'
+        requestId:
+          $ref: '#/components/schemas/Identifier'
+    RiskDecisionResponse:
+      type: object
+      additionalProperties: false
+      required: [operatorId, sessionId, roundId, decision, status, decidedAt, replayed]
+      properties:
+        operatorId:
+          $ref: '#/components/schemas/Identifier'
+        sessionId:
+          $ref: '#/components/schemas/Identifier'
+        roundId:
+          $ref: '#/components/schemas/Identifier'
+        decision:
+          type: string
+          enum: [APPROVE, REJECT]
+        status:
+          type: string
+          enum: [PREPARED, REJECTED]
+        decidedAt:
+          type: string
+          format: date-time
+        replayed:
+          type: boolean
 
     PendingResultSuccessEnvelope:
       type: object
@@ -1237,7 +1542,7 @@ components:
             this value and must not infer the origin from the post-round
             session or result.
         result:
-          $ref: '#/components/schemas/SpinResult'
+          $ref: '#/components/schemas/ClientSpinResult'
     ResultDeliveryAcknowledgementSuccessEnvelope:
       type: object
       additionalProperties: false
@@ -1269,6 +1574,12 @@ components:
     SpinResult:
       type: object
       additionalProperties: false
+      description: >-
+        HTTP projection of a committed result. The nominal/paid award split is
+        persisted under the internal ResultSchemaPaidFactsV1 identity
+        (`rgs-spin-result-paid-facts-v1`). That marker is intentionally not an
+        HTTP response property: resultHash follows the stored result schema,
+        and historical pre-marker replays retain their legacy hash projection.
       required:
         - operatorId
         - sessionId
@@ -1329,6 +1640,10 @@ components:
           $ref: '#/components/schemas/MoneyMinor'
         totalWinMinor:
           $ref: '#/components/schemas/MoneyMinor'
+        idleDisconnectAt:
+          type: string
+          format: date-time
+          description: Transport-only current session deadline. Required on every client result/recovery response, omitted from operator reconciliation when no client transport is projected, and excluded from economic result JSON and hashes.
         grid:
           type: array
           minItems: 3
@@ -1352,6 +1667,12 @@ components:
             $ref: '#/components/schemas/GameEvent'
         feature:
           $ref: '#/components/schemas/FeatureState'
+    ClientSpinResult:
+      description: Client-facing committed result with a freshly hydrated authoritative idle deadline.
+      allOf:
+        - $ref: '#/components/schemas/SpinResult'
+        - type: object
+          required: [idleDisconnectAt]
     Cell:
       type: object
       additionalProperties: false
@@ -1411,7 +1732,7 @@ components:
     PathAward:
       type: object
       additionalProperties: false
-      required: [cells, multiplier, baseAmountMinor, amountMinor]
+      required: [cells, multiplier, baseAmountMinor, nominalAmountMinor, amountMinor]
       properties:
         cells:
           type: array
@@ -1426,8 +1747,21 @@ components:
           allOf:
             - $ref: '#/components/schemas/MoneyMinor'
           description: Server-resolved amount shown before the WILD multiplier merge; clients must not derive it by division.
+        nominalAmountMinor:
+          allOf:
+            - $ref: '#/components/schemas/MoneyMinor'
+          description: >-
+            Full mathematical path award after the WILD multiplier and before
+            the signed whole-game maximum-win budget is applied. Zero is valid
+            for an individual path after deterministic minor-unit rounding;
+            the aggregate Win nominal amount remains positive.
         amountMinor:
-          $ref: '#/components/schemas/MoneyMinor'
+          allOf:
+            - $ref: '#/components/schemas/MoneyMinor'
+          description: >-
+            Amount actually settled for this path after the maximum-win
+            budget. Zero is valid when the nominal path remains in the result
+            after the budget has been exhausted.
     Win:
       type: object
       additionalProperties: false
@@ -1435,7 +1769,7 @@ components:
         One aggregate paying-symbol record. multiplier is optional presentation
         metadata and is emitted only when every pathAward has the same
         multiplier; mixed records retain only their per-path multipliers.
-      required: [id, symbol, ways, amountMinor, cells, pathAwards]
+      required: [id, symbol, ways, nominalAmountMinor, amountMinor, cells, pathAwards]
       properties:
         id:
           $ref: '#/components/schemas/Identifier'
@@ -1444,8 +1778,19 @@ components:
         ways:
           type: integer
           minimum: 1
+        nominalAmountMinor:
+          allOf:
+            - $ref: '#/components/schemas/PositiveMoneyMinor'
+          description: >-
+            Sum of nominalAmountMinor across every preserved pathAward before
+            the signed whole-game maximum-win budget is applied.
         amountMinor:
-          $ref: '#/components/schemas/PositiveMoneyMinor'
+          allOf:
+            - $ref: '#/components/schemas/MoneyMinor'
+          description: >-
+            Sum actually settled across pathAwards after the maximum-win
+            budget. Zero is valid when all nominal paths are preserved after
+            the budget has been exhausted.
         multiplier:
           allOf:
             - $ref: '#/components/schemas/PositiveIntegerString'

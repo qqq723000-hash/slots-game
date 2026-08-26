@@ -30,9 +30,11 @@ func TestExpectedSchemaManifestIsFrozen(t *testing.T) {
 		{Version: "0008_wallet_recovery_scheduler", Checksum: "73c7c28413a4c7313b5f451f95750e2a6be986fca21717e48763c9f9f4062420"},
 		{Version: "0009_postgres_hot_path", Checksum: "fe05563382fa6f558ecfb8944658740f718551032274a81521711b2d25e8314c"},
 		{Version: "0010_wallet_recovery_registry_invariant", Checksum: "5fc3fe96f71a66bd252713751e36139000eb6e503f981fb520df7e5f3412ce17"},
+		{Version: "0011_high_value_risk_review", Checksum: "260ddb33a04620d3ca2b2300855a94485ff57befd6101a7544471d6441288246"},
+		{Version: "0012_session_idle_disconnect", Checksum: "bae4016984f9099d06c8b833348f4d6214b37fb9e67e3be87e0f307db4182580"},
 	}
 	if manifest.Version != want[len(want)-1].Version ||
-		manifest.SHA256 != "fab6e6497d8fbc3bbeba8f77282841448e97bb6434dadb47c4b7b9b7ee40f1a5" ||
+		manifest.SHA256 != "4cd39a6a1377be77c0b1d9b3e911a05e4597bc6444dbfca4fcdc31571e1f0241" ||
 		!reflect.DeepEqual(manifest.Migrations, want) {
 		t.Fatalf("manifest = %+v, want version/checksum freeze %+v", manifest, want)
 	}
@@ -97,6 +99,8 @@ func TestSchemaCheckRequiresExactLedger(t *testing.T) {
 			walletRecoveryRegistryUpdateTriggerDefinition,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"policy_ok"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta(sessionIdleTransportInvariantSQL)).
+		WillReturnRows(sqlmock.NewRows([]string{"policy_ok"}).AddRow(true))
 	if err := check.Check(context.Background()); err != nil {
 		t.Fatalf("Check() error = %v", err)
 	}
@@ -145,6 +149,54 @@ func TestWalletRecoveryRegistryInvariantFailsClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestSessionIdleTransportInvariantFailsClosed(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		rows      *sqlmock.Rows
+		queryErr  error
+		wantError error
+	}{
+		{
+			name: "constraint mismatch", rows: sqlmock.NewRows([]string{"policy_ok"}).AddRow(false),
+			wantError: ErrSchemaState,
+		},
+		{
+			name: "catalog query failure", queryErr: driver.ErrBadConn,
+			wantError: ErrSchemaState,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			database, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			expectation := mock.ExpectQuery(regexp.QuoteMeta(sessionIdleTransportInvariantSQL))
+			if test.queryErr != nil {
+				expectation.WillReturnError(test.queryErr)
+			} else {
+				expectation.WillReturnRows(test.rows)
+			}
+			if err := verifySessionIdleTransportInvariant(context.Background(), database); !errors.Is(err, test.wantError) {
+				t.Fatalf("verifySessionIdleTransportInvariant() error = %v, want %v", err, test.wantError)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	for _, required := range []string{
+		"item.convalidated",
+		"pg_catalog.pg_get_expr(item.conbin, item.conrelid)",
+		"'(idle_disconnect_at<=expires_at)'",
+		"item.conname='rgs_sessions_idle_disconnect_before_absolute_expiry'",
+	} {
+		if !strings.Contains(sessionIdleTransportInvariantSQL, required) {
+			t.Fatalf("session idle schema invariant is missing %q", required)
+		}
 	}
 }
 

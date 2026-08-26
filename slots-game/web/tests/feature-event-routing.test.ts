@@ -30,6 +30,7 @@ const allEvents: readonly FeatureEvent[] = [
   { type: "vault.awarded", reel: 1, row: 1, multiplier: 20, amountMinor: "2000" },
   { type: "free_spin.awarded", count: 1, reel: 1, row: 1 },
   { type: "free_spin.cap_reached", reel: 1, row: 1 },
+  { type: "win_cap.reached", multiplier: 2_500, cumulativeWinMinor: "250000" },
   { type: "free_spins.completed", mode: "EXPANSION", awarded: 9, cumulativeWinMinor: "12500" },
 ];
 
@@ -52,6 +53,7 @@ describe("authoritative feature event routing", () => {
       ["vault.awarded", "vault-award"],
       ["free_spin.awarded", "extra-spin"],
       ["free_spin.cap_reached", "free-spin-cap"],
+      ["win_cap.reached", "none"],
       ["free_spins.completed", "free-spin-summary"],
     ]);
   });
@@ -133,5 +135,19 @@ describe("authoritative feature event routing", () => {
       .toMatchObject({ visual: "extra-spin", audio: false, environment: false, announce: false });
     expect(featureEventRoute({ type: "free_spin.cap_reached", reel: 1, row: 1 }))
       .toMatchObject({ visual: "free-spin-cap", audio: false, environment: false, announce: false });
+  });
+
+  it("observes the economic win-cap boundary without inventing a player-facing effect", () => {
+    expect(featureEventRoute({
+      type: "win_cap.reached",
+      multiplier: 2_500,
+      cumulativeWinMinor: "250000",
+    })).toEqual({
+      visual: "none",
+      beforeReels: false,
+      environment: false,
+      audio: false,
+      announce: false,
+    });
   });
 });

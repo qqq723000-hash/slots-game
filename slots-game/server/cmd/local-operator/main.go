@@ -22,12 +22,23 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"slots-game/server/internal/operator"
+	"slots-game/server/internal/safelog"
 )
 
 func main() {
 	if err := run(os.Args[1:], os.Getenv); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		logRuntimeFailure(
+			slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
+			err,
+		)
 		os.Exit(1)
+	}
+}
+
+func logRuntimeFailure(logger *slog.Logger, err error) {
+	if logger != nil {
+		// 启动错误可能包含数据库地址、秘密文件路径、证书名或监听地址，只记录固定错误族。
+		logger.Error("local operator stopped", "error_class", safelog.ErrorClass(err))
 	}
 }
 
@@ -172,6 +183,7 @@ func serve(getenv func(string) string) error {
 		DefinitionHash: runtime.Config.DefinitionHash, Currency: runtime.Config.Currency,
 		CurrencyExponent: runtime.Config.CurrencyExponent, Jurisdiction: runtime.Config.Jurisdiction,
 		InitialBalanceMinor: runtime.Config.InitialBalanceMinor, SessionTTL: runtime.Config.SessionTTL,
+		IdleDisconnect:         runtime.Config.IdleDisconnect,
 		DefaultPlayerID:        runtime.Config.DefaultPlayerID,
 		DefaultWalletAccountID: runtime.Config.DefaultWalletAccountID,
 		AdminToken:             runtime.AdminToken, Store: store, Client: launchClient, Metrics: metrics,
@@ -248,19 +260,62 @@ func serve(getenv func(string) string) error {
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
-		return fmt.Errorf("serve local operator: %w", err)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), runtime.Config.ShutdownTimeout)
+		defer cancel()
+		return shutdownLocalOperatorAfterServeFailure(shutdownCtx, server, err)
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), runtime.Config.ShutdownTimeout)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown local operator: %w", err)
+		shutdownErr := shutdownLocalOperatorHTTPServer(shutdownCtx, server)
+		serveErr := <-serveError
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
+		} else if serveErr != nil {
+			serveErr = fmt.Errorf("close local operator: %w", serveErr)
 		}
-		if err := <-serveError; err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("close local operator: %w", err)
+		if err := errors.Join(shutdownErr, serveErr); err != nil {
+			return err
 		}
 		logger.Info("local operator stopped")
 		return nil
 	}
+}
+
+type localOperatorHTTPServer interface {
+	Shutdown(context.Context) error
+	Close() error
+}
+
+func shutdownLocalOperatorHTTPServer(ctx context.Context, server localOperatorHTTPServer) error {
+	if server == nil {
+		return nil
+	}
+	if err := server.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		failures := []error{fmt.Errorf("shutdown local operator: %w", err)}
+		// Shutdown 超时后必须先强制断开活动请求，再由上层释放数据库与落盘存储。
+		// 否则仍运行的 handler 会在资源关闭后继续读写并遗留协程或部分响应。
+		if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
+			failures = append(failures, fmt.Errorf("force-close local operator: %w", closeErr))
+		}
+		return errors.Join(failures...)
+	}
+	return nil
+}
+
+func shutdownLocalOperatorAfterServeFailure(
+	ctx context.Context,
+	server localOperatorHTTPServer,
+	serveErr error,
+) error {
+	if serveErr == nil || errors.Is(serveErr, http.ErrServerClosed) {
+		return nil
+	}
+	// Listener 在运行期异常退出时，已接收的 handler 仍可能访问数据库和落盘存储。
+	// 必须先完成有界排空或强制断连，再允许 serve 返回并执行上层资源清理 defer。
+	return errors.Join(
+		fmt.Errorf("serve local operator: %w", serveErr),
+		shutdownLocalOperatorHTTPServer(ctx, server),
+	)
 }
 
 func openDatabase(databaseURL string) (*sql.DB, error) {
@@ -351,7 +406,28 @@ type statusRecorder struct {
 	status int
 }
 
+// Unwrap 让 http.ResponseController 在访问 Flush、Hijack 或 deadline 能力时继续
+// 检查底层 writer；中间件只观测状态，不能截断标准可选接口。
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+// FlushError 在底层执行刷新路径后记录已隐式提交的 200，即使网络刷新失败；
+// ErrNotSupported 没有提交响应，不能提前锁死后续 handler 仍可提交的错误状态。
+func (r *statusRecorder) FlushError() error {
+	err := http.NewResponseController(r.ResponseWriter).Flush()
+	if !errors.Is(err, http.ErrNotSupported) && r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return err
+}
+
 func (r *statusRecorder) WriteHeader(status int) {
+	// 103 等临时响应可以在最终状态前重复发送；101 协议切换本身是最终提交。
+	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
+		if r.status == 0 {
+			r.ResponseWriter.WriteHeader(status)
+		}
+		return
+	}
 	if r.status != 0 {
 		return
 	}
@@ -369,6 +445,8 @@ func (r *statusRecorder) Write(encoded []byte) (int, error) {
 func requestMiddleware(logger *slog.Logger, metrics *serviceMetrics, timeout time.Duration, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		started := time.Now()
+		method := normalizedLocalOperatorMethod(request.Method)
+		route := normalizedLocalOperatorRoute(request.URL.Path)
 		metrics.requests.Add(1)
 		metrics.active.Add(1)
 		defer metrics.active.Add(-1)
@@ -394,13 +472,42 @@ func requestMiddleware(logger *slog.Logger, metrics *serviceMetrics, timeout tim
 				metrics.failures.Add(1)
 			}
 			// Vector 会把 stdout 再投递到 /logs；成功日志接收本身禁止产生日志，避免反馈环。
-			if request.URL.Path != "/logs" || status >= http.StatusBadRequest {
-				logger.Info("http request", "method", request.Method, "path", request.URL.Path,
+			if route != "/logs" || status >= http.StatusBadRequest {
+				logger.Info("http request", "method", method, "route", route,
 					"status", status, "duration_ms", time.Since(started).Milliseconds())
 			}
 		}()
 		next.ServeHTTP(recorder, request.WithContext(ctx))
 	})
+}
+
+func normalizedLocalOperatorMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost:
+		return method
+	default:
+		return "other"
+	}
+}
+
+func normalizedLocalOperatorRoute(path string) string {
+	switch path {
+	case "/",
+		"/launch",
+		"/api/v1/launches",
+		"/rgs/wallet/v1/rounds/apply",
+		"/rgs/wallet/v1/transactions/status",
+		"/rgs/wallet/v1/transactions/rollback",
+		"/audit",
+		"/logs",
+		"/alerts",
+		"/healthz",
+		"/metrics",
+		"/internal/auth/alertmanager":
+		return path
+	default:
+		return "other"
+	}
 }
 
 func (runtime *loadedRuntime) clearSecrets() {

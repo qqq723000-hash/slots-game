@@ -3,6 +3,7 @@ import indexHtml from "../index.html?raw";
 import bootstrapSource from "../src/bootstrap.ts?raw";
 import mainSource from "../src/main.ts?raw";
 import controllerSource from "../src/app/AppController.ts?raw";
+import overlaySource from "../src/ui/DomOverlay.ts?raw";
 import { DomOverlay } from "../src/ui/DomOverlay";
 import type { PreloadProgress } from "../src/startup/PreloadGate";
 
@@ -34,12 +35,14 @@ describe("startup shell contract", () => {
     expect(mainSource).toContain("if (event.persisted)");
     expect(mainSource).toContain("runtimeAvailability(false)");
     expect(mainSource).toContain('disposeApplication("Application page was unloaded")');
-    expect(mainSource).toContain("configuredGateway?.close()");
+    expect(mainSource).toContain("ownedGateway?.close()");
+    expect(mainSource).toContain('disposeApplication("Application launch failed")');
+    expect(mainSource).toContain("configuredGateway = null");
   });
 
   it("不会把渲染装配故障误报为运营方会话失效", () => {
     expect(mainSource).toContain(
-      "presentStartupFailure(\n      error,\n      false,\n      launchGateway.operatorHostOrigin,",
+      "presentStartupFailure(\n      error,\n      false,\n      operatorHostOrigin,",
     );
     expect(mainSource).not.toContain(
       'launchGateway.initialSessionRecoveryMode === "operator-session"',
@@ -71,16 +74,19 @@ describe("startup shell contract", () => {
   });
 
   it("keeps the live loading surface in viewport space before responsive frame layout", () => {
-    expect(controllerSource).toContain('class="launch-loading-host" data-role="launch-host"');
-    expect(controllerSource).toContain('launchHost: requireRole("launch-host")');
+    expect(controllerSource).toContain('const launchHost = document.createElement("div")');
+    expect(controllerSource).toContain('launchHost.className = "launch-loading-host"');
+    expect(controllerSource).toContain('launchHost.dataset.role = "launch-host"');
     expect(controllerSource).toContain("shell.launchHost.appendChild(serverLoader)");
     expect(controllerSource).toContain("overlay.mountLaunchLoading(shell.launchHost)");
     expect(controllerSource).not.toContain("shell.overlayHost.appendChild(serverLoader)");
   });
 
   it("measures a safe-area outer shell and keeps the authored frame as its only scaled child", () => {
-    expect(controllerSource).toContain('class="game-safe-area" data-role="safe-area"');
-    expect(controllerSource).toContain('safeArea: requireRole("safe-area")');
+    expect(controllerSource).toContain('const safeArea = document.createElement("div")');
+    expect(controllerSource).toContain('safeArea.className = "game-safe-area"');
+    expect(controllerSource).toContain('safeArea.dataset.role = "safe-area"');
+    expect(controllerSource).toContain("root.replaceChildren(viewport)");
     expect(controllerSource).toContain("new ResponsiveLayout(shell.safeArea ?? shell.viewport");
     expect(controllerSource).not.toContain("|| window.innerWidth");
     expect(controllerSource).not.toContain("|| window.innerHeight");
@@ -93,6 +99,9 @@ describe("startup shell contract", () => {
       "this.layout = new ResponsiveLayout(shell.safeArea ?? shell.viewport, frame",
     );
     expect(controllerSource).toContain("this.ui.setResponsiveLayout(snapshot)");
+    expect(controllerSource).toContain(
+      "this.ui.onHandModeChange((handMode) => this.layout.setHandMode(handMode))",
+    );
     expect(controllerSource).not.toContain("}, { channel: assetChannel });");
   });
 
@@ -122,12 +131,14 @@ describe("startup shell contract", () => {
     const host = { dataset: {} as Record<string, string> };
     const loading = { dataset: {} as Record<string, string> };
     const loadingBar = { style: { transform: "" } };
+    const loadingTrack = { setAttribute: vi.fn() };
     const loadingStatus = { textContent: "" };
     const loadingValue = { textContent: "" };
     Object.assign(overlay as unknown as Record<string, unknown>, {
       host,
       loading,
       loadingBar,
+      loadingTrack,
       loadingStatus,
       loadingValue,
     });
@@ -152,6 +163,16 @@ describe("startup shell contract", () => {
     expect(loadingStatus.textContent).toBe("Loading game resources");
     expect(loadingValue.textContent).toBe("45%");
     expect(loadingBar.style.transform).toBe("scaleX(0.45)");
+    expect(loadingTrack.setAttribute).toHaveBeenCalledWith("aria-valuenow", "45");
+  });
+
+  it("exposes determinate progress semantics in the pre-module and live loading shells", () => {
+    for (const source of [indexHtml, overlaySource]) {
+      expect(source).toContain('role="progressbar"');
+      expect(source).toContain('aria-valuemin="0"');
+      expect(source).toContain('aria-valuemax="100"');
+      expect(source).toContain('aria-valuenow="0"');
+    }
   });
 
   it("keeps the regular desktop intro skippable internally but hides its invented Skip Intro control", () => {

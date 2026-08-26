@@ -7,6 +7,16 @@ import { verifyReleaseManifest } from "./release-manifest.mjs";
 const scriptPath = fileURLToPath(import.meta.url);
 const webRoot = resolve(dirname(scriptPath), "..");
 
+const APPROVAL_KEYS = Object.freeze([
+  "schemaVersion",
+  "status",
+  "approvalReference",
+  "jurisdictions",
+  "expiresAt",
+  "assets",
+]);
+const ASSET_KEYS = Object.freeze(["path", "bytes", "sha256"]);
+
 export const PROTECTED_RELEASE_ASSET_PREFIXES = Object.freeze([
   "assets/primal-runtime/",
   "assets/primal-reference/",
@@ -41,7 +51,7 @@ function readJson(path, label) {
   }
 
   try {
-    return JSON.parse(contents);
+    return { contents, value: JSON.parse(contents) };
   } catch {
     fail(`${label} is not valid JSON`);
   }
@@ -50,6 +60,14 @@ function readJson(path, label) {
 function object(value, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be an object`);
   return value;
+}
+
+function exactKeys(value, expected, label) {
+  const actual = Object.keys(value).sort();
+  const supported = [...expected].sort();
+  if (actual.length !== supported.length || actual.some((key, index) => key !== supported[index])) {
+    fail(`${label} contains unsupported fields`);
+  }
 }
 
 function nonEmptyString(value, label) {
@@ -82,6 +100,7 @@ function protectedPath(value, label) {
 
 function assetRecord(value, label) {
   const record = object(value, label);
+  exactKeys(record, ASSET_KEYS, label);
   return {
     path: protectedPath(record.path, `${label}.path`),
     bytes: safeByteLength(record.bytes, `${label}.bytes`),
@@ -97,6 +116,24 @@ function indexUniqueAssets(entries, label) {
     records.set(record.path, record);
   });
   return records;
+}
+
+function canonicalApproval(approval, assets) {
+  return {
+    schemaVersion: approval.schemaVersion,
+    status: approval.status,
+    approvalReference: approval.approvalReference,
+    jurisdictions: approval.jurisdictions,
+    expiresAt: approval.expiresAt,
+    assets,
+  };
+}
+
+function requireCanonicalJson(contents, approval, assets) {
+  // 这是仓库审批生成器输出的编码。逐字节比较还能检测重复对象键，
+  // 因为 JSON.parse 会在其他情况下将它们静默折叠为最后一个值。
+  const canonical = `${JSON.stringify(canonicalApproval(approval, assets), null, 2)}\n`;
+  if (contents !== canonical) fail("release asset approval is not canonical JSON");
 }
 
 function expiration(value, now) {
@@ -143,7 +180,7 @@ export function verifyReleaseAssetApproval({
 
   let manifest;
   try {
-    manifest = verifyReleaseManifest(readJson(manifestPath, "release manifest"));
+    manifest = verifyReleaseManifest(readJson(manifestPath, "release manifest").value);
   } catch (error) {
     fail(error instanceof Error ? error.message : "release manifest is invalid");
   }
@@ -155,7 +192,9 @@ export function verifyReleaseAssetApproval({
   if (protectedEntries.length === 0) fail("release manifest contains no protected release assets");
   const manifestAssets = indexUniqueAssets(protectedEntries, "release manifest protected files");
 
-  const approval = object(readJson(approvalPath, "release asset approval"), "release asset approval");
+  const approvalDocument = readJson(approvalPath, "release asset approval");
+  const approval = object(approvalDocument.value, "release asset approval");
+  exactKeys(approval, APPROVAL_KEYS, "release asset approval");
   if (approval.schemaVersion !== 1) fail("approval.schemaVersion must be 1");
   if (approval.status !== "APPROVED") fail("approval.status must be APPROVED");
   nonEmptyString(approval.approvalReference, "approval.approvalReference");
@@ -163,6 +202,7 @@ export function verifyReleaseAssetApproval({
   expiration(approval.expiresAt, now);
   if (!Array.isArray(approval.assets)) fail("approval.assets must be an array");
   const approvalAssets = indexUniqueAssets(approval.assets, "approval.assets");
+  requireCanonicalJson(approvalDocument.contents, approval, [...approvalAssets.values()]);
 
   for (const [path, manifestAsset] of manifestAssets) {
     const approvedAsset = approvalAssets.get(path);

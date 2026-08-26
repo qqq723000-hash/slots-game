@@ -31,17 +31,18 @@ type CodeDigest [sha256.Size]byte
 
 // Claims 是成功兑换后复制到短期客户端访问令牌中的不可变启动事实。
 type Claims struct {
-	OperatorID         string
-	SessionID          string
-	PlayerID           string
-	WalletSessionID    string
-	GameID             string
-	DefinitionVersion  string
-	DefinitionHash     string
-	RequestFingerprint string
-	Currency           string
-	CurrencyExponent   int
-	Jurisdiction       string
+	OperatorID            string
+	SessionID             string
+	PlayerID              string
+	WalletSessionID       string
+	GameID                string
+	DefinitionVersion     string
+	DefinitionHash        string
+	RequestFingerprint    string
+	Currency              string
+	CurrencyExponent      int
+	Jurisdiction          string
+	IdleDisconnectSeconds int64
 }
 
 // Binding 由兑换端点提供。两个字段都必须匹配创建该启动码的已签名运营商启动请求。
@@ -100,6 +101,9 @@ func validateClaims(claims Claims) error {
 	}
 	if !jurisdictionPattern.MatchString(claims.Jurisdiction) {
 		return fmt.Errorf("%w: invalid jurisdiction", ErrInvalidInput)
+	}
+	if claims.IdleDisconnectSeconds < 1 || claims.IdleDisconnectSeconds > 86400 {
+		return fmt.Errorf("%w: idle disconnect seconds must be in [1,86400]", ErrInvalidInput)
 	}
 	return nil
 }

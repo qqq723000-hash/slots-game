@@ -34,14 +34,14 @@ make migrate-postgres
 make verify-postgres-schema
 ```
 
-`up` 只接受空账本或十个内嵌迁移的严格有序前缀。迁移 SQL、账本写入、授权收敛和最终验证
+`up` 只接受空账本或十二个内嵌迁移的严格有序前缀。迁移 SQL、账本写入、授权收敛和最终验证
 都在同一个事务级 advisory lock 内完成。`verify` 和运行时就绪检查要求账本与内嵌清单完全
 一致；校验和漂移、版本缺口、重复版本和未知未来版本都会失败关闭。
 
 规范清单格式为 `version<TAB>checksum<LF>`，其冻结 SHA-256 为：
 
 ```text
-fab6e6497d8fbc3bbeba8f77282841448e97bb6434dadb47c4b7b9b7ee40f1a5
+3683a51292b36ebe723b4be451ec10bdbd786ed1fed8477e71d818484c8b09c7
 ```
 
 `0010_wallet_recovery_registry_invariant` 的当前嵌入校验和为
@@ -49,6 +49,29 @@ fab6e6497d8fbc3bbeba8f77282841448e97bb6434dadb47c4b7b9b7ee40f1a5
 migrator `verify` 以及运行时 `SchemaCheck`/readiness 都会从 PostgreSQL 目录动态回读并核对
 精确函数与两条已启用触发器；函数或触发器被禁用、删除或替换时失败关闭，不能只凭迁移账本判定
 模式就绪。
+
+`0011_high_value_risk_review` 的嵌入校验和为
+`260ddb33a04620d3ca2b2300855a94485ff57befd6101a7544471d6441288246`。它增加
+`RISK_PENDING`、持久审批表和运行时列级最小权限；策略默认关闭。旧二进制不认识该状态，必须在
+全部 API/Worker 升级并通过新 schema/readiness 后才可显式启用，禁止混跑期间产生风险待决轮次。
+状态机、签名决策、到期策略和外部人工控制边界详见
+[《高额派奖持久审批边界》](high-value-risk-review.md)。
+
+`0012_session_idle_disconnect` 的嵌入校验和为
+`bae4016984f9099d06c8b833348f4d6214b37fb9e67e3be87e0f307db4182580`。它增加已签名 operator
+策略控制的空闲秒数、数据库时钟截止时间和浏览器 transport generation。迁移保留三个列默认值并在
+回填后设为 `NOT NULL`，因此迁移先落库时，尚未排空的旧 writer 省略新列的 `INSERT` 仍能完成；旧
+writer 的 deadline 默认使用数据库当前时间并立即超时，只有新的已签名 relaunch 才能建立未来
+deadline。数据库 CHECK 永久保证 `idle_disconnect_at <= expires_at`，reader 不会静默修正漂移。
+这些默认值只是 expand 阶段的失败关闭写兼容，不代表允许旧、新运行时混跑，也不表示原游戏公开了
+一个可确认的分钟数。
+
+同一版本还把浏览器 bearer 从 `RGS-ACCESS-v2` 升到绑定 transport generation 的
+`RGS-ACCESS-v3`。v3 令牌会被旧 Pod 拒绝，v2 令牌会被新 Pod 拒绝，因此该协议变更**不能**使用
+普通 RollingUpdate。Chart 在 RGS Pod 模板写入 `slots-game.io/access-token-protocol`，并在发现
+现网注解与候选 v3 不同时，除非 `rgs.maintenanceQuiesced=true` 否则渲染失败。发布必须先静默并
+排空所有 API Pod；完成迁移和 v3 runtime 替换后再恢复流量。旧浏览器令牌不会被重新接受，客户端
+必须通过新的已签名 launch 交接恢复同一未绝对过期的持久会话。
 
 退出码保持稳定：`0` 表示成功，`1` 表示内部错误，`2` 表示命令或配置错误，`3` 表示数据库、
 锁或超时错误，`4` 表示模式或迁移错误，`5` 表示角色或权限策略错误。迁移器故意不提供
@@ -74,7 +97,10 @@ down、force、baseline 或跳过校验和的命令。
    `rgs_rounds_wallet_recovery_due` 的 partial predicate 一致；本机 PostgreSQL 17 的 50,000 条终态、
    25 条在途样本使用 Index Only Scan。`PREPARE` CTE 保留一次有界主键冲突探测，只用于目录漂移后、
    readiness 摘流前的短窗口保险，不能替代永久触发器或模式门禁；正式变更仍必须保存目标 RDS 的
-   真实执行计划与锁等待证据；
+   真实执行计划与锁等待证据。`0011_high_value_risk_review` 会替换轮次状态 CHECK 并新建审批索引，同样必须在双组件静默下
+   评估 `rgs_rounds` 锁等待；迁移完成不等于策略启用，启用必须等待所有运行时升级完成。
+   `0012_session_idle_disconnect` 的列默认值只保护迁移先行的旧 `INSERT`，不能解决 v2/v3 token
+   双向不兼容；该版本必须在 API 全部排空的维护窗口内替换，不得让旧、新 RGS Pod 同时服务；
 5. 只向 `migrator` 镜像注入迁移 DSN，在已确认排空后依次执行 `up` 和 `verify`。记录迁移耗时、
    锁等待和目标索引执行计划；任一项超出批准窗口就保持双组件静默并前向修复；
 6. 使用候选 runtime 摘要、但仍保持两个静默值为 `true` 完成 Helm `verify` 和工作负载清单替换；

@@ -107,6 +107,15 @@ func TestNewIntentCapacityRejectsOnlyNewSessionAndEconomicIntentsAndReleasesPerm
 			capacity.calls, statusRecorder.Code, statusRecorder.Body.String())
 	}
 
+	sessionStatusRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(sessionStatusRecorder, clientRequest(
+		ClientSessionStatusPath, sessionBindingBody(testDefinitionHash), token,
+	))
+	if sessionStatusRecorder.Code != http.StatusOK {
+		t.Fatalf("session status route consumed new-intent capacity: calls=%d status=%d body=%s",
+			capacity.calls, sessionStatusRecorder.Code, sessionStatusRecorder.Body.String())
+	}
+
 	refreshRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(refreshRecorder, clientRequest(ClientSessionRefreshPath, sessionBindingBody(testDefinitionHash), token))
 	if launches.refreshCalls != 1 {

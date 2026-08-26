@@ -1,0 +1,997 @@
+# 前后端持续优化加固清单
+
+## 前端架构
+
+- 应用启动器边界
+- 应用控制器拆分
+- 轮次编排器拆分
+- 特性表现协调器拆分
+- 音频协调器拆分
+- RGS 传输层拆分
+- RGS 严格解码层拆分
+- 轮次恢复账本拆分
+- 结果交付确认拆分
+- Pixi 渲染器拆分
+- DOM 覆盖层拆分
+- CSS 分层
+- 状态机边界
+- 依赖注入边界
+- 只读领域模型
+- 单向事件流
+- 模块循环依赖门禁
+- 公共接口最小化
+
+## 前端运行时安全
+
+- HTTPS 配置门禁
+- 精确 RGS Origin
+- 精确宿主 Origin
+- 一次性 Launch Code 清除
+- 地址栏凭据清除
+- 浏览器历史凭据清除
+- 内存 Access Token
+- SessionStorage 恢复账本
+- 存储可写性门禁
+- 存储损坏拒绝
+- Token 绑定校验
+- Session 绑定校验
+- Operator 绑定校验
+- Currency 绑定校验
+- Jurisdiction 绑定校验
+- Game Definition 绑定校验
+- postMessage 精确 Target Origin
+- iframe 来源校验
+- CSP 精确源
+- CSP 违规探针
+- Trusted Types 边界
+- Trusted Types 单策略
+- Trusted Types 模块私有铸造
+- Trusted Types 能力不出全局
+- Trusted Types 全局能力探针消除
+- Trusted Types 真实浏览器门禁
+- 第三方 DOM Sink 门禁
+- 静态 HTML 模板边界
+- 公共 HTML 注册接口消除
+- 公共 HTML 挂载接口消除
+- 伪造 TemplateStringsArray 拒绝
+- AppController 纯 DOM 装配
+- BMFont 静态解析边界
+- XML 字体格式边界
+- 动态 URL 白名单
+- 公共资源路径规范化
+- 外链导航隔离
+- Referrer Policy
+- Permissions Policy
+- MIME Sniffing 防护
+- Clickjacking 防护
+- 敏感异常屏蔽
+- 玩家错误文案白名单
+- Game ID 日志语法契约
+- 相关 ID 语法限制
+- 前端遥测隐私白名单
+- DOM 数据属性隐私门禁
+- Spine Atlas 页名精确白名单
+- Spine Atlas 外部 URL 阻断
+- Spine Atlas 路径穿越阻断
+- Spine Atlas 加载异常收口
+
+## 前端协议与资金状态
+
+- 服务端权威结果
+- 服务端权威余额
+- 服务端权威特性状态
+- 整数最小货币单位
+- BigInt 金额边界
+- 规范金额字符串
+- 投注选项白名单
+- 默认投注一致性
+- Round ID 唯一性
+- Round Ledger 不可变性
+- 请求体字节等价重放
+- 单待处理轮次
+- Session Revision 单调性
+- Result Sequence 单调性
+- 结果哈希校验
+- 结果来源校验
+- Pending Result 恢复
+- Round Status 恢复
+- 503 准入恢复
+- Retry-After 下界
+- 指数退避
+- 分布式抖动
+- 最大轮询次数
+- ACK 幂等
+- ACK 重试窗口
+- 前端 ACK 非经济语义
+- Token 刷新边界
+- 404 重提授权边界
+- 不确定结果阻断
+- 运营支持轮次引用
+
+## 前端可靠性与生命周期
+
+- 请求超时
+- AbortSignal 传播
+- 页面卸载终止
+- BFCache 暂停恢复
+- 可见性暂停恢复
+- 在线状态暂停恢复
+- 离线状态阻断
+- 启动失败清理
+- 中途装配回滚
+- 销毁幂等
+- 事件监听器清理
+- 定时器清理
+- Animation Frame 清理
+- ResizeObserver 清理
+- 音频节点清理
+- Pixi 对象清理
+- GPU Context Lost 恢复
+- GPU Context Restored 恢复
+- WebGL 不可用降级
+- WebAudio 不可用降级
+- 存储不可用拒绝
+- 多标签页冲突
+- 后台标签页节流
+- 系统时钟跳变
+- 长时间休眠恢复
+- 快速重复点击防护
+- 重复旋转防护
+- 自动旋转终止
+- 表现队列取消
+- 特性输入超时
+- 启动资源失败降级
+- DOM 监听器统一中止
+- 销毁后 HUD 原子失活
+- 销毁后旧控件不可交互
+- UI Owner 清理异常隔离
+- 应用 Owner 清理异常隔离
+- 应用销毁幂等一次性
+- 销毁回调能力断开
+- 对话框延迟焦点代次门禁
+- 语义播报代次门禁
+- 帮助投影晚到阻断
+- Toast 计时器引用释放
+- BMFont 启动中止传播
+- BMFont 晚到安装阻断
+- BMFont 失败可重试
+- BMFont 多消费者独立取消
+- BMFont 最后消费者底层取消
+- BMFont 立即重试代际隔离
+- Spine Atlas 瞬态失败可重试
+
+## 前端性能与资源
+
+- 首屏静态外壳
+- 首屏绘制屏障
+- 分帧初始化
+- 启动阶段切片
+- 关键资源预加载
+- 非关键资源流式加载
+- 资源包清单
+- 资源哈希清单
+- 资源所有权清单
+- 资源重复去除
+- 图片尺寸预算
+- 音频尺寸预算
+- 字体尺寸预算
+- JavaScript Bundle 预算
+- CSS Bundle 预算
+- 路由级代码分割
+- 渲染器代码分割
+- 协议层代码分割
+- 缓存不可变资源
+- 稳定名称资源重验证
+- Range 请求边界
+- GPU 预热切片
+- 纹理生命周期
+- 对象池边界
+- 粒子数量上限
+- 动画数量上限
+- Long Task 监控
+- 慢帧监控
+- 内存增长监控
+- 加载耗时监控
+- 交互延迟监控
+- 低性能设备降级
+- Reduced Motion
+- 页面隐藏降载
+- BMFont 晚到 GPU 纹理释放
+- 符号纹理批次原子发布
+- 符号纹理失败缓存驱逐
+- 符号纹理失败重试
+- Pixi 纹理代际身份清理
+- Pixi BaseTexture 同键新代保护
+- BMFont 旧代晚到新代保护
+- Spine 页面失败缓存身份驱逐
+
+## 前端布局、体验与可访问性
+
+- 单一响应式布局快照
+- 桌面布局
+- 手机横屏布局
+- 手机竖屏布局
+- 平板横屏布局
+- 平板竖屏布局
+- 极端宽高比
+- 安全区域 Insets
+- 浏览器工具栏变化
+- 软键盘变化
+- 连续 Resize
+- 高 DPI
+- 浏览器缩放
+- 文本缩放
+- Canvas 坐标映射
+- DOM 坐标映射
+- 点击目标尺寸
+- 键盘导航
+- 焦点顺序
+- 焦点可见性
+- 焦点陷阱
+- Escape 关闭
+- ARIA 名称
+- ARIA 状态
+- Live Region
+- 语义按钮
+- 语义标题
+- 帮助页可读性
+- 色彩对比度
+- 非颜色状态提示
+- 屏幕阅读器
+- 高对比度模式
+- 本地化边界
+- 货币格式化
+- 数字格式化
+- 错误恢复入口
+- 支持引用展示
+
+## 前端测试与发布门禁
+
+- TypeScript 严格模式
+- 未使用代码门禁
+- 索引访问安全门禁
+- 协议解码测试
+- 配置失败关闭测试
+- 恢复账本测试
+- 网络故障测试
+- 超时测试
+- 重试测试
+- ACK 测试
+- 状态机测试
+- 生命周期测试
+- 资源失败测试
+- WebGL 故障测试
+- 可访问性测试
+- 响应式矩阵测试
+- 真实浏览器启动测试
+- CSP 浏览器测试
+- Visual Regression
+- 像素冻结证据
+- 生产资源边界测试
+- 资源来源测试
+- 资源授权门禁
+- 前端第三方许可门禁
+- 前端确定性构建
+- JavaScript Bundle 求值门禁
+- 多副本静态一致性
+- Nginx 响应头契约
+- NPM 依赖审计
+- 销毁后回调竞态测试
+- Owner 清理异常隔离测试
+- BMFont 多消费者取消测试
+- BMFont 旧代晚到测试
+- 符号纹理原子发布测试
+- Spine Atlas 页名攻击测试
+- Spine 页面失败重试测试
+- Pixi 同键纹理代际测试
+
+## 后端架构与 API
+
+- API 运行角色
+- Worker 运行角色
+- Migrator 运行角色
+- 运维监听器隔离
+- 公网监听器隔离
+- 服务端权威结算
+- 模块化单体边界
+- Wallet Adapter SPI
+- Repository 接口边界
+- Outbox 接口边界
+- Recovery Scheduler 边界
+- OpenAPI 单一契约
+- 固定路由集合
+- 固定 HTTP 方法
+- Content-Type 严格校验
+- Content-Encoding 拒绝
+- Query String 拒绝
+- Encoded Path 拒绝
+- GET Body 拒绝
+- 未知字段拒绝
+- 重复字段拒绝
+- 多 JSON 值拒绝
+- JSON 深度限制
+- 请求体大小限制
+- 响应体大小限制
+- 响应头大小限制
+- 通用公开错误
+- Request ID 规范
+- Retry-After 规范
+- Content-Digest 规范
+- HTTP 消息签名
+
+## 后端身份与应用安全
+
+- 运营商独立签名密钥
+- 运营商独立响应密钥
+- 运营商独立 Access Token 密钥
+- 密钥用途隔离
+- 密钥环境隔离
+- 密钥版本轮换
+- 保留验证密钥
+- 重复公钥拒绝
+- Launch HMAC
+- Launch HMAC 轮换
+- Access Token 短时效
+- Access Token 精确绑定
+- 签名有效期
+- 时钟偏差边界
+- Nonce 原子消费
+- Nonce 重放拒绝
+- Nonce 保留清理
+- Nonce 权威时钟清理
+- Nonce 数据库权威时钟消费门禁
+- Launch 墓碑权威时钟清理
+- 签名 429 可重试
+- 常量时间 Bearer 比较
+- 运维 Bearer 文件权限
+- 私钥文件权限
+- Secret 文件挂载
+- Secret 环境变量隔离
+- DSN 日志脱敏
+- SQL 错误脱敏
+- 钱包错误脱敏
+- 审计错误脱敏
+- Panic 恢复
+- 错误栈屏蔽
+- CORS 精确允许列表
+- 预检请求门禁
+- TLS 主机名校验
+- TLS 根证书隔离
+- HTTP 重定向拒绝
+- 压缩响应放大防护
+- 请求头耗尽防护
+- 慢请求头防护
+- 慢请求体防护
+
+## 后端资金正确性
+
+- OS 密码学随机源
+- RNG 失败关闭
+- 数学定义哈希
+- 数学定义签名审批
+- 数学定义版本绑定
+- Game ID 绑定
+- Jurisdiction 绑定
+- 投注上下限
+- RTP 报告引用
+- RNG 报告引用
+- Operation ID 幂等
+- Round Fingerprint
+- Command Digest
+- 规范 Wallet Command
+- 钱包请求签名
+- 钱包响应签名
+- Wallet Receipt 校验
+- Wallet Receipt 字段绑定
+- 原子 Debit/Payout
+- Pending 状态
+- Not Found 状态
+- Unknown 状态
+- Conflict 状态
+- Rejected Final 状态
+- Not Sent 状态
+- 不确定结果先查询
+- 不确定结果禁止重写
+- 不确定结果禁止重跑 RNG
+- 单会话单待处理轮次
+- 余额 Revision
+- 特性状态 Revision
+- Committed Result 持久化
+- Result Hash 持久化
+- 结果交付游标
+- 后端 ACK 非经济语义
+- Manual Review 隔离
+- Manual Review 稳定原因码
+- 持久化错误低基数化
+- Quarantine 隔离
+- 事务型 Outbox
+- 日终对账
+
+## 后端数据与并发
+
+- PostgreSQL 唯一权威
+- Runtime 最小权限
+- Migrator 独立权限
+- DDL 权限隔离
+- Migration Ledger
+- Schema Manifest
+- Schema 不变量
+- Schema 漂移拒绝
+- Expand Contract 迁移边界
+- 事务隔离级别
+- 行级锁顺序
+- 乐观版本校验
+- 唯一约束幂等
+- Check Constraint
+- Foreign Key
+- 不可变字段约束
+- 数据库时钟
+- Statement Timeout
+- Lock Timeout
+- 连接池上限
+- 空闲连接上限
+- 连接等待指标
+- 数据库连接预算
+- SKIP LOCKED
+- Recovery Lease
+- Recovery Fencing Token
+- Outbox Lease
+- Outbox Fencing Token
+- 并发 Migrator 锁
+- 归档边界
+- 分区边界
+- 数据保留边界
+- 数据擦除边界
+
+## 后端容量、韧性与故障恢复
+
+- 公网连接硬上限
+- 运维连接硬上限
+- 公网请求硬上限
+- 预认证密码学容量
+- 新经济意图容量
+- 运营商限流
+- Session 限流
+- Valkey 共享准入
+- Valkey 身份 HMAC
+- Valkey 运行时 ACL
+- Valkey 运行时 TLS
+- Valkey 故障关闭
+- Valkey 真实 TLS 启动门禁
+- Valkey 真实 ACL 启动门禁
+- Valkey 真实 Lua 命令门禁
+- Valkey EVALSHA 缓存门禁
+- Valkey No Eviction 门禁
+- 查询容量保留
+- ACK 容量保留
+- Recovery 容量保留
+- Wallet Apply 舱壁
+- Wallet Lookup 舱壁
+- 运营商级舱壁
+- Wallet Apply 熔断器
+- Wallet Lookup 熔断器
+- 半开探针边界
+- HTTP 连接池边界
+- Wallet Host 连接上限
+- 请求 Context 超时
+- Wallet 超时
+- 有界首次快路径
+- 202 持久恢复
+- Recovery 批量上限
+- Recovery 并发上限
+- Recovery 公平调度
+- Full Jitter 退避
+- Attempt Budget
+- 恢复积压保护
+- Outbox 批量上限
+- Outbox 重试上限
+- Outbox 积压保护
+- 优雅关闭
+- Listener Drain
+- Lease 安全过期
+- 单区损失恢复
+- 数据库故障转移
+- 钱包故障恢复
+- 审计接收端故障恢复
+- 优雅关停失败强制断连
+- 多监听器并发排空
+- 多监听器确定性错误聚合
+- 监听器异常退出有界排空
+
+## 后端日志、指标与追踪
+
+- JSON 结构化日志
+- 固定错误分类
+- Local Operator 固定错误分类
+- Local Operator 固定路由日志
+- 日志字段白名单
+- 日志脱敏
+- 访问日志路由归类
+- 成功访问日志采样
+- 失败访问日志限速
+- 日志写入背压
+- 日志丢弃指标
+- 安全事件日志
+- Security Event 限速
+- Request ID 贯穿
+- Request ID 日志单向摘要
+- Trace Context 接口
+- Span 关联接口
+- 低基数指标
+- 无租户指标标签
+- HTTP 请求计数
+- HTTP 失败计数
+- HTTP 延迟直方图
+- 活跃请求指标
+- 活跃连接指标
+- 容量拒绝指标
+- 身份失败指标
+- 钱包请求指标
+- 钱包舱壁指标
+- 钱包熔断指标
+- Recovery 循环指标
+- Recovery Backlog 数量
+- Recovery Backlog 最旧年龄
+- Outbox Backlog 数量
+- Outbox Backlog 最旧年龄
+- 数据库连接池指标
+- Readiness 指标
+- Metrics 抓取预算
+- Liveness 探针
+- Readiness 探针
+- Startup 探针
+- ResponseWriter Unwrap 能力链保留
+- ResponseController Flush 与 Deadline 能力穿透
+- Flush 隐式提交状态一致性
+- 响应体隐式 200 与迟到状态码一致性
+- 1xx 临时响应状态透传
+- Flush 不支持状态回退
+- Flush 网络错误提交状态一致性
+- Flush 非支持与网络错误区分
+
+## 后端测试与发布门禁
+
+- Go 单元测试
+- Go 竞态测试
+- Go Vet
+- Go Build
+- Govulncheck
+- 后端第三方许可门禁
+- OpenAPI 契约测试
+- 严格 JSON 测试
+- 签名测试
+- Token 绑定测试
+- Nonce 重放测试
+- 幂等测试
+- 并发测试
+- 钱包一致性测试
+- Wallet Fault Injection
+- Recovery Crash Point 测试
+- Outbox Fault Injection
+- PostgreSQL 集成测试
+- PostgreSQL 高并发测试
+- Schema 不变量测试
+- 运行角色权限测试
+- 生产配置失败关闭测试
+- DDoS Abuse Profile
+- HTTP 高并发 Profile
+- Valkey 高并发 Profile
+- PostgreSQL 高并发 Profile
+- 数学模拟门禁
+- 数学报告复现
+- 本地运营端 PostgreSQL 角色分离集成验证
+- 数据库过期 Nonce 无墓碑验证
+- 多监听器并发排空测试
+- 运行期 Serve 错误排空测试
+- 1xx 与最终状态回归
+- Unsupported Flush 回归
+- Flush 网络错误状态回归
+
+## 容器与 Kubernetes
+
+- 多阶段镜像
+- 最小运行镜像
+- 镜像摘要固定
+- 非 Root 用户
+- 只读根文件系统
+- Linux Capabilities 清除
+- No New Privileges
+- Seccomp Profile
+- 临时目录 tmpfs
+- 镜像职责分离
+- Runtime 镜像隔离
+- Migrator 镜像隔离
+- Web 镜像隔离
+- Secret Helper 隔离
+- Service Probe 隔离
+- 镜像文件权限
+- 镜像凭据扫描
+- Namespace 隔离
+- ServiceAccount 隔离
+- RBAC 最小权限
+- API Worker Secret 隔离
+- Migrator Secret 隔离
+- NetworkPolicy 默认拒绝
+- API Egress 白名单
+- Worker Egress 白名单
+- Prometheus 抓取白名单
+- Pod Security Context
+- 资源 Requests
+- 资源 Limits
+- Ephemeral Storage 限制
+- Startup Probe
+- Liveness Probe
+- Readiness Probe
+- Termination Grace Period
+- PreStop Drain
+- PodDisruptionBudget
+- Topology Spread
+- Zone Anti Affinity
+- Rolling Surge 上限
+- Rolling Unavailable 上限
+- HPA 上下限
+- HPA 缺失指标回退
+- Migrator One Shot
+- Immutable Secret
+- Config Hash Rollout
+- Definition Hash Rollout
+
+## 云、网络与边缘
+
+- 多账号隔离
+- 多环境隔离
+- 私有 VPC
+- 多可用区子网
+- 私有 EKS Endpoint
+- 最小 Security Group
+- VPC Flow Logs
+- 受控 NAT Egress
+- 固定 Egress Gateway
+- 私有 RDS
+- RDS Multi AZ
+- RDS TLS Verify Full
+- RDS Encryption
+- RDS PITR
+- RDS Parameter Group
+- RDS Performance Insights
+- 高可用 Valkey
+- 云 Valkey TLS
+- 云 Valkey ACL
+- Valkey Secret 轮换
+- S3 Block Public Access
+- S3 Versioning
+- S3 SSE KMS
+- S3 Object Lock
+- CloudFront OAC
+- CloudFront Release Pinning
+- CloudFront TLS Policy
+- CloudFront Security Headers
+- ALB TLS Policy
+- ALB Access Logs
+- ALB Target Health
+- WAF Managed Rules
+- WAF Body Oversize
+- WAF Header Size
+- WAF Per IP Rate
+- WAF 运营商速率
+- WAF 日志
+- Shield Advanced
+- Shield SRT
+- Route 53 Health Check
+- ACM Certificate
+- DNSSEC 边界
+- IAM 最小权限
+- Workload Identity
+- OIDC 发布身份
+- KMS Key Policy
+- Secrets Manager 版本化
+- External Secrets
+- CloudTrail
+- GuardDuty
+- Security Hub
+- AWS Config
+
+## 可观测性与告警
+
+- Prometheus 抓取配置
+- Prometheus 规则解析门禁
+- Alertmanager TLS 出口
+- Alertmanager 路由
+- Dead Man Switch
+- Grafana 数据源
+- Grafana 仪表盘
+- Vector 日志采集
+- Vector 日志脱敏
+- Vector 严格根字段白名单
+- Vector 消息级字段白名单
+- Vector 跨消息字段隔离
+- Vector 实际路由枚举
+- Vector 嵌套秘密阻断
+- 未知结构化日志折叠
+- Vector 真实转换测试
+- Vector 双配置固定镜像测试
+- 日志缓冲上限
+- 日志磁盘上限
+- 日志保留策略
+- 指标保留策略
+- 审计保留策略
+- SLO 可用性
+- SLO 延迟
+- SLO 经济正确性
+- Error Budget
+- Multi Window Burn Rate
+- RGS 不可用告警
+- RGS 未就绪告警
+- HTTP 5xx 告警
+- HTTP 延迟告警
+- 连接容量告警
+- 请求容量告警
+- 数据库连接告警
+- 数据库锁等待告警
+- Recovery Backlog 告警
+- Wallet Unknown 告警
+- Wallet Circuit 告警
+- Outbox Backlog 告警
+- 对账差异告警
+- Quarantine 告警
+- WAF 异常告警
+- Shield 异常告警
+- 证书过期告警
+- 备份失败告警
+- 监控链路中断告警
+- 告警静默审批
+- 告警恢复通知
+- On Call 路由
+- Runbook 链接
+- Vector 新文件从头采集
+- Vector 24 小时历史上限
+- Vector Checkpoint 续读
+- 启动失败日志首次采集门禁
+- 运行烟测私有 Umask
+- Docker Fluent 正文字段解析
+- Docker Fluent 真实事件夹具
+- Vector 配置精确组件闭包
+- Vector 消费者图唯一闭包
+- Vector Source 子契约锁定
+- Vector Sink 子契约锁定
+- Vector 全配置受审哈希
+- Vector 条件泄漏变异门禁
+- Vector HTTPS 双验证
+- Vector 发布态完整拓扑验证
+- Vector 真实日志 Glob 审批
+- Vector 广域日志 Glob 拒绝
+- 日志 Sink 增量投递证明
+- 日志持久化字节增长证明
+- 日志探针随机关联摘要
+- 日志探针 At Least Once 兼容
+- 日志探针精确 HTTP 语义
+- 日志探针字段白名单回读
+- Prometheus 顶层配置闭包
+- Prometheus Scrape 任务集合闭包
+- Prometheus 抓取目标唯一绑定
+- Prometheus 重写与代理拒绝
+- Prometheus 远程读写拒绝
+- Prometheus Alertmanager 唯一绑定
+- Alertmanager 目标与 SNI 独立审批
+- Prometheus 私有 CA 挂载契约
+- Prometheus Render Profile 绑定
+- Prometheus 规则受审哈希
+- Prometheus 关键规则深度规范
+- Grafana 仪表盘受审哈希
+- 本地运营端告警精确语义
+- 本地运营端面板精确语义
+- Grafana 面板 ID 唯一性
+- 固定来源 Promtool 发布校验
+
+## 供应链与发布
+
+- 依赖锁文件
+- Go Module 校验
+- NPM Lock 校验
+- GitHub Action 摘要固定
+- 容器基础镜像摘要固定
+- 工具镜像摘要固定
+- Source SBOM
+- Image SBOM
+- SPDX SBOM
+- CycloneDX SBOM
+- 漏洞数据库身份
+- Go 漏洞扫描
+- NPM 漏洞扫描
+- 文件系统漏洞扫描
+- 容器漏洞扫描
+- Secret 扫描
+- IaC 扫描
+- Dockerfile 扫描
+- Helm 扫描
+- 扫描 Canary
+- 漏洞例外审批
+- 第三方许可清单
+- 素材来源清单
+- 素材授权审批
+- Clean Checkout 构建
+- Fresh Checkout 构建
+- 无网络构建边界
+- 全仓确定性构建
+- Build Provenance
+- Artifact Attestation
+- OIDC Keyless Signing
+- 镜像签名
+- 签名验证
+- Registry Immutability
+- Release Tag 保护
+- Branch Protection
+- CODEOWNERS
+- 双人审批
+- 职责分离
+- Environment Approval
+- Release Evidence Bundle
+- Artifact Retention
+- Release Digest 绑定
+- Web Release ID 绑定
+- Definition Identity 绑定
+- Rollback Digest 固定
+- 红门失败关闭
+- 持续加固清单固定拓扑
+- 持续加固清单仅名称语法
+- 持续加固清单唯一名称门禁
+- 持续加固清单最低基线
+- 持续加固清单供应链前置
+- 持续加固清单负向变异测试
+- README 加固清单入口
+- 发布可观测性固定镜像门禁
+- 发布可观测性单一工作流入口
+- 发布工作流受审脚本哈希
+- 发布 Conformance 步骤语义哈希
+- 发布步骤条件跳过拒绝
+- 发布步骤提前退出拒绝
+- 发布步骤注释绕过拒绝
+- 发布观测临时目录清理
+- 固定镜像离线预载校验
+
+## 数据保护、备份与灾难恢复
+
+- 数据分类
+- 最小采集
+- 传输加密
+- 静态加密
+- 租户访问隔离
+- 特权访问审计
+- 日志访问控制
+- 审计防篡改
+- 保留策略
+- 擦除策略
+- Legal Hold
+- PostgreSQL 全量备份
+- PostgreSQL 增量恢复
+- PITR 演练
+- 备份完整性校验
+- 隔离恢复验证
+- RPO
+- RTO
+- 单区恢复演练
+- 跨区恢复演练
+- 区域灾难恢复
+- 密钥灾难恢复
+- 配置灾难恢复
+- 发布制品灾难恢复
+- 钱包对账恢复
+- Outbox 重放恢复
+- 备份源树普通文件边界
+- 备份源树符号链接拒绝
+- 备份源树硬链接拒绝
+- 备份源树特殊文件拒绝
+- 备份源树安全字符路径
+- 备份清单精确三成员
+- 备份清单固定顺序
+- 备份清单额外成员拒绝
+- 备份成员单链接约束
+- 备份时间戳碰撞拒绝
+- 备份成员原子不覆盖发布
+- 备份成员数据耐久刷新
+- 备份目录项耐久刷新
+- 备份状态耐久替换
+- 备份归档三根目录契约
+- 备份归档成员类型白名单
+- 备份归档路径穿越拒绝
+- 备份归档规范路径
+- 备份归档重复路径拒绝
+- 备份归档文件目录碰撞拒绝
+- 备份归档普通文件祖先拒绝
+- 备份归档控制字符拒绝
+- 备份归档符号链接拒绝
+- 备份归档硬链接拒绝
+- 备份完整性负向夹具
+- 备份发布 Sync 失败关闭
+- 备份运行脚本完整性自足
+- 备份旧挂载拓扑兼容
+- 内嵌与独立完整性库一致性
+- 备份尾换行成员拒绝
+- 备份 Tar 列表哨兵保护
+- 备份旧挂载固定镜像验证
+- 生产备份健康自然恢复验收
+
+## 运维与治理
+
+- 发布 Runbook
+- 回滚 Runbook
+- 数据库故障 Runbook
+- 钱包故障 Runbook
+- Recovery Backlog Runbook
+- Outbox Backlog Runbook
+- DDoS Runbook
+- Secret 泄露 Runbook
+- 密钥轮换 Runbook
+- 证书轮换 Runbook
+- 备份恢复 Runbook
+- 区域灾难 Runbook
+- 对账 Runbook
+- Manual Review Runbook
+- 事件响应流程
+- 事故分级
+- 事故复盘
+- 变更冻结
+- 紧急变更审批
+- 容量评审
+- 成本评审
+- 补丁管理
+- 依赖升级
+- 定期演练
+- 退役与数据清理
+
+## 外部上线门禁
+
+- 运营牌照
+- 游戏审批
+- RNG 独立认证
+- 数学独立认证
+- RTP 独立认证
+- 特性独立认证
+- 安全架构评审
+- 渗透测试
+- 密码学评审
+- 真实钱包认证
+- 钱包幂等认证
+- 钱包故障转移认证
+- 钱包容量认证
+- 日终对账认证
+- 运营商一致性认证
+- KYC
+- 年龄验证
+- AML
+- 制裁筛查
+- 地理定位
+- 自我排除
+- 存款限制
+- 损失限制
+- 会话限制
+- 现实检查
+- 隐私影响评估
+- 数据处理协议
+- 玩家权利流程
+- 真实 AWS 部署验收
+- 真实容量压测
+- 真实故障演练
+- 真实 WAF 回读
+- 真实 Shield 回读
+- 真实监控路由验收
+- 真实备份恢复验收
+- 真实灾难恢复验收
+- 真实 Chrome 销毁生命周期验收
+- 真实 BFCache 恢复验收
+- 真实辅助技术矩阵验收
+- 真实极端视口矩阵验收
+- Pixi 不可取消传输资源观测
+- 多标签页资金会话排他合约确认
+- 底层备份卷 Flush 语义验收
+- 真实断电恢复验收
+- Terraform CLI 环境复验
+- 真实日志轮转首次采集验收
+- 真实容器日志 Glob 身份审批
+- 真实 Alertmanager CA 文件注入验收
+- 真实 Prometheus 抓取目标审批
+- 法务签收
+- SRE 签收
+- 安全签收
+- 业务签收
+- 运营商签收

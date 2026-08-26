@@ -11,6 +11,7 @@ import (
 
 	"slots-game/server/internal/platform"
 	"slots-game/server/internal/rgs"
+	"slots-game/server/internal/safelog"
 )
 
 type Resolver interface {
@@ -25,13 +26,14 @@ type Config struct {
 	ObservationInterval time.Duration
 	ObservationTimeout  time.Duration
 	// StaleAfter 只为旧配置源代码兼容保留；到期时间现在完全由持久 next_attempt_at 决定。
-	StaleAfter     time.Duration
-	AttemptTimeout time.Duration
-	LeaseDuration  time.Duration
-	InitialBackoff time.Duration
-	MaximumBackoff time.Duration
-	BatchSize      int
-	MaxParallel    int
+	StaleAfter          time.Duration
+	AttemptTimeout      time.Duration
+	LeaseDuration       time.Duration
+	InitialBackoff      time.Duration
+	MaximumBackoff      time.Duration
+	BatchSize           int
+	MaxParallel         int
+	RiskExpiryBatchSize int
 	// FullJitter 仅用于确定性测试。生产默认在 [0, upperBound] 内均匀取值。
 	FullJitter func(time.Duration) time.Duration
 	// InitialObservationJitter 只错开首次数据库 backlog 快照；恢复 pass 仍会立即执行，
@@ -39,15 +41,18 @@ type Config struct {
 	InitialObservationJitter func(time.Duration) time.Duration
 	// Now 仅用于确定性测试恢复循环新鲜度。生产默认使用进程 UTC 时钟；积压年龄
 	// 始终由存储适配器使用权威存储时钟计算。
-	Now func() time.Time
+	Now              func() time.Time
+	StartupReadiness *StartupReadiness
 }
 
 type Worker struct {
 	config                  Config
 	repository              rgs.RecoveryRepository
 	resolver                Resolver
+	riskExpiryRepository    rgs.RiskExpiryRepository
 	logger                  *slog.Logger
 	metrics                 *platform.Metrics
+	startupReadiness        *StartupReadiness
 	observationMu           sync.Mutex
 	nextObservationAt       time.Time
 	initialObservationDelay time.Duration
@@ -94,6 +99,17 @@ func New(
 	if config.MaxParallel == 0 {
 		config.MaxParallel = 8
 	}
+	var riskExpiryRepository rgs.RiskExpiryRepository
+	if config.RiskExpiryBatchSize != 0 {
+		if config.RiskExpiryBatchSize < 1 || config.RiskExpiryBatchSize > 1_000 {
+			return nil, errors.New("recovery: invalid risk expiry batch size")
+		}
+		var ok bool
+		riskExpiryRepository, ok = repository.(rgs.RiskExpiryRepository)
+		if !ok {
+			return nil, errors.New("recovery: risk expiry repository is required")
+		}
+	}
 	if config.FullJitter == nil {
 		config.FullJitter = func(upperBound time.Duration) time.Duration {
 			if upperBound <= 0 {
@@ -135,7 +151,9 @@ func New(
 	}
 	return &Worker{
 		config: config, repository: repository, resolver: resolver,
-		logger: logger, metrics: metrics, initialObservationDelay: initialObservationDelay,
+		riskExpiryRepository: riskExpiryRepository,
+		logger:               logger, metrics: metrics, startupReadiness: config.StartupReadiness,
+		initialObservationDelay: initialObservationDelay,
 	}, nil
 }
 
@@ -155,8 +173,19 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) RunOnce(ctx context.Context) (runErr error) {
-	defer func() { runErr = w.finishObservedPass(ctx, runErr) }()
+	defer func() {
+		runErr = w.finishObservedPass(ctx, runErr)
+		if runErr == nil && ctx.Err() == nil {
+			w.startupReadiness.MarkSuccessfulPass()
+		}
+	}()
 	var failures []error
+	if w.riskExpiryRepository != nil {
+		if _, err := w.riskExpiryRepository.ExpireRiskReviews(ctx, w.config.RiskExpiryBatchSize); err != nil {
+			// 风险到期失败必须让本轮观测失败，但不能饿死独立的钱包未知结果恢复。
+			failures = append(failures, err)
+		}
+	}
 	for remaining := w.config.BatchSize; remaining > 0; {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(failures, err)...)
@@ -242,9 +271,13 @@ func (w *Worker) claimBacklogObservation(now time.Time) bool {
 }
 
 func (w *Worker) logObservationFailure(err error) {
+	w.logFailure("recovery backlog observation failed", err)
+}
+
+func (w *Worker) logFailure(message string, err error) {
 	if w.logger != nil {
-		// 只记录固定操作名与适配器错误；禁止附加运营商、会话、轮次或钱包标识。
-		w.logger.Error("recovery backlog observation failed", "error", err)
+		// 底层 PostgreSQL 错误可能包含 SQL、绑定值或拓扑；只输出固定错误族。
+		w.logger.Error(message, "error_class", safelog.ErrorClass(err))
 	}
 }
 
@@ -344,9 +377,7 @@ func expectedTerminalError(err error) bool {
 
 func (w *Worker) runAndObserve(ctx context.Context) {
 	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		if w.logger != nil {
-			// 禁止将玩家、会话或轮次标识写入日志。
-			w.logger.Error("round recovery pass failed", "error", err)
-		}
+		// 联合错误链可能携带轮次、会话、钱包或数据库细节。
+		w.logFailure("round recovery pass failed", err)
 	}
 }

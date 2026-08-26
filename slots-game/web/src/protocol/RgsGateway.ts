@@ -9,6 +9,7 @@ import type {
   GameGateway,
   GatewayCallbacks,
   GatewayRuntimeAvailability,
+  GatewaySessionTimeout,
   ResultDeliveryStage,
 } from "./GameGateway";
 import { createRequestId } from "./messages";
@@ -18,6 +19,7 @@ import {
   decodeRgsError,
   decodeRgsExchange,
   decodeRgsRoundStatus,
+  decodeRgsSessionStatus,
   decodeRgsSpin,
   parseRgsJson,
   rgsSessionOpened,
@@ -39,6 +41,7 @@ import {
   NetworkResponseLimitError,
   readBoundedResponseText,
 } from "../network/boundedResponse";
+import { browserTraceHeaders } from "./browserTraceContext";
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const LAUNCH_CODE_PATTERN = /^lc_[A-Za-z0-9_-]{43}$/;
@@ -51,6 +54,8 @@ const DEFAULT_ACKNOWLEDGEMENT_RETRY_BASE_DELAY_MS = 500;
 const DEFAULT_ACKNOWLEDGEMENT_RETRY_MAX_DELAY_MS = 30_000;
 const DEFAULT_ACKNOWLEDGEMENT_MAX_ATTEMPTS = 8;
 const DEFAULT_ACKNOWLEDGEMENT_RETRY_WINDOW_MS = 120_000;
+const SESSION_STATUS_MIN_DELAY_MS = 25_000;
+const SESSION_STATUS_MAX_DELAY_MS = 30_000;
 // 当前 RGS HTTP 准入精确收取一个成本单位，并接受最低 0.001 单位/秒回填率，
 // 因此最长合法 token-ready 延迟为 1,000 秒。该传输上限刻意独立于 ACK 退避；
 // 上线加权 HTTP 成本前必须显式修订。
@@ -156,6 +161,8 @@ export interface RgsGatewayConfig {
   readonly ledgerStorage?: RgsRecoveryLedgerStorage;
   readonly timers?: RgsGatewayTimers;
   readonly now?: () => number;
+  /** 服务端时钟同步后的 elapsed-time 来源；生产使用 performance.now。 */
+  readonly monotonicNow?: () => number;
   readonly requestId?: () => string;
   /**
    * 仅用于把协议重试分散到时间窗内，不能改变 Retry-After 下界、轮次身份或
@@ -169,6 +176,10 @@ export interface RgsGatewayConfig {
   readonly acknowledgementRetryMaxDelayMs?: number;
   readonly acknowledgementMaxAttempts?: number;
   readonly acknowledgementRetryWindowMs?: number;
+  /** online + visible 时原版 25-30 秒 FLUSH 等价探测的确定性测试接缝。 */
+  readonly sessionStatusIntervalMs?: () => number;
+  /** 仅供 Vitest 旧计时器夹具；生产构建传入 true 会在构造时失败关闭。 */
+  readonly disableSessionMonitoringForTests?: boolean;
   readonly bindingFingerprint?: (binding: Readonly<RgsBinding>) => Promise<string>;
 }
 
@@ -180,6 +191,7 @@ interface ValidatedConfig {
   readonly statusUrl: string;
   readonly acknowledgementUrl: string;
   readonly pendingResultUrl: string;
+  readonly sessionStatusUrl: string;
   readonly operatorId: string;
   readonly sessionId: string;
   readonly betOptionsMinor: readonly MoneyMinor[];
@@ -189,6 +201,7 @@ interface ValidatedConfig {
   readonly ledgerStorage?: RgsRecoveryLedgerStorage;
   readonly timers: RgsGatewayTimers;
   readonly now: () => number;
+  readonly monotonicNow: () => number;
   readonly requestId: () => string;
   readonly retryJitter: () => number;
   readonly requestTimeoutMs: number;
@@ -198,6 +211,8 @@ interface ValidatedConfig {
   readonly acknowledgementRetryMaxDelayMs: number;
   readonly acknowledgementMaxAttempts: number;
   readonly acknowledgementRetryWindowMs: number;
+  readonly sessionStatusIntervalMs: () => number;
+  readonly sessionStatusProbeEnabled: boolean;
   readonly bindingFingerprint: (binding: Readonly<RgsBinding>) => Promise<string>;
 }
 
@@ -428,6 +443,12 @@ function validateConfig(config: RgsGatewayConfig): ValidatedConfig {
       "RGS acknowledgement retry delays must satisfy base <= max <= window",
     );
   }
+  const sessionMonitoringDisabled = config.disableSessionMonitoringForTests === true;
+  if (sessionMonitoringDisabled && import.meta.env.MODE !== "test") {
+    throw new RgsGatewayConfigurationError(
+      "RGS session monitoring cannot be disabled outside the test runtime",
+    );
+  }
   return Object.freeze({
     baseUrl: base.toString(),
     exchangeUrl: endpoint(base, "/client/v1/sessions/exchange"),
@@ -436,6 +457,7 @@ function validateConfig(config: RgsGatewayConfig): ValidatedConfig {
     statusUrl: endpoint(base, "/client/v1/rounds/status"),
     acknowledgementUrl: endpoint(base, "/client/v1/results/acknowledgements"),
     pendingResultUrl: endpoint(base, "/client/v1/results/pending"),
+    sessionStatusUrl: endpoint(base, "/client/v1/sessions/status"),
     operatorId: config.operatorId,
     sessionId: config.sessionId,
     betOptionsMinor: Object.freeze(betOptionsMinor),
@@ -445,6 +467,10 @@ function validateConfig(config: RgsGatewayConfig): ValidatedConfig {
     ...(config.ledgerStorage ? { ledgerStorage: config.ledgerStorage } : {}),
     timers: config.timers ?? nativeTimers,
     now: config.now ?? Date.now,
+    monotonicNow: config.monotonicNow ?? (() => {
+      const value = globalThis.performance?.now?.();
+      return Number.isFinite(value) ? value : Date.now();
+    }),
     requestId: config.requestId ?? (() => createRequestId("rgs")),
     retryJitter: config.retryJitter ?? Math.random,
     requestTimeoutMs: configuredInteger(
@@ -478,6 +504,11 @@ function validateConfig(config: RgsGatewayConfig): ValidatedConfig {
       20,
     ),
     acknowledgementRetryWindowMs,
+    sessionStatusIntervalMs: config.sessionStatusIntervalMs ?? (() => (
+      SESSION_STATUS_MIN_DELAY_MS
+      + Math.floor(Math.random() * (SESSION_STATUS_MAX_DELAY_MS - SESSION_STATUS_MIN_DELAY_MS + 1))
+    )),
+    sessionStatusProbeEnabled: !sessionMonitoringDisabled,
     bindingFingerprint: config.bindingFingerprint ?? sha256BindingFingerprint,
   });
 }
@@ -951,6 +982,14 @@ export class RgsGateway implements GameGateway {
   private acknowledgementRetryTimer: unknown | null = null;
   private acknowledgementDeadlineTimer: unknown | null = null;
   private refreshTimer: unknown | null = null;
+  private sessionTimeoutTimer: unknown | null = null;
+  private sessionStatusTimer: unknown | null = null;
+  private sessionStatusRequestActive = false;
+  /** 服务端 epoch 与同一瞬间单调时钟的配对；墙钟后续跳变不影响终止判断。 */
+  private serverClockAnchor: Readonly<{
+    serverEpochMs: number;
+    monotonicAtSync: number;
+  }> | null = null;
   private refreshNotBeforeAtMs: number | null = null;
   private refreshPromise: Promise<void> | null = null;
   private proactiveRefreshToken: string | null = null;
@@ -960,6 +999,8 @@ export class RgsGateway implements GameGateway {
   private runtimeRecoveryStatusEmitted = false;
   /** 仅表示 connect 因明确离线/后台而尚未发出；网络不确定失败绝不能自动重放 launch code。 */
   private connectParkedForRuntimeAvailability = false;
+  /** 终态通知与宿主退出都必须至多发生一次。 */
+  private sessionTimeoutNotified = false;
 
   constructor(config: RgsGatewayConfig) {
     this.config = validateConfig(config);
@@ -990,6 +1031,8 @@ export class RgsGateway implements GameGateway {
     this.runtimeOnline = availability.online;
     this.runtimeVisible = availability.visible;
     if (this.closed) return;
+    // 后台冻结可以任意延迟 timer；每个浏览器生命周期边界都按服务端绝对时间复核。
+    if (this.expireSessionAtAuthoritativeDeadline()) return;
 
     const isAvailable = this.runtimeOnline && this.runtimeVisible;
     if (!this.runtimeOnline) {
@@ -998,6 +1041,7 @@ export class RgsGateway implements GameGateway {
     }
     if (!isAvailable) {
       this.clearPollTimer(true);
+      this.clearSessionStatusTimer();
       // 已交付结果的 ACK 恢复不改变控制器轮次阶段；否则重复 SESSION_OPENED
       // 会把已完成表现误判为一轮新的 requesting。ACK 仍按下方在线状态独立恢复。
       if (wasAvailable && (this.connected || this.connecting)
@@ -1024,7 +1068,6 @@ export class RgsGateway implements GameGateway {
         this.callbacks.onSession(rgsSessionOpened(
           {
             requestId: this.sessionProjectionRequestId,
-            accessToken: this.requireAccessToken(),
             session: this.session,
           },
           this.config.betOptionsMinor,
@@ -1032,6 +1075,7 @@ export class RgsGateway implements GameGateway {
         ));
       }
       this.resumeRoundRecovery();
+      this.scheduleSessionStatusProbe(0);
     }
   }
 
@@ -1058,6 +1102,7 @@ export class RgsGateway implements GameGateway {
   }
 
   requestSpin(roundId: string, betMinor: MoneyMinor): boolean {
+    if (this.expireSessionAtAuthoritativeDeadline()) return false;
     if (this.closed || this.wageringBlocked || !this.connected
       || !this.runtimeOnline || !this.runtimeVisible
       || this.pending || !this.session || !this.accessToken
@@ -1124,6 +1169,8 @@ export class RgsGateway implements GameGateway {
     this.clearAcknowledgementRetryTimer();
     this.clearAcknowledgementDeadlineTimer();
     this.clearRefreshTimer();
+    this.clearSessionTimeoutTimer();
+    this.clearSessionStatusTimer();
     this.proactiveRefreshToken = null;
     for (const controller of this.activeRequests) controller.abort();
     this.activeRequests.clear();
@@ -1141,6 +1188,9 @@ export class RgsGateway implements GameGateway {
     this.bindingFingerprint = null;
     this.connectParkedForRuntimeAvailability = false;
     this.runtimeRecoveryStatusEmitted = false;
+    this.sessionTimeoutNotified = false;
+    this.sessionStatusRequestActive = false;
+    this.serverClockAnchor = null;
     try {
       this.callbacks.onStatus("offline");
     } catch {
@@ -1158,7 +1208,7 @@ export class RgsGateway implements GameGateway {
       || pending.acknowledgementExhausted) return false;
     if (!pending.acknowledgementInFlight) {
       if (pending.acknowledgementStartedAtMs === null) {
-        pending.acknowledgementStartedAtMs = this.config.now();
+        pending.acknowledgementStartedAtMs = this.sessionClockNow();
         this.scheduleAcknowledgementDeadline(pending);
       }
       if (!this.acknowledgementAttemptAllowed(pending)) {
@@ -1238,7 +1288,7 @@ export class RgsGateway implements GameGateway {
   private acknowledgementWindowOpen(pending: Readonly<PendingRound>): boolean {
     const startedAt = pending.acknowledgementStartedAtMs;
     return startedAt !== null
-      && this.config.now() < startedAt + this.config.acknowledgementRetryWindowMs;
+      && this.sessionClockNow() < startedAt + this.config.acknowledgementRetryWindowMs;
   }
 
   private acknowledgementAttemptAllowed(pending: Readonly<PendingRound>): boolean {
@@ -1250,7 +1300,7 @@ export class RgsGateway implements GameGateway {
   private assertAcknowledgementWindowOpen(pending: PendingRound): void {
     if (!this.isPending(pending) || pending.acknowledgementExhausted
       || pending.acknowledgementStartedAtMs === null
-      || this.config.now() >= pending.acknowledgementStartedAtMs
+      || this.sessionClockNow() >= pending.acknowledgementStartedAtMs
         + this.config.acknowledgementRetryWindowMs) {
       throw new RgsProtocolError("RGS result acknowledgement recovery window expired");
     }
@@ -1277,7 +1327,7 @@ export class RgsGateway implements GameGateway {
       error instanceof RgsHttpError ? error.retryAfterMs ?? 0 : 0,
       this.config.retryJitter,
     );
-    const now = this.config.now();
+    const now = this.sessionClockNow();
     const deadline = startedAt + this.config.acknowledgementRetryWindowMs;
     // 服务端建议只能延后下一次请求，不能延长本页固定窗口；等于截止时间也不再发包。
     if (now >= deadline || delay >= deadline - now) {
@@ -1307,7 +1357,7 @@ export class RgsGateway implements GameGateway {
     if (startedAt === null) return;
     const remaining = Math.max(
       0,
-      startedAt + this.config.acknowledgementRetryWindowMs - this.config.now(),
+      startedAt + this.config.acknowledgementRetryWindowMs - this.sessionClockNow(),
     );
     const generation = this.generation;
     this.acknowledgementDeadlineTimer = this.config.timers.setTimeout(() => {
@@ -1315,7 +1365,7 @@ export class RgsGateway implements GameGateway {
       if (!this.isCurrent(generation) || !this.isPending(pending)
         || pending.acknowledgementExhausted) return;
       this.exhaustResultAcknowledgement(pending);
-    }, remaining);
+    }, Math.ceil(remaining));
   }
 
   private resumeResultAcknowledgement(): void {
@@ -1328,8 +1378,10 @@ export class RgsGateway implements GameGateway {
       return;
     }
     const notBefore = pending.acknowledgementNotBeforeAtMs;
-    if (notBefore !== null && this.config.now() < notBefore) {
-      this.armAcknowledgementRetry(pending, notBefore - this.config.now());
+    const now = this.sessionClockNow();
+    if (notBefore !== null && now < notBefore) {
+      // performance.now() 可以含小数；向上取整确保浏览器 timer 绝不早于协议下界。
+      this.armAcknowledgementRetry(pending, Math.ceil(notBefore - now));
       return;
     }
     pending.acknowledgementNotBeforeAtMs = null;
@@ -1380,6 +1432,8 @@ export class RgsGateway implements GameGateway {
     this.clearAcknowledgementRetryTimer();
     this.clearAcknowledgementDeadlineTimer();
     this.clearRefreshTimer();
+    this.clearSessionTimeoutTimer();
+    this.clearSessionStatusTimer();
     this.proactiveRefreshToken = null;
     for (const controller of this.activeRequests) controller.abort();
     this.activeRequests.clear();
@@ -1408,6 +1462,218 @@ export class RgsGateway implements GameGateway {
     this.connectParkedForRuntimeAvailability = false;
     this.runtimeRecoveryStatusEmitted = false;
     this.callbacks = NULL_CALLBACKS;
+  }
+
+  /**
+   * 与普通 close 不同，空闲终止必须保留内存 pending 及其持久 ledger，供运营商
+   * 新会话恢复可能已经提交的结果；旧 token、请求和下注能力立即失效。
+   */
+  private terminateForSessionTimeout(): void {
+    if (this.sessionTimeoutNotified || this.closed) return;
+    const idleDisconnectAt = this.session?.idleDisconnectAt;
+    if (!idleDisconnectAt) return;
+    this.sessionTimeoutNotified = true;
+    const notifyOffline = this.connected || this.connecting;
+    if (this.pending) {
+      this.pending.blocked = true;
+      this.pending.pollRequestActive = false;
+      this.pending.acknowledgementInFlight = false;
+      this.pending.acknowledgementRequestActive = false;
+    }
+    this.wageringBlocked = true;
+    this.closed = true;
+    this.connected = false;
+    this.connecting = false;
+    this.generation += 1;
+    this.clearPollTimer();
+    this.clearAcknowledgementRetryTimer();
+    this.clearAcknowledgementDeadlineTimer();
+    this.clearRefreshTimer();
+    this.clearSessionTimeoutTimer();
+    this.clearSessionStatusTimer();
+    this.proactiveRefreshToken = null;
+    for (const controller of this.activeRequests) controller.abort();
+    this.activeRequests.clear();
+    this.sessionStatusRequestActive = false;
+    this.accessToken = null;
+    this.launchCode = null;
+    if (notifyOffline) {
+      try {
+        this.callbacks.onStatus("offline");
+      } catch {
+        // 状态观察者不拥有终态会话清理。
+      }
+    }
+    const timeout: Readonly<GatewaySessionTimeout> = Object.freeze({
+      code: "SESSION_TIMEOUT",
+      idleDisconnectAt,
+    });
+    try {
+      this.callbacks.onSessionTimeout?.(timeout);
+    } catch {
+      // UI/宿主通知是旁路；回调故障不能复活旧 token 或解除下注栅栏。
+    }
+    this.session = null;
+    this.sessionProjectionRequestId = null;
+    this.bindingFingerprint = null;
+    this.connectParkedForRuntimeAvailability = false;
+    this.runtimeRecoveryStatusEmitted = false;
+    this.callbacks = NULL_CALLBACKS;
+  }
+
+  private expireSessionAtAuthoritativeDeadline(): boolean {
+    if (!this.config.sessionStatusProbeEnabled || this.closed || !this.session) return false;
+    if (this.sessionClockNow() < Date.parse(this.session.idleDisconnectAt)) return false;
+    this.terminateForSessionTimeout();
+    return true;
+  }
+
+  private armSessionTimeout(idleDisconnectAt: string): void {
+    this.clearSessionTimeoutTimer();
+    if (!this.config.sessionStatusProbeEnabled
+      || this.closed || !this.session || this.session.idleDisconnectAt !== idleDisconnectAt) return;
+    const remaining = Date.parse(idleDisconnectAt) - this.sessionClockNow();
+    if (remaining <= 0) {
+      this.terminateForSessionTimeout();
+      return;
+    }
+    const delay = Math.min(MAX_TIMER_DELAY_MS, remaining);
+    this.sessionTimeoutTimer = this.config.timers.setTimeout(() => {
+      this.sessionTimeoutTimer = null;
+      if (this.closed || !this.session || this.session.idleDisconnectAt !== idleDisconnectAt) return;
+      if (!this.expireSessionAtAuthoritativeDeadline()) this.armSessionTimeout(idleDisconnectAt);
+    }, delay);
+  }
+
+  private sessionClockNow(): number {
+    const anchor = this.serverClockAnchor;
+    if (!anchor) return this.config.now();
+    let monotonicNow: number;
+    try {
+      monotonicNow = this.config.monotonicNow();
+    } catch {
+      // 浏览器单调时钟暂时不可读时冻结在最后一个服务端锚点，绝不因 wall clock
+      // 跳变提前终止。下一次服务端 status 会重新校准或按协议故障关闭。
+      return anchor.serverEpochMs;
+    }
+    if (!Number.isFinite(monotonicNow) || monotonicNow < 0) return anchor.serverEpochMs;
+    return anchor.serverEpochMs
+      + Math.max(0, monotonicNow - anchor.monotonicAtSync);
+  }
+
+  private synchronizeServerClock(serverTime: string): void {
+    const parsed = Date.parse(serverTime);
+    let monotonicAtSync: number;
+    try {
+      monotonicAtSync = this.config.monotonicNow();
+    } catch {
+      throw new RgsProtocolError("RGS monotonic clock is unavailable");
+    }
+    if (!Number.isFinite(monotonicAtSync) || monotonicAtSync < 0) {
+      throw new RgsProtocolError("RGS monotonic clock is invalid");
+    }
+    const previous = this.serverClockAnchor;
+    const previousEstimate = previous
+      ? previous.serverEpochMs + Math.max(0, monotonicAtSync - previous.monotonicAtSync)
+      : parsed;
+    const serverEpochMs = Math.max(parsed, previousEstimate);
+    this.serverClockAnchor = Object.freeze({
+      serverEpochMs,
+      monotonicAtSync,
+    });
+  }
+
+  private nextSessionStatusDelay(): number {
+    let delay: number;
+    try {
+      delay = this.config.sessionStatusIntervalMs();
+    } catch {
+      throw new RgsProtocolError("RGS session status interval source failed");
+    }
+    if (!Number.isSafeInteger(delay)
+      || delay < SESSION_STATUS_MIN_DELAY_MS
+      || delay > SESSION_STATUS_MAX_DELAY_MS) {
+      throw new RgsProtocolError("RGS session status interval must be 25000-30000ms");
+    }
+    return delay;
+  }
+
+  private scheduleSessionStatusProbe(delay?: number): void {
+    if (!this.config.sessionStatusProbeEnabled
+      || this.closed || !this.connected || !this.session || !this.accessToken
+      || !this.runtimeOnline || !this.runtimeVisible
+      || this.sessionStatusTimer !== null || this.sessionStatusRequestActive) return;
+    let scheduledDelay: number;
+    try {
+      scheduledDelay = delay ?? this.nextSessionStatusDelay();
+    } catch (error) {
+      this.terminateForOperatorRelaunch(error instanceof Error ? error : new RgsProtocolError(
+        "RGS session status interval is unavailable",
+      ));
+      return;
+    }
+    const generation = this.generation;
+    this.sessionStatusTimer = this.config.timers.setTimeout(() => {
+      this.sessionStatusTimer = null;
+      if (!this.isCurrent(generation)) return;
+      void this.probeSessionStatus(generation);
+    }, scheduledDelay);
+  }
+
+  private async probeSessionStatus(generation: number): Promise<void> {
+    if (!this.isCurrent(generation) || this.sessionStatusRequestActive
+      || !this.runtimeOnline || !this.runtimeVisible) return;
+    this.sessionStatusRequestActive = true;
+    try {
+      const sessionBefore = this.requireSession();
+      const status = await this.authorizedPost(
+        this.config.sessionStatusUrl,
+        bindingPayload(sessionBefore.binding),
+        (raw, requestId) => decodeRgsSessionStatus(
+          raw,
+          requestId,
+          sessionBefore.binding.operatorId,
+          sessionBefore.binding.sessionId,
+        ),
+      );
+      if (!this.isCurrent(generation)) return;
+      const current = this.requireSession();
+      if (!sameCompleteSessionIdentity(current, sessionBefore)) {
+        throw new RgsProtocolError("RGS session binding changed during status probe");
+      }
+      if (Date.parse(status.idleDisconnectAt) > Date.parse(current.expiresAt)) {
+        throw new RgsProtocolError("RGS session status idle deadline exceeds session expiry");
+      }
+      this.synchronizeServerClock(status.serverTime);
+      const idleDisconnectAt = laterIdleDisconnectAt(
+        current.idleDisconnectAt,
+        status.idleDisconnectAt,
+      );
+      this.session = Object.freeze({ ...current, idleDisconnectAt });
+      if (status.status === "EXPIRED" || this.expireSessionAtAuthoritativeDeadline()) {
+        if (!this.closed) this.terminateForSessionTimeout();
+        return;
+      }
+      this.armSessionTimeout(idleDisconnectAt);
+    } catch (error) {
+      if (!this.isCurrent(generation)) return;
+      if (error instanceof RgsHttpError && error.code === "SESSION_TIMEOUT") {
+        this.terminateForSessionTimeout();
+        return;
+      }
+      if (error instanceof RgsNetworkError
+        || (error instanceof RgsHttpError && retryableHttp(error))) {
+        // 只读 FLUSH 丢包不延长本地绝对截止时间，也不改变轮次状态；下一窗口再探测。
+        return;
+      }
+      const terminal = error instanceof RgsHttpError
+        ? serverError(error, this.session?.binding.sessionId, this.pending?.ledger.roundId)
+        : error instanceof Error ? error : new RgsProtocolError("RGS session status failed");
+      this.terminateForOperatorRelaunch(terminal);
+    } finally {
+      this.sessionStatusRequestActive = false;
+      if (this.isCurrent(generation)) this.scheduleSessionStatusProbe();
+    }
   }
 
   private async exchange(generation: number): Promise<void> {
@@ -1442,16 +1708,33 @@ export class RgsGateway implements GameGateway {
       if (!this.isCurrent(generation)) return;
       this.accessToken = exchange.accessToken;
       this.session = exchange.session;
+      this.synchronizeServerClock(exchange.serverTime);
       this.sessionProjectionRequestId = exchange.requestId;
       this.bindingFingerprint = fingerprint;
       this.restorePendingLedger(exchange.session, fingerprint);
-      const discovered = this.pending === null
-        ? await this.discoverPendingResult(exchange.session, fingerprint)
-        : null;
+      let discovered: DecodedPendingResultDelivery | null = null;
+      if (this.pending === null) {
+        try {
+          discovered = await this.discoverPendingResult(exchange.session, fingerprint);
+        } catch (error) {
+          if (!this.isCurrent(generation)) return;
+          // exchange 已消费 launch code 且建立了权威会话；pending 游标若返回畸形或
+          // 外来结果，当前页既不能安全重放 spin，也不能继续接受下注。即使响应尚未
+          // 形成可信 ledger，也必须一次性交给 operator relaunch，由新页重新查询游标。
+          this.terminatePendingRecovery(
+            null,
+            error,
+            "RGS pending-result discovery failed with an unrecoverable response",
+          );
+          return;
+        }
+      }
       if (!this.isCurrent(generation)) return;
       this.connecting = false;
       this.connected = true;
       this.wageringBlocked = false;
+      this.armSessionTimeout(exchange.session.idleDisconnectAt);
+      this.scheduleSessionStatusProbe();
       if (this.runtimeOnline && this.runtimeVisible) {
         this.callbacks.onStatus("online");
         this.callbacks.onSession(rgsSessionOpened(
@@ -1471,8 +1754,11 @@ export class RgsGateway implements GameGateway {
               this.reportError(error, pending);
               this.schedulePoll(pending);
             } else {
-              pending.blocked = true;
-              this.reportError(error, pending);
+              this.terminatePendingRecovery(
+                pending,
+                error,
+                "RGS pending-result discovery failed with an unrecoverable response",
+              );
             }
           }
         }
@@ -1694,8 +1980,11 @@ export class RgsGateway implements GameGateway {
         this.schedulePoll(pending);
         return;
       }
-      pending.blocked = true;
-      this.reportError(error, pending);
+      this.terminatePendingRecovery(
+        pending,
+        error,
+        "RGS spin submission failed with an unrecoverable response",
+      );
     }
   }
 
@@ -1717,7 +2006,7 @@ export class RgsGateway implements GameGateway {
         minimumDelayMs ?? 0,
         this.config.retryJitter,
       );
-    this.pollNotBeforeAtMs = this.config.now() + delay;
+    this.pollNotBeforeAtMs = this.sessionClockNow() + delay;
     if (!this.runtimeOnline || !this.runtimeVisible) return;
     this.armPollTimer(pending, delay);
   }
@@ -1808,8 +2097,11 @@ export class RgsGateway implements GameGateway {
         this.schedulePoll(pending);
         return;
       }
-      pending.blocked = true;
-      this.reportError(error, pending);
+      this.terminatePendingRecovery(
+        pending,
+        error,
+        "RGS round recovery failed with an unrecoverable response",
+      );
     } finally {
       if (this.isPending(pending)) pending.pollRequestActive = false;
     }
@@ -1817,17 +2109,33 @@ export class RgsGateway implements GameGateway {
 
   private exhaustRoundRecovery(pending: PendingRound): void {
     if (!this.isPending(pending) || pending.blocked) return;
-    pending.blocked = true;
     pending.resubmitOnNotFound = false;
-    this.callbacks.onError({
+    const terminal: ServerError = {
       type: "error",
       protocolVersion: 1,
       sessionId: this.session?.binding.sessionId,
       roundId: pending.ledger.roundId,
       code: "ROUND_RECOVERY_EXHAUSTED",
       message: "Round recovery polling is exhausted; obtain a fresh operator relaunch",
-      retryable: true,
-    });
+      retryable: false,
+    };
+    this.terminateForOperatorRelaunch(terminal);
+  }
+
+  private terminatePendingRecovery(
+    pending: PendingRound | null,
+    cause: unknown,
+    fallbackMessage: string,
+  ): void {
+    if (pending !== null && !this.isPending(pending)) return;
+    if (cause instanceof RgsHttpError && cause.code === "SESSION_TIMEOUT") {
+      this.terminateForSessionTimeout();
+      return;
+    }
+    const terminal = cause instanceof RgsHttpError
+      ? serverError(cause, this.session?.binding.sessionId, pending?.ledger.roundId)
+      : cause instanceof Error ? cause : new RgsProtocolError(fallbackMessage);
+    this.terminateForOperatorRelaunch(terminal);
   }
 
   private resumeRoundRecovery(): void {
@@ -1836,7 +2144,10 @@ export class RgsGateway implements GameGateway {
       || pending.pollRequestActive) return;
     const notBefore = this.pollNotBeforeAtMs;
     if (notBefore !== null) {
-      this.armPollTimer(pending, Math.max(0, notBefore - this.config.now()));
+      this.armPollTimer(
+        pending,
+        Math.max(0, Math.ceil(notBefore - this.sessionClockNow())),
+      );
       return;
     }
     this.schedulePoll(pending, 0);
@@ -1891,7 +2202,11 @@ export class RgsGateway implements GameGateway {
       revision: decoded.endRevision,
       sequence: result.sequence,
       featureState: cloneFeatureState(result.featureState),
+      idleDisconnectAt: laterIdleDisconnectAt(session.idleDisconnectAt, decoded.idleDisconnectAt),
     });
+    if (Date.parse(decoded.idleDisconnectAt) > Date.parse(session.expiresAt)) {
+      throw new RgsProtocolError("committed RGS idle deadline exceeds the session expiry");
+    }
     this.reportResultDeliveryStage("controller-dispatch");
     try {
       this.callbacks.onSpinResult(result, origin);
@@ -1907,6 +2222,7 @@ export class RgsGateway implements GameGateway {
     this.lastAppliedSequence = result.sequence;
     this.lastAppliedRoundId = result.roundId;
     this.session = nextSession;
+    this.armSessionTimeout(nextSession.idleDisconnectAt);
     pending.deliveredSequence = result.sequence;
     pending.deliveredResultHash = decoded.resultHash;
     pending.acknowledgementInFlight = false;
@@ -1932,15 +2248,7 @@ export class RgsGateway implements GameGateway {
 
   private blockForManualReview(pending: PendingRound): void {
     if (!this.isPending(pending)) return;
-    pending.blocked = true;
-    this.wageringBlocked = true;
-    this.connected = false;
-    this.accessToken = null;
-    this.clearPollTimer();
-    this.clearRefreshTimer();
-    this.proactiveRefreshToken = null;
-    this.callbacks.onStatus("offline");
-    this.callbacks.onError({
+    const terminal: ServerError = {
       type: "error",
       protocolVersion: 1,
       sessionId: this.session?.binding.sessionId,
@@ -1948,7 +2256,8 @@ export class RgsGateway implements GameGateway {
       code: "MANUAL_REVIEW",
       message: "Session requires manual review",
       retryable: false,
-    });
+    };
+    this.terminateForOperatorRelaunch(terminal);
   }
 
   private clearPending(pending: PendingRound): void {
@@ -2003,7 +2312,7 @@ export class RgsGateway implements GameGateway {
           sessionBefore.binding.sessionId,
         );
         if (exchange.session.status !== "ACTIVE"
-          || !sameCompleteBinding(exchange.session.binding, sessionBefore.binding)) {
+          || !sameCompleteSessionIdentity(exchange.session, sessionBefore)) {
           throw new RgsProtocolError("RGS refresh changed the immutable session binding or status");
         }
         exchange = Object.freeze({
@@ -2014,6 +2323,8 @@ export class RgsGateway implements GameGateway {
         if (this.isCurrent(generation)) {
           if (error instanceof RgsProtocolError) {
             this.terminateForOperatorRelaunch(error);
+          } else if (error instanceof RgsHttpError && error.code === "SESSION_TIMEOUT") {
+            this.terminateForSessionTimeout();
           } else if (error instanceof RgsHttpError && unrecoverableRefreshAuthorization(error)) {
             this.terminateForOperatorRelaunch(serverError(
               error,
@@ -2027,9 +2338,11 @@ export class RgsGateway implements GameGateway {
       if (!this.isCurrent(generation)) return;
       this.accessToken = exchange.accessToken;
       this.session = exchange.session;
+      this.synchronizeServerClock(exchange.serverTime);
       this.sessionProjectionRequestId = exchange.requestId;
       this.wageringBlocked = false;
       this.proactiveRefreshAttempt = 0;
+      this.armSessionTimeout(exchange.session.idleDisconnectAt);
       if (this.runtimeOnline && this.runtimeVisible) {
         this.callbacks.onSession(rgsSessionOpened(
           exchange,
@@ -2052,7 +2365,7 @@ export class RgsGateway implements GameGateway {
     requestBaseline: DecodedRgsSession,
   ): DecodedRgsSession {
     const current = this.requireSession();
-    if (!sameCompleteBinding(current.binding, requestBaseline.binding)) {
+    if (!sameCompleteSessionIdentity(current, requestBaseline)) {
       throw new RgsProtocolError("RGS session binding changed during refresh");
     }
     if (refreshed.revision === current.revision
@@ -2069,6 +2382,10 @@ export class RgsGateway implements GameGateway {
       return Object.freeze({
         ...current,
         expiresAt: refreshed.expiresAt,
+        idleDisconnectAt: laterIdleDisconnectAt(
+          current.idleDisconnectAt,
+          refreshed.idleDisconnectAt,
+        ),
       });
     }
     if (!this.pending) {
@@ -2094,6 +2411,9 @@ export class RgsGateway implements GameGateway {
       return Object.freeze({
         ...current,
         expiresAt: refreshed.expiresAt,
+        // refresh 在 spin 提交前读取的旧投影可能晚于 committed 结果抵达；
+        // 该交错只采用 token/absolute expiry，不能缩短已续期的空闲截止时间。
+        idleDisconnectAt: current.idleDisconnectAt,
       });
     }
 
@@ -2108,13 +2428,21 @@ export class RgsGateway implements GameGateway {
         "refreshed RGS session is outside the pending round revision/sequence window",
       );
     }
-    return refreshed;
+    return Object.freeze({
+      ...refreshed,
+      idleDisconnectAt: laterIdleDisconnectAt(
+        current.idleDisconnectAt,
+        refreshed.idleDisconnectAt,
+      ),
+    });
   }
 
   private scheduleProactiveRefresh(token: string): void {
     this.clearRefreshTimer();
     this.proactiveRefreshAttempt = 0;
-    const delay = tokenRefreshDelayMs(token, this.config.now());
+    // exchange/refresh 已先用响应体 serverTime 建立单调锚点；JWT iat/exp 也是服务端
+    // epoch，禁止再与可被用户修改的浏览器墙钟混用。
+    const delay = tokenRefreshDelayMs(token, this.sessionClockNow());
     this.proactiveRefreshToken = delay === null ? null : token;
     if (delay === null || this.closed || !this.runtimeOnline) return;
     this.scheduleProactiveRefreshAttempt(token, delay);
@@ -2122,7 +2450,7 @@ export class RgsGateway implements GameGateway {
 
   private scheduleProactiveRefreshAttempt(token: string, delay: number): void {
     this.proactiveRefreshToken = token;
-    this.refreshNotBeforeAtMs = this.config.now() + delay;
+    this.refreshNotBeforeAtMs = this.sessionClockNow() + delay;
     if (this.closed || !this.runtimeOnline) return;
     this.armProactiveRefreshAttempt(token, delay);
   }
@@ -2136,7 +2464,7 @@ export class RgsGateway implements GameGateway {
         if (error instanceof RgsNetworkError
           || (error instanceof RgsHttpError && retryableHttp(error))) {
           const lifetime = compactTokenLifetime(token);
-          const now = this.config.now();
+          const now = this.sessionClockNow();
           const remaining = lifetime ? lifetime.expiresMs - now : 0;
           const backoff = Math.min(30_000, 1_000 * 2 ** Math.min(this.proactiveRefreshAttempt, 5));
           const delay = distributedRetryDelayMs(
@@ -2163,7 +2491,8 @@ export class RgsGateway implements GameGateway {
     if (!token || this.closed || !this.runtimeOnline
       || this.refreshTimer !== null || this.refreshPromise !== null) return;
     const lifetime = compactTokenLifetime(token);
-    if (!lifetime || this.config.now() >= lifetime.expiresMs) {
+    const now = this.sessionClockNow();
+    if (!lifetime || now >= lifetime.expiresMs) {
       this.failClosedAfterRefresh(new RgsProtocolError(
         "RGS access token expired while the browser was offline; operator relaunch is required",
       ));
@@ -2172,7 +2501,7 @@ export class RgsGateway implements GameGateway {
     const notBefore = this.refreshNotBeforeAtMs;
     this.scheduleProactiveRefreshAttempt(
       token,
-      notBefore === null ? 0 : Math.max(0, notBefore - this.config.now()),
+      notBefore === null ? 0 : Math.max(0, notBefore - now),
     );
   }
 
@@ -2207,6 +2536,7 @@ export class RgsGateway implements GameGateway {
             "X-Request-Id": requestId,
             "X-Operator-Id": this.config.operatorId,
             Authorization: `Bearer ${accessToken}`,
+            ...browserTraceHeaders(),
           },
           cache: "no-store",
           credentials: "omit",
@@ -2224,7 +2554,7 @@ export class RgsGateway implements GameGateway {
       throwIfEdgeRateLimited(
         response,
         requestId,
-        this.config.now(),
+        this.sessionClockNow(),
       );
       let responseText: string;
       try {
@@ -2269,7 +2599,7 @@ export class RgsGateway implements GameGateway {
           decoded.message,
           safeRetryAfterMs(
             response.headers.get("Retry-After"),
-            this.config.now(),
+            this.sessionClockNow(),
           ),
         );
       }
@@ -2305,6 +2635,7 @@ export class RgsGateway implements GameGateway {
             "Content-Type": "application/json",
             "X-Request-Id": requestId,
             ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+            ...browserTraceHeaders(),
           },
           body: JSON.stringify(body),
           cache: "no-store",
@@ -2323,7 +2654,7 @@ export class RgsGateway implements GameGateway {
       throwIfEdgeRateLimited(
         response,
         requestId,
-        this.config.now(),
+        this.sessionClockNow(),
       );
       const contentType = response.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
       if (contentType !== "application/json") {
@@ -2362,7 +2693,7 @@ export class RgsGateway implements GameGateway {
           decoded.message,
           safeRetryAfterMs(
             response.headers.get("Retry-After"),
-            this.config.now(),
+            this.sessionClockNow(),
           ),
         );
       }
@@ -2379,6 +2710,10 @@ export class RgsGateway implements GameGateway {
   private reportError(error: unknown, pending?: PendingRound): void {
     if (this.closed) return;
     if (error instanceof RgsHttpError) {
+      if (error.code === "SESSION_TIMEOUT") {
+        this.terminateForSessionTimeout();
+        return;
+      }
       if (error.status === 401 || error.status === 403
         || error.status === 410 || error.status === 423) {
         const notifyOffline = this.connected;
@@ -2456,6 +2791,18 @@ export class RgsGateway implements GameGateway {
     }
     if (!preserveSchedule) this.refreshNotBeforeAtMs = null;
   }
+
+  private clearSessionTimeoutTimer(): void {
+    if (this.sessionTimeoutTimer === null) return;
+    this.config.timers.clearTimeout(this.sessionTimeoutTimer);
+    this.sessionTimeoutTimer = null;
+  }
+
+  private clearSessionStatusTimer(): void {
+    if (this.sessionStatusTimer === null) return;
+    this.config.timers.clearTimeout(this.sessionStatusTimer);
+    this.sessionStatusTimer = null;
+  }
 }
 
 function sameCompleteBinding(left: Readonly<RgsBinding>, right: Readonly<RgsBinding>): boolean {
@@ -2467,4 +2814,17 @@ function sameCompleteBinding(left: Readonly<RgsBinding>, right: Readonly<RgsBind
     && left.currency === right.currency
     && left.currencyExponent === right.currencyExponent
     && left.jurisdiction === right.jurisdiction;
+}
+
+function sameCompleteSessionIdentity(
+  left: Readonly<DecodedRgsSession>,
+  right: Readonly<DecodedRgsSession>,
+): boolean {
+  return left.engineRulesVersion === right.engineRulesVersion
+    && sameCompleteBinding(left.binding, right.binding);
+}
+
+/** 同一 gateway generation 内服务端空闲截止时间只能单调向后移动。 */
+function laterIdleDisconnectAt(current: string, candidate: string): string {
+  return Date.parse(candidate) > Date.parse(current) ? candidate : current;
 }

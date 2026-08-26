@@ -156,5 +156,7 @@ WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
 - 正式镜像使用 digest，Web 资源由字节长度、SHA-256、发布清单和审批逐项绑定；
 - `local-operator`、本机 PostgreSQL、Compose Prometheus/Grafana/Vector 均不得进入 AWS 生产环境。
 
-完整系统说明见 [生产架构总览](docs/architecture.md)，贡献和中文注释规范见
+完整系统说明见 [生产架构总览](docs/architecture.md)，当前实施边界见
+[最终优化与加固状态矩阵](docs/final-optimization-hardening-status.md)，持续审计范围见
+[前后端持续优化加固清单](docs/full-stack-hardening-checklist.md)，贡献和中文注释规范见
 [CONTRIBUTING.md](CONTRIBUTING.md)。

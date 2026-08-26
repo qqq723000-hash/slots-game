@@ -43,7 +43,9 @@ export interface PathAward {
   multiplier: number;
   /** 合并 WILD 倍率前显示的服务端已解析金额。 */
   baseAmountMinor: MoneyMinor;
-  /** 已结算的路径金额。表现层绝不能重新计算。 */
+  /** 整局最高赢额上限应用前的数学路径金额。 */
+  nominalAmountMinor: MoneyMinor;
+  /** 实际支付并计入 `totalWinMinor` 的路径金额。表现层绝不能重新计算。 */
   amountMinor: MoneyMinor;
 }
 
@@ -52,6 +54,9 @@ export interface Win {
   symbol: SymbolId;
   /** 每个实时服务端结果都包含；仅在旧版夹具/重放中可选。 */
   ways?: number;
+  /** 整局最高赢额上限应用前的数学聚合金额。 */
+  nominalAmountMinor: MoneyMinor;
+  /** 实际支付并计入 `totalWinMinor` 的聚合金额。 */
   amountMinor: MoneyMinor;
   /**
    * 仅用于表现的倍率。只有当每个 pathAward 具有相同值时，实时记录才会携带它；混合记录和
@@ -203,6 +208,13 @@ export interface FreeSpinsCompletedEvent {
   cumulativeWinMinor: MoneyMinor;
 }
 
+/** 纯经济边界事实；客户端可观测但不得为其虚构独立动画或音频。 */
+export interface WinCapReachedEvent {
+  type: "win_cap.reached";
+  multiplier: 2_500;
+  cumulativeWinMinor: MoneyMinor;
+}
+
 export type FeatureEvent =
   | SurgeCollectedEvent
   | RageTransformedEvent
@@ -217,6 +229,7 @@ export type FeatureEvent =
   | VaultUpgradedEvent
   | VaultUpgradeStartedEvent
   | FreeSpinCapReachedEvent
+  | WinCapReachedEvent
   | FreeSpinsCompletedEvent;
 
 /**
@@ -239,7 +252,7 @@ export interface SessionOpened extends MoneyDisplayBinding {
   type: "session.opened";
   protocolVersion: 1;
   /** 历史协议兼容字段；生产 RGS 会话以获批定义的版本和哈希为准。 */
-  engineRulesVersion?: "slots-game-ways3-features-v4";
+  engineRulesVersion?: "slots-game-ways3-features-win-cap-paid-facts-v6";
   /** RGS 投影总是提供；非 RGS 测试替身省略时，固定玩法文案必须保持关闭。 */
   definitionBinding?: Readonly<GameDefinitionBinding>;
   requestId: string;
@@ -248,6 +261,8 @@ export interface SessionOpened extends MoneyDisplayBinding {
   betOptionsMinor: MoneyMinor[];
   defaultBetMinor: MoneyMinor;
   featureState: FeatureState;
+  /** 生产 RGS 提供的服务端权威空闲断开绝对时间；测试网关可以省略。 */
+  idleDisconnectAt?: string;
 }
 
 export interface SpinResult {

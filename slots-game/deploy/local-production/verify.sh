@@ -22,6 +22,8 @@ image_created="$(metadata_value LOCAL_PRODUCTION_IMAGE_CREATED)"
 image_revision="$(metadata_value LOCAL_PRODUCTION_IMAGE_REVISION)"
 image_source="$(metadata_value LOCAL_PRODUCTION_IMAGE_SOURCE)"
 image_version="$(metadata_value LOCAL_PRODUCTION_IMAGE_VERSION)"
+image_tag="$(metadata_value LOCAL_PRODUCTION_IMAGE_TAG)"
+operator_id="$(metadata_value LOCAL_PRODUCTION_OPERATOR_ID)"
 
 printf '%s\n' '验收阶段：镜像来源元数据。'
 
@@ -49,13 +51,14 @@ process.stdin.on("data", chunk => { source += chunk; }).on("end", () => {
 ' "$expected_title" "$image_created" "$image_revision" "$image_source" "$image_version" "$image_name"
 }
 
-verify_image_metadata slots-rgs-runtime:local-production slots-rgs-runtime
-verify_image_metadata slots-rgs-migrator:local-production slots-rgs-migrator
-verify_image_metadata slots-local-operator:local-production slots-local-operator
-verify_image_metadata slots-web:local-production slots-web
+verify_image_metadata "slots-rgs-runtime:$image_tag" slots-rgs-runtime
+verify_image_metadata "slots-rgs-migrator:$image_tag" slots-rgs-migrator
+verify_image_metadata "slots-local-operator:$image_tag" slots-local-operator
+verify_image_metadata "slots-web:$image_tag" slots-web
+verify_image_metadata "slots-nginx-proxy:$image_tag" slots-nginx-proxy
 
 printf '%s\n' '验收阶段：容器健康与最小权限。'
-for service in postgres local-operator rgs-server web ingress vector alertmanager alert-proxy prometheus grafana backup; do
+for service in postgres valkey local-operator rgs-server web ingress vector alertmanager alert-proxy prometheus grafana backup; do
   container_id="$(compose ps -q "$service")"
   test -n "$container_id" || { printf '%s\n' "$service 容器不存在。" >&2; exit 1; }
   test "$(docker inspect -f '{{.State.Status}}' "$container_id")" = running || {
@@ -175,6 +178,14 @@ compose exec -T \
   -e PROBE_SERVER_NAME=local-operator \
   -e PROBE_BEARER_FILE=/run/operator-secrets/local-operator-metrics.token \
   local-operator /service-probe
+# 密码只经容器环境传给 valkey-cli，不进入命令行、宿主输出或 Compose 环境。
+# shellcheck disable=SC2016
+compose exec -T valkey sh -ceu '
+  REDISCLI_AUTH="$(sed -n "1p" /run/valkey-secrets/valkey-password)"
+  export REDISCLI_AUTH
+  valkey-cli --tls --cacert /run/valkey-secrets/local-production-root-ca.pem \
+    --user rgs-api -h valkey -p 6379 ping | grep -qx PONG
+'
 
 printf '%s\n' '验收阶段：数据库 TLS 与观测面。'
 # shellcheck disable=SC2016
@@ -265,25 +276,129 @@ require_prometheus_vector 'local_operator_log_store_writable{job="local-operator
 require_prometheus_vector 'local_operator_alert_store_writable{job="local-operator"} == 1'
 
 printf '%s\n' '验收阶段：脱敏日志持久化。'
-# 造成一条无敏感数据的 RGS 请求日志，然后确认 Vector HTTPS sink 已投递。
-curl --silent --show-error --cacert "$ca_file" --resolve rgs.localhost:8443:127.0.0.1 \
-  --header 'Content-Type: application/json' --data '{}' \
-  https://rgs.localhost:8443/operator/v1/launches >/dev/null
-sink_ready=0
-attempt=0
-while [ "$attempt" -lt 12 ]; do
-  query_json="$(curl --fail --silent --show-error --get \
+read_vector_sink_counter() {
+  curl --fail --silent --show-error --get \
     --data-urlencode 'query=sum(vector_component_sent_events_total{component_id="local_https_archive"})' \
-    http://127.0.0.1:9090/api/v1/query)"
-  if printf '%s' "$query_json" | node -e '
-let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s); const v=Number(p.data?.result?.[0]?.value?.[1]||0); process.exit(v>0?0:1)});'; then
-    sink_ready=1
+    http://127.0.0.1:9090/api/v1/query | node -e '
+let source="";
+process.stdin.on("data", chunk => { source += chunk; }).on("end", () => {
+  const payload=JSON.parse(source);
+  if (payload.status !== "success") process.exit(1);
+  const results=payload.data?.result ?? [];
+  if (results.length === 0) return process.stdout.write("0");
+  const value=Number(results[0]?.value?.[1]);
+  if (!Number.isFinite(value) || value < 0) process.exit(1);
+  process.stdout.write(String(value));
+});'
+}
+
+read_operator_log_bytes() {
+  # 容器内 shell 应展开文件/计数变量，宿主不得提前展开。
+  # shellcheck disable=SC2016
+  compose exec -T backup sh -ceu '
+    total=0
+    found=0
+    for file in /operator-data/logs/rgs*.jsonl; do
+      test -f "$file" || continue
+      set -- $(wc -c < "$file")
+      test "$#" -eq 1
+      bytes=$1
+      case "$bytes" in *[!0-9]*) exit 1 ;; esac
+      total=$((total + bytes))
+      found=1
+    done
+    test "$found" -eq 1
+    printf "%s" "$total"
+  '
+}
+
+verify_operator_log_probe() {
+  expected_digest=$1
+  # 容器内 shell 按受控摘要搜索脱敏 JSONL，宿主不得提前展开。
+  # shellcheck disable=SC2016
+  compose exec -T backup sh -ceu '
+    needle=$1
+    found=0
+    for file in /operator-data/logs/rgs*.jsonl; do
+      test -f "$file" || continue
+      found=1
+      grep -F "$needle" "$file" || :
+    done
+    test "$found" -eq 1
+  ' sh "$expected_digest" |
+    node "$local_production_directory/verify-operator-log-probe.mjs" "$expected_digest"
+}
+
+# 在触发之前同时记录 sink 累计值和持久文件总字节。只发送一个业务探针；后续推进
+# 只能来自 Vector 的固定四字段 10 秒心跳，不能再发业务事件掩盖低流量磁盘唤醒问题。
+# 唯一安全 request id 仅用于计算日志中的 SHA-256 摘要，不作为业务/租户标识。
+vector_sink_baseline=$(read_vector_sink_counter)
+operator_log_bytes_baseline=$(read_operator_log_bytes)
+# 模板字符串插值必须由 Node 求值，不能由当前 shell 提前展开。
+# shellcheck disable=SC2016
+log_probe_request_id=$(node -e '
+const {randomBytes}=require("node:crypto");
+process.stdout.write(`vectorverify${randomBytes(18).toString("hex")}`);
+')
+log_probe_digest="sha256:$(node -e '
+const {createHash}=require("node:crypto");
+process.stdout.write(createHash("sha256").update(process.argv[1], "utf8").digest("hex"));
+' "$log_probe_request_id")"
+log_probe_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --cacert "$ca_file" --resolve rgs.localhost:8443:127.0.0.1 \
+  --header 'Content-Type: application/json' --header "X-Request-Id: $log_probe_request_id" \
+  --header "X-Operator-Id: $operator_id" \
+  --data '{}' https://rgs.localhost:8443/operator/v1/launches)
+test "$log_probe_status" = 401 || {
+  printf '%s\n' "RGS 日志探针返回非预期状态 ${log_probe_status}。" >&2
+  exit 1
+}
+unset log_probe_request_id
+delivery_ready=0
+delivery_attempt=0
+while [ "$delivery_attempt" -le 5 ]; do
+  operator_log_bytes_current=$(read_operator_log_bytes)
+  if test "$operator_log_bytes_current" -gt "$operator_log_bytes_baseline" \
+      && verify_operator_log_probe "$log_probe_digest"; then
+    delivery_ready=1
     break
   fi
-  attempt=$((attempt + 1))
-  sleep 5
+  delivery_attempt=$((delivery_attempt + 1))
+  if [ "$delivery_attempt" -le 5 ]; then
+    sleep 5
+  fi
 done
-test "$sink_ready" = 1 || { printf '%s\n' 'Vector HTTPS sink 未确认投递。' >&2; exit 1; }
+test "$delivery_ready" = 1 || {
+  printf '%s\n' 'Vector HTTPS sink 未在 25 秒内证明单业务探针的文件增长与精确脱敏落盘语义。' >&2
+  exit 1
+}
+printf '%s\n' 'Vector 单业务探针已在 25 秒内完成文件增长与精确脱敏落盘。'
+
+# sent counter 经 Vector internal_metrics 和 Prometheus 两个 15 秒周期传播；它只验证
+# 可观测链路新鲜度，不参与也不推翻上面已经完成的 25 秒业务交付判定。
+counter_ready=0
+counter_attempt=0
+while [ "$counter_attempt" -le 7 ]; do
+  vector_sink_current=$(read_vector_sink_counter)
+  if node -e '
+const current=Number(process.argv[1]); const baseline=Number(process.argv[2]);
+process.exit(Number.isFinite(current) && Number.isFinite(baseline) && current > baseline ? 0 : 1);
+' "$vector_sink_current" "$vector_sink_baseline"; then
+    counter_ready=1
+    break
+  fi
+  counter_attempt=$((counter_attempt + 1))
+  if [ "$counter_attempt" -le 7 ]; then
+    sleep 5
+  fi
+done
+test "$counter_ready" = 1 || {
+  printf '%s\n' '单业务探针已在 25 秒内精确落盘，但 Vector sent counter 未在独立 35 秒观测窗口内刷新。' >&2
+  exit 1
+}
+unset log_probe_digest vector_sink_baseline vector_sink_current \
+  operator_log_bytes_baseline operator_log_bytes_current delivery_ready delivery_attempt \
+  counter_ready counter_attempt
 
 printf '%s\n' '验收阶段：一次性游戏启动会话。'
 admin_token="$(sed -n '1p' "$secrets_root/local-operator-admin.token")"

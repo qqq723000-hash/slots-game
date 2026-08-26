@@ -127,6 +127,13 @@ func TestReportRequiresValidExplicitAcceptanceAndMetadata(t *testing.T) {
 			},
 			wantMessage: "rules schema",
 		},
+		{
+			name: "foreign rules schema",
+			mutate: func(options *Options) {
+				options.RulesSchemaVersion = "slots-game-ways3-features-v999"
+			},
+			wantMessage: "must match the signed game definition",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -148,8 +155,8 @@ func TestTheoreticalMaximumIsExplicitConservativeLiabilityBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := MaximumEvidence{
-		SpinWinMinor: 10_240_000, SpinWinMultiplier: "102400.00000000",
-		CycleWinMinor: 307_740_000, CycleWinMultiplier: "3077400.00000000",
+		SpinWinMinor: 250_000, SpinWinMultiplier: "2500.00000000",
+		CycleWinMinor: 250_000, CycleWinMultiplier: "2500.00000000",
 	}
 	if !reflect.DeepEqual(report.TheoreticalMaximumUpperBound, want) {
 		t.Fatalf("theoretical maximum = %+v, want %+v", report.TheoreticalMaximumUpperBound, want)
@@ -165,15 +172,15 @@ func TestTheoreticalMaximumIsExplicitConservativeLiabilityBound(t *testing.T) {
 	}
 }
 
-func TestTheoreticalMaximumFailsClosedOnInt64ExposureOverflow(t *testing.T) {
+func TestTheoreticalMaximumFailsClosedOnDefinitionArithmeticOverflow(t *testing.T) {
 	config := game.DemoConfig()
 	// 将所有视觉倍数限制在随附资源目录内。极大的赔付表数值仍能证明，责任计算器会在报告
 	// 无法表示的风险敞口前失效即关闭。
 	config.Paytable[game.SymbolOrbit] = int64(^uint64(0) >> 1)
 	options := reportOptions(1, config.Bet.MaxMinor)
 	_, err := Run(context.Background(), config, &fixedSpinner{}, options)
-	if err == nil || !strings.Contains(err.Error(), "theoretical maximum exceeds int64") {
-		t.Fatalf("Run error = %v, want theoretical maximum overflow", err)
+	if err == nil || !strings.Contains(err.Error(), "Ways liability overflows") {
+		t.Fatalf("Run error = %v, want definition arithmetic overflow", err)
 	}
 }
 

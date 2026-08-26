@@ -12,7 +12,11 @@ import {
   createReleaseContentSecurityPolicy,
   verifyReleaseContentSecurityPolicy,
 } from "../../deploy/web/content-security-policy.mjs";
-import { createControlledRgsTransactionFixture } from "./production-browser-transaction-fixture.mjs";
+import {
+  assertSessionStatusCadence,
+  createControlledRgsTransactionFixture,
+  economicTransactionStateEqual,
+} from "./production-browser-transaction-fixture.mjs";
 import {
   BROWSER_RUNTIME_PHASES,
   BROWSER_TRANSACTION_PROBE_SOURCE,
@@ -27,6 +31,120 @@ const bootstrapFailureText = "The game could not start. Please try again.";
 const startupTimeoutMs = 30_000;
 const transactionTimeoutMs = 25_000;
 const commandTimeoutMs = Math.max(startupTimeoutMs, transactionTimeoutMs) + 5_000;
+// 文档创建前只观察 policy 名称是否匹配以及创建次数。探针不保存 createPolicy 的
+// 返回值，也不把 factory、policy 或铸造函数发布到全局对象。
+const TRUSTED_TYPES_POLICY_OBSERVATION_PROBE_SOURCE = `(() => {
+  let staticHtmlPolicyCreateCount = 0;
+  let unexpectedPolicyCreateCount = 0;
+  const trustedTypesFactory = globalThis.trustedTypes;
+  const nativeCreatePolicy = trustedTypesFactory?.createPolicy;
+  const enforcementSupported = typeof nativeCreatePolicy === 'function';
+  let observerInstalled = false;
+  if (enforcementSupported) {
+    try {
+      Object.defineProperty(trustedTypesFactory, 'createPolicy', {
+        configurable: true,
+        enumerable: false,
+        writable: true,
+        value: function observedCreatePolicy(name) {
+          if (name === 'slots-game-static-html') {
+            staticHtmlPolicyCreateCount += 1;
+          } else {
+            unexpectedPolicyCreateCount += 1;
+          }
+          return Reflect.apply(nativeCreatePolicy, trustedTypesFactory, arguments);
+        },
+      });
+      observerInstalled = trustedTypesFactory.createPolicy !== nativeCreatePolicy;
+    } catch {
+      observerInstalled = false;
+    }
+  }
+  const observation = {};
+  Object.defineProperties(observation, {
+    enforcementSupported: { enumerable: true, value: enforcementSupported },
+    observerInstalled: { enumerable: true, value: observerInstalled },
+    staticHtmlPolicyNameObserved: {
+      enumerable: true,
+      get: () => staticHtmlPolicyCreateCount > 0,
+    },
+    staticHtmlPolicyCreateCount: {
+      enumerable: true,
+      get: () => staticHtmlPolicyCreateCount,
+    },
+    unexpectedPolicyCreateCount: {
+      enumerable: true,
+      get: () => unexpectedPolicyCreateCount,
+    },
+  });
+  Object.freeze(observation);
+  Object.defineProperty(globalThis, '__slotsTrustedTypesPolicyObservation', {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: observation,
+  });
+})();`;
+const IMAGE_DECODE_OBSERVATION_PROBE_SOURCE = `(() => {
+  const nativeDecode = HTMLImageElement.prototype.decode;
+  if (typeof nativeDecode !== 'function') return;
+  let calls = 0;
+  let fulfilled = 0;
+  let pending = 0;
+  let rejected = 0;
+  const failures = [];
+  Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: function observedDecode() {
+      calls += 1;
+      pending += 1;
+      let result;
+      try {
+        result = Reflect.apply(nativeDecode, this, arguments);
+      } catch (error) {
+        pending -= 1;
+        rejected += 1;
+        failures.push({
+          name: error?.name ?? 'Error',
+          source: String(this.currentSrc || this.src || '').slice(0, 192),
+        });
+        throw error;
+      }
+      Promise.resolve(result).then(
+        () => {
+          pending -= 1;
+          fulfilled += 1;
+        },
+        (error) => {
+          pending -= 1;
+          rejected += 1;
+          failures.push({
+            name: error?.name ?? 'Error',
+            source: String(this.currentSrc || this.src || '').slice(0, 192),
+          });
+        },
+      );
+      return result;
+    },
+  });
+  const observation = {};
+  Object.defineProperties(observation, {
+    calls: { enumerable: true, get: () => calls },
+    fulfilled: { enumerable: true, get: () => fulfilled },
+    pending: { enumerable: true, get: () => pending },
+    rejected: { enumerable: true, get: () => rejected },
+    failures: { enumerable: true, get: () => failures.slice(-16) },
+  });
+  Object.freeze(observation);
+  Object.defineProperty(globalThis, '__slotsImageDecodeObservation', {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: observation,
+  });
+})();`;
 // 真实设备尺寸不是白名单。前十三项覆盖主流手机/平板纵横态，末两项专门证明
 // 超出 9:22/22:9 的病态视口只会产生等比黑边，不会拉伸设计域。
 const CONTINUOUS_VIEWPORTS = Object.freeze([
@@ -63,6 +181,8 @@ const DESKTOP_VIEWPORT_SURFACE = Object.freeze({
   designWidth: 1_280,
   designHeight: 720,
 });
+const DESKTOP_AUTHORED_WIDTH = 1_200;
+const DESKTOP_AUTHORED_HEIGHT = 900;
 const MOBILE_DESIGN_LONG_EDGE = 844;
 const MOBILE_MIN_DESIGN_ASPECT = 9 / 22;
 const MOBILE_MAX_DESIGN_ASPECT = 22 / 9;
@@ -71,8 +191,8 @@ const TABLET_SHORT_EDGE_MIN = 600;
 const MAXIMUM_STATUS_VALUE = "92233720368547758.07";
 const PRESENTATION_APPROVED_BINDING = Object.freeze({
   gameId: "iron-colossus",
-  definitionVersion: "local-production-2026-08-16.1",
-  definitionHash: "96caac1ea4f82292ba96e0e0397459687638d6ff904471a8363e69f6e824d35d",
+  definitionVersion: "local-production-2026-08-26.3",
+  definitionHash: "9e9b9b5f23f0f2cfed0a4a5ff5961dbc76a91ba9e614f3cfadb47824a46d2205",
 });
 const TRANSACTION_FIXTURE_BINDING = Object.freeze({
   gameId: "primal-rampage",
@@ -84,7 +204,7 @@ const browserRgsBaseUrl = process.env.VITE_RGS_BASE_URL;
 const browserHostOrigin = process.env.VITE_RGS_HOST_ORIGIN;
 const browserBetMinor = process.env.VITE_RGS_DEFAULT_BET_MINOR;
 const initialBalanceMinor = (BigInt(browserBetMinor) + 800n).toString();
-const finalBalanceMinor = "800";
+const finalBalanceMinor = "850";
 const expectedInitialBalance = formatMinor(initialBalanceMinor, 2);
 const expectedFinalBalance = formatMinor(finalBalanceMinor, 2);
 const browserContentSecurityPolicy = createReleaseContentSecurityPolicy({
@@ -134,6 +254,7 @@ const server = createDistributionServer();
 const chrome = await launchChrome(chromeExecutable, profileDirectory);
 let pageSocket;
 let verifiedEntryPath;
+let verifiedEvidence;
 
 try {
   const address = await listenOnLoopback(server);
@@ -179,6 +300,17 @@ try {
       .join("\n\n");
     throw new Error(`生产入口在真实浏览器中求值失败：\n${detail}`);
   }
+  if (result.trustedTypesEvidence?.enforcementSupported !== true
+    || result.trustedTypesEvidence?.observerInstalled !== true
+    || result.trustedTypesEvidence?.staticHtmlPolicyNameObserved !== true
+    || result.trustedTypesEvidence?.staticHtmlPolicyCreateCount !== 1
+    || result.trustedTypesEvidence?.unexpectedPolicyCreateCount !== 0
+    || result.trustedTypesEvidence?.policyObservationCapabilityFree !== true
+    || result.trustedTypesEvidence?.policyObservationGlobalLocked !== true) {
+    throw new Error(
+      `生产入口没有在强制 Trusted Types 下精确创建唯一模块私有静态 HTML policy：${JSON.stringify(result.trustedTypesEvidence)}`,
+    );
+  }
   if (!result.rendererReady) {
     throw new Error(
       `生产入口没有完成严格 CSP Pixi/WebGL 装配：${JSON.stringify(result.rendererEvidence)}`,
@@ -205,6 +337,7 @@ try {
     );
   }
   const transactionEvidence = result.transactionEvidence;
+  assertSessionStatusCadence(transactionEvidence);
   if (transactionEvidence.exchangeCount !== 1
     || transactionEvidence.spinCount !== 1
     || transactionEvidence.acknowledgementCount !== 1
@@ -232,8 +365,8 @@ try {
     }
   }
   const finalState = result.finalState;
-  if (finalState.balance !== "8.00" || finalState.balance !== expectedFinalBalance
-    || finalState.lastWin !== "0.00"
+  if (finalState.balance !== "8.50" || finalState.balance !== expectedFinalBalance
+    || finalState.lastWin !== "0.50"
     || finalState.reelState !== "Idle"
     || finalState.hasReelRoundId
     || finalState.spinMode !== "ready"
@@ -268,6 +401,23 @@ try {
     throw new Error(`同文档布局通道迁移证据不完整：${JSON.stringify(layoutTransitionEvidence)}`);
   }
   verifiedEntryPath = basename(result.entryPath);
+  verifiedEvidence = Object.freeze({
+    cspViolationCount: result.cspViolations.length,
+    deliveryStages: ["decode-complete", "controller-dispatch", "callback", "accepted"],
+    rendererReady: result.rendererReady,
+    transaction: Object.freeze({
+      acknowledgementCount: transactionEvidence.acknowledgementCount,
+      exchangeCount: transactionEvidence.exchangeCount,
+      order: transactionEvidence.order,
+      spinCount: transactionEvidence.spinCount,
+    }),
+    trustedTypes: Object.freeze({
+      nameObserved: result.trustedTypesEvidence.staticHtmlPolicyNameObserved,
+      policyCreateCount: result.trustedTypesEvidence.staticHtmlPolicyCreateCount,
+      unexpectedPolicyCreateCount: result.trustedTypesEvidence.unexpectedPolicyCreateCount,
+    }),
+    webgl: result.rendererEvidence?.webgl === true,
+  });
 } finally {
   await cleanupBrowserResources({
     browser: chrome.process,
@@ -278,7 +428,7 @@ try {
 }
 
 process.stdout.write(
-  `生产浏览器事务门禁通过：${verifiedEntryPath} 已在精确 CSP 下完成同文档桌面资产会话的连续移动/桌面布局迁移、等比黑边与控件排版门禁，以及会话交换、旋转、结果解码与表现、余额更新及结果 ACK。\n`,
+  `生产浏览器事务门禁通过：${verifiedEntryPath} 已在精确 CSP 下完成同文档桌面资产会话的连续移动/桌面布局迁移、等比黑边与控件排版门禁，以及会话交换、旋转、结果解码与表现、余额更新及结果 ACK。\n证据：${JSON.stringify(verifiedEvidence)}\n`,
 );
 
 /**
@@ -679,11 +829,20 @@ async function verifyBootstrap(
       }],
     }),
   ]);
+  // RGS 在后台/隐藏页面上按设计停放一次性 launch code。浏览器验收模拟玩家
+  // 实际打开的活动游戏页，必须先将目标前置，否则只会测到正确的后台保护分支。
+  await send("Page.bringToFront");
+  await send("Page.addScriptToEvaluateOnNewDocument", {
+    source: TRUSTED_TYPES_POLICY_OBSERVATION_PROBE_SOURCE,
+  });
   await send("Page.addScriptToEvaluateOnNewDocument", {
     source: CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE,
   });
   await send("Page.addScriptToEvaluateOnNewDocument", {
     source: BROWSER_TRANSACTION_PROBE_SOURCE,
+  });
+  await send("Page.addScriptToEvaluateOnNewDocument", {
+    source: IMAGE_DECODE_OBSERVATION_PROBE_SOURCE,
   });
   await send("Page.navigate", { url: pageUrl });
   await waitForDocumentReady(send);
@@ -706,6 +865,18 @@ async function verifyBootstrap(
             violatedDirective: String(violation?.violatedDirective ?? '').slice(0, 64),
             disposition: String(violation?.disposition ?? '').slice(0, 32),
             blockedTarget: String(violation?.blockedTarget ?? '').slice(0, 256),
+            sourceFile: typeof violation?.sourceFile === 'string'
+              ? violation.sourceFile.slice(0, 128)
+              : undefined,
+            lineNumber: Number.isSafeInteger(violation?.lineNumber)
+              ? violation.lineNumber
+              : undefined,
+            columnNumber: Number.isSafeInteger(violation?.columnNumber)
+              ? violation.columnNumber
+              : undefined,
+            trustedTypesSink: typeof violation?.trustedTypesSink === 'string'
+              ? violation.trustedTypesSink.slice(0, 64)
+              : undefined,
           }));
         };
         const entry = document.querySelector('script[type="module"][src]');
@@ -763,11 +934,51 @@ async function verifyBootstrap(
           if (rendererReady || stage === 'assembly-failed') break;
           await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
         }
+        const policyObservationDescriptor = Object.getOwnPropertyDescriptor(
+          globalThis,
+          '__slotsTrustedTypesPolicyObservation',
+        );
+        const policyObservation = policyObservationDescriptor?.value;
+        const policyObservationIsObject = policyObservation !== null
+          && typeof policyObservation === 'object';
+        const policyObservationOwnKeys = policyObservationIsObject
+          ? Reflect.ownKeys(policyObservation)
+          : [];
+        const expectedPolicyObservationKeys = [
+          'enforcementSupported',
+          'observerInstalled',
+          'staticHtmlPolicyNameObserved',
+          'staticHtmlPolicyCreateCount',
+          'unexpectedPolicyCreateCount',
+        ];
+        const policyObservationCapabilityFree = policyObservationIsObject
+          && Object.isFrozen(policyObservation)
+          && policyObservationOwnKeys.length === expectedPolicyObservationKeys.length
+          && expectedPolicyObservationKeys.every((key) => policyObservationOwnKeys.includes(key))
+          && !Reflect.has(policyObservation, 'policy')
+          && !Reflect.has(policyObservation, 'factory')
+          && !Reflect.has(policyObservation, 'createPolicy')
+          && !Reflect.has(policyObservation, 'createHTML');
         return {
           entryPath: new URL(entry.src).pathname,
           moduleFailures,
           rendererEvidence,
           rendererReady,
+          trustedTypesEvidence: {
+            enforcementSupported: policyObservation?.enforcementSupported === true,
+            observerInstalled: policyObservation?.observerInstalled === true,
+            staticHtmlPolicyNameObserved: policyObservation?.staticHtmlPolicyNameObserved === true,
+            staticHtmlPolicyCreateCount: Number.isSafeInteger(policyObservation?.staticHtmlPolicyCreateCount)
+              ? policyObservation.staticHtmlPolicyCreateCount
+              : -1,
+            unexpectedPolicyCreateCount: Number.isSafeInteger(policyObservation?.unexpectedPolicyCreateCount)
+              ? policyObservation.unexpectedPolicyCreateCount
+              : -1,
+            policyObservationCapabilityFree,
+            policyObservationGlobalLocked: policyObservationDescriptor?.enumerable === false
+              && policyObservationDescriptor?.writable === false
+              && policyObservationDescriptor?.configurable === false,
+          },
           reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
           status: document.querySelector('.launch-loading__status')?.textContent ?? null,
           cspViolations: readCspViolations(),
@@ -788,9 +999,9 @@ async function verifyBootstrap(
     throw new Error("生产浏览器事务夹具没有启用系统级减少动态效果配置");
   }
 
-  // 资产会话固定为 desktop，布局通道则必须随着当前输入能力与视口在同一文档中重算。
-  // 先建立节点/玩家状态/RGS 三重基线，再用 CDP 的真实 touch capability 迁移布局；
-  // 期间不导航、不刷新，也不允许预先消费 Spin/ACK 事务。
+  // 资产会话固定为 desktop；显式 launcher 通道也必须让触屏 PC 保持 PC 构图。
+  // 浏览器矩阵只通过更高优先级的 layout= 测试接缝在同一文档切换构图，期间不
+  // 导航、不刷新，也不允许预先消费 Spin/ACK 事务。
   const preTransitionLayout = await readViewportLayout(send);
   if (!preTransitionLayout || preTransitionLayout.frameCount !== 1
     || !preTransitionLayout.nodeIdentityPreserved
@@ -803,6 +1014,7 @@ async function verifyBootstrap(
   const preTransitionDocumentIdentity = preTransitionLayout.documentIdentityToken;
 
   await setBrowserProbePhase(send, "mobile-matrix");
+  await setLayoutChannelOverride(send, "mobile");
   await setTouchLayoutCapability(send, true);
   const mobileViewportEvidence = await verifyContinuousViewportTransitions(
     send,
@@ -830,6 +1042,7 @@ async function verifyBootstrap(
   );
 
   await setBrowserProbePhase(send, "desktop-matrix");
+  await setLayoutChannelOverride(send, "desktop");
   await setTouchLayoutCapability(send, false);
   const desktopViewportEvidence = await verifyContinuousViewportTransitions(
     send,
@@ -874,8 +1087,10 @@ async function verifyBootstrap(
       && postTransitionLayout.documentIdentityToken === preTransitionDocumentIdentity,
     statePreserved: mobileViewportEvidence.steps.every((step) => step.statePreserved)
       && desktopViewportEvidence.steps.every((step) => step.statePreserved),
-    transactionStatePreserved: JSON.stringify(postTransitionTransaction)
-      === JSON.stringify(preTransitionTransaction),
+    transactionStatePreserved: economicTransactionStateEqual(
+      preTransitionTransaction,
+      postTransitionTransaction,
+    ),
   });
 
   await setBrowserProbePhase(send, "transaction-active");
@@ -972,6 +1187,9 @@ async function verifyContinuousViewportTransitions(send, fixture, options) {
     const controlLayout = options.channel === "mobile" && surface.regularAspect
       ? assertMobileControlLayout(snapshot, viewport)
       : null;
+    const desktopStatusLayout = options.channel === "desktop"
+      ? assertDesktopStatusLayout(snapshot, viewport)
+      : null;
     const maximumStatusLayout = options.channel === "mobile"
       ? await verifyMaximumStatusValues(send, viewport)
       : null;
@@ -1028,6 +1246,8 @@ async function verifyContinuousViewportTransitions(send, fixture, options) {
       frameHeight: snapshot.frameRect.height,
       frameWidth: snapshot.frameRect.width,
       scale: snapshot.datasetScale,
+      statusLayout: desktopStatusLayout,
+      visibleInsetX: snapshot.visibleInsetX,
       x: snapshot.frameRect.left,
       y: snapshot.frameRect.top,
       coarsePointer: snapshot.coarsePointer,
@@ -1084,6 +1304,24 @@ async function setTouchLayoutCapability(send, enabled) {
   await delay(50);
 }
 
+async function setLayoutChannelOverride(send, channel) {
+  if (channel !== "desktop" && channel !== "mobile") {
+    throw new Error(`生产浏览器布局测试接缝不受支持：${channel}`);
+  }
+  const accepted = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `(() => {
+      const url = new URL(location.href);
+      url.searchParams.set('layout', ${JSON.stringify(channel)});
+      history.replaceState(history.state, '', url);
+      window.dispatchEvent(new Event('resize'));
+      return new URL(location.href).searchParams.get('layout') === ${JSON.stringify(channel)};
+    })()`,
+  });
+  if (!accepted) throw new Error("生产浏览器无法提交同文档布局测试接缝");
+  await delay(50);
+}
+
 async function setBrowserProbePhase(send, phase) {
   if (!BROWSER_RUNTIME_PHASES.includes(phase)) {
     throw new Error("生产浏览器运行时探针阶段不受支持");
@@ -1114,7 +1352,10 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
     await delay(50);
   }
   if (!opening?.visible || !opening.authored || opening.continueDisabled) {
-    throw new Error(`正式浏览器无法到达已启用的开场 Feature Preview：${JSON.stringify(opening)}`);
+    throw new Error(`正式浏览器无法到达已启用的开场 Feature Preview：${JSON.stringify({
+      fixture: fixture.snapshot(),
+      opening,
+    })}`);
   }
   const initialLayout = await readViewportLayout(send);
   const expectedDocumentIdentity = initialLayout.documentIdentityToken;
@@ -1122,7 +1363,45 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
   const expectedTransaction = fixture.snapshot();
   const steps = [];
 
+  // URL 中的 channel=desktop 是正式 launcher 合约。即使浏览器暴露 coarse pointer，
+  // Feature Preview 与游戏根也必须先保持 PC 构图，避免桌面资产落入移动坐标域。
   await setTouchLayoutCapability(send, true);
+  const desktopTouchViewport = Object.freeze({ width: 1_440, height: 900 });
+  await send("Emulation.setDeviceMetricsOverride", {
+    width: desktopTouchViewport.width,
+    height: desktopTouchViewport.height,
+    deviceScaleFactor: 1,
+    mobile: false,
+    screenWidth: desktopTouchViewport.width,
+    screenHeight: desktopTouchViewport.height,
+  });
+  const desktopTouchLayout = await waitForStableViewportLayout(
+    send,
+    desktopTouchViewport,
+    DESKTOP_VIEWPORT_SURFACE,
+    "desktop",
+    transportFailure,
+  );
+  assertViewportGeometry(
+    desktopTouchLayout,
+    desktopTouchViewport,
+    DESKTOP_VIEWPORT_SURFACE,
+    "desktop",
+  );
+  if (!desktopTouchLayout.coarsePointer || desktopTouchLayout.maxTouchPoints <= 0) {
+    throw new Error(`触屏 PC 能力探针没有生效：${JSON.stringify(desktopTouchLayout)}`);
+  }
+  assertViewportStatePreserved(expectedState, desktopTouchLayout.state, desktopTouchViewport,
+    "desktop");
+  assertTransactionStatePreserved(expectedTransaction, fixture.snapshot(), desktopTouchViewport,
+    "desktop");
+  if (desktopTouchLayout.documentIdentityToken !== expectedDocumentIdentity) {
+    throw new Error("触屏 PC Feature Preview 视口切换替换了文档");
+  }
+  opening = await readOpeningOverlayLayout(send);
+  assertOpeningOverlayGeometry(opening, desktopTouchViewport, DESKTOP_VIEWPORT_SURFACE);
+
+  await setLayoutChannelOverride(send, "mobile");
   for (const viewport of OFFICIAL_HELP_VIEWPORTS) {
     const surface = responsiveSurfaceForViewport(viewport, "mobile");
     await send("Emulation.setDeviceMetricsOverride", {
@@ -1153,41 +1432,7 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
       throw new Error(`开场 overlay 视口切换替换了文档或游戏节点：${viewport.width}x${viewport.height}`);
     }
     opening = await readOpeningOverlayLayout(send);
-    const detail = () => JSON.stringify({ viewport, surface, opening });
-    if (!opening?.visible || !opening.authored || opening.continueDisabled
-      || !opening.previewRect || !opening.frameRect || !opening.featuresMatrix) {
-      throw new Error(`开场 Feature Preview 缺少完整布局证据：${detail()}`);
-    }
-    requireNear(opening.featuresMatrix.a, opening.featuresMatrix.d, 0.000_01,
-      "开场 overlay scaleX/scaleY", detail);
-    if (opening.featuresMatrix.a <= 0) {
-      throw new Error(`开场 Feature Preview 没有正向等比投影：${detail()}`);
-    }
-    requireNear(opening.featuresMatrix.b, 0, 0.000_001, "开场 overlay skewY", detail);
-    requireNear(opening.featuresMatrix.c, 0, 0.000_001, "开场 overlay skewX", detail);
-    requireNear(opening.previewRect.left, opening.frameRect.left, 0.75,
-      "开场 overlay 左边界", detail);
-    requireNear(opening.previewRect.top, opening.frameRect.top, 0.75,
-      "开场 overlay 上边界", detail);
-    requireNear(opening.previewRect.width, opening.frameRect.width, 0.75,
-      "开场 overlay 宽度", detail);
-    requireNear(opening.previewRect.height, opening.frameRect.height, 0.75,
-      "开场 overlay 高度", detail);
-    for (const [name, rectangle] of Object.entries(opening.controls ?? {})) {
-      if (!rectangle
-        || rectangle.width <= 0 || rectangle.height <= 0
-        || rectangle.left < opening.previewRect.left - 0.75
-        || rectangle.right > opening.previewRect.right + 0.75
-        || rectangle.top < opening.previewRect.top - 0.75
-        || rectangle.bottom > opening.previewRect.bottom + 0.75) {
-        throw new Error(`开场 Feature Preview ${name} 控件越出画面：${detail()}`);
-      }
-    }
-    if (rectangleIntersectionArea(opening.controls.continue, opening.controls.optOut) > 0.75
-      || rectangleIntersectionArea(opening.controls.continue, opening.controls.sound) > 0.75
-      || rectangleIntersectionArea(opening.controls.optOut, opening.controls.sound) > 0.75) {
-      throw new Error(`开场 Feature Preview 控件发生交叠：${detail()}`);
-    }
+    assertOpeningOverlayGeometry(opening, viewport, surface);
     steps.push(Object.freeze({
       height: viewport.height,
       noControlOverlap: true,
@@ -1207,6 +1452,17 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
     "mobile",
   );
   return Object.freeze({
+    desktopTouchLocked: Object.freeze({
+      coarsePointer: desktopTouchLayout.coarsePointer,
+      featurePreviewContained: true,
+      frameHeight: desktopTouchLayout.frameRect.height,
+      frameWidth: desktopTouchLayout.frameRect.width,
+      maxTouchPoints: desktopTouchLayout.maxTouchPoints,
+      verified: desktopTouchLayout.channel === "desktop",
+      visibleInsetX: desktopTouchLayout.visibleInsetX,
+      x: desktopTouchLayout.frameRect.left,
+      y: desktopTouchLayout.frameRect.top,
+    }),
     freeSpinsHud: Object.freeze({
       reachable: false,
       reason: "controlled-transaction-fixture-feature-mode-none",
@@ -1216,12 +1472,54 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
   });
 }
 
+function assertOpeningOverlayGeometry(opening, viewport, surface) {
+  const detail = () => JSON.stringify({ viewport, surface, opening });
+  if (!opening?.visible || !opening.authored || opening.continueDisabled
+    || !opening.previewRect || !opening.frameRect || !opening.featuresMatrix) {
+    throw new Error(`开场 Feature Preview 缺少完整布局证据：${detail()}`);
+  }
+  requireNear(opening.featuresMatrix.a, opening.featuresMatrix.d, 0.000_01,
+    "开场 overlay scaleX/scaleY", detail);
+  if (opening.featuresMatrix.a <= 0) {
+    throw new Error(`开场 Feature Preview 没有正向等比投影：${detail()}`);
+  }
+  requireNear(opening.featuresMatrix.b, 0, 0.000_001, "开场 overlay skewY", detail);
+  requireNear(opening.featuresMatrix.c, 0, 0.000_001, "开场 overlay skewX", detail);
+  requireNear(opening.previewRect.left, opening.frameRect.left, 0.75,
+    "开场 overlay 左边界", detail);
+  requireNear(opening.previewRect.top, opening.frameRect.top, 0.75,
+    "开场 overlay 上边界", detail);
+  requireNear(opening.previewRect.width, opening.frameRect.width, 0.75,
+    "开场 overlay 宽度", detail);
+  requireNear(opening.previewRect.height, opening.frameRect.height, 0.75,
+    "开场 overlay 高度", detail);
+  for (const [name, rectangle] of Object.entries(opening.controls ?? {})) {
+    if (!rectangle
+      || rectangle.width <= 0 || rectangle.height <= 0
+      || rectangle.left < opening.previewRect.left - 0.75
+      || rectangle.right > opening.previewRect.right + 0.75
+      || rectangle.top < opening.previewRect.top - 0.75
+      || rectangle.bottom > opening.previewRect.bottom + 0.75
+      || rectangle.left < -0.75 || rectangle.right > viewport.width + 0.75
+      || rectangle.top < -0.75 || rectangle.bottom > viewport.height + 0.75) {
+      throw new Error(`开场 Feature Preview ${name} 控件越出可见画面：${detail()}`);
+    }
+  }
+  if (rectangleIntersectionArea(opening.controls.continue, opening.controls.optOut) > 0.75
+    || rectangleIntersectionArea(opening.controls.continue, opening.controls.sound) > 0.75
+    || rectangleIntersectionArea(opening.controls.optOut, opening.controls.sound) > 0.75) {
+    throw new Error(`开场 Feature Preview 控件发生交叠：${detail()}`);
+  }
+}
+
 async function readOpeningOverlayLayout(send) {
   return evaluateValue(send, {
     returnByValue: true,
     expression: `
       (() => {
+        const root = document.querySelector('#app');
         const frame = document.querySelector('[data-role="frame"]');
+        const overlay = document.querySelector('[data-role="overlay"]');
         const preview = document.querySelector('[data-role="feature-preview"]');
         const features = document.querySelector('.feature-preview__features');
         const continuation = document.querySelector('[data-role="preview-continue"]');
@@ -1267,6 +1565,55 @@ async function readOpeningOverlayLayout(send) {
           },
           featuresMatrix,
           frameRect: rectangle(frame),
+          launch: {
+            assemblyStage: root instanceof HTMLElement
+              ? root.dataset.startupAssemblyStage ?? null
+              : null,
+            domImages: (() => {
+              const images = Array.from(root?.querySelectorAll('img') ?? []);
+              return {
+                complete: images.filter((image) => image.complete).length,
+                naturalSize: images.filter((image) => image.naturalWidth > 0).length,
+                total: images.length,
+              };
+            })(),
+            fontStatus: document.fonts?.status ?? null,
+            navigatorOnline: navigator.onLine,
+            visibilityState: document.visibilityState,
+            imageDecode: (() => {
+              const observation = globalThis.__slotsImageDecodeObservation;
+              return observation ? {
+                calls: observation.calls,
+                failures: observation.failures,
+                fulfilled: observation.fulfilled,
+                pending: observation.pending,
+                rejected: observation.rejected,
+              } : null;
+            })(),
+            launchPhase: overlay instanceof HTMLElement ? overlay.dataset.launch ?? null : null,
+            loadingStatus: document.querySelector('[data-role="loading-status"]')?.textContent ?? null,
+            loadingValue: document.querySelector('[data-role="loading-value"]')?.textContent ?? null,
+            readiness: root instanceof HTMLElement ? root.dataset.startupReadiness ?? null : null,
+            readinessProgress: root instanceof HTMLElement
+              ? root.dataset.startupReadinessProgress ?? null
+              : null,
+            readinessStage: root instanceof HTMLElement
+              ? root.dataset.startupReadinessStage ?? null
+              : null,
+            rgsSession: root instanceof HTMLElement ? root.dataset.rgsSession ?? null : null,
+            domReadiness: root instanceof HTMLElement ? {
+              completed: root.dataset.startupDomImageCompleted ?? null,
+              errorClass: root.dataset.startupDomImageErrorClass ?? null,
+              state: root.dataset.startupDomImageState ?? null,
+              total: root.dataset.startupDomImageTotal ?? null,
+            } : null,
+            toast: (() => {
+              const toast = document.querySelector('[data-role="toast"]');
+              return toast instanceof HTMLElement
+                ? { text: toast.textContent, visible: toast.dataset.visible ?? null }
+                : null;
+            })(),
+          },
           previewRect: rectangle(preview),
           visible: preview instanceof HTMLElement && preview.dataset.visible === 'true',
         };
@@ -1354,6 +1701,8 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
       || rectangleIntersectionArea(help.tabsRect, help.closeRect) > 0.75) {
       throw new Error(`正式浏览器帮助页标签与关闭按钮发生交叠：${detail()}`);
     }
+    const paytableContent = await verifyOfficialHelpBottomLayout(send, viewport);
+    const gameRulesContent = await verifyBoundGameRulesLayout(send, viewport);
     const postHelpLayout = await readViewportLayout(send);
     if (!postHelpLayout.nodeIdentityPreserved
       || postHelpLayout.documentIdentityToken !== options.expectedDocumentIdentity) {
@@ -1376,6 +1725,9 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
       bound: true,
       height: viewport.height,
       horizontalOverflow: false,
+      gameRulesBottomVisible: gameRulesContent.bottomVisible,
+      gameRulesBound: gameRulesContent.bound,
+      paytableBottomVisible: paytableContent.bottomVisible,
       scaleX: help.scaleX,
       scaleY: help.scaleY,
       width: viewport.width,
@@ -1389,7 +1741,11 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
 
 function officialHelpProjectionSettled(help) {
   if (!help?.viewportRect || !help?.projectionRect || !help?.authoredRect) return false;
+  const expectedScale = help.viewportClientWidth / 750;
   return help.projectionScrollWidth <= help.projectionClientWidth + 1
+    && Math.abs(help.scaleX - expectedScale) <= 0.000_000_1
+    && Math.abs(help.scaleY - expectedScale) <= 0.000_000_1
+    && Math.abs(help.projectionRect.width - help.viewportClientWidth) <= 0.75
     && Math.abs(help.authoredRect.width - help.projectionRect.width) <= 0.75
     && help.projectionRect.left >= help.viewportRect.left - 0.75
     && help.projectionRect.right <= help.viewportRect.right + 0.75
@@ -1451,6 +1807,278 @@ async function readOfficialHelpLayout(send) {
   });
 }
 
+async function setGameMenuScrollPosition(send, position) {
+  const requested = position === "bottom" ? "bottom" : "top";
+  const deadline = Date.now() + 5_000;
+  let metrics = null;
+  let previousGeometry = null;
+  let stableSamples = 0;
+  while (Date.now() < deadline) {
+    await evaluateValue(send, {
+      returnByValue: true,
+      expression: `
+        (() => {
+          const content = document.querySelector('.game-menu__content');
+          if (!(content instanceof HTMLElement)) return null;
+          content.scrollTop = ${requested === "bottom" ? "content.scrollHeight" : "0"};
+          return true;
+        })()
+      `,
+    });
+    // 冷缓存下帮助页素材与投影可能在首次滚动后继续改变 scrollHeight。
+    // 等一帧布局窗口再取样，并要求最大滚动位置连续稳定，避免把旧最大值误判为底边。
+    await delay(50);
+    metrics = await evaluateValue(send, {
+      returnByValue: true,
+      expression: `
+        (() => {
+          const content = document.querySelector('.game-menu__content');
+          if (!(content instanceof HTMLElement)) return null;
+          return {
+            clientHeight: content.clientHeight,
+            scrollHeight: content.scrollHeight,
+            scrollTop: content.scrollTop,
+          };
+        })()
+      `,
+    });
+    if (metrics) {
+      const maximum = Math.max(0, metrics.scrollHeight - metrics.clientHeight);
+      const settled = requested === "bottom"
+        ? Math.abs(metrics.scrollTop - maximum) <= 1
+        : metrics.scrollTop <= 1;
+      if (settled) {
+        const geometry = `${metrics.clientHeight}:${metrics.scrollHeight}:${maximum}`;
+        stableSamples = previousGeometry === geometry
+          ? stableSamples + 1
+          : 1;
+        previousGeometry = geometry;
+        if (stableSamples >= 3) return metrics;
+      } else {
+        stableSamples = 0;
+        previousGeometry = null;
+      }
+    }
+  }
+  throw new Error(`正式浏览器游戏菜单无法滚动到${requested === "bottom" ? "底部" : "顶部"}：${JSON.stringify(metrics)}`);
+}
+
+async function verifyOfficialHelpBottomLayout(send, viewport) {
+  await setGameMenuScrollPosition(send, "bottom");
+  const evidence = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const content = document.querySelector('.game-menu__content');
+        const panel = document.querySelector('#game-menu-paytable');
+        const bottomHeading = document.querySelector('[data-help-anchor="maximum-win-bottom"]');
+        const lastSeparator = document.querySelector('[data-separator-index="8"]');
+        const authoredSections = document.querySelector('[data-role="official-help-sections"]');
+        const rectangle = (element) => {
+          if (!(element instanceof HTMLElement)) return null;
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        return {
+          amountTexts: [...document.querySelectorAll('.base-paytable__amount')]
+            .map((element) => element.textContent?.trim() ?? ''),
+          authorHeight: authoredSections instanceof HTMLElement
+            ? authoredSections.dataset.authorHeight ?? null
+            : null,
+          bottomHeadingRect: rectangle(bottomHeading),
+          bottomHeadingText: bottomHeading
+            ?.querySelector('.official-help__title-fill')
+            ?.textContent?.trim() ?? null,
+          contentClientHeight: content instanceof HTMLElement ? content.clientHeight : -1,
+          contentClientWidth: content instanceof HTMLElement ? content.clientWidth : -1,
+          contentRect: rectangle(content),
+          contentScrollHeight: content instanceof HTMLElement ? content.scrollHeight : -1,
+          contentScrollTop: content instanceof HTMLElement ? content.scrollTop : -1,
+          contentScrollWidth: content instanceof HTMLElement ? content.scrollWidth : -1,
+          lastSeparatorRect: rectangle(lastSeparator),
+          panelHidden: !(panel instanceof HTMLElement) || panel.hidden,
+          selected: document.querySelector('[data-menu-tab="paytable"]')?.getAttribute('aria-selected'),
+          separatorCount: document.querySelectorAll('[data-separator-index]').length,
+          titles: [...document.querySelectorAll('.official-help__title-fill')]
+            .map((element) => element.textContent?.trim() ?? ''),
+        };
+      })()
+    `,
+  });
+  const requiredTitles = [
+    "Win up to 2500x your bet!",
+    "WILD",
+    "VAULT BONUS",
+    "RAGE SYMBOL",
+    "PRIMAL WHEEL",
+    "KONG QUEST",
+    "KING SPIN",
+    "PAYING SYMBOLS",
+    "WAY WINS",
+  ];
+  const detail = () => JSON.stringify({ viewport, evidence });
+  const maximumScrollTop = evidence
+    ? Math.max(0, evidence.contentScrollHeight - evidence.contentClientHeight)
+    : Number.NaN;
+  if (!evidence || evidence.panelHidden || evidence.selected !== "true"
+    || evidence.authorHeight !== String(7_565) || evidence.separatorCount !== 9
+    || !requiredTitles.every((title) => evidence.titles?.includes(title))
+    || evidence.bottomHeadingText !== "Win up to 2500x your bet!"
+    || evidence.amountTexts?.length !== 6
+    || evidence.amountTexts.some((value) => value === "" || value === "—")
+    || Math.abs(evidence.contentScrollTop - maximumScrollTop) > 1
+    || evidence.contentScrollWidth > evidence.contentClientWidth + 1
+    || !evidence.contentRect || !evidence.bottomHeadingRect || !evidence.lastSeparatorRect
+    || evidence.bottomHeadingRect.top < evidence.contentRect.top - 1
+    || evidence.bottomHeadingRect.bottom > evidence.contentRect.bottom + 1
+    || evidence.lastSeparatorRect.top < evidence.contentRect.top - 1
+    || evidence.lastSeparatorRect.bottom > evidence.contentRect.bottom + 1
+    || evidence.bottomHeadingRect.bottom > evidence.lastSeparatorRect.top + 1) {
+    throw new Error(`正式浏览器 PAYTABLE 关键内容或底边不可达：${detail()}`);
+  }
+  return Object.freeze({ bottomVisible: true });
+}
+
+async function verifyBoundGameRulesLayout(send, viewport) {
+  await clickElement(send, '[data-menu-tab="rules"]');
+  await setGameMenuScrollPosition(send, "top");
+  const topEvidence = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const menu = document.querySelector('[data-role="game-menu"]');
+        const content = document.querySelector('.game-menu__content');
+        const documentSurface = document.querySelector('[data-role="game-rules-document"]');
+        const unavailable = document.querySelector('[data-role="game-rules-unavailable"]');
+        const pageTitle = document.querySelector('[data-role="packaged-primal-game-rules-title"]');
+        const rectangle = (element) => {
+          if (!(element instanceof HTMLElement)) return null;
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        return {
+          actionTerms: [...document.querySelectorAll('.packaged-game-rules__actions dt')]
+            .map((element) => element.textContent?.trim() ?? ''),
+          background: documentSurface instanceof HTMLElement
+            ? getComputedStyle(documentSurface).backgroundColor
+            : null,
+          contentClientWidth: content instanceof HTMLElement ? content.clientWidth : -1,
+          contentRect: rectangle(content),
+          contentScrollWidth: content instanceof HTMLElement ? content.scrollWidth : -1,
+          documentHidden: !(documentSurface instanceof HTMLElement) || documentSurface.hidden,
+          documentRect: rectangle(documentSurface),
+          pageTitleRect: rectangle(pageTitle),
+          pageTitleText: pageTitle?.textContent?.trim() ?? null,
+          rulesStatus: menu instanceof HTMLElement ? menu.dataset.gameRulesStatus ?? null : null,
+          sectionTitles: [...document.querySelectorAll('[data-game-rules-section] > h4')]
+            .map((element) => element.textContent?.trim() ?? ''),
+          selected: document.querySelector('[data-menu-tab="rules"]')?.getAttribute('aria-selected'),
+          unavailableHidden: unavailable instanceof HTMLElement && unavailable.hidden,
+          visibleText: documentSurface?.textContent ?? '',
+        };
+      })()
+    `,
+  });
+  const requiredSectionTitles = [
+    "Information",
+    "Game Rules",
+    "WILD",
+    "VAULT BONUS",
+    "RAGE SYMBOL",
+    "PRIMAL WHEEL",
+    "KONG QUEST FREE SPINS",
+    "KING SPIN FREE SPINS",
+    "Actions",
+  ];
+  const expectedActionTerms = [
+    "Paytable",
+    "Auto Play",
+    "Spin / Start / Spacebar",
+    "Stop",
+    "Fast Play",
+  ];
+  const topDetail = () => JSON.stringify({ viewport, topEvidence });
+  if (!topEvidence || topEvidence.documentHidden || !topEvidence.unavailableHidden
+    || topEvidence.rulesStatus !== "bound" || topEvidence.selected !== "true"
+    || topEvidence.pageTitleText !== "Primal Rampage"
+    || JSON.stringify(topEvidence.sectionTitles) !== JSON.stringify(requiredSectionTitles)
+    || JSON.stringify(topEvidence.actionTerms) !== JSON.stringify(expectedActionTerms)
+    || /Hyper Spin|holding down the SPACE button|Auto adjust bet|Automatically reduces the total bet/u
+      .test(topEvidence.visibleText)
+    || topEvidence.background !== "rgb(255, 255, 255)"
+    || topEvidence.contentScrollWidth > topEvidence.contentClientWidth + 1
+    || !topEvidence.contentRect || !topEvidence.documentRect || !topEvidence.pageTitleRect
+    || topEvidence.documentRect.left < topEvidence.contentRect.left - 1
+    || topEvidence.documentRect.right > topEvidence.contentRect.right + 1
+    || topEvidence.pageTitleRect.top < topEvidence.contentRect.top - 1
+    || topEvidence.pageTitleRect.bottom > topEvidence.contentRect.bottom + 1) {
+    throw new Error(`正式浏览器 Game Rules 绑定、关键标题或顶部几何失真：${topDetail()}`);
+  }
+
+  await setGameMenuScrollPosition(send, "bottom");
+  const bottomEvidence = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const content = document.querySelector('.game-menu__content');
+        const documentSurface = document.querySelector('[data-role="game-rules-document"]');
+        const descriptions = document.querySelectorAll('.packaged-game-rules__actions dd');
+        const finalDescription = descriptions.item(descriptions.length - 1);
+        const rectangle = (element) => {
+          if (!(element instanceof HTMLElement)) return null;
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        return {
+          contentClientHeight: content instanceof HTMLElement ? content.clientHeight : -1,
+          contentRect: rectangle(content),
+          contentScrollHeight: content instanceof HTMLElement ? content.scrollHeight : -1,
+          contentScrollTop: content instanceof HTMLElement ? content.scrollTop : -1,
+          documentRect: rectangle(documentSurface),
+          finalDescriptionRect: rectangle(finalDescription),
+          finalDescriptionText: finalDescription?.textContent?.trim() ?? null,
+        };
+      })()
+    `,
+  });
+  const bottomDetail = () => JSON.stringify({ viewport, bottomEvidence });
+  const maximumScrollTop = bottomEvidence
+    ? Math.max(0, bottomEvidence.contentScrollHeight - bottomEvidence.contentClientHeight)
+    : Number.NaN;
+  if (!bottomEvidence || Math.abs(bottomEvidence.contentScrollTop - maximumScrollTop) > 1
+    || !bottomEvidence.contentRect || !bottomEvidence.documentRect
+    || !bottomEvidence.finalDescriptionRect
+    || bottomEvidence.documentRect.bottom > bottomEvidence.contentRect.bottom + 1
+    || bottomEvidence.documentRect.bottom < bottomEvidence.contentRect.top - 1
+    || bottomEvidence.finalDescriptionRect.top < bottomEvidence.contentRect.top - 1
+    || bottomEvidence.finalDescriptionRect.bottom > bottomEvidence.contentRect.bottom + 1
+    || bottomEvidence.finalDescriptionText !== "- Toggle on for a significantly faster gameplay.") {
+    throw new Error(`正式浏览器 Game Rules 底边不可达：${bottomDetail()}`);
+  }
+  return Object.freeze({ bound: true, bottomVisible: true });
+}
+
 async function clickElement(send, selector) {
   const point = await evaluateValue(send, {
     returnByValue: true,
@@ -1503,12 +2131,7 @@ async function waitForStableViewportLayout(
     const transportError = transportFailure?.();
     if (transportError) throw transportError;
     snapshot = await readViewportLayout(send);
-    const expectedScale = Math.min(
-      viewport.width / surface.designWidth,
-      viewport.height / surface.designHeight,
-    );
-    const expectedWidth = surface.designWidth * expectedScale;
-    const expectedHeight = surface.designHeight * expectedScale;
+    const expected = expectedViewportGeometry(viewport, surface, channel);
     const eligible = snapshot?.viewportWidth === viewport.width
       && snapshot?.viewportHeight === viewport.height
       && snapshot?.frameCount === 1
@@ -1516,9 +2139,9 @@ async function waitForStableViewportLayout(
       && snapshot?.profile === surface.profile
       && Math.abs(snapshot?.designWidth - surface.designWidth) <= 0.000_001
       && Math.abs(snapshot?.designHeight - surface.designHeight) <= 0.000_001
-      && Math.abs(snapshot.datasetScale - expectedScale) <= 0.000_001
-      && Math.abs(snapshot.frameRect.width - expectedWidth) <= 0.75
-      && Math.abs(snapshot.frameRect.height - expectedHeight) <= 0.75;
+      && Math.abs(snapshot.datasetScale - expected.scale) <= 0.000_001
+      && Math.abs(snapshot.frameRect.width - expected.width) <= 0.75
+      && Math.abs(snapshot.frameRect.height - expected.height) <= 0.75;
     if (eligible) {
       const stabilityKey = JSON.stringify([
         snapshot.viewportWidth,
@@ -1580,6 +2203,9 @@ async function readViewportLayout(send) {
           };
         };
         const statusPanel = root?.querySelector('.status-panel');
+        const statusPanelStyle = statusPanel instanceof HTMLElement
+          ? getComputedStyle(statusPanel)
+          : null;
         const statusValues = [...(root?.querySelectorAll('.status-metric') ?? [])]
           .filter((element) => element instanceof HTMLElement)
           .map((element) => ({
@@ -1686,6 +2312,7 @@ async function readViewportLayout(send) {
             spin: rectangle('[data-role="spin-dock"]'),
             utility: rectangle('[data-role="tool-strip"]'),
             status: rectangle('.status-panel'),
+            statusBoxShadow: statusPanelStyle?.boxShadow ?? null,
             statusClientHeight: statusPanel instanceof HTMLElement ? statusPanel.clientHeight : -1,
             statusScrollHeight: statusPanel instanceof HTMLElement ? statusPanel.scrollHeight : -1,
             statusValues,
@@ -1703,6 +2330,7 @@ async function readViewportLayout(send) {
             spinMode: spin?.dataset.mode ?? null,
           },
           transformOrigin: frameStyle.transformOrigin,
+          visibleInsetX: Number.parseFloat(frameStyle.getPropertyValue('--visible-inset-x')),
           viewportHeight: innerHeight,
           viewportWidth: innerWidth,
         };
@@ -1712,14 +2340,7 @@ async function readViewportLayout(send) {
 }
 
 function assertViewportGeometry(snapshot, viewport, surface, channel) {
-  const expectedScale = Math.min(
-    viewport.width / surface.designWidth,
-    viewport.height / surface.designHeight,
-  );
-  const expectedWidth = surface.designWidth * expectedScale;
-  const expectedHeight = surface.designHeight * expectedScale;
-  const expectedX = (viewport.width - expectedWidth) / 2;
-  const expectedY = (viewport.height - expectedHeight) / 2;
+  const expected = expectedViewportGeometry(viewport, surface, channel);
   const detail = () => JSON.stringify({ viewport, surface, snapshot });
   if (snapshot.frameCount !== 1 || !snapshot.nodeIdentityPreserved
     || snapshot.channel !== channel || snapshot.profile !== surface.profile
@@ -1727,22 +2348,37 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
     || Math.abs(snapshot.designHeight - surface.designHeight) > 0.000_001) {
     throw new Error(`生产布局没有唯一且动态匹配当前能力的设计框架：${detail()}`);
   }
-  requireNear(snapshot.datasetScale, expectedScale, 0.000_001, "数据 scale", detail);
-  requireNear(snapshot.datasetX, expectedX, 0.000_001, "数据 x", detail);
-  requireNear(snapshot.datasetY, expectedY, 0.000_001, "数据 y", detail);
-  requireNear(snapshot.frameRect.width, expectedWidth, 0.75, "框架宽度", detail);
-  requireNear(snapshot.frameRect.height, expectedHeight, 0.75, "框架高度", detail);
-  requireNear(snapshot.frameRect.left, expectedX, 0.75, "左黑边", detail);
-  requireNear(snapshot.frameRect.top, expectedY, 0.75, "上黑边", detail);
-  requireNear(viewport.width - snapshot.frameRect.right, expectedX, 0.75, "右黑边", detail);
-  requireNear(viewport.height - snapshot.frameRect.bottom, expectedY, 0.75, "下黑边", detail);
+  requireNear(snapshot.datasetScale, expected.scale, 0.000_001, "数据 scale", detail);
+  requireNear(snapshot.datasetX, expected.x, 0.000_001, "数据 x", detail);
+  requireNear(snapshot.datasetY, expected.y, 0.000_001, "数据 y", detail);
+  requireNear(snapshot.frameRect.width, expected.width, 0.75, "框架宽度", detail);
+  requireNear(snapshot.frameRect.height, expected.height, 0.75, "框架高度", detail);
+  requireNear(snapshot.frameRect.left, expected.x, 0.75, "框架左偏移", detail);
+  requireNear(snapshot.frameRect.top, expected.y, 0.75, "框架上偏移", detail);
+  requireNear(
+    viewport.width - snapshot.frameRect.right,
+    expected.x,
+    0.75,
+    "框架右偏移",
+    detail,
+  );
+  requireNear(
+    viewport.height - snapshot.frameRect.bottom,
+    expected.y,
+    0.75,
+    "框架下偏移",
+    detail,
+  );
+  requireNear(snapshot.visibleInsetX, expected.visibleInsetX, 0.000_001, "可见横向内缩", detail);
   requireNear(snapshot.safeAreaRect.left, 0, 0.25, "安全区左边", detail);
   requireNear(snapshot.safeAreaRect.top, 0, 0.25, "安全区上边", detail);
   requireNear(snapshot.safeAreaRect.width, viewport.width, 0.25, "安全区宽度", detail);
   requireNear(snapshot.safeAreaRect.height, viewport.height, 0.25, "安全区高度", detail);
-  if (snapshot.frameRect.left < -0.75 || snapshot.frameRect.top < -0.75
+  if (channel === "mobile" && (
+    snapshot.frameRect.left < -0.75 || snapshot.frameRect.top < -0.75
     || snapshot.frameRect.right > viewport.width + 0.75
-    || snapshot.frameRect.bottom > viewport.height + 0.75) {
+    || snapshot.frameRect.bottom > viewport.height + 0.75
+  )) {
     throw new Error(`生产布局发生视口裁切：${detail()}`);
   }
   const matrix = snapshot.matrix;
@@ -1750,8 +2386,8 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
     throw new Error(`生产布局没有唯一二维缩放矩阵：${detail()}`);
   }
   // getComputedStyle() 会把 CSS matrix 小数序列化为约 6 位；数据集仍保持完整精度。
-  requireNear(matrix.a, expectedScale, 0.000_01, "矩阵 scaleX", detail);
-  requireNear(matrix.d, expectedScale, 0.000_01, "矩阵 scaleY", detail);
+  requireNear(matrix.a, expected.scale, 0.000_01, "矩阵 scaleX", detail);
+  requireNear(matrix.d, expected.scale, 0.000_01, "矩阵 scaleY", detail);
   requireNear(matrix.b, 0, 0.000_001, "矩阵 skewY", detail);
   requireNear(matrix.c, 0, 0.000_001, "矩阵 skewX", detail);
   requireNear(matrix.e, 0, 0.000_001, "矩阵 translateX", detail);
@@ -1778,6 +2414,41 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
   }
 }
 
+function expectedViewportGeometry(viewport, surface, channel) {
+  if (channel === "desktop") {
+    const height = Math.min(
+      viewport.height,
+      viewport.width * (DESKTOP_AUTHORED_HEIGHT / DESKTOP_AUTHORED_WIDTH),
+    );
+    const scale = height / surface.designHeight;
+    const width = surface.designWidth * scale;
+    const x = (viewport.width - width) / 2;
+    const y = (viewport.height - height) / 2;
+    return Object.freeze({
+      height,
+      scale,
+      visibleInsetX: scale > 0 ? Math.max(0, -x / scale) : 0,
+      width,
+      x,
+      y,
+    });
+  }
+  const scale = Math.min(
+    viewport.width / surface.designWidth,
+    viewport.height / surface.designHeight,
+  );
+  const width = surface.designWidth * scale;
+  const height = surface.designHeight * scale;
+  return Object.freeze({
+    height,
+    scale,
+    visibleInsetX: 0,
+    width,
+    x: (viewport.width - width) / 2,
+    y: (viewport.height - height) / 2,
+  });
+}
+
 function assertViewportStatePreserved(expected, actual, viewport, channel) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`连续视口切换重置了状态、余额或 roundId：${JSON.stringify({
@@ -1790,7 +2461,9 @@ function assertViewportStatePreserved(expected, actual, viewport, channel) {
 }
 
 function assertTransactionStatePreserved(expected, actual, viewport, channel) {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+  assertSessionStatusCadence(expected);
+  assertSessionStatusCadence(actual);
+  if (!economicTransactionStateEqual(expected, actual)) {
     throw new Error(`连续视口切换或界面点击改变了 RGS 事务：${JSON.stringify({
       channel,
       viewport,
@@ -1835,6 +2508,40 @@ function assertMobileControlLayout(snapshot, viewport) {
       && (controls.statusValues ?? []).every(
         (metric) => metric.scrollHeight <= metric.clientHeight + 1,
       ),
+  });
+}
+
+function assertDesktopStatusLayout(snapshot, viewport) {
+  const status = snapshot.controlLayout?.status;
+  const expected = expectedViewportGeometry(
+    viewport,
+    DESKTOP_VIEWPORT_SURFACE,
+    "desktop",
+  );
+  const detail = () => JSON.stringify({ viewport, expected, status, snapshot });
+  if (!status) throw new Error(`PC 状态栏缺少浏览器几何证据：${detail()}`);
+  requireNear(status.left, 0, 0.75, "PC 状态栏可见左边", detail);
+  requireNear(status.right, viewport.width, 0.75, "PC 状态栏可见右边", detail);
+  requireNear(status.width, viewport.width, 0.75, "PC 状态栏可见宽度", detail);
+  requireNear(status.height, 16 * expected.scale, 0.75, "PC 状态栏物理高度", detail);
+  requireNear(status.bottom, viewport.height, 0.75, "PC 状态栏物理底边", detail);
+  if (typeof snapshot.controlLayout.statusBoxShadow !== "string"
+    || !/rgb\(19, 10, 3\) 0px -1px 0px(?: 0px)?/.test(
+      snapshot.controlLayout.statusBoxShadow,
+    )) {
+    throw new Error(`PC 状态栏缺少原版顶部 1px 纹理接缝：${detail()}`);
+  }
+  if (snapshot.controlLayout.statusScrollHeight
+      > snapshot.controlLayout.statusClientHeight + 1
+    || snapshot.controlLayout.statusValues.some(
+      (metric) => metric.scrollHeight > metric.clientHeight + 1,
+    )) {
+    throw new Error(`PC 状态栏内容发生纵向裁切：${detail()}`);
+  }
+  return Object.freeze({
+    contained: true,
+    height: status.height,
+    physicalBottom: status.bottom,
   });
 }
 
@@ -1991,7 +2698,7 @@ async function dispatchMouseClick(send, point) {
 
 function requireNear(actual, expected, tolerance, label, detail) {
   if (!Number.isFinite(actual) || Math.abs(actual - expected) > tolerance) {
-    throw new Error(`生产布局 ${label} 不符合等比居中契约：${detail()}`);
+    throw new Error(`生产布局 ${label} 不符合根投影契约：${detail()}`);
   }
 }
 
@@ -2010,11 +2717,20 @@ function validateContinuousViewportEvidence(viewportEvidence) {
     || mobile.steps?.length !== CONTINUOUS_VIEWPORTS.length
     || help.steps?.length !== OFFICIAL_HELP_VIEWPORTS.length
     || openingOverlay.steps?.length !== OFFICIAL_HELP_VIEWPORTS.length
+    || openingOverlay.desktopTouchLocked?.verified !== true
+    || openingOverlay.desktopTouchLocked?.coarsePointer !== true
+    || openingOverlay.desktopTouchLocked?.maxTouchPoints <= 0
+    || openingOverlay.desktopTouchLocked?.featurePreviewContained !== true
+    || Math.abs(openingOverlay.desktopTouchLocked?.x - (-80)) > 0.75
+    || Math.abs(openingOverlay.desktopTouchLocked?.y) > 0.75
+    || Math.abs(openingOverlay.desktopTouchLocked?.frameWidth - 1_600) > 0.75
+    || Math.abs(openingOverlay.desktopTouchLocked?.frameHeight - 900) > 0.75
+    || Math.abs(openingOverlay.desktopTouchLocked?.visibleInsetX - 64) > 0.000_001
     || openingOverlay.freeSpinsHud?.reachable !== false
     || openingOverlay.freeSpinsHud?.verified !== false
     || openingOverlay.freeSpinsHud?.reason
       !== "controlled-transaction-fixture-feature-mode-none"
-    || desktop.blackBorderClickCount !== 3
+    || desktop.blackBorderClickCount !== 0
     || mobile.blackBorderClickCount !== 2) {
     throw new Error(`生产浏览器连续视口证据不完整：${JSON.stringify(viewportEvidence)}`);
   }
@@ -2043,18 +2759,30 @@ function validateContinuousViewportEvidence(viewportEvidence) {
     if (step.width !== expected.width || step.height !== expected.height
       || step.channel !== "desktop" || step.maxTouchPoints !== 0
       || !step.nodeIdentityPreserved || !step.documentIdentityPreserved || !step.statePreserved
-      || !step.transactionStatePreserved) {
+      || !step.transactionStatePreserved || step.blackBorderClicked
+      || !Number.isFinite(step.visibleInsetX) || !step.statusLayout?.contained
+      || Math.abs(step.statusLayout.physicalBottom - expected.height) > 0.75) {
       throw new Error(`生产浏览器桌面连续视口顺序或状态证据失真：${JSON.stringify({
         expected,
         step,
       })}`);
+    }
+    if (expected.width === 1_440 && expected.height === 900
+      && (Math.abs(step.x - (-80)) > 0.75 || Math.abs(step.y) > 0.75
+        || Math.abs(step.frameWidth - 1_600) > 0.75
+        || Math.abs(step.frameHeight - 900) > 0.75
+        || Math.abs(step.scale - 1.25) > 0.000_001
+        || Math.abs(step.visibleInsetX - 64) > 0.000_001)) {
+      throw new Error(`生产浏览器 1440x900 PC authored 投影证据失真：${JSON.stringify(step)}`);
     }
   }
   for (let index = 0; index < OFFICIAL_HELP_VIEWPORTS.length; index += 1) {
     const expected = OFFICIAL_HELP_VIEWPORTS[index];
     const step = help.steps[index];
     if (step.width !== expected.width || step.height !== expected.height
-      || !step.bound || step.horizontalOverflow || step.scaleX !== step.scaleY) {
+      || !step.bound || step.horizontalOverflow || step.scaleX !== step.scaleY
+      || step.paytableBottomVisible !== true || step.gameRulesBound !== true
+      || step.gameRulesBottomVisible !== true) {
       throw new Error(`正式浏览器帮助页视口证据失真：${JSON.stringify({
         expected,
         step,
@@ -2155,6 +2883,18 @@ async function readBrowserState(send) {
               violatedDirective: String(violation?.violatedDirective ?? '').slice(0, 64),
               disposition: String(violation?.disposition ?? '').slice(0, 32),
               blockedTarget: String(violation?.blockedTarget ?? '').slice(0, 256),
+              sourceFile: typeof violation?.sourceFile === 'string'
+                ? violation.sourceFile.slice(0, 128)
+                : undefined,
+              lineNumber: Number.isSafeInteger(violation?.lineNumber)
+                ? violation.lineNumber
+                : undefined,
+              columnNumber: Number.isSafeInteger(violation?.columnNumber)
+                ? violation.columnNumber
+                : undefined,
+              trustedTypesSink: typeof violation?.trustedTypesSink === 'string'
+                ? violation.trustedTypesSink.slice(0, 64)
+                : undefined,
             }))
           : [{ effectiveDirective: "probe-missing", disposition: "enforce" }];
         const finalState = {

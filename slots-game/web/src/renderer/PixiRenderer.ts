@@ -41,7 +41,9 @@ import {
   type BigWinInteractionResult,
   type BigWinMilestone,
 } from "./BigWinView";
-import { BIG_WIN_COIN_ATLAS_URL } from "./BigWinCoinShower";
+import {
+  type BigWinCoinShowerOptions,
+} from "./BigWinCoinShower";
 import {
   AnticipationView,
 } from "./AnticipationView";
@@ -101,6 +103,7 @@ import { LOGICAL_HEIGHT, LOGICAL_WIDTH } from "./theme";
 import { WinCelebration } from "./WinCelebration";
 import { WheelBonusWinLabel } from "./WheelBonusWinLabel";
 import type { FrameRequest } from "../startup/frameSlicedInitialization";
+import type { LoadedAssetPackage } from "../startup/StreamingAssetPackages";
 import {
   createStagedGraphOwnershipTransfer,
   runStagedComponentConstruction,
@@ -122,6 +125,11 @@ import {
   type GpuWarmupDisplayObjectLike,
   type GpuWarmupUploadDiagnostic,
 } from "./GpuWarmupDiagnostics";
+import {
+  disposeVerifiedWheelArtwork,
+  verifiedFeatureArtworkFromPackage,
+  type VerifiedFeatureArtworkKind,
+} from "./VerifiedFeatureArtwork";
 
 export interface PersistentFeatureVisualPlan {
   readonly backdrop: "main" | "fire" | "snow";
@@ -139,6 +147,8 @@ export interface PixiRendererOptions {
    * 初始帧缓冲区尺寸。移动设备/平板电脑启动提供其物理视口，因此 Pixi 永远不会分配然后丢弃 1280x720。
    */
   readonly initialSize?: Readonly<{ width: number; height: number }>;
+  /** 可注入的纯装饰 Big Win 粒子策略；`frameFusePolicy: null` 保留逐帧捕获基线。 */
+  readonly bigWinCoinShowerOptions?: BigWinCoinShowerOptions;
 }
 
 export interface PixiRendererStagedCreateOptions {
@@ -638,6 +648,7 @@ export class PixiRenderer {
     if (this.app.view.parentElement !== host) host.appendChild(this.app.view);
 
     this.backdrop.setReducedMotion(this.reducedMotion?.matches ?? false);
+    this.bigWin.setReducedMotion(this.reducedMotion?.matches ?? false);
     this.reducedMotion?.addEventListener("change", this.handleReducedMotionChange);
     this.camera.farLayer.addChild(this.backdrop);
     this.camera.foregroundLayer.addChild(this.backdrop.foregroundView);
@@ -942,15 +953,7 @@ export class PixiRenderer {
         } catch (error) {
           const failedFeatures = [
             ["rage.collect", "procedural"],
-            ["free-spin.intro.kong", "procedural"],
-            ["free-spin.intro.king", "procedural"],
             ["free-spin.trails", "none"],
-            ["free-spin.summary", "text"],
-            ["wheel.popup", "none"],
-            ["wheel.ready", "none"],
-            ["wheel.spin", "none"],
-            ["wheel.summary", "none"],
-            ["wheel.outro", "none"],
           ] as const;
           for (const [id, fallback] of failedFeatures) {
             this.visualTelemetry.failedToStart({
@@ -1003,19 +1006,12 @@ export class PixiRenderer {
           throw new Error(`Required authored launch artwork missing: ${missingLaunchArtwork.join(", ")}`);
         }
       },
-      () => this.featurePreview.loadArtwork(options.signal),
-      requiredAuthoredLoad({
-        id: "free-spin.hud",
-        requirement: "conditional",
-        mode: "authored",
-        sourceEvent: "launch.preload",
-      }, () => this.freeSpinHud.loadArtwork(options.signal), () => this.freeSpinHud.artworkLoaded),
-      requiredAuthoredLoad({
-        id: "win.big",
-        requirement: "conditional",
-        mode: "authored",
-        sourceEvent: "launch.preload",
-      }, (report) => this.bigWin.loadArtwork(options.signal, report), () => this.bigWin.artworkLoaded, "text"),
+      async () => {
+        const loaded = await this.featurePreview.loadArtwork(options.signal);
+        if (!loaded || !this.featurePreview.hasArtwork) {
+          throw new Error("Required authored feature preview artwork missing");
+        }
+      },
       requiredAuthoredLoad({
         id: "reel.anticipation",
         requirement: "conditional",
@@ -1325,6 +1321,41 @@ export class PixiRenderer {
     else this.gameLogo.show();
   }
 
+  /**
+   * 在权威事件进入可见状态前，把目标包的已验证 bytes 原子交给对应消费者。
+   * 依赖包仍由外层 StreamingAssetEventLease 保持，不在这里重复请求。
+   */
+  async adoptVerifiedFeatureArtwork(
+    kind: VerifiedFeatureArtworkKind,
+    loaded: LoadedAssetPackage,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const artwork = await verifiedFeatureArtworkFromPackage(loaded, kind, signal);
+    if (this.destroyed || signal?.aborted) {
+      if (artwork.kind === "wheel") disposeVerifiedWheelArtwork(artwork);
+      throw signal?.reason instanceof Error
+        ? signal.reason
+        : new Error("Verified feature artwork adoption was aborted");
+    }
+    if (artwork.kind === "wheel") {
+      this.featureEffects.adoptVerifiedWheelArtwork(artwork);
+      return;
+    }
+    try {
+      this.featureEffects.adoptVerifiedFreeSpinArtwork(artwork);
+      await this.freeSpinHud.loadArtwork(signal, artwork);
+    } catch (error) {
+      this.featureEffects.releaseVerifiedFeatureArtwork("free-spins");
+      this.freeSpinHud.clearArtwork();
+      throw error;
+    }
+  }
+
+  releaseVerifiedFeatureArtwork(kind: VerifiedFeatureArtworkKind): void {
+    this.featureEffects.releaseVerifiedFeatureArtwork(kind);
+    if (kind === "free-spins") this.freeSpinHud.clearArtwork();
+  }
+
   showFreeSpinHud(state: FeatureState): Promise<void> {
     const operation = this.visualTelemetry?.start({
       id: "free-spin.hud",
@@ -1631,7 +1662,6 @@ export class PixiRenderer {
       ...loadedFeatureTextures(),
       ...collectGpuWarmupTextures(this.app.stage),
       Texture.from(PRIMAL_ASSETS.atlases.particles),
-      Texture.from(BIG_WIN_COIN_ATLAS_URL),
     ]);
     const warmup = new Container();
     for (const texture of warmTextures) {
@@ -1659,8 +1689,6 @@ export class PixiRenderer {
         ["game", splitGpuWarmupTargets(this.camera.gameLayer, 2)],
         ["fx", splitGpuWarmupTargets(this.camera.fxLayer, 1)],
         ["intro", splitGpuWarmupTargets(this.launchScene.overlay, 1)],
-        ["free-spin", splitGpuWarmupTargets(this.freeSpinHud, 1)],
-        ["big-win", splitGpuWarmupTargets(this.bigWin, 1)],
         ["feature-preview", splitGpuWarmupTargets(this.featurePreview.view, 1)],
       ] as const;
       const prepareTargets = prepareGroups.flatMap(([group, targets]) => (
@@ -1720,7 +1748,6 @@ export class PixiRenderer {
         this.camera.gameLayer,
         this.camera.fxLayer,
         this.launchScene.overlay,
-        this.freeSpinHud,
         this.bigWin,
         this.featurePreview.view,
       ];
@@ -2184,6 +2211,9 @@ export class PixiRenderer {
       case "free_spin.cap_reached":
         // CAPLIMIT 重新触发面板拥有此表现流程。
         return;
+      case "win_cap.reached":
+        // 纯经济边界事实，不虚构独立环境效果。
+        return;
       case "vaults.landed":
       case "vaults.locked":
       case "vault.unlocked":
@@ -2259,6 +2289,7 @@ export class PixiRenderer {
   private readonly handleReducedMotionChange = (event: MediaQueryListEvent): void => {
     this.backdrop.setReducedMotion(event.matches);
     this.launchScene.setReducedMotion(event.matches);
+    this.bigWin.setReducedMotion(event.matches);
     if (event.matches) this.environmentState = resetSpinEnvironment(this.environmentState);
   };
 }
@@ -2298,7 +2329,10 @@ function createEagerPixiRendererOwners(options: PixiRendererOptions): PixiRender
     onCapClose: (reason) => freeSpinCallbacks.onCapClose(reason),
     onCapInputReadyCheckpoint: () => freeSpinCallbacks.onCapInputReadyCheckpoint(),
   });
-  const bigWin = new BigWinView({ visualTelemetry });
+  const bigWin = new BigWinView({
+    visualTelemetry,
+    coinShowerOptions: options.bigWinCoinShowerOptions,
+  });
   const anticipation = new AnticipationView();
   const backdrop = new CityBackdrop();
   const winCelebration = new WinCelebration(camera.fxLayer, reels, visualTelemetry);
@@ -2465,6 +2499,7 @@ function pixiRendererOwnerConstructionStages(
       build: () => {
         const bigWin = new BigWinView({
           visualTelemetry: requiredOwner(state, "visualTelemetry"),
+          coinShowerOptions: options.bigWinCoinShowerOptions,
         });
         state.bigWin = bigWin;
         return state.ownershipTransfer.componentDisposer(cleanup("bigWin", () => bigWin.destroy({

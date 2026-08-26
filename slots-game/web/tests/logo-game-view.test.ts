@@ -302,6 +302,7 @@ describe("PixiRenderer base-logo lifecycle routing", () => {
     await renderer.reactToWin([{
       id: "logo-win",
       symbol: "TANK",
+      nominalAmountMinor: "100",
       amountMinor: "100",
       cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
     }], "base");

@@ -285,8 +285,10 @@ func TestPostgresRollingOldPrepareIsRecoverableByNewWorker(t *testing.T) {
 		GameID:          "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
 		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
 		Status: rgs.SessionActive, BalanceMinor: 10_000,
-		Feature:   game.EmptyFeatureState(),
-		ExpiresAt: time.Now().UTC().Add(time.Hour),
+		Feature:        game.EmptyFeatureState(),
+		ExpiresAt:      time.Now().UTC().Add(time.Hour),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().UTC().Add(20 * time.Minute),
+		TransportGeneration: 1,
 	}
 	if err := repository.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
@@ -306,7 +308,7 @@ func TestPostgresRollingOldPrepareIsRecoverableByNewWorker(t *testing.T) {
 		OperatorID: operatorID, SessionID: sessionID, RoundID: roundID,
 		GameID: session.GameID, DefinitionVersion: session.DefinitionVersion,
 		DefinitionHash: hash, Currency: session.Currency,
-		RoundKind: rgs.RoundKindBase, BetMinor: 100,
+		RoundKind: rgs.RoundKindBase, BetMinor: 100, TransportGeneration: 1,
 	}
 	result := validPreparedSessionIntegrityResult(request, 1)
 	result.ServerTransactionID = "rgs-op-v1:" + roundID
@@ -561,6 +563,8 @@ func createRollingLegacyPrepareFixture(
 		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
 		Status: rgs.SessionActive, BalanceMinor: 10_000,
 		Feature: game.EmptyFeatureState(), ExpiresAt: time.Now().UTC().Add(time.Hour),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().UTC().Add(20 * time.Minute),
+		TransportGeneration: 1,
 	}
 	if err := repository.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
@@ -570,7 +574,7 @@ func createRollingLegacyPrepareFixture(
 		RoundID: "round-rolling-" + suffix,
 		GameID:  session.GameID, DefinitionVersion: session.DefinitionVersion,
 		DefinitionHash: hash, Currency: session.Currency,
-		RoundKind: rgs.RoundKindBase, BetMinor: 100,
+		RoundKind: rgs.RoundKindBase, BetMinor: 100, TransportGeneration: 1,
 	}
 	outcome := validPreparedSessionIntegrityResult(request, 1)
 	outcome.ServerTransactionID = "rgs-op-v1:" + request.RoundID
@@ -736,8 +740,10 @@ func assertFailedPrepareDoesNotRegisterRecoveryOperator(
 		GameID:          "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
 		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
 		Status: rgs.SessionActive, BalanceMinor: 10_000,
-		Feature:   game.EmptyFeatureState(),
-		ExpiresAt: time.Now().UTC().Add(time.Hour),
+		Feature:        game.EmptyFeatureState(),
+		ExpiresAt:      time.Now().UTC().Add(time.Hour),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().UTC().Add(20 * time.Minute),
+		TransportGeneration: 1,
 	}
 	if err := repository.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
@@ -746,7 +752,7 @@ func assertFailedPrepareDoesNotRegisterRecoveryOperator(
 		OperatorID: operatorID, SessionID: sessionID, RoundID: roundID,
 		GameID: session.GameID, DefinitionVersion: session.DefinitionVersion,
 		DefinitionHash: hash, Currency: session.Currency,
-		RoundKind: rgs.RoundKindBase, BetMinor: 100,
+		RoundKind: rgs.RoundKindBase, BetMinor: 100, TransportGeneration: 1,
 	}
 	result := validPreparedSessionIntegrityResult(request, 1)
 	result.ServerTransactionID = "rgs-op-v1:" + roundID
@@ -1371,8 +1377,10 @@ func preparePostgresRecoveryFixture(
 		GameID:          "game-a", DefinitionVersion: "math-v1", DefinitionHash: hash,
 		Currency: "USD", CurrencyExponent: 2, Jurisdiction: "MT",
 		Status: rgs.SessionActive, BalanceMinor: 10_000,
-		Feature:   game.EmptyFeatureState(),
-		ExpiresAt: time.Now().UTC().Add(time.Hour),
+		Feature:        game.EmptyFeatureState(),
+		ExpiresAt:      time.Now().UTC().Add(time.Hour),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().UTC().Add(20 * time.Minute),
+		TransportGeneration: 1,
 	}
 	if err := repository.CreateSession(ctx, session); err != nil {
 		t.Fatal(err)
@@ -1381,7 +1389,7 @@ func preparePostgresRecoveryFixture(
 		OperatorID: operatorID, SessionID: sessionID, RoundID: roundID,
 		GameID: session.GameID, DefinitionVersion: session.DefinitionVersion,
 		DefinitionHash: hash, Currency: session.Currency,
-		RoundKind: rgs.RoundKindBase, BetMinor: 100,
+		RoundKind: rgs.RoundKindBase, BetMinor: 100, TransportGeneration: 1,
 	}
 	result := validPreparedSessionIntegrityResult(request, 1)
 	result.ServerTransactionID = "rgs-op-v1:" + roundID
@@ -1477,26 +1485,31 @@ func TestPrepareRoundUsesDatabaseClockForInitialRecoverySchedule(t *testing.T) {
 	databaseNow := fixture.createdAt.Add(time.Minute)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`(?s)SELECT s\.operator_id.*EXISTS \(.*result_acknowledged_at IS NULL.*clock_timestamp\(\).*FOR UPDATE OF s`).
+	mock.ExpectQuery(regexp.QuoteMeta(prepareSessionLockSQL)).
 		WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"operator_id", "session_id", "player_id", "wallet_account_id",
 			"wallet_session_id", "game_id", "definition_version", "definition_hash",
 			"currency", "currency_exponent", "jurisdiction", "status",
 			"balance_snapshot_minor", "sequence", "revision", "feature_state",
-			"pending_round_id", "expires_at", "integrity_quarantined_at",
-			"result_delivery_pending", "database_now",
+			"pending_round_id", "expires_at", "idle_disconnect_seconds",
+			"idle_disconnect_at", "transport_generation", "integrity_quarantined_at",
 		}).AddRow(
 			fixture.request.OperatorID, fixture.request.SessionID, "player-a", "wallet-account-a",
 			"wallet-session-a", fixture.request.GameID, fixture.request.DefinitionVersion,
 			fixture.request.DefinitionHash, fixture.request.Currency, 2, "MT", string(rgs.SessionActive),
 			10_000, 7, int64(fixture.request.StartRevision), fixture.inputFeatureJSON,
-			nil, fixture.createdAt.Add(time.Hour), nil, false, databaseNow,
+			nil, fixture.createdAt.Add(time.Hour), int64(1200),
+			fixture.createdAt.Add(20*time.Minute), int64(1), nil,
 		))
 	mock.ExpectQuery(regexp.QuoteMeta(roundSelect+`
 		WHERE r.operator_id=$1 AND r.session_id=$2 AND r.round_id=$3`)).
 		WithArgs(fixture.request.OperatorID, fixture.request.SessionID, fixture.request.RoundID).
 		WillReturnRows(sqlmock.NewRows(roundRowColumns))
+	mock.ExpectQuery(regexp.QuoteMeta(prepareAdmissionStateSQL)).
+		WithArgs(fixture.request.OperatorID, fixture.request.SessionID).
+		WillReturnRows(sqlmock.NewRows([]string{"clock_timestamp", "result_delivery_pending"}).
+			AddRow(databaseNow, false))
 	mock.ExpectQuery(`(?s)WITH inserted_round AS .*INSERT INTO rgs_rounds.*inserted_wallet AS .*INSERT INTO rgs_wallet_transactions.*updated_session AS .*UPDATE rgs_sessions.*registered_recovery_operator AS .*INSERT INTO rgs_wallet_recovery_operators.*SELECT operator_id FROM updated_session.*ON CONFLICT \(operator_id\) DO NOTHING.*inserted_outbox AS .*INSERT INTO rgs_outbox.*SELECT`).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"round_count", "wallet_count", "session_count", "outbox_count",

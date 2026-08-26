@@ -10,8 +10,9 @@
 
 ### PC 1280×720
 
-- status height: 24px
-- font: `ROBOTO_CONDENSED_REGULAR`, 14.4px, line-height 24px
+- status layout height: 16px; the texture may paint a 1px dark seam above it without changing layout or hit geometry
+- font: `ROBOTO_CONDENSED_REGULAR`, 12.8px, line-height 16px
+- provider: 45.3333×13.3333px at x=4px; Balance x=56px; Bet x=165px; Win right=34px
 - color: `#cccccc`
 - labels and values: 同一文本基线，无人为 flex gap
 - jackpot font: `KANIT_BOLD`; title 45px; value 48px; stroke `#22140e` 6px
@@ -43,6 +44,6 @@
 
 ## Responsive behavior
 
-- PC: vertical left rail and no mobile Balance/Bet backplates.
+- PC: vertical left rail, no mobile Balance/Bet backplates, and the footer is flush with the physical bottom edge.
 - Phone: a continuous mobile composition and compact status region; 390×844 is a regression point, not a fixed canvas.
 - Tablet: continuous dimensions with the dedicated `iPad_pt` authored layout in portrait, not a scaled phone screenshot.

@@ -20,7 +20,16 @@ API 角色对启动和 Spin 实施分层准入：Pod 内有界限制器之后，
 
 `rgs.sharedAdmission.economic` 的默认 `operatorRatePerSecond/operatorRateBurst=20/40`、`backendRatePerSecond/backendRateBurst=100/200` 是保守平台上限，不是第三方钱包真实合同。所有共享/经济速率最多三位小数并精确转换为毫单位；schema、进程启动校验和 24 小时最大回填窗口共同失败关闭。发布审批必须用正常峰值、EDoS 攻击画像、单 backend 热 slot 和钱包合同校准四项值；不要按 bet 金额推测成本。`SlotsRGSEconomicAdmissionLimitedSustained` 触发时先区分 operator 与 backend 固定计数器，再核对钱包合同与 WAF 聚合；`SlotsRGSEconomicAdmissionErrors` 触发时冻结新放量，检查 Valkey ACL、超时、OOM、`NOSCRIPT` 与 parameter group，禁止提升额度掩盖后端故障。AWS 环境还必须由 live gate 证明 replication group 无 pending、全部节点 parameter group `in-sync` 且实际 `maxmemory-policy=noeviction`；仅 Terraform plan 或默认 `volatile-lru` 都不合格。
 
+分布式追踪默认严格关闭：`observability.tracing.enabled=false`、endpoint 为空，API 与 Worker 都不会创建 exporter 或后台队列。只有发布审批同时填写完整 HTTPS `/v1/traces` endpoint、采样率、有界 queue/batch/timeout 以及 collector 的 `/24` 至 `/32` CIDR 与一致端口后，Chart 才向两类 Pod 注入 `RGS_OTEL_*` 并开放专用出口；终止宽限还必须覆盖向上取整的 tracing flush 预算，Chart 不部署或硬编码 collector。公网边界仅接受规范且唯一的 W3C `traceparent`，支持 Level 2 的 `00` 至 `03` flags 并保留 random 位，丢弃外部 `tracestate` 和 baggage；不可信 remote parent 使用进程启动 CSPRNG 密钥对完整 trace ID 做 HMAC 比例决策，调用方不能靠选择低尾 ID 强制采样，本地 root 和 child 仍分别使用官方比例及父级继承语义。span/resource 只含固定低基数字段，不含玩家、会话、金额、endpoint、主机或错误文本。API/Worker 分别使用固定 `service.name`，Exporter 投递失败只增加无标签 `rgs_trace_export_failures_total`，绝不阻断资金请求，并由 API/Worker 共同的五分钟 increase 告警报告。启用前仍必须由目标平台验证 collector TLS、容量、保留期与实际可检索父子链；官方 BatchSpanProcessor 队列满的精确 drop 数尚无稳定公共 hook，需由 OTel SDK 自监控到平台指标的桥接作为外部门禁，不能伪造本地计数器。
+
 原生滚动还有严格的兼容边界：只有新旧二进制使用完全相同的数据库模式清单和数学定义身份时才允许执行。当前旧二进制会拒绝带未来迁移的账本，新二进制会拒绝缺失迁移的账本；每个进程也只加载一个获批数学定义。因此，包含数据库迁移或数学定义变更的版本不能使用本 Chart 做普通无停机升级。必须先进入维护窗口完成协调切换，或另行实现并验证“扩展—双版本兼容—收缩”、按定义分群排空或多定义注册表协议。
+
+空闲断开版本还把客户端 bearer 从 `RGS-ACCESS-v2` 升到 `RGS-ACCESS-v3` 并绑定持久 transport
+generation。旧 Pod 不接受 v3，新 Pod 不接受 v2，普通 RollingUpdate 会让同一客户端随机命中
+不兼容副本。RGS Pod 模板固定 `slots-game.io/access-token-protocol=RGS-ACCESS-v3`；Chart 的
+`lookup` 门禁发现现网协议注解缺失或不同且 `rgs.maintenanceQuiesced=false` 时会失败。首次安装除外，
+升级必须先把 API 静默排空，再迁移并替换全部 runtime，最后恢复流量并要求浏览器使用新的已签名
+launch。不得把迁移 `0012` 为旧 INSERT 保留的列默认值误当作 token 混跑兼容或零停机证明。
 
 `release.compatibilityClass=same-schema-and-definition` 仍是强制发布声明和审计标签，但已不是唯一检查。`release.definitionIdentity` 的 `gameID`、`version`、`sha256` 会同时写入 API/Worker Pod template annotation 与 `RGS_EXPECTED_DEFINITION_*` 环境变量；进程在加载并验证签名数学定义后，会对三个字段逐项比对，任一不符即拒绝启动。升级前，Chart 的 Helm `lookup` 和 AWS 应用部署工作流都会把现网 API/Worker 的三元组与候选值比较；仅首次安装可以在两个 Deployment 均不存在时通过，只存在其中一个或任一字段变化都失败闭合。完整边界见 [`docs/cluster-runtime-contract.md`](../../docs/cluster-runtime-contract.md)。
 
@@ -32,7 +41,7 @@ Chart 默认提供：
 - API、Worker 和启用后的 Web 各有独立 PDB，均使用零不可用滚动发布、五秒摘流窗口和应用级优雅关闭；终止宽限必须覆盖摘流、应用关闭及额外五秒调度余量。
 - 三可用区严格均衡、主机级拓扑分散和 Pod 反亲和偏好。
 - 非 root、只读根文件系统、`RuntimeDefault` seccomp、禁止提权、删除全部 Linux capabilities、禁用 ServiceAccount token 和 service links。
-- 默认双向拒绝 NetworkPolicy；Web 无运行时出口，API 可访问 DNS、外部 PostgreSQL、钱包和 Valkey，Worker 只可访问 DNS、PostgreSQL、钱包和审计接收端；Valkey 凭据、挂载和出口都不进入 Worker。所有外部目标都限制到明确 `/24` 或更窄 IPv4 CIDR 与端口。
+- 默认双向拒绝 NetworkPolicy；Web 无运行时出口，API 可访问 DNS、外部 PostgreSQL、钱包和 Valkey，Worker 只可访问 DNS、PostgreSQL、钱包和审计接收端；Valkey 凭据、挂载和出口都不进入 Worker。显式启用 tracing 后，API 与 Worker 才共同获得 collector 的专用 CIDR/端口出口。所有外部目标都限制到明确 `/24` 或更窄 IPv4 CIDR 与端口。
 - 公网 API Service、API/Worker 各自的私有 operations Service、Web Service，以及两个强制 TLS Ingress。
 - API 与 Worker 分别使用带文件 Bearer 的 `ServiceMonitor`；operations 端口不会进入公网 Ingress，`PrometheusRule` 固定选择 `job="slots-rgs"` 或 `job="slots-rgs-worker"` 和当前发布 namespace。
 - `pre-install,pre-upgrade` 数据库 Job：首次安装执行 `up`，原生滚动升级只执行 `verify`，从机制上阻止升级 hook 偷跑不兼容迁移。失败会阻断 Helm 发布并保留失败 Job 与其最小 NetworkPolicy 供排障；下次重试先清理同名失败现场，成功后 post hook 清理临时策略，避免历史 Job 无限累积。
@@ -110,7 +119,7 @@ Secret 内容更新不会自动让已经启动的进程热加载。轮换时创�
 
 ## 网络与容量规划
 
-标准 Kubernetes NetworkPolicy 不能可靠按 DNS 名称限制外部流量，因此本 Chart 要求分别填写 PostgreSQL、钱包、共享 Valkey 和审计接收端的 IPv4 CIDR。每项只接受 `/24` 至 `/32`，拒绝空数组和 `0.0.0.0/0`。若供应商地址动态变化，应先通过公司 egress gateway 固定出口目标，再把 gateway 的专用网段写入 values；不要临时放宽到全网。
+标准 Kubernetes NetworkPolicy 不能可靠按 DNS 名称限制外部流量，因此本 Chart 要求分别填写 PostgreSQL、钱包、共享 Valkey 和审计接收端的 IPv4 CIDR；启用 tracing 时 collector 也必须填写独立 CIDR。每项只接受 `/24` 至 `/32` 并拒绝 `0.0.0.0/0`；核心经济依赖始终拒绝空数组，tracing 仅在关闭且 endpoint 同为空时允许空数组。collector endpoint 的显式端口必须与出口端口一致。若供应商地址动态变化，应先通过公司 egress gateway 固定出口目标，再把 gateway 的专用网段写入 values；不要临时放宽到全网。
 
 `networkPolicy.ingressController` 和 `monitoring` 同时使用 namespaceSelector 与 podSelector，两者是 AND 关系。必须使用平台真实、不可由业务 namespace 自行伪造的标签。入口来源只可访问业务 8080 和 `ingress.apiHealthCheckPort=8081`；后者只承载私有 `/healthz`，不得为此把 operations Service 加入公网 Ingress。DNS selector 也必须匹配集群实际 CoreDNS 标签。
 

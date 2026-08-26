@@ -112,6 +112,18 @@ monitoring:
   ruleLabels:
     prometheus: company-platform
 
+# 示例显式启用受控 OTLP/HTTP collector；生产默认值仍为 disabled + 空 endpoint。
+observability:
+  tracing:
+    enabled: true
+    endpointURL: https://otel-collector.example.internal:4318/v1/traces
+    sampleRatio: 0.01
+    batchTimeoutMilliseconds: 1000
+    exportTimeoutMilliseconds: 3000
+    shutdownTimeoutMilliseconds: 5000
+    maxQueueSize: 1024
+    maxExportBatchSize: 256
+
 networkPolicy:
   ingressController:
     mode: selectors
@@ -142,6 +154,10 @@ networkPolicy:
     sharedAdmission:
       cidrs:
         - 10.50.0.0/24
+    tracing:
+      cidrs:
+        - 10.60.0.0/24
+      port: 4318
 
 scheduling:
   nodeSelector:

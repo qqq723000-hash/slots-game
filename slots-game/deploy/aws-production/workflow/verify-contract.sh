@@ -180,7 +180,16 @@ require_fixed 'ordered.fetch("LambdaFunctionAssociations")' \
   "$production_directory/verify-live-platform-prerequisites.sh"
 require_fixed 'cache_behaviors.fetch("Quantity") == 1' \
   "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'web_edge.fetch("viewer_http_version") == "http2and3"' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'config.fetch("HttpVersion") == delivery.fetch("cloudfront_edge_security_contract").fetch("viewer_http_version")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed '"viewer_http_version": "http2and3"' \
+  "$workflow_directory/fixtures/live-delivery.json"
+require_fixed 'cloudfront-http-version-drift' \
+  "$workflow_directory/fixtures/mock-live-aws.sh"
 for cloudfront_negative_mode in \
+  cloudfront-http-version-drift \
   cloudfront-lambda-association \
   cloudfront-extra-cache-behavior \
   cloudfront-extra-function-association \
@@ -222,6 +231,104 @@ for final_execution_negative_mode in \
 do
   require_fixed "$final_execution_negative_mode" "$workflow_directory/test-live-application-secrets.sh"
 done
+for rds_alarm_negative_mode in \
+  rds-alarm-missing \
+  rds-alarm-action-drift \
+  rds-alarm-metric-drift \
+  rds-alarm-unit-drift \
+  rds-alarm-threshold-drift \
+  rds-alarm-missing-data-drift \
+  rds-alarm-dimension-drift \
+  rds-deadlock-window-drift \
+  rds-deadlock-statistic-drift \
+  rds-deadlock-alarm-namespace-drift \
+  rds-deadlock-alarm-metric-name-drift \
+  rds-deadlock-alarm-dimension-drift \
+  rds-deadlock-filter-missing \
+  rds-deadlock-filter-log-group-drift \
+  rds-deadlock-filter-pattern-drift \
+  rds-deadlock-filter-namespace-drift \
+  rds-deadlock-filter-metric-name-drift \
+  rds-deadlock-filter-value-drift \
+  rds-deadlock-filter-default-drift \
+  rds-deadlock-filter-unit-drift \
+  rds-deadlock-filter-dimension-drift \
+  rds-math-expression-drift \
+  rds-math-expression-return-data-drift \
+  rds-math-source-return-data-drift \
+  rds-math-source-statistic-drift \
+  rds-math-source-period-drift \
+  rds-math-source-namespace-drift \
+  rds-math-source-dimension-drift \
+  rds-math-extra-query
+do
+  require_fixed "$rds_alarm_negative_mode" "$workflow_directory/test-live-application-secrets.sh"
+  require_fixed "$rds_alarm_negative_mode" "$workflow_directory/fixtures/mock-live-aws.sh"
+done
+for rds_reader_negative_mode in \
+  rds-reader-missing \
+  rds-reader-status-drift \
+  rds-reader-source-drift \
+  rds-reader-endpoint-drift \
+  rds-reader-engine-version-drift \
+  rds-reader-instance-class-drift \
+  rds-reader-storage-type-drift \
+  rds-reader-allocated-storage-drift \
+  rds-reader-max-storage-drift \
+  rds-reader-public \
+  rds-reader-multi-az-drift \
+  rds-reader-subnet-drift \
+  rds-reader-parameter-drift \
+  rds-reader-parameter-pending \
+  rds-reader-security-group-drift \
+  rds-reader-unencrypted \
+  rds-reader-kms-drift \
+  rds-reader-backup-drift \
+  rds-reader-deletion-protection-drift \
+  rds-reader-log-export-drift \
+  rds-reader-pending-modification \
+  rds-reader-alarm-missing \
+  rds-reader-alarm-action-drift \
+  rds-reader-alarm-metric-drift \
+  rds-reader-alarm-statistic-drift \
+  rds-reader-alarm-threshold-drift \
+  rds-reader-alarm-missing-data-drift \
+  rds-reader-alarm-dimension-drift
+do
+  require_fixed "$rds_reader_negative_mode" "$workflow_directory/test-live-application-secrets.sh"
+  require_fixed "$rds_reader_negative_mode" "$workflow_directory/fixtures/mock-live-aws.sh"
+done
+require_fixed 'rds_alarm_contract' "$workflow_directory/fixtures/live-delivery.json"
+require_fixed 'rds = value.fetch("rds_alarm_contract")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'rds_read_scaling_contract' "$workflow_directory/fixtures/live-delivery.json"
+require_fixed 'read_scaling = value.fetch("rds_read_scaling_contract")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'rds describe-db-instances' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'application_routing_adopted' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'cross_region_dr_implemented' "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'alarm.fetch("Unit") == expected.fetch("unit")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'actual_queries = alarm.fetch("Metrics")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'actual.fetch("Expression") == query.fetch("expression")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'actual.fetch("ReturnData") == query.fetch("return_data")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'metric_stat.fetch("Unit") == query.fetch("unit")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed '%w[Namespace MetricName Statistic Unit Dimensions Period].none?' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'metric.fetch("threshold") == 1 && metric.fetch("evaluation_periods") == 1' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'logs describe-metric-filters' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'transformation.fetch("defaultValue") == expected.fetch("default_value")' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'deadlock_filter.fetch("filter_pattern") == %q{"deadlock detected"}' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
+require_fixed 'deadlock_evidence.fetch("automatic_snapshot_implemented") == false' \
+  "$production_directory/verify-live-platform-prerequisites.sh"
 require_fixed 'HTTP listener 必须仅包含默认规则' "$production_directory/verify-live-alb-edge.sh"
 require_fixed 'HTTPS listener 规则集合必须精确为默认 404 与唯一 API host forward' \
   "$production_directory/verify-live-alb-edge.sh"

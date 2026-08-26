@@ -2,7 +2,7 @@
 
 状态：已实现规则契约；精确商业数学仍未认证。
 
-最后更新：2026-07-29
+最后更新：2026-08-26
 
 本文档把从抓取的客户端、赔付表与采样命令响应中确认的规则事实，与这些产物未披露的概率值分开
 列出。Go 引擎在网格、奖品、特性状态、事件顺序与所有资金上具有权威。动画代码消费这些事实，
@@ -23,12 +23,23 @@
   Helmet/`PULSE` 0.8x、Radio/`NOVA` 1x、Tank/`TANK` 1.5x、Jet/`CIRCUIT` 2x。以本地 100 最小
   参考单位计，这些存储为 `10/30/80/100/150/200`。
 
-`Win` 是按赔付符号的聚合：`ways`、`cells` 与 `amountMinor` 覆盖该符号的每条具体路径。不同路
-径可能穿过不同的 WILD 格子，因此协议刻意不把它们压缩成一个模糊的 `Win.multiplier`。取而代
-之，有序的 `pathAwards` 携带三格、实际 WILD 倍数、服务端解析的合并前基础金额与每条具体路径
-的结算金额。基础金额是显式的，而非通过除法推导，因为最小单位缩放可能舍入。最终路径金额精确
-求和等于聚合值，引擎在接受自己的结果前从网格与不可变赔付表重新计算完整分解。客户端可以表现
-这些记录，但绝不猜测。
+`Win` 是按赔付符号的聚合：`ways` 与 `cells` 覆盖该符号的每条具体路径。不同路径可能穿过不同
+的 WILD 格子，因此协议刻意不把它们压缩成一个模糊的 `Win.multiplier`。取而代之，有序的
+`pathAwards` 携带三格、实际 WILD 倍数、服务端解析的合并前基础金额与每条具体路径的金额事实。
+基础金额是显式的，而非通过除法推导，因为最小单位缩放可能舍入。
+
+在 `Win` 与每条 `pathAwards` 上，HTTP `nominalAmountMinor` 保留应用 WILD 后、整场最高赢取预算
+截断前的完整数学金额；个别路径经确定性的最小货币单位取整后可为零，但聚合 Win 名义金额必须为
+正。为保持既有客户端兼容，HTTP `amountMinor` 表示实际结算/支付金额。未触发上限时两者相等；触
+发上限时，所有原始路径、`ways` 与 `cells` 仍完整保留，但较后的路径支付可以被截断甚至为零。每
+条路径的名义金额之和精确等于聚合名义金额，每条路径的实际支付之和精确等于
+聚合 `amountMinor`，且只有后者计入 `TotalWinMinor`、钱包结算与整场预算。引擎在接受自己的结果
+前从网格与不可变赔付表重新计算完整分解。客户端可以表现这些记录，但绝不猜测。
+
+该名义/支付分离以内部 `ResultSchemaPaidFactsV1`（`rgs-spin-result-paid-facts-v1`）绑定到新持久化
+结果及其经济哈希；该内部标记不是 HTTP 响应字段。标记出现前的历史结果没有保存两套金额，重放
+时只能规范化为名义金额等于实际支付，同时继续使用其原始旧版哈希投影，不能伪造已经丢失的封顶
+前路径事实。
 
 ## 2. Rage 收集与 Primal Wheel
 
@@ -77,8 +88,10 @@ GRAND x1000。`vault.awarded` 是唯一可赔付的 Vault 事件；揭示与升�
 
 每个结算的 Vault 把其最终结果写回对应的网格格子。一个可赔付 Vault 有匹配的
 `cell.multiplier` 与 `cell.prize`；一个 `FREE_SPIN` Vault 仅有 `cell.prize`；一个锁定的
-Vault 两者皆不暴露。结果校验器拒绝该格子、其有序 `vault.unlocked`/`vault.upgraded` 链、最终
-`vault.awarded` 与 `amountMinor = betMinor × multiplier` 之间的任何不一致。
+Vault 两者皆不暴露。`vault.awarded` 的名义金额应为 `betMinor × multiplier`。其事件
+`amountMinor` 是实际支付：未触发整场上限时必须等于名义金额；触发上限时可以小于名义金额（包括
+零），但不得为负或超过名义金额，且必须存在匹配的 `win_cap.reached` 边界。结果校验器拒绝任何
+不一致。
 
 不可变定义也被限制为带编写符号面的标签：基础 Vault x1–x9 加 MINI/MINOR/MAJOR/MEGA/GRAND，
 以及 King Spin 的同集合加四个 `*_2X` 面。不支持的任意值会失败配置校验，而非静默变成客户端兜
@@ -92,8 +105,8 @@ Vault 两者皆不暴露。结果校验器拒绝该格子、其有序 `vault.unl
 - Rage 从特性轴采样中移除。
 - 一个解锁的 Vault 可揭示 `FREE_SPIN`；每个此类格子恰好增加一次剩余与授予旋转，并发出
   `free_spin.awarded`。
-- 持久化的 `Remaining`、`Awarded`、锁定的 `BetMinor` 与运行中的 `WinMinor` 使自动播放可安全
-  重启。
+- 持久化的 `Remaining`、`Awarded`、锁定的 `BetMinor` 与运行中的已支付累计值 `WinMinor` 使自动
+  播放可安全重启。
 - 加载的定义必须设置防御性扩展上限，并发出 `free_spin.cap_reached` 而非静默丢弃扩展。
 
 ## 5. King Spin（`OVERDRIVE`）
@@ -110,8 +123,8 @@ Vault 两者皆不暴露。结果校验器拒绝该格子、其有序 `vault.unl
 
 ## 6. 特性完成与恢复
 
-每个活跃 Free Spin 把已提交的轮次获胜加到持久化的 `FeatureState.WinMinor`。最后一次旋转发
-出：
+每个活跃 Free Spin 把已提交轮次的实际支付加到持久化的 `FeatureState.WinMinor`。最后一次旋转
+发出：
 
 ```text
 free_spins.completed {
@@ -121,13 +134,22 @@ free_spins.completed {
 }
 ```
 
-状态然后返回 `NONE`，同时保留规范的 Rage 计量。一个重放的 `roundId` 返回相同的网格、获胜、
-事件数组、累计特性获胜、余额与下一状态；它绝不再次运行 RNG 或钱包操作。RGS 仓库在钱包恢复
+其中 `cumulativeWinMinor` 也是该触发局已实际支付的累计金额，而不是未截断的名义责任。状态然后
+返回 `NONE`，同时保留规范的 Rage 计量。一个重放的 `roundId` 返回相同的网格、获胜、事件数组、
+累计已支付特性获胜、余额与下一状态；它绝不再次运行 RNG 或钱包操作。RGS 仓库在钱包恢复
 前/中持久化该投影，因此一个模糊的钱包响应或进程重启不会丢失特性进度。
 
 编写的 Free Spins 摘要仅在 `cumulativeWinMinor > betMinor` 时进入，按规范整数最小单位比较。
 零、低于投注、等于投注或畸形金额走无摘要状态/跳过片尾路径。在该路径上，基础恢复与约 400 ms
 的 HUD 隐藏同时开始；客户端不虚构摘要面板。
+
+本地定义 `local-production-2026-08-26.3` 还固定了整场触发局的权威最高赢取为总投注的 2500 倍，
+并将引擎语义版本纳入签名定义。
+触发基础局、该局产生的 Kong Quest/King Spin 以及其所有后续 Free Spin 共用同一整数最小货币单位
+预算。Ways 的完整名义路径事实始终保留，实际支付与 Vault、即时 Wheel 奖励按权威事件顺序消耗
+预算；正好命中或被截断到上限时发出
+`win_cap.reached { multiplier: 2500, cumulativeWinMinor }`。恢复态已达到上限后仍可完成剩余免费局，
+但不得再产生资金支付。该控制只证明最高赢取声明与本地结算一致，不证明商业概率或 RTP 一致。
 
 ## 7. 规范的单次旋转顺序
 
@@ -141,7 +163,8 @@ free_spins.completed {
 6. `wheel.started`
 7. `wheel.awarded`
 8. `free_spins.started`（仅特性轮盘结果）
-9. `free_spins.completed`（仅最后一次活跃 Free Spin）
+9. `win_cap.reached`（仅整场触发局正好命中或越过定义上限）
+10. `free_spins.completed`（仅最后一次活跃 Free Spin）
 
 快速停止可缩短表现等待，但必须保留此事件顺序并收敛到相同的最终投影。
 
@@ -156,7 +179,8 @@ free_spins.completed {
 已实现并由确定性测试覆盖。抓取的命令响应校验单个可见网格、命令形状与符号/值目录，但不披露
 商业轴条带/权重、触发赔率、Vault 分组解锁概率、轮盘扇区概率、Vault 奖励权重、升级赔率、行
 高分布、RTP 分解或精确最大获胜证明。抓取的客户端视觉条带数组仅是表现数据，绝不能被重新标记
-为 RNG 权重。因此 `DemoConfig` 使用清晰标识的净室值，并非 1:1 商业数学的声明。
+为 RNG 权重。因此 `DemoConfig` 使用清晰标识的净室值，只能作为确定性工程测试夹具：它不是
+1:1 商业数学、生产 RTP/概率或认证结论的声明，也不得被正式 RGS 启动路径选用。
 
 在真实货币使用前，用已批准的不可变签名定义替换这些值，并为确切的定义哈希与二进制取得独立
 的数学/RNG 认证。不要从视觉客户端资产调优或推断隐藏赔率。

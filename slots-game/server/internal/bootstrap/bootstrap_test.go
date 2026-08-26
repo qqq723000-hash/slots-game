@@ -352,7 +352,7 @@ func TestLoadOperatorDocumentV2RetainsVerificationKeysForRotation(t *testing.T) 
 		OperatorID: "operator-a", PlayerID: "player-a", WalletSessionID: "wallet-a",
 		SessionID: "session-a", GameID: "game-a", GameDefinitionVersion: "math-v1",
 		GameDefinitionHash: strings.Repeat("a", 64), Currency: "USD",
-		CurrencyExponent: 2, Jurisdiction: "GB",
+		CurrencyExponent: 2, Jurisdiction: "GB", TransportGeneration: 1,
 	}
 	for name, issuer := range map[string]*operator.AccessTokenIssuer{
 		"active": activeIssuer, "retained": previousIssuer,

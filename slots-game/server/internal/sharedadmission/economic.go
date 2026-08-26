@@ -233,7 +233,7 @@ func newEconomicAdmission(
 			backend:  keyPrefix + "backend",
 		}
 	}
-	return &EconomicAdmission{
+	admission := &EconomicAdmission{
 		executor: executor,
 		timeout:  timeout,
 		arguments: []string{
@@ -244,7 +244,11 @@ func newEconomicAdmission(
 		routes:  compiled,
 		metrics: metrics,
 		now:     time.Now,
-	}, nil
+	}
+	if metrics != nil {
+		metrics.EnableEconomicAdmissionHealthMetrics()
+	}
+	return admission, nil
 }
 
 func economicPolicyArguments(policy EconomicPolicy) ([2]string, error) {
@@ -301,7 +305,7 @@ func (admission *EconomicAdmission) admitCost(
 	if !exists {
 		return admission.backendUnavailable()
 	}
-	now := admission.now()
+	now := admission.observationTime()
 	unavailableUntil := admission.unavailableUntil.Load()
 	if unavailableUntil > now.UnixNano() {
 		return admission.backendUnavailable()
@@ -328,12 +332,16 @@ func (admission *EconomicAdmission) admitCost(
 		result[1] < 0 || result[1] > 3 || result[2] < 0 ||
 		(result[0] == 1 && (result[1] != 0 || result[2] != 0)) ||
 		(result[0] == 0 && (result[1] == 0 || result[2] == 0)) {
-		if parent.Err() == nil {
-			admission.unavailableUntil.Store(now.Add(time.Second).UnixNano())
+		if parent.Err() != nil {
+			return admission.requestUnavailable()
 		}
+		admission.unavailableUntil.Store(now.Add(time.Second).UnixNano())
 		return admission.backendUnavailable()
 	}
 	admission.unavailableUntil.Store(0)
+	if admission.metrics != nil {
+		admission.metrics.ObserveEconomicAdmissionHealth(true, now)
+	}
 	if result[0] == 1 {
 		if admission.metrics != nil {
 			admission.metrics.EconomicAdmissionAllowed.Add(1)
@@ -381,10 +389,16 @@ func (admission *EconomicAdmission) AdmitNewEconomicIntent(
 // 生产 ACL 已允许 EVAL/EVALSHA 及 GET/TIME/MSET/PEXPIRE。随机键不含业务身份。
 func (admission *EconomicAdmission) Check(parent context.Context) error {
 	if admission == nil || admission.executor == nil {
+		if admission != nil && admission.metrics != nil {
+			admission.metrics.ObserveEconomicAdmissionHealth(false, time.Time{})
+		}
 		return errors.New("economic admission is not configured")
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
+		if admission.metrics != nil {
+			admission.metrics.ObserveEconomicAdmissionHealth(false, time.Time{})
+		}
 		return errors.New("economic admission canary entropy unavailable")
 	}
 	tag := "{rgs-economic:startup-canary:" + hex.EncodeToString(nonce[:]) + "}"
@@ -399,7 +413,13 @@ func (admission *EconomicAdmission) Check(parent context.Context) error {
 		[]string{"1000", "1000000", "1000", "1000000", "1000"},
 	)
 	if err != nil || len(result) != 3 || result[0] != 1 || result[1] != 0 || result[2] != 0 {
+		if admission.metrics != nil {
+			admission.metrics.ObserveEconomicAdmissionHealth(false, time.Time{})
+		}
 		return errors.New("economic admission atomic canary failed")
+	}
+	if admission.metrics != nil {
+		admission.metrics.ObserveEconomicAdmissionHealth(true, admission.observationTime())
 	}
 	return nil
 }
@@ -407,11 +427,29 @@ func (admission *EconomicAdmission) Check(parent context.Context) error {
 func (admission *EconomicAdmission) backendUnavailable() economicResult {
 	if admission != nil && admission.metrics != nil {
 		admission.metrics.EconomicAdmissionErrors.Add(1)
+		admission.metrics.ObserveEconomicAdmissionHealth(false, time.Time{})
 	}
 	return economicResult{
 		decision:   economicBackendUnavailable,
 		retryAfter: time.Second,
 	}
+}
+
+func (admission *EconomicAdmission) requestUnavailable() economicResult {
+	if admission != nil && admission.metrics != nil {
+		admission.metrics.EconomicAdmissionErrors.Add(1)
+	}
+	return economicResult{
+		decision:   economicBackendUnavailable,
+		retryAfter: time.Second,
+	}
+}
+
+func (admission *EconomicAdmission) observationTime() time.Time {
+	if admission != nil && admission.now != nil {
+		return admission.now()
+	}
+	return time.Now()
 }
 
 var _ rgs.EconomicIntentAdmitter = (*EconomicAdmission)(nil)

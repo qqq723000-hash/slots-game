@@ -21,29 +21,7 @@ test -n "$manifest" || { printf '%s\n' '未找到已完成的备份集。' >&2; 
 manifest_name="${manifest##*/}"
 timestamp="${manifest_name#backup-set-}"
 timestamp="${timestamp%.sha256}"
-case "$timestamp" in
-  [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
-  *) printf '%s\n' '备份时间标记不合法。' >&2; exit 1 ;;
-esac
-
-rgs_dump="$backup_directory/rgs-${timestamp}.dump"
-operator_dump="$backup_directory/local_operator-${timestamp}.dump"
-operator_archive="$backup_directory/operator-files-${timestamp}.tar.gz"
-test -s "$rgs_dump" && test -s "$operator_dump" && test -s "$operator_archive"
-(
-  cd "$backup_directory"
-  sha256sum -c "$manifest_name" >/dev/null
-)
-
-# 拒绝可越界解压的路径，并确认审计、日志和告警三个目录都在归档内。
-archive_list="$(tar -tzf "$operator_archive")"
-printf '%s\n' "$archive_list" | awk '
-  /^\// || /(^|\/)\.\.($|\/)/ { exit 1 }
-  END { if (NR == 0) exit 1 }
-'
-printf '%s\n' "$archive_list" | grep -Eq '^audit(/|$)'
-printf '%s\n' "$archive_list" | grep -Eq '^logs(/|$)'
-printf '%s\n' "$archive_list" | grep -Eq '^alerts(/|$)'
+"$local_production_directory/backup-integrity.sh" verify-set "$backup_directory" "$timestamp"
 
 suffix="$(date -u +%s)-$$"
 container_name="slots-backup-verify-$suffix"

@@ -113,14 +113,122 @@ func TestBoundedValkeyTransportReturnsAfterBlackholeSaturation(t *testing.T) {
 	}
 }
 
+func TestLimiterStartupCanaryUsesDirectEvalThenCachedEvalSHAOnWire(t *testing.T) {
+	peer := newBlackholeValkeyPeer(t)
+	peer.blackhole.Store(false)
+	defer peer.close()
+	options := boundedValkeyClientOptions(250 * time.Millisecond)
+	options.InitAddress = []string{peer.address()}
+	client, err := valkey.NewClient(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limiter, err := newLimiter(newValkeyExecutor(client), Config{
+		Timeout: 250 * time.Millisecond, Rate: 10, Burst: 10,
+	}, []byte("01234567890123456789012345678901"), nil)
+	if err != nil {
+		client.Close()
+		t.Fatal(err)
+	}
+	defer limiter.Close()
+
+	if err := limiter.Check(context.Background()); err != nil {
+		t.Fatalf("startup canary: %v", err)
+	}
+	commands := peer.scriptCommands()
+	if len(commands) != 2 || len(commands[0]) != 6 || len(commands[1]) != 6 {
+		t.Fatalf("startup script wire commands = %#v", commands)
+	}
+	if commands[0][0] != "EVAL" || commands[0][1] != tokenBucketScriptBody || commands[0][2] != "1" ||
+		commands[1][0] != "EVALSHA" || commands[1][1] != tokenBucketScriptSHA1 || commands[1][2] != "1" {
+		t.Fatalf("startup script command contract = %#v", commands)
+	}
+	if commands[0][3] != commands[1][3] ||
+		!strings.HasPrefix(commands[0][3], keyPrefix+"startup-canary:") ||
+		commands[0][4] != strconv.FormatInt(basicCanaryCapacityMilli, 10) ||
+		commands[0][5] != strconv.FormatInt(basicCanaryRateMilliPerSecond, 10) ||
+		commands[0][4] != commands[1][4] || commands[0][5] != commands[1][5] {
+		t.Fatalf("startup script key/arguments drifted = %#v", commands)
+	}
+}
+
+func TestDirectStartupEvalDoesNotRegressConcurrentNoScriptReload(t *testing.T) {
+	peer := newBlackholeValkeyPeer(t)
+	peer.blackhole.Store(false)
+	defer peer.close()
+	options := boundedValkeyClientOptions(500 * time.Millisecond)
+	options.InitAddress = []string{peer.address()}
+	client, err := valkey.NewClient(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	executor := newValkeyExecutor(client)
+	arguments := []string{"2000", "2000000"}
+	if result, directErr := executor.EvaluateDirect(
+		context.Background(), keyPrefix+"startup-canary:concurrency}", arguments,
+	); directErr != nil || len(result) != 2 || result[0] != 1 || result[1] != 0 {
+		t.Fatalf("direct startup EVAL = %v, %v", result, directErr)
+	}
+	peer.evictScript()
+
+	const workers = 32
+	start := make(chan struct{})
+	errorsSeen := make(chan error, workers)
+	var ready sync.WaitGroup
+	var complete sync.WaitGroup
+	ready.Add(workers)
+	complete.Add(workers)
+	for index := range workers {
+		go func() {
+			defer complete.Done()
+			ready.Done()
+			<-start
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			result, evaluateErr := executor.Evaluate(
+				ctx, fmt.Sprintf("%sconcurrent:%d}", keyPrefix, index), arguments,
+			)
+			if evaluateErr != nil || len(result) != 2 || result[0] != 1 || result[1] != 0 {
+				errorsSeen <- fmt.Errorf("result=%v error=%w", result, evaluateErr)
+			}
+		}()
+	}
+	ready.Wait()
+	close(start)
+	complete.Wait()
+	close(errorsSeen)
+	for evaluateErr := range errorsSeen {
+		t.Error(evaluateErr)
+	}
+
+	evalCalls := 0
+	evalSHACalls := 0
+	for _, command := range peer.scriptCommands() {
+		switch command[0] {
+		case "EVAL":
+			evalCalls++
+		case "EVALSHA":
+			evalSHACalls++
+		}
+	}
+	if evalCalls != 2 || evalSHACalls < workers || executor.noScriptMisses.Load() == 0 {
+		t.Fatalf("direct/reload EVAL=%d EVALSHA=%d NOSCRIPT=%d, want 2/>=%d/>0",
+			evalCalls, evalSHACalls, executor.noScriptMisses.Load(), workers)
+	}
+}
+
 type blackholeValkeyPeer struct {
 	listener             net.Listener
 	blackhole            atomic.Bool
 	blackholedCommands   atomic.Int64
 	activeConnections    atomic.Int64
 	maximumConnections   atomic.Int64
+	scriptLoaded         atomic.Bool
 	connectionsMu        sync.Mutex
 	connections          map[net.Conn]struct{}
+	commandsMu           sync.Mutex
+	commands             [][]string
 	connectionGoroutines sync.WaitGroup
 	closeOnce            sync.Once
 }
@@ -176,6 +284,7 @@ func (peer *blackholeValkeyPeer) serve(connection net.Conn) {
 		if err != nil {
 			return
 		}
+		peer.recordCommand(command)
 		switch strings.ToUpper(command[0]) {
 		case "HELLO":
 			_, err = io.WriteString(connection, "%2\r\n+version\r\n+7.2.0\r\n+proto\r\n:3\r\n")
@@ -189,13 +298,25 @@ func (peer *blackholeValkeyPeer) serve(connection net.Conn) {
 				return
 			}
 			_, err = io.WriteString(connection, "+PONG\r\n")
-		case "EVAL", "EVALSHA":
+		case "EVAL":
 			if peer.blackhole.Load() {
 				peer.blackholedCommands.Add(1)
 				_, _ = io.Copy(io.Discard, reader)
 				return
 			}
+			peer.scriptLoaded.Store(true)
 			_, err = io.WriteString(connection, "*2\r\n:1\r\n:0\r\n")
+		case "EVALSHA":
+			if peer.blackhole.Load() {
+				peer.blackholedCommands.Add(1)
+				_, _ = io.Copy(io.Discard, reader)
+				return
+			}
+			if !peer.scriptLoaded.Load() {
+				_, err = io.WriteString(connection, "-NOSCRIPT No matching script. Please use EVAL.\r\n")
+			} else {
+				_, err = io.WriteString(connection, "*2\r\n:1\r\n:0\r\n")
+			}
 		default:
 			_, err = fmt.Fprintf(connection, "-ERR unexpected command %s\r\n", command[0])
 		}
@@ -204,6 +325,26 @@ func (peer *blackholeValkeyPeer) serve(connection net.Conn) {
 		}
 	}
 }
+
+func (peer *blackholeValkeyPeer) recordCommand(command []string) {
+	peer.commandsMu.Lock()
+	peer.commands = append(peer.commands, append([]string(nil), command...))
+	peer.commandsMu.Unlock()
+}
+
+func (peer *blackholeValkeyPeer) scriptCommands() [][]string {
+	peer.commandsMu.Lock()
+	defer peer.commandsMu.Unlock()
+	commands := make([][]string, 0, len(peer.commands))
+	for _, command := range peer.commands {
+		if len(command) != 0 && (strings.EqualFold(command[0], "EVAL") || strings.EqualFold(command[0], "EVALSHA")) {
+			commands = append(commands, append([]string(nil), command...))
+		}
+	}
+	return commands
+}
+
+func (peer *blackholeValkeyPeer) evictScript() { peer.scriptLoaded.Store(false) }
 
 func (peer *blackholeValkeyPeer) close() {
 	peer.closeOnce.Do(func() {

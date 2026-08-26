@@ -660,6 +660,7 @@ if test "$1" = cloudfront; then
       Status: "Deployed",
       DistributionConfig: {
         Enabled: true,
+        HttpVersion: (if $mode == "cloudfront-http-version-drift" then "http2" else "http2and3" end),
         DefaultRootObject: "index.html",
         Aliases: {Quantity: 1, Items: ["slots.production.example.com"]},
         WebACLId: "arn:aws:wafv2:us-east-1:123456789012:global/webacl/slots-prod-primary-web/11111111-1111-4111-8111-111111111111",
@@ -701,11 +702,235 @@ if test "$1" = cloudfront; then
   '
   exit 0
 fi
+if test "$1" = rds; then
+  test "$2" = describe-db-instances || fail '只允许回读受合同约束的 RDS 实例'
+  shift 2
+  region=$(argument_value --region "$@")
+  identifier=$(argument_value --db-instance-identifier "$@")
+  test "$region" = ap-southeast-1 || fail 'RDS 区域不匹配'
+  test "$identifier" = slots-prod-primary-postgresql-reader || fail 'RDS 只读副本 identity 不匹配'
+  jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
+    {DBInstances: (if $mode == "rds-reader-missing" then [] else [{
+      DBInstanceIdentifier: "slots-prod-primary-postgresql-reader",
+      DBInstanceArn: "arn:aws:rds:ap-southeast-1:123456789012:db:slots-prod-primary-postgresql-reader",
+      DBInstanceStatus: (if $mode == "rds-reader-status-drift" then "modifying" else "available" end),
+      ReadReplicaSourceDBInstanceIdentifier: (if $mode == "rds-reader-source-drift" then
+        "foreign-postgresql" else "slots-prod-primary-postgresql" end),
+      Endpoint: {
+        Address: (if $mode == "rds-reader-endpoint-drift" then
+          "foreign.abcdefghijkl.ap-southeast-1.rds.amazonaws.com" else
+          "slots-prod-primary-postgresql-reader.abcdefghijkl.ap-southeast-1.rds.amazonaws.com" end),
+        Port: 5432
+      },
+      Engine: "postgres",
+      EngineVersion: (if $mode == "rds-reader-engine-version-drift" then "16.9" else "17.5" end),
+      DBInstanceClass: (if $mode == "rds-reader-instance-class-drift" then
+        "db.r7g.2xlarge" else "db.r7g.xlarge" end),
+      StorageType: (if $mode == "rds-reader-storage-type-drift" then "gp2" else "gp3" end),
+      AllocatedStorage: (if $mode == "rds-reader-allocated-storage-drift" then 499 else 500 end),
+      MaxAllocatedStorage: (if $mode == "rds-reader-max-storage-drift" then 1000 else 2000 end),
+      PubliclyAccessible: ($mode == "rds-reader-public"),
+      MultiAZ: ($mode != "rds-reader-multi-az-drift"),
+      DBSubnetGroup: {DBSubnetGroupName: (if $mode == "rds-reader-subnet-drift" then
+        "foreign-subnet-group" else "slots-prod-primary-postgresql" end)},
+      DBParameterGroups: [{
+        DBParameterGroupName: (if $mode == "rds-reader-parameter-drift" then
+          "foreign-parameter-group" else "slots-prod-primary-postgresql-20260825000000000000000001" end),
+        ParameterApplyStatus: (if $mode == "rds-reader-parameter-pending" then "applying" else "in-sync" end)
+      }],
+      VpcSecurityGroups: [{
+        VpcSecurityGroupId: (if $mode == "rds-reader-security-group-drift" then
+          "sg-01111111111111111" else "sg-0fedcba9876543210" end),
+        Status: "active"
+      }],
+      StorageEncrypted: ($mode != "rds-reader-unencrypted"),
+      KmsKeyId: (if $mode == "rds-reader-kms-drift" then
+        "arn:aws:kms:ap-southeast-1:123456789012:key/33333333-3333-4333-8333-333333333333" else
+        "arn:aws:kms:ap-southeast-1:123456789012:key/11111111-1111-4111-8111-111111111111" end),
+      BackupRetentionPeriod: (if $mode == "rds-reader-backup-drift" then 0 else 35 end),
+      DeletionProtection: ($mode != "rds-reader-deletion-protection-drift"),
+      IAMDatabaseAuthenticationEnabled: true,
+      AutoMinorVersionUpgrade: false,
+      MonitoringInterval: 60,
+      PerformanceInsightsEnabled: true,
+      EnabledCloudwatchLogsExports: (if $mode == "rds-reader-log-export-drift" then
+        ["postgresql"] else ["postgresql", "upgrade"] end),
+      PendingModifiedValues: (if $mode == "rds-reader-pending-modification" then
+        {DBInstanceClass: "db.r7g.2xlarge"} else {} end)
+    }] end)}
+  '
+  exit 0
+fi
+if test "$1" = logs; then
+  test "$2" = describe-metric-filters || fail '只允许读取受合同约束的 CloudWatch Logs metric filter'
+  shift 2
+  region=$(argument_value --region "$@")
+  log_group=$(argument_value --log-group-name "$@")
+  filter_prefix=$(argument_value --filter-name-prefix "$@")
+  test "$region" = ap-southeast-1 || fail 'CloudWatch Logs 区域不匹配'
+  test "$log_group" = /aws/rds/instance/slots-prod-primary-postgresql/postgresql || fail 'RDS PostgreSQL 日志组不匹配'
+  test "$filter_prefix" = slots-prod-primary-postgresql-deadlock-detected || fail 'RDS deadlock filter 前缀不匹配'
+  jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
+    {metricFilters: (if $mode == "rds-deadlock-filter-missing" then [] else [{
+      filterName: "slots-prod-primary-postgresql-deadlock-detected",
+      logGroupName: (if $mode == "rds-deadlock-filter-log-group-drift" then
+        "/aws/rds/instance/foreign-postgresql/postgresql" else
+        "/aws/rds/instance/slots-prod-primary-postgresql/postgresql" end),
+      filterPattern: (if $mode == "rds-deadlock-filter-pattern-drift" then
+        "\"deadlock_detected\"" else "\"deadlock detected\"" end),
+      metricTransformations: [{
+        metricName: (if $mode == "rds-deadlock-filter-metric-name-drift" then
+          "foreign-deadlock-detected" else "slots-prod-primary-postgresql-deadlock-detected" end),
+        metricNamespace: (if $mode == "rds-deadlock-filter-namespace-drift" then
+          "AWS/RDS" else "Slots/RDSLogEvents" end),
+        metricValue: (if $mode == "rds-deadlock-filter-value-drift" then "0" else "1" end),
+        defaultValue: (if $mode == "rds-deadlock-filter-default-drift" then 1 else 0 end),
+        unit: (if $mode == "rds-deadlock-filter-unit-drift" then "Bytes" else "Count" end),
+        dimensions: (if $mode == "rds-deadlock-filter-dimension-drift" then
+          {DBInstanceIdentifier: "slots-prod-primary-postgresql"} else {} end)
+      }]
+    }] end)}
+  '
+  exit 0
+fi
 if test "$1" = cloudwatch; then
-  test "$2" = describe-alarms || fail '只允许读取 WAF CloudWatch 告警'
+  test "$2" = describe-alarms || fail '只允许读取受合同约束的 CloudWatch 告警'
   shift 2
   region=$(argument_value --region "$@")
   test "$region" = ap-southeast-1 || fail 'CloudWatch 区域不匹配'
+  case " $* " in
+    *" --alarm-name-prefix "*)
+      alarm_prefix=$(argument_value --alarm-name-prefix "$@")
+      if test "$alarm_prefix" = slots-prod-primary-postgresql-reader-; then
+        jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
+          def reader_alarm($name; $metric; $statistic; $unit; $threshold; $comparison; $missing): {
+            AlarmName: $name,
+            ActionsEnabled: ($mode != "rds-reader-alarm-action-drift"),
+            AlarmActions: (if $mode == "rds-reader-alarm-action-drift" then [] else
+              ["arn:aws:sns:ap-southeast-1:123456789012:slots-prod-primary-alerts"] end),
+            OKActions: ["arn:aws:sns:ap-southeast-1:123456789012:slots-prod-primary-alerts"],
+            InsufficientDataActions: [],
+            Namespace: "AWS/RDS",
+            MetricName: (if $mode == "rds-reader-alarm-metric-drift" and $metric == "ReplicaLag" then
+              "ReadLatency" else $metric end),
+            Statistic: (if $mode == "rds-reader-alarm-statistic-drift" and $metric == "ReplicaLag" then
+              "Average" else $statistic end),
+            Unit: $unit,
+            ComparisonOperator: $comparison,
+            Period: 60,
+            EvaluationPeriods: 3,
+            DatapointsToAlarm: 2,
+            Threshold: (if $mode == "rds-reader-alarm-threshold-drift" and $metric == "ReplicaLag" then
+              $threshold + 1 else $threshold end),
+            TreatMissingData: (if $mode == "rds-reader-alarm-missing-data-drift" and $metric == "ReplicaLag" then
+              "notBreaching" else $missing end),
+            Dimensions: [{Name: "DBInstanceIdentifier", Value:
+              (if $mode == "rds-reader-alarm-dimension-drift" and $metric == "ReplicaLag" then
+                "foreign-reader" else "slots-prod-primary-postgresql-reader" end)}]
+          };
+          [
+            reader_alarm("slots-prod-primary-postgresql-reader-cpu-high"; "CPUUtilization"; "Average"; "Percent"; 65; "GreaterThanOrEqualToThreshold"; "notBreaching"),
+            reader_alarm("slots-prod-primary-postgresql-reader-connections-high"; "DatabaseConnections"; "Maximum"; "Count"; 400; "GreaterThanOrEqualToThreshold"; "notBreaching"),
+            reader_alarm("slots-prod-primary-postgresql-reader-read-latency-high"; "ReadLatency"; "Average"; "Seconds"; 0.015; "GreaterThanOrEqualToThreshold"; "notBreaching"),
+            reader_alarm("slots-prod-primary-postgresql-reader-disk-queue-high"; "DiskQueueDepth"; "Maximum"; "Count"; 64; "GreaterThanOrEqualToThreshold"; "notBreaching"),
+            reader_alarm("slots-prod-primary-postgresql-reader-swap-usage-high"; "SwapUsage"; "Maximum"; "Bytes"; 1073741824; "GreaterThanOrEqualToThreshold"; "notBreaching"),
+            reader_alarm("slots-prod-primary-postgresql-reader-freeable-memory-low"; "FreeableMemory"; "Minimum"; "Bytes"; 4294967296; "LessThanOrEqualToThreshold"; "notBreaching"),
+            reader_alarm("slots-prod-primary-postgresql-reader-free-storage-low"; "FreeStorageSpace"; "Minimum"; "Bytes"; 107374182400; "LessThanOrEqualToThreshold"; "notBreaching"),
+            reader_alarm("slots-prod-primary-postgresql-reader-replica-lag-high"; "ReplicaLag"; "Maximum"; "Seconds"; 30; "GreaterThanOrEqualToThreshold"; "breaching")
+          ] | (if $mode == "rds-reader-alarm-missing" then
+            map(select(.MetricName != "ReplicaLag")) else . end) | {MetricAlarms: .}
+        '
+        exit 0
+      fi
+      test "$alarm_prefix" = slots-prod-primary-postgresql- || fail 'RDS 告警名称前缀不匹配'
+      jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
+        def rds_alarm($name; $metric; $statistic; $unit; $threshold; $comparison; $evaluations; $datapoints): {
+          AlarmName: $name,
+          ActionsEnabled: ($mode != "rds-alarm-action-drift"),
+          AlarmActions: (if $mode == "rds-alarm-action-drift" then [] else
+            ["arn:aws:sns:ap-southeast-1:123456789012:slots-prod-primary-alerts"] end),
+          OKActions: ["arn:aws:sns:ap-southeast-1:123456789012:slots-prod-primary-alerts"],
+          InsufficientDataActions: [],
+          Namespace: (if $metric == "Deadlocks" then
+            (if $mode == "rds-deadlock-alarm-namespace-drift" then "AWS/RDS" else "Slots/RDSLogEvents" end)
+            else "AWS/RDS" end),
+          MetricName: (if $metric == "Deadlocks" then
+            (if $mode == "rds-deadlock-alarm-metric-name-drift" then "foreign-deadlock-detected"
+              else "slots-prod-primary-postgresql-deadlock-detected" end)
+            else $metric end),
+          Statistic: (if $mode == "rds-deadlock-statistic-drift" and $metric == "Deadlocks" then "Average" else $statistic end),
+          Unit: $unit,
+          ComparisonOperator: $comparison,
+          Period: 60,
+          EvaluationPeriods: (if $mode == "rds-deadlock-window-drift" and $metric == "Deadlocks" then 3 else $evaluations end),
+          DatapointsToAlarm: (if $mode == "rds-deadlock-window-drift" and $metric == "Deadlocks" then 2 else $datapoints end),
+          Threshold: $threshold,
+          TreatMissingData: (if $mode == "rds-alarm-missing-data-drift" then "breaching" else "notBreaching" end),
+          Dimensions: (if $metric == "Deadlocks" then
+            (if $mode == "rds-deadlock-alarm-dimension-drift" then
+              [{Name: "DBInstanceIdentifier", Value: "slots-prod-primary-postgresql"}] else [] end)
+            else [{Name: "DBInstanceIdentifier", Value:
+              (if $mode == "rds-alarm-dimension-drift" then "foreign-postgresql" else "slots-prod-primary-postgresql" end)}] end)
+        };
+        def rds_math_source($id; $metric; $unit): {
+          Id: $id,
+          ReturnData: (if $mode == "rds-math-source-return-data-drift" and $id == "m1" then true else false end),
+          MetricStat: {
+            Metric: {
+              Namespace: (if $mode == "rds-math-source-namespace-drift" and $id == "m1" then
+                "AWS/EC2" else "AWS/RDS" end),
+              MetricName: (if $mode == "rds-alarm-metric-drift" and $metric == "ReadIOPS" then
+                "ReplicaLag" else $metric end),
+              Dimensions: [{Name: "DBInstanceIdentifier", Value:
+                (if $mode == "rds-math-source-dimension-drift" and $id == "m1" then
+                  "foreign-postgresql" else "slots-prod-primary-postgresql" end)}]
+            },
+            Period: (if $mode == "rds-math-source-period-drift" and $id == "m1" then 300 else 60 end),
+            Stat: (if $mode == "rds-math-source-statistic-drift" and $id == "m1" then "Sum" else "Average" end),
+            Unit: (if $mode == "rds-alarm-unit-drift" and $id == "m1" then "Count" else $unit end)
+          }
+        };
+        def rds_math_alarm($name; $threshold; $unit; $label; $read_metric; $write_metric): {
+          AlarmName: $name,
+          ActionsEnabled: ($mode != "rds-alarm-action-drift"),
+          AlarmActions: (if $mode == "rds-alarm-action-drift" then [] else
+            ["arn:aws:sns:ap-southeast-1:123456789012:slots-prod-primary-alerts"] end),
+          OKActions: ["arn:aws:sns:ap-southeast-1:123456789012:slots-prod-primary-alerts"],
+          InsufficientDataActions: [],
+          ComparisonOperator: "GreaterThanOrEqualToThreshold",
+          EvaluationPeriods: 3,
+          DatapointsToAlarm: 2,
+          Threshold: (if $mode == "rds-alarm-threshold-drift" and ($name | endswith("total-throughput-high"))
+            then $threshold + 1 else $threshold end),
+          TreatMissingData: (if $mode == "rds-alarm-missing-data-drift" then "breaching" else "notBreaching" end),
+          Metrics: ([
+            {Id: "e1", Expression: (if $mode == "rds-math-expression-drift" then "m1" else "m1 + m2" end),
+              Label: $label, ReturnData: ($mode != "rds-math-expression-return-data-drift")},
+            rds_math_source("m1"; $read_metric; $unit),
+            rds_math_source("m2"; $write_metric; $unit)
+          ] + (if $mode == "rds-math-extra-query" then
+            [{Id: "m3", ReturnData: false, MetricStat: {Metric: {Namespace: "AWS/RDS", MetricName: "ReplicaLag",
+              Dimensions: [{Name: "DBInstanceIdentifier", Value: "slots-prod-primary-postgresql"}]},
+              Period: 60, Stat: "Average", Unit: "Seconds"}}] else [] end))
+        };
+        [
+          rds_alarm("slots-prod-primary-postgresql-cpu-high"; "CPUUtilization"; "Average"; "Percent"; 65; "GreaterThanOrEqualToThreshold"; 3; 2),
+          rds_alarm("slots-prod-primary-postgresql-connections-high"; "DatabaseConnections"; "Maximum"; "Count"; 400; "GreaterThanOrEqualToThreshold"; 3; 2),
+          rds_alarm("slots-prod-primary-postgresql-read-latency-high"; "ReadLatency"; "Average"; "Seconds"; 0.015; "GreaterThanOrEqualToThreshold"; 3; 2),
+          rds_alarm("slots-prod-primary-postgresql-write-latency-high"; "WriteLatency"; "Average"; "Seconds"; 0.015; "GreaterThanOrEqualToThreshold"; 3; 2),
+          rds_alarm("slots-prod-primary-postgresql-disk-queue-high"; "DiskQueueDepth"; "Maximum"; "Count"; 64; "GreaterThanOrEqualToThreshold"; 3; 2),
+          rds_math_alarm("slots-prod-primary-postgresql-total-iops-high"; 9600; "Count/Second"; "Total RDS IOPS"; "ReadIOPS"; "WriteIOPS"),
+          rds_math_alarm("slots-prod-primary-postgresql-total-throughput-high"; 419430400; "Bytes/Second"; "Total RDS throughput"; "ReadThroughput"; "WriteThroughput"),
+          rds_alarm("slots-prod-primary-postgresql-swap-usage-high"; "SwapUsage"; "Maximum"; "Bytes"; 1073741824; "GreaterThanOrEqualToThreshold"; 3; 2),
+          rds_alarm("slots-prod-primary-postgresql-freeable-memory-low"; "FreeableMemory"; "Minimum"; "Bytes"; 4294967296; "LessThanOrEqualToThreshold"; 3; 2),
+          rds_alarm("slots-prod-primary-postgresql-free-storage-low"; "FreeStorageSpace"; "Minimum"; "Bytes"; 107374182400; "LessThanOrEqualToThreshold"; 3; 2),
+          rds_alarm("slots-prod-primary-postgresql-deadlocks"; "Deadlocks"; "Sum"; "Count"; 1; "GreaterThanOrEqualToThreshold"; 1; 1)
+        ] | (if $mode == "rds-alarm-missing" then map(select(.AlarmName != "slots-prod-primary-postgresql-deadlocks")) else . end) |
+        {MetricAlarms: .}
+      '
+      exit 0
+      ;;
+  esac
   jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
     def alarm($name; $metric; $threshold): {
       AlarmName: $name,

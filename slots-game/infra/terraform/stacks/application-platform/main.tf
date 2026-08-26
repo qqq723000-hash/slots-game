@@ -27,6 +27,8 @@ resource "terraform_data" "production_guardrails" {
     production_mode         = local.production_mode
     nat_gateway_per_az      = var.enable_nat_gateway_per_az
     rds_multi_az            = var.rds_multi_az
+    rds_reader_enabled      = var.rds_read_replica.enabled
+    rds_reader_multi_az     = var.rds_read_replica.multi_az
     rds_deletion_protection = var.rds_deletion_protection
     backup_vault_lock       = var.backup_enable_vault_lock
     ecr_retention_days      = var.ecr_untagged_retention_days
@@ -58,13 +60,14 @@ resource "terraform_data" "production_guardrails" {
       condition = !local.production_mode || (
         var.enable_nat_gateway_per_az &&
         var.rds_multi_az &&
+        (!var.rds_read_replica.enabled || var.rds_read_replica.multi_az) &&
         var.rds_deletion_protection &&
         var.rds_backup_retention_days == 35 &&
         var.backup_enable_vault_lock &&
         var.ecr_untagged_retention_days >= 365 &&
         var.node_max_size >= var.node_min_size * 2
       )
-      error_message = "生产环境必须启用每区 NAT、RDS Multi-AZ/删除保护/35 天 PITR、Vault Lock、至少两倍节点扩容边界，并将无标签 OCI 保留至少 365 天。"
+      error_message = "生产环境必须启用每区 NAT、writer RDS Multi-AZ；启用 read replica 时副本也必须 Multi-AZ；并启用删除保护/35 天 PITR、Vault Lock、至少两倍节点扩容边界，将无标签 OCI 保留至少 365 天。"
     }
   }
 
@@ -178,6 +181,7 @@ module "rds" {
   multi_az                  = var.rds_multi_az
   backup_retention_days     = var.rds_backup_retention_days
   deletion_protection       = var.rds_deletion_protection
+  read_replica              = var.rds_read_replica
   alarm_thresholds          = var.rds_alarm_thresholds
   log_retention_days        = var.log_retention_days
   tags                      = local.tags

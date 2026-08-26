@@ -11,8 +11,12 @@ import (
 	"sort"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"slots-game/server/internal/game"
 	"slots-game/server/internal/rgs"
+	"slots-game/server/internal/telemetry"
 )
 
 // Repository 是 RGS 聚合的 PostgreSQL 持久化实现。每个修改轮次的方法必须先锁定
@@ -20,6 +24,12 @@ import (
 type Repository struct {
 	db                *sql.DB
 	integrityObserver rgs.IntegrityObserver
+	riskPolicy        rgs.HighValueRiskPolicy
+}
+
+type RepositoryOptions struct {
+	IntegrityObserver rgs.IntegrityObserver
+	RiskPolicy        rgs.HighValueRiskPolicy
 }
 
 const (
@@ -28,24 +38,30 @@ const (
 	persistedWalletLedgerIntegrityFailure = "persisted wallet ledger integrity validation failed"
 )
 
-const walletLeaseClockSQL = `SELECT clock_timestamp()`
+const databaseClockSQL = `SELECT clock_timestamp()`
+
+const walletLeaseClockSQL = databaseClockSQL
 
 const prepareSessionLockSQL = `
 	SELECT s.operator_id, s.session_id, s.player_id, s.wallet_account_id,
 		s.wallet_session_id, s.game_id, s.definition_version, s.definition_hash,
 		s.currency, s.currency_exponent, s.jurisdiction, s.status,
 		s.balance_snapshot_minor, s.sequence, s.revision, s.feature_state,
-		s.pending_round_id, s.expires_at, s.integrity_quarantined_at,
-		EXISTS (
-			SELECT 1 FROM rgs_rounds delivery
-			WHERE delivery.operator_id=s.operator_id AND delivery.session_id=s.session_id
-			  AND delivery.status='COMMITTED' AND delivery.result_delivery_required
-			  AND delivery.result_acknowledged_at IS NULL
-		) AS result_delivery_pending,
-		clock_timestamp() AS database_now
+		s.pending_round_id, s.expires_at, s.idle_disconnect_seconds,
+		s.idle_disconnect_at, s.transport_generation, s.integrity_quarantined_at
 	FROM rgs_sessions s
 	WHERE s.operator_id=$1 AND s.session_id=$2
 	FOR UPDATE OF s`
+
+const prepareAdmissionStateSQL = `
+	SELECT clock_timestamp(),
+		EXISTS (
+			SELECT 1 FROM rgs_rounds delivery
+			WHERE delivery.operator_id=$1 AND delivery.session_id=$2
+			  AND delivery.status='COMMITTED' AND delivery.result_delivery_required
+			  AND delivery.result_acknowledged_at IS NULL
+		) AS result_delivery_pending
+	`
 
 const prepareRoundWriteSQL = `
 	WITH inserted_round AS (
@@ -72,7 +88,12 @@ const prepareRoundWriteSQL = `
 		RETURNING operator_id
 	), updated_session AS (
 		UPDATE rgs_sessions AS session
-		SET pending_round_id=$3, updated_at=$22
+		SET pending_round_id=$3,
+			idle_disconnect_at=LEAST(
+				session.expires_at,
+				$22 + session.idle_disconnect_seconds * INTERVAL '1 second'
+			),
+			updated_at=$22
 		FROM inserted_wallet
 		WHERE session.operator_id=$1 AND session.session_id=$2
 		  AND session.revision=$15 AND session.pending_round_id IS NULL
@@ -97,6 +118,67 @@ const prepareRoundWriteSQL = `
 		(SELECT count(*) FROM updated_session),
 		(SELECT count(*) FROM inserted_outbox)`
 
+const prepareRiskRoundWriteSQL = `
+	WITH inserted_round AS (
+		INSERT INTO rgs_rounds (
+			operator_id, session_id, round_id, server_transaction_id,
+			request_fingerprint, status, round_kind, game_id,
+			definition_version, definition_hash, currency, bet_minor,
+			input_feature_state, charged_minor, win_minor, starting_revision, resulting_revision,
+			sequence, result_json, outcome_hash, wallet_phase, wallet_command_digest,
+			wallet_profile, next_attempt_at, created_at, updated_at
+		) VALUES (
+			$1,$2,$3,$4,$5,'RISK_PENDING',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+			'',$20,$21,NULL,$22,$22
+		)
+		RETURNING operator_id, session_id, round_id, server_transaction_id
+	), inserted_risk AS (
+		INSERT INTO rgs_risk_reviews (
+			operator_id, session_id, round_id, policy_version, threshold_minor,
+			payout_minor, summary_hash, expiry_policy, status, expires_at,
+			created_at, updated_at
+		)
+		SELECT operator_id, session_id, round_id, $24, $25, $26, $27, $28,
+			'PENDING', $29, $22, $22
+		FROM inserted_round
+		RETURNING operator_id, session_id, round_id
+	), inserted_wallet AS (
+		INSERT INTO rgs_wallet_transactions (
+			operator_id, transaction_id, session_id, round_id, kind, status,
+			currency, amount_minor, request_fingerprint, created_at, updated_at
+		)
+		SELECT risk.operator_id, round.server_transaction_id, risk.session_id, risk.round_id,
+			'PLAY', 'PENDING', $10, $13, $5, $22, $22
+		FROM inserted_risk risk
+		JOIN inserted_round round USING (operator_id, session_id, round_id)
+		RETURNING operator_id
+	), updated_session AS (
+		UPDATE rgs_sessions AS session
+		SET pending_round_id=$3,
+			idle_disconnect_at=LEAST(
+				session.expires_at,
+				$22 + session.idle_disconnect_seconds * INTERVAL '1 second'
+			),
+			updated_at=$22
+		FROM inserted_wallet
+		WHERE session.operator_id=$1 AND session.session_id=$2
+		  AND session.revision=$15 AND session.pending_round_id IS NULL
+		RETURNING session.operator_id
+	), inserted_outbox AS (
+		INSERT INTO rgs_outbox (
+			operator_id, aggregate_type, aggregate_id, event_type, payload
+		)
+		SELECT $1, 'round', $4, 'ROUND_RISK_PENDING', $23::jsonb
+		FROM updated_session
+		RETURNING id
+	)
+	SELECT
+		(SELECT count(*) FROM inserted_round),
+		(SELECT count(*) FROM inserted_risk),
+		(SELECT count(*) FROM inserted_wallet),
+		(SELECT count(*) FROM updated_session),
+		(SELECT count(*) FROM inserted_outbox)`
+
 func NewRepository(db *sql.DB, observers ...rgs.IntegrityObserver) (*Repository, error) {
 	if db == nil {
 		return nil, errors.New("postgres repository: database is required")
@@ -111,7 +193,19 @@ func NewRepository(db *sql.DB, observers ...rgs.IntegrityObserver) (*Repository,
 		}
 		observer = observers[0]
 	}
-	return &Repository{db: db, integrityObserver: observer}, nil
+	return NewRepositoryWithOptions(db, RepositoryOptions{IntegrityObserver: observer})
+}
+
+func NewRepositoryWithOptions(db *sql.DB, options RepositoryOptions) (*Repository, error) {
+	if db == nil {
+		return nil, errors.New("postgres repository: database is required")
+	}
+	if err := options.RiskPolicy.Validate(); err != nil {
+		return nil, fmt.Errorf("postgres repository: %w", err)
+	}
+	return &Repository{
+		db: db, integrityObserver: options.IntegrityObserver, riskPolicy: options.RiskPolicy,
+	}, nil
 }
 
 func (r *Repository) CreateSession(ctx context.Context, session rgs.Session) error {
@@ -136,15 +230,17 @@ func (r *Repository) CreateSession(ctx context.Context, session rgs.Session) err
 			wallet_session_id, game_id, definition_version, definition_hash,
 			currency, currency_exponent, jurisdiction, status,
 			balance_snapshot_minor, sequence, revision, feature_state,
-			pending_round_id, expires_at
+			pending_round_id, expires_at, idle_disconnect_seconds,
+			idle_disconnect_at, transport_generation
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NULL,$17
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NULL,$17,$18,$19,$20
 		)`,
 		session.OperatorID, session.SessionID, session.PlayerID, session.WalletAccountID,
 		session.WalletSessionID, session.GameID, session.DefinitionVersion, session.DefinitionHash,
 		session.Currency, session.CurrencyExponent, session.Jurisdiction, string(session.Status),
 		session.BalanceMinor, checkedInt64(session.Sequence), checkedInt64(session.Revision),
-		featureJSON, session.ExpiresAt.UTC(),
+		featureJSON, session.ExpiresAt.UTC(), int64(session.IdleDisconnect/time.Second),
+		session.IdleDisconnectAt.UTC(), checkedInt64(session.TransportGeneration),
 	)
 	if err != nil {
 		if sqlState(err) == "23505" {
@@ -172,6 +268,99 @@ func (r *Repository) GetSession(ctx context.Context, operatorID, sessionID strin
 		return session, err
 	}
 	return rgs.Session{}, r.quarantineSession(ctx, operatorID, sessionID)
+}
+
+func (r *Repository) ResetSessionTransport(
+	ctx context.Context,
+	operatorID, sessionID string,
+	idleDisconnect time.Duration,
+) (rgs.Session, error) {
+	if idleDisconnect < time.Second || idleDisconnect > 24*time.Hour ||
+		idleDisconnect%time.Second != 0 {
+		return rgs.Session{}, rgs.ErrInvalidRequest
+	}
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return rgs.Session{}, fmt.Errorf("postgres repository: reset session transport begin: %w", err)
+	}
+	defer tx.Rollback()
+	session, err := scanSession(tx.QueryRowContext(ctx, sessionSelect+`
+		WHERE operator_id=$1 AND session_id=$2 FOR UPDATE`, operatorID, sessionID))
+	if err != nil {
+		return rgs.Session{}, err
+	}
+	var databaseNow time.Time
+	if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&databaseNow); err != nil {
+		return rgs.Session{}, fmt.Errorf("postgres repository: reset session transport clock: %w", err)
+	}
+	databaseNow = databaseNow.UTC()
+	if session.Status == rgs.SessionBlocked {
+		return rgs.Session{}, rgs.ErrManualReview
+	}
+	if session.Status != rgs.SessionActive || !session.ExpiresAt.After(databaseNow) {
+		return rgs.Session{}, rgs.ErrSessionExpired
+	}
+	if session.TransportGeneration >= rgs.MaxStateRevision {
+		return rgs.Session{}, rgs.ErrInvalidRequest
+	}
+	deadline := databaseNow.Add(idleDisconnect)
+	if deadline.After(session.ExpiresAt) {
+		deadline = session.ExpiresAt
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE rgs_sessions
+		SET idle_disconnect_seconds=$3, idle_disconnect_at=$4,
+			transport_generation=transport_generation+1, updated_at=$5
+		WHERE operator_id=$1 AND session_id=$2 AND transport_generation=$6`,
+		operatorID, sessionID, int64(idleDisconnect/time.Second), deadline, databaseNow,
+		checkedInt64(session.TransportGeneration),
+	)
+	if err != nil {
+		return rgs.Session{}, fmt.Errorf("postgres repository: reset session transport: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows != 1 {
+		return rgs.Session{}, rgs.ErrSessionTimeout
+	}
+	session.IdleDisconnect = idleDisconnect
+	session.IdleDisconnectAt = deadline
+	session.TransportGeneration++
+	session.ServerTime = databaseNow
+	if err := tx.Commit(); err != nil {
+		return rgs.Session{}, fmt.Errorf("postgres repository: reset session transport commit: %w", err)
+	}
+	return session, nil
+}
+
+func (r *Repository) AuthorizeSessionTransport(
+	ctx context.Context,
+	operatorID, sessionID string,
+	transportGeneration uint64,
+	allowIdleRecovery bool,
+) (rgs.Session, error) {
+	if transportGeneration == 0 || transportGeneration > rgs.MaxStateRevision {
+		return rgs.Session{}, rgs.ErrSessionTimeout
+	}
+	var databaseNow time.Time
+	session, err := scanSessionWithTrailing(r.db.QueryRowContext(ctx, sessionTransportSelect+`
+		WHERE operator_id=$1 AND session_id=$2`, operatorID, sessionID), &databaseNow)
+	if err != nil {
+		return rgs.Session{}, err
+	}
+	databaseNow = databaseNow.UTC()
+	if session.TransportGeneration != transportGeneration {
+		return rgs.Session{}, rgs.ErrSessionTimeout
+	}
+	if session.Status == rgs.SessionBlocked {
+		return rgs.Session{}, rgs.ErrManualReview
+	}
+	if session.Status != rgs.SessionActive || !session.ExpiresAt.After(databaseNow) {
+		return rgs.Session{}, rgs.ErrSessionExpired
+	}
+	if !allowIdleRecovery && !session.IdleDisconnectAt.After(databaseNow) {
+		return rgs.Session{}, rgs.ErrSessionTimeout
+	}
+	session.ServerTime = databaseNow
+	return session, nil
 }
 
 func (r *Repository) GetRound(ctx context.Context, key rgs.RoundKey) (rgs.RoundRecord, error) {
@@ -259,10 +448,14 @@ func (r *Repository) AcknowledgeResultDelivery(
 		return rgs.ResultDelivery{}, false, fmt.Errorf("postgres repository: acknowledge result delivery begin: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := lockSession(ctx, tx, rgs.RoundKey{
+	session, err := lockSession(ctx, tx, rgs.RoundKey{
 		OperatorID: receipt.OperatorID, SessionID: receipt.SessionID, RoundID: receipt.RoundID,
-	}); err != nil {
+	})
+	if err != nil {
 		return rgs.ResultDelivery{}, false, err
+	}
+	if receipt.TransportGeneration != session.TransportGeneration {
+		return rgs.ResultDelivery{}, false, rgs.ErrSessionTimeout
 	}
 	key := rgs.RoundKey{
 		OperatorID: receipt.OperatorID, SessionID: receipt.SessionID, RoundID: receipt.RoundID,
@@ -356,7 +549,17 @@ func (r *Repository) PrepareRound(
 	fingerprint string,
 	walletProfile rgs.Profile,
 	prepare rgs.PrepareOutcome,
-) (rgs.RoundRecord, bool, error) {
+) (returnedRecord rgs.RoundRecord, prepared bool, err error) {
+	ctx, span := telemetry.Start(
+		ctx,
+		"postgres.transaction.prepare_round",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("db.system.name", "postgresql"),
+			attribute.String("db.operation.name", "prepare_round"),
+		),
+	)
+	defer func() { telemetry.End(span, err) }()
 	if err := rgs.ValidateSpinRequest(request); err != nil {
 		return rgs.RoundRecord{}, false, err
 	}
@@ -373,7 +576,7 @@ func (r *Repository) PrepareRound(
 		return rgs.RoundRecord{}, false, fmt.Errorf("postgres repository: prepare begin: %w", err)
 	}
 	defer tx.Rollback()
-	session, resultDeliveryPending, now, err := scanPrepareSession(tx.QueryRowContext(
+	session, err := scanSession(tx.QueryRowContext(
 		ctx, prepareSessionLockSQL, request.OperatorID, request.SessionID,
 	))
 	if err != nil {
@@ -408,6 +611,20 @@ func (r *Repository) PrepareRound(
 	if !errors.Is(err, rgs.ErrRoundNotFound) {
 		return rgs.RoundRecord{}, false, err
 	}
+	// 必须先真正取得会话行锁，再用新语句读取数据库时钟和待交付栅栏。PostgreSQL
+	// 可能在 LockRows 等待前求值目标列表；若将二者放在 FOR UPDATE 查询中，等待
+	// 跨过 idle deadline 或前序事务提交待确认结果后，便可能错误接收下一经济意图。
+	var now time.Time
+	var resultDeliveryPending bool
+	if err := tx.QueryRowContext(
+		ctx, prepareAdmissionStateSQL, request.OperatorID, request.SessionID,
+	).Scan(&now, &resultDeliveryPending); err != nil {
+		return rgs.RoundRecord{}, false, fmt.Errorf("postgres repository: prepare admission state: %w", err)
+	}
+	if now.IsZero() {
+		return rgs.RoundRecord{}, false, errors.New("postgres repository: prepare admission clock is zero")
+	}
+	now = now.UTC()
 	if resultDeliveryPending {
 		return rgs.RoundRecord{}, false, rgs.ErrResultDeliveryPending
 	}
@@ -425,6 +642,11 @@ func (r *Repository) PrepareRound(
 	if err := validatePrepared(session, request, result); err != nil {
 		return rgs.RoundRecord{}, false, err
 	}
+	renewedIdleDisconnectAt := now.Add(session.IdleDisconnect)
+	if renewedIdleDisconnectAt.After(session.ExpiresAt) {
+		renewedIdleDisconnectAt = session.ExpiresAt
+	}
+	result.IdleDisconnectAt = renewedIdleDisconnectAt
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		return rgs.RoundRecord{}, false, fmt.Errorf("postgres repository: encode prepared result: %w", err)
@@ -437,9 +659,11 @@ func (r *Repository) PrepareRound(
 	if err != nil {
 		return rgs.RoundRecord{}, false, err
 	}
-	// 会话锁、待交付游标与本次预备时间来自同一条数据库语句；既减少热路径往返，
-	// 又确保所有副本继续使用 PostgreSQL 时钟而不是本地时钟。
-	now = now.UTC()
+	// 本次预备时间来自持有会话锁后的 PostgreSQL 时钟，不受 Pod 时钟偏差影响。
+	riskAssessment, err := r.riskPolicy.Assess(result, now)
+	if err != nil {
+		return rgs.RoundRecord{}, false, fmt.Errorf("postgres repository: assess high-value risk: %w", err)
+	}
 	walletCommand := rgs.WalletRound{
 		OperationID: result.ServerTransactionID, Fingerprint: fingerprint,
 		OperatorID: request.OperatorID, PlayerID: session.PlayerID,
@@ -450,33 +674,58 @@ func (r *Repository) PrepareRound(
 		DebitMinor: result.ChargedBetMinor, CreditMinor: result.TotalWinMinor,
 	}
 	walletCommand.CommandDigest = rgs.CommandDigestFor(walletCommand)
+	roundStatus := rgs.RoundPrepared
+	walletPhase := rgs.WalletRecoveryApply
+	nextAttemptAt := now
+	if riskAssessment != nil {
+		roundStatus = rgs.RoundRiskPending
+		walletPhase = ""
+		nextAttemptAt = time.Time{}
+	}
 	record := rgs.RoundRecord{
 		Key: request.Key(), Fingerprint: fingerprint, Request: request,
-		Status: rgs.RoundPrepared, Result: result,
+		Status: roundStatus, Result: result,
 		InputFeatureState: session.Feature, OutcomeHash: outcomeHash,
 		WalletCommand: walletCommand, WalletProfile: walletProfile,
-		WalletPhase:   rgs.WalletRecoveryApply,
-		NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		WalletPhase:   walletPhase,
+		NextAttemptAt: nextAttemptAt, CreatedAt: now, UpdatedAt: now,
 	}
-	outboxPayload, err := json.Marshal(map[string]any{
+	outboxFields := map[string]any{
 		"sessionId": request.SessionID, "roundId": request.RoundID,
 		"fingerprint": fingerprint, "outcomeHash": outcomeHash,
 		"definitionVersion": request.DefinitionVersion,
-	})
+	}
+	if riskAssessment != nil {
+		outboxFields = riskPendingOutboxFields(request, *riskAssessment)
+	}
+	outboxPayload, err := json.Marshal(outboxFields)
 	if err != nil {
 		return rgs.RoundRecord{}, false, fmt.Errorf("postgres repository: encode prepared outbox event: %w", err)
 	}
-	var roundCount, walletCount, sessionCount, outboxCount int64
-	err = tx.QueryRowContext(
-		ctx, prepareRoundWriteSQL,
+	baseArguments := []any{
 		request.OperatorID, request.SessionID, request.RoundID, result.ServerTransactionID,
 		fingerprint, string(request.RoundKind), request.GameID,
 		request.DefinitionVersion, request.DefinitionHash, request.Currency,
 		request.BetMinor, inputFeatureJSON, result.ChargedBetMinor, result.TotalWinMinor,
-		checkedInt64(request.StartRevision), checkedInt64(request.StartRevision+1),
+		checkedInt64(request.StartRevision), checkedInt64(request.StartRevision + 1),
 		checkedInt64(result.Sequence), resultJSON, outcomeHash, walletCommand.CommandDigest,
 		walletProfileJSON, now, outboxPayload,
-	).Scan(&roundCount, &walletCount, &sessionCount, &outboxCount)
+	}
+	var roundCount, riskCount, walletCount, sessionCount, outboxCount int64
+	if riskAssessment == nil {
+		err = tx.QueryRowContext(ctx, prepareRoundWriteSQL, baseArguments...).Scan(
+			&roundCount, &walletCount, &sessionCount, &outboxCount,
+		)
+	} else {
+		riskArguments := append(baseArguments,
+			riskAssessment.PolicyVersion, riskAssessment.ThresholdMinor,
+			riskAssessment.PayoutMinor, riskAssessment.SummaryHash,
+			string(riskAssessment.ExpiryPolicy), riskAssessment.ExpiresAt,
+		)
+		err = tx.QueryRowContext(ctx, prepareRiskRoundWriteSQL, riskArguments...).Scan(
+			&roundCount, &riskCount, &walletCount, &sessionCount, &outboxCount,
+		)
+	}
 	if err != nil {
 		if sqlState(err) == "23505" {
 			// 会话锁本应阻止同一会话出现此冲突；若仍发生，应按重放竞态安全失败，
@@ -485,7 +734,8 @@ func (r *Repository) PrepareRound(
 		}
 		return rgs.RoundRecord{}, false, fmt.Errorf("postgres repository: persist prepared round bundle: %w", err)
 	}
-	if roundCount != 1 || walletCount != 1 || outboxCount != sessionCount {
+	if roundCount != 1 || walletCount != 1 || outboxCount != sessionCount ||
+		(riskAssessment != nil && riskCount != 1) {
 		return rgs.RoundRecord{}, false, rgs.ErrManualReview
 	}
 	if sessionCount != 1 {
@@ -497,11 +747,37 @@ func (r *Repository) PrepareRound(
 	return record, true, nil
 }
 
+func riskPendingOutboxFields(
+	request rgs.SpinRequest,
+	assessment rgs.RiskAssessment,
+) map[string]any {
+	return map[string]any{
+		"sessionId": request.SessionID, "roundId": request.RoundID,
+		"policyVersion":  assessment.PolicyVersion,
+		"thresholdMinor": assessment.ThresholdMinor,
+		"payoutMinor":    assessment.PayoutMinor,
+		"currency":       request.Currency,
+		"expiryPolicy":   assessment.ExpiryPolicy,
+		"summaryHash":    assessment.SummaryHash,
+		"expiresAt":      assessment.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
 func (r *Repository) ClaimWallet(
 	ctx context.Context,
 	key rgs.RoundKey,
 	leaseDuration time.Duration,
-) (rgs.WalletRecoveryClaim, bool, error) {
+) (returnedClaim rgs.WalletRecoveryClaim, claimed bool, err error) {
+	ctx, span := telemetry.Start(
+		ctx,
+		"postgres.transaction.claim_wallet",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("db.system.name", "postgresql"),
+			attribute.String("db.operation.name", "claim_wallet"),
+		),
+	)
+	defer func() { telemetry.End(span, err) }()
 	if leaseDuration <= 0 || leaseDuration > 24*time.Hour {
 		return rgs.WalletRecoveryClaim{}, false, rgs.ErrInvalidRequest
 	}
@@ -688,7 +964,21 @@ func claimWalletLocked(
 	}, true, nil
 }
 
-func (r *Repository) CommitClaim(ctx context.Context, claim rgs.WalletRecoveryClaim, receipt rgs.WalletReceipt) (rgs.RoundRecord, bool, error) {
+func (r *Repository) CommitClaim(
+	ctx context.Context,
+	claim rgs.WalletRecoveryClaim,
+	receipt rgs.WalletReceipt,
+) (returnedRecord rgs.RoundRecord, changed bool, err error) {
+	ctx, span := telemetry.Start(
+		ctx,
+		"postgres.transaction.commit_claim",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("db.system.name", "postgresql"),
+			attribute.String("db.operation.name", "commit_claim"),
+		),
+	)
+	defer func() { telemetry.End(span, err) }()
 	key := claim.Record.Key
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
@@ -1386,12 +1676,17 @@ func quarantineCorruptRound(
 		return rgs.RoundRecord{}, false, rgs.ErrRoundNotFound
 	}
 	if !economicallyFinal {
+		ledgerStatus := "UNKNOWN"
+		if persistedStatus == string(rgs.RoundRiskPending) {
+			// 风险待决轮次从未进入钱包 claim；完整性隔离不能伪造可能已发生外部副作用。
+			ledgerStatus = "FAILED"
+		}
 		_, err = tx.ExecContext(ctx, `
 			UPDATE rgs_wallet_transactions
-			SET status=CASE WHEN status='PENDING' THEN 'UNKNOWN' ELSE status END,
+			SET status=CASE WHEN status='PENDING' THEN $5 ELSE status END,
 				failure_code=$3, updated_at=$4
 			WHERE operator_id=$1 AND transaction_id=$2`,
-			key.OperatorID, serverTransactionID, reason, now,
+			key.OperatorID, serverTransactionID, reason, now, ledgerStatus,
 		)
 		if err != nil {
 			return rgs.RoundRecord{}, false, fmt.Errorf("postgres repository: quarantine wallet ledger: %w", err)
@@ -1484,7 +1779,18 @@ const sessionSelect = `
 		wallet_session_id, game_id, definition_version, definition_hash,
 		currency, currency_exponent, jurisdiction, status,
 		balance_snapshot_minor, sequence, revision, feature_state,
-		pending_round_id, expires_at, integrity_quarantined_at
+		pending_round_id, expires_at, idle_disconnect_seconds,
+		idle_disconnect_at, transport_generation, integrity_quarantined_at
+	FROM rgs_sessions`
+
+const sessionTransportSelect = `
+	SELECT operator_id, session_id, player_id, wallet_account_id,
+		wallet_session_id, game_id, definition_version, definition_hash,
+		currency, currency_exponent, jurisdiction, status,
+		balance_snapshot_minor, sequence, revision, feature_state,
+		pending_round_id, expires_at, idle_disconnect_seconds,
+		idle_disconnect_at, transport_generation, integrity_quarantined_at,
+		clock_timestamp()
 	FROM rgs_sessions`
 
 const roundSelect = `
@@ -1510,25 +1816,14 @@ func scanSession(row rowScanner) (rgs.Session, error) {
 	return scanSessionWithTrailing(row)
 }
 
-func scanPrepareSession(row rowScanner) (rgs.Session, bool, time.Time, error) {
-	var resultDeliveryPending bool
-	var databaseNow time.Time
-	session, err := scanSessionWithTrailing(row, &resultDeliveryPending, &databaseNow)
-	if err != nil {
-		return rgs.Session{}, false, time.Time{}, err
-	}
-	if databaseNow.IsZero() {
-		return rgs.Session{}, false, time.Time{}, rgs.ErrSessionIntegrity
-	}
-	return session, resultDeliveryPending, databaseNow.UTC(), nil
-}
-
 func scanSessionWithTrailing(row rowScanner, trailing ...any) (rgs.Session, error) {
 	var session rgs.Session
 	var status string
 	var sequence, revision int64
 	var featureJSON []byte
 	var pending sql.NullString
+	var idleDisconnectSeconds int64
+	var transportGeneration int64
 	var quarantinedAt sql.NullTime
 	destinations := []any{
 		&session.OperatorID, &session.SessionID, &session.PlayerID,
@@ -1536,7 +1831,8 @@ func scanSessionWithTrailing(row rowScanner, trailing ...any) (rgs.Session, erro
 		&session.GameID, &session.DefinitionVersion, &session.DefinitionHash,
 		&session.Currency, &session.CurrencyExponent, &session.Jurisdiction,
 		&status, &session.BalanceMinor, &sequence, &revision, &featureJSON,
-		&pending, &session.ExpiresAt, &quarantinedAt,
+		&pending, &session.ExpiresAt, &idleDisconnectSeconds,
+		&session.IdleDisconnectAt, &transportGeneration, &quarantinedAt,
 	}
 	destinations = append(destinations, trailing...)
 	err := row.Scan(destinations...)
@@ -1549,11 +1845,15 @@ func scanSessionWithTrailing(row rowScanner, trailing ...any) (rgs.Session, erro
 	if quarantinedAt.Valid {
 		return rgs.Session{}, rgs.ErrSessionIntegrity
 	}
-	if sequence < 0 || revision < 0 || uint64(sequence) > rgs.MaxClientSequence {
+	if sequence < 0 || revision < 0 || idleDisconnectSeconds < 1 ||
+		idleDisconnectSeconds > 86400 || transportGeneration < 1 ||
+		uint64(sequence) > rgs.MaxClientSequence || uint64(transportGeneration) > rgs.MaxStateRevision {
 		return rgs.Session{}, rgs.ErrSessionIntegrity
 	}
 	session.Status = rgs.SessionStatus(status)
 	session.Sequence, session.Revision = uint64(sequence), uint64(revision)
+	session.IdleDisconnect = time.Duration(idleDisconnectSeconds) * time.Second
+	session.TransportGeneration = uint64(transportGeneration)
 	if pending.Valid {
 		session.PendingRoundID = pending.String
 	}
@@ -1646,6 +1946,9 @@ func scanRound(row rowScanner) (rgs.RoundRecord, error) {
 	if record.RetryCount < 0 || record.WalletApplyAttempts < 0 || record.WalletLookupAttempts < 0 ||
 		((record.Status == rgs.RoundPrepared || record.Status == rgs.RoundWalletPending) &&
 			(!record.WalletPhase.Valid() || record.NextAttemptAt.IsZero() ||
+				!rgs.SupportedSettlementProfile(record.WalletProfile))) ||
+		(record.Status == rgs.RoundRiskPending &&
+			(record.WalletPhase != "" || !record.NextAttemptAt.IsZero() ||
 				!rgs.SupportedSettlementProfile(record.WalletProfile))) {
 		return rgs.RoundRecord{}, rgs.ErrManualReview
 	}
@@ -1655,6 +1958,8 @@ func scanRound(row rowScanner) (rgs.RoundRecord, error) {
 	record.Request.RoundKind = rgs.RoundKind(roundKind)
 	record.Request.BetMinor = betMinor
 	record.Request.StartRevision = uint64(startRevision)
+	// 传输代际只用于隔离 HTTP 授权，刻意不属于 rgs_rounds 持久化的不可变经济身份。
+	record.Request.TransportGeneration = 1
 	if err := rgs.ValidateSpinRequest(record.Request); err != nil {
 		return rgs.RoundRecord{}, rgs.ErrManualReview
 	}
@@ -1671,6 +1976,9 @@ func scanRound(row rowScanner) (rgs.RoundRecord, error) {
 	}
 	record.InputFeatureState = inputFeature
 	if err := decodeStrictRoundResult(resultJSON, &record.Result); err != nil {
+		return rgs.RoundRecord{}, rgs.ErrManualReview
+	}
+	if err := rgs.NormalizePersistedSpinResult(&record.Result); err != nil {
 		return rgs.RoundRecord{}, rgs.ErrManualReview
 	}
 	if record.Result.OperatorID != record.Key.OperatorID ||
@@ -1718,7 +2026,8 @@ func scanRound(row rowScanner) (rgs.RoundRecord, error) {
 			walletTransaction.String == "" || walletBalance.Int64 < 0 {
 			return rgs.RoundRecord{}, rgs.ErrManualReview
 		}
-	case rgs.RoundPrepared, rgs.RoundWalletPending, rgs.RoundRejected, rgs.RoundManualReview:
+	case rgs.RoundPrepared, rgs.RoundRiskPending, rgs.RoundWalletPending,
+		rgs.RoundRejected, rgs.RoundManualReview:
 		if record.Result.EndRevision != 0 ||
 			record.Result.WalletTransactionID != "" || record.Result.BalanceMinor != 0 ||
 			walletTransaction.Valid || walletBalance.Valid {
@@ -1739,7 +2048,8 @@ func scanRound(row rowScanner) (rgs.RoundRecord, error) {
 		CreditMinor: record.Result.TotalWinMinor,
 	}
 	computedCommandDigest := rgs.CommandDigestFor(record.WalletCommand)
-	if (record.Status == rgs.RoundPrepared || record.Status == rgs.RoundWalletPending) &&
+	if (record.Status == rgs.RoundPrepared || record.Status == rgs.RoundRiskPending ||
+		record.Status == rgs.RoundWalletPending) &&
 		!walletCommandDigest.Valid {
 		return rgs.RoundRecord{}, rgs.ErrManualReview
 	}
@@ -1880,10 +2190,14 @@ func validateBinding(session rgs.Session, request rgs.SpinRequest, databaseNow t
 	if session.Status != rgs.SessionActive {
 		return rgs.ErrInvalidRequest
 	}
-	// 会话与数据库时钟已由同一条加锁查询取得。这里绝不能回退到 Pod 时钟，
-	// 否则慢时钟副本会接受数据库已过期的经济会话，快时钟副本则会误拒绝。
+	// 会话先由 FOR UPDATE 锁定，数据库时钟随后由同一事务的新语句取得。这里绝不能
+	// 回退到 Pod 时钟，否则慢时钟副本会接受已过期会话，快时钟副本则会误拒绝。
 	if databaseNow.IsZero() || !session.ExpiresAt.After(databaseNow) {
 		return rgs.ErrSessionExpired
+	}
+	if session.TransportGeneration != request.TransportGeneration ||
+		!session.IdleDisconnectAt.After(databaseNow) {
+		return rgs.ErrSessionTimeout
 	}
 	if session.Revision != request.StartRevision {
 		return rgs.ErrRevisionConflict
@@ -1902,7 +2216,8 @@ func validateBinding(session rgs.Session, request rgs.SpinRequest, databaseNow t
 }
 
 func validatePrepared(session rgs.Session, request rgs.SpinRequest, result rgs.SpinResult) error {
-	if result.OperatorID != request.OperatorID || result.SessionID != request.SessionID ||
+	if result.ResultSchemaVersion != rgs.ResultSchemaPaidFactsV1 ||
+		result.OperatorID != request.OperatorID || result.SessionID != request.SessionID ||
 		result.RoundID != request.RoundID || result.GameID != request.GameID ||
 		result.DefinitionVersion != request.DefinitionVersion ||
 		result.DefinitionHash != request.DefinitionHash ||

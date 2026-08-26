@@ -86,6 +86,8 @@ export function featureEventRoute(event: FeatureEvent): FeatureEventRoute {
       return route("extra-spin", { announce: false });
     case "free_spin.cap_reached":
       return route("free-spin-cap", { announce: false });
+    case "win_cap.reached":
+      return route("none", { announce: false });
     case "free_spins.completed":
       return route("free-spin-summary", { audio: true, announce: false });
   }

@@ -1,6 +1,9 @@
 {{- if ge (int .Values.rgs.runtime.walletFastPathTimeoutSeconds) (int .Values.rgs.runtime.walletTimeoutSeconds) }}
 {{- fail "rgs.runtime.walletFastPathTimeoutSeconds must be shorter than walletTimeoutSeconds" }}
 {{- end }}
+{{- if gt (int .Values.rgs.runtime.sessionIdleDisconnectMinSeconds) (int .Values.rgs.runtime.sessionIdleDisconnectMaxSeconds) }}
+{{- fail "rgs.runtime.sessionIdleDisconnectMinSeconds must not exceed sessionIdleDisconnectMaxSeconds" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -34,6 +37,7 @@ spec:
         slots-game.io/global-rate-limit-provider: {{ .Values.externalControls.globalRateLimitProvider | quote }}
         slots-game.io/tls-enforcement-provider: {{ .Values.externalControls.tlsEnforcementProvider | quote }}
         slots-game.io/release-compatibility-class: {{ .Values.release.compatibilityClass | quote }}
+        slots-game.io/access-token-protocol: "RGS-ACCESS-v3"
         slots-game.io/definition-game-id: {{ .Values.release.definitionIdentity.gameID | quote }}
         slots-game.io/definition-version: {{ .Values.release.definitionIdentity.version | quote }}
         slots-game.io/definition-sha256: {{ .Values.release.definitionIdentity.sha256 | quote }}
@@ -160,6 +164,22 @@ spec:
               value: production
             - name: RGS_RUNTIME_ROLE
               value: api
+            {{- if .Values.observability.tracing.enabled }}
+            - name: RGS_OTEL_TRACES_ENDPOINT
+              value: {{ .Values.observability.tracing.endpointURL | quote }}
+            - name: RGS_OTEL_TRACE_SAMPLE_RATIO
+              value: {{ .Values.observability.tracing.sampleRatio | quote }}
+            - name: RGS_OTEL_BATCH_TIMEOUT
+              value: {{ printf "%dms" (int .Values.observability.tracing.batchTimeoutMilliseconds) | quote }}
+            - name: RGS_OTEL_EXPORT_TIMEOUT
+              value: {{ printf "%dms" (int .Values.observability.tracing.exportTimeoutMilliseconds) | quote }}
+            - name: RGS_OTEL_SHUTDOWN_TIMEOUT
+              value: {{ printf "%dms" (int .Values.observability.tracing.shutdownTimeoutMilliseconds) | quote }}
+            - name: RGS_OTEL_MAX_QUEUE_SIZE
+              value: {{ .Values.observability.tracing.maxQueueSize | quote }}
+            - name: RGS_OTEL_MAX_EXPORT_BATCH_SIZE
+              value: {{ .Values.observability.tracing.maxExportBatchSize | quote }}
+            {{- end }}
             - name: RGS_HTTP_ADDR
               value: :8080
             - name: RGS_OPERATIONS_HTTP_ADDR
@@ -216,6 +236,10 @@ spec:
               value: {{ .Values.rgs.runtime.rateBurstPerPod | quote }}
             - name: RGS_SUCCESS_ACCESS_LOG_SAMPLE_PER_MILLION
               value: {{ .Values.rgs.runtime.successAccessLogSamplePerMillion | quote }}
+            - name: RGS_SESSION_IDLE_DISCONNECT_MIN
+              value: {{ printf "%ds" (int .Values.rgs.runtime.sessionIdleDisconnectMinSeconds) | quote }}
+            - name: RGS_SESSION_IDLE_DISCONNECT_MAX
+              value: {{ printf "%ds" (int .Values.rgs.runtime.sessionIdleDisconnectMaxSeconds) | quote }}
             - name: RGS_SHARED_ADMISSION_URL
               value: {{ .Values.rgs.sharedAdmission.endpointURL | quote }}
             - name: RGS_SHARED_ADMISSION_USERNAME

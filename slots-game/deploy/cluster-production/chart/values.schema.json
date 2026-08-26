@@ -16,6 +16,7 @@
     "externalControls",
     "release",
     "monitoring",
+    "observability",
     "networkPolicy",
     "scheduling"
   ],
@@ -112,6 +113,8 @@
             "ratePerSecondPerPod",
             "rateBurstPerPod",
             "successAccessLogSamplePerMillion",
+            "sessionIdleDisconnectMinSeconds",
+            "sessionIdleDisconnectMaxSeconds",
             "walletFastPathTimeoutSeconds",
             "walletTimeoutSeconds",
             "walletMaxAttempts"
@@ -129,6 +132,8 @@
             "ratePerSecondPerPod": {"type": "number", "exclusiveMinimum": 0, "maximum": 100000},
             "rateBurstPerPod": {"type": "integer", "minimum": 1, "maximum": 1000000},
             "successAccessLogSamplePerMillion": {"type": "integer", "minimum": 0, "maximum": 1000000},
+            "sessionIdleDisconnectMinSeconds": {"type": "integer", "minimum": 60, "maximum": 86400},
+            "sessionIdleDisconnectMaxSeconds": {"type": "integer", "minimum": 60, "maximum": 86400},
             "walletFastPathTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 13},
             "walletTimeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 14},
             "walletMaxAttempts": {"type": "integer", "minimum": 1, "maximum": 1000}
@@ -364,6 +369,28 @@
         "ruleLabels": {"$ref": "#/definitions/labelMap"}
       }
     },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tracing"],
+      "properties": {
+        "tracing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "endpointURL", "sampleRatio", "batchTimeoutMilliseconds", "exportTimeoutMilliseconds", "shutdownTimeoutMilliseconds", "maxQueueSize", "maxExportBatchSize"],
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "endpointURL": {"type": "string", "pattern": "^(?:|https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/v1/traces)$", "maxLength": 2048},
+            "sampleRatio": {"type": "number", "minimum": 0, "maximum": 1},
+            "batchTimeoutMilliseconds": {"type": "integer", "minimum": 100, "maximum": 30000},
+            "exportTimeoutMilliseconds": {"type": "integer", "minimum": 100, "maximum": 30000},
+            "shutdownTimeoutMilliseconds": {"type": "integer", "minimum": 100, "maximum": 30000},
+            "maxQueueSize": {"type": "integer", "minimum": 1, "maximum": 8192},
+            "maxExportBatchSize": {"type": "integer", "minimum": 1, "maximum": 1024}
+          }
+        }
+      }
+    },
     "networkPolicy": {
       "type": "object",
       "additionalProperties": false,
@@ -374,12 +401,13 @@
         "egress": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["database", "wallet", "audit", "sharedAdmission"],
+          "required": ["database", "wallet", "audit", "sharedAdmission", "tracing"],
           "properties": {
             "database": {"$ref": "#/definitions/egressTarget"},
             "wallet": {"$ref": "#/definitions/egressTarget"},
             "audit": {"$ref": "#/definitions/egressTarget"},
-            "sharedAdmission": {"$ref": "#/definitions/egressTarget"}
+            "sharedAdmission": {"$ref": "#/definitions/egressTarget"},
+            "tracing": {"$ref": "#/definitions/optionalEgressTarget"}
           }
         }
       }
@@ -606,6 +634,23 @@
         "cidrs": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])/(?:2[4-9]|3[0-2])$"
+          }
+        },
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
+    "optionalEgressTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cidrs", "port"],
+      "properties": {
+        "cidrs": {
+          "type": "array",
           "maxItems": 64,
           "uniqueItems": true,
           "items": {

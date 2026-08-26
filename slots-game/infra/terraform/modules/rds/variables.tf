@@ -81,13 +81,17 @@ variable "max_allocated_storage_gib" {
 variable "alarm_thresholds" {
   description = "经容量测试批准的 RDS CloudWatch 告警阈值"
   type = object({
-    cpu_utilization_percent  = number
-    database_connections     = number
-    freeable_memory_bytes    = number
-    free_storage_space_bytes = number
-    read_latency_seconds     = number
-    write_latency_seconds    = number
-    disk_queue_depth         = number
+    cpu_utilization_percent           = number
+    database_connections              = number
+    freeable_memory_bytes             = number
+    free_storage_space_bytes          = number
+    read_latency_seconds              = number
+    write_latency_seconds             = number
+    disk_queue_depth                  = number
+    deadlocks_per_minute              = number
+    total_iops_per_second             = number
+    total_throughput_bytes_per_second = number
+    swap_usage_bytes                  = number
   })
 
   validation {
@@ -106,9 +110,18 @@ variable "alarm_thresholds" {
       var.alarm_thresholds.write_latency_seconds > 0 &&
       var.alarm_thresholds.write_latency_seconds <= 60 &&
       var.alarm_thresholds.disk_queue_depth > 0 &&
-      var.alarm_thresholds.disk_queue_depth <= 1000000
+      var.alarm_thresholds.disk_queue_depth <= 1000000 &&
+      var.alarm_thresholds.deadlocks_per_minute == 1 &&
+      var.alarm_thresholds.total_iops_per_second >= 1 &&
+      var.alarm_thresholds.total_iops_per_second <= 1000000000 &&
+      floor(var.alarm_thresholds.total_iops_per_second) == var.alarm_thresholds.total_iops_per_second &&
+      var.alarm_thresholds.total_throughput_bytes_per_second >= 1 &&
+      var.alarm_thresholds.total_throughput_bytes_per_second <= 1000000000000000 &&
+      floor(var.alarm_thresholds.total_throughput_bytes_per_second) == var.alarm_thresholds.total_throughput_bytes_per_second &&
+      var.alarm_thresholds.swap_usage_bytes >= 1048576 &&
+      floor(var.alarm_thresholds.swap_usage_bytes) == var.alarm_thresholds.swap_usage_bytes
     )
-    error_message = "RDS 告警阈值必须使用有效百分比、正整数连接/字节预算，以及最多 60 秒的正延迟阈值。"
+    error_message = "RDS 告警阈值必须使用有效百分比、整数连接/总 IOPS/总吞吐字节预算、最多 60 秒的正延迟，并固定单次 deadlock 日志匹配即告警。"
   }
 }
 
@@ -130,6 +143,66 @@ variable "backup_retention_days" {
 variable "deletion_protection" {
   description = "是否开启 RDS 删除保护"
   type        = bool
+}
+
+variable "read_replica" {
+  description = "同区域 PostgreSQL 只读副本的显式开关、容量和告警边界；关闭时不创建任何副本或副本告警"
+  type = object({
+    enabled        = bool
+    instance_class = string
+    multi_az       = bool
+    alarm_thresholds = object({
+      replica_lag_seconds      = number
+      cpu_utilization_percent  = number
+      database_connections     = number
+      freeable_memory_bytes    = number
+      free_storage_space_bytes = number
+      read_latency_seconds     = number
+      disk_queue_depth         = number
+      swap_usage_bytes         = number
+    })
+  })
+
+  default = {
+    enabled        = false
+    instance_class = "db.t4g.medium"
+    multi_az       = false
+    alarm_thresholds = {
+      replica_lag_seconds      = 30
+      cpu_utilization_percent  = 80
+      database_connections     = 100
+      freeable_memory_bytes    = 268435456
+      free_storage_space_bytes = 10737418240
+      read_latency_seconds     = 0.1
+      disk_queue_depth         = 64
+      swap_usage_bytes         = 268435456
+    }
+  }
+
+  validation {
+    condition = (
+      !var.read_replica.enabled || (
+        can(regex("^db\\.[a-z0-9]+[a-z0-9.-]*$", var.read_replica.instance_class)) &&
+        var.read_replica.alarm_thresholds.replica_lag_seconds >= 1 &&
+        var.read_replica.alarm_thresholds.replica_lag_seconds <= 3600 &&
+        var.read_replica.alarm_thresholds.cpu_utilization_percent > 0 &&
+        var.read_replica.alarm_thresholds.cpu_utilization_percent <= 100 &&
+        var.read_replica.alarm_thresholds.database_connections >= 1 &&
+        floor(var.read_replica.alarm_thresholds.database_connections) == var.read_replica.alarm_thresholds.database_connections &&
+        var.read_replica.alarm_thresholds.freeable_memory_bytes >= 67108864 &&
+        floor(var.read_replica.alarm_thresholds.freeable_memory_bytes) == var.read_replica.alarm_thresholds.freeable_memory_bytes &&
+        var.read_replica.alarm_thresholds.free_storage_space_bytes >= 1073741824 &&
+        floor(var.read_replica.alarm_thresholds.free_storage_space_bytes) == var.read_replica.alarm_thresholds.free_storage_space_bytes &&
+        var.read_replica.alarm_thresholds.read_latency_seconds > 0 &&
+        var.read_replica.alarm_thresholds.read_latency_seconds <= 60 &&
+        var.read_replica.alarm_thresholds.disk_queue_depth > 0 &&
+        var.read_replica.alarm_thresholds.disk_queue_depth <= 1000000 &&
+        var.read_replica.alarm_thresholds.swap_usage_bytes >= 1048576 &&
+        floor(var.read_replica.alarm_thresholds.swap_usage_bytes) == var.read_replica.alarm_thresholds.swap_usage_bytes
+      )
+    )
+    error_message = "启用 RDS 只读副本时必须提供有效 db.* 实例类型，以及经容量评审的 ReplicaLag、CPU、连接、内存、存储、读取延迟、队列和 swap 阈值。"
+  }
 }
 
 variable "log_retention_days" {

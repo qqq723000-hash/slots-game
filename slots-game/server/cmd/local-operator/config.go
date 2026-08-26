@@ -86,6 +86,7 @@ type runtimeConfig struct {
 	Jurisdiction           string
 	InitialBalanceMinor    int64
 	SessionTTL             time.Duration
+	IdleDisconnect         time.Duration
 	DefaultPlayerID        string
 	DefaultWalletAccountID string
 	AllowLegacyWalletV1    bool
@@ -152,6 +153,11 @@ func loadRuntimeConfig(getenv func(string) string) (loadedRuntime, error) {
 		return loadedRuntime{}, err
 	}
 	if config.SessionTTL, err = parseDuration(getenv("LOCAL_OPERATOR_SESSION_TTL"), 8*time.Hour, time.Minute, 24*time.Hour); err != nil {
+		return loadedRuntime{}, err
+	}
+	if config.IdleDisconnect, err = parseDuration(
+		getenv("LOCAL_OPERATOR_IDLE_DISCONNECT"), 20*time.Minute, time.Second, 24*time.Hour,
+	); err != nil {
 		return loadedRuntime{}, err
 	}
 	if config.ShutdownTimeout, err = parseDuration(getenv("LOCAL_OPERATOR_SHUTDOWN_TIMEOUT"), 20*time.Second, time.Second, time.Minute); err != nil {

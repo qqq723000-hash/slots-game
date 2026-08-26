@@ -87,6 +87,21 @@ output "rds_security_group_id" {
   value = module.rds.security_group_id
 }
 
+output "rds_reader_endpoint" {
+  description = "可选同区域 PostgreSQL 只读副本 endpoint；默认 null，应用不得据此假定已完成读写分离"
+  value       = module.rds.reader_endpoint
+}
+
+output "rds_read_scaling_contract" {
+  description = "可选 RDS 同区域读扩展、继承校验与告警合同"
+  value       = module.rds.read_scaling_contract
+}
+
+output "rds_alarm_contract" {
+  description = "单实例 RDS 指标、阈值、告警窗口和死锁证据边界"
+  value       = module.rds.alarm_contract
+}
+
 output "rds_master_user_secret_arn" {
   value     = module.rds.master_user_secret_arn
   sensitive = true

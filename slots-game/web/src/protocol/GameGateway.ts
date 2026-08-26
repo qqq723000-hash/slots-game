@@ -35,6 +35,15 @@ export interface GatewayRuntimeAvailability {
   readonly visible: boolean;
 }
 
+/**
+ * 服务端权威空闲截止时间的终态通知。浏览器只能按绝对时间投影该状态，
+ * 不能通过本地指针、键盘或可见性事件延长它。
+ */
+export interface GatewaySessionTimeout {
+  readonly code: "SESSION_TIMEOUT";
+  readonly idleDisconnectAt: string;
+}
+
 export interface GatewayCallbacks {
   onStatus(status: GatewayStatus): void;
   onSession(message: SessionOpened): void;
@@ -46,6 +55,8 @@ export interface GatewayCallbacks {
   onSpinResultAcknowledged?(roundId: string, sequence: number): void;
   /** 当前页无法安全恢复时，只请求运营商签发新会话，不暴露底层异常内容。 */
   onOperatorSessionRequired?(error: ServerError | Error): void;
+  /** 服务端空闲会话已经终止；调用方必须停止下注且不得自动重连。 */
+  onSessionTimeout?(timeout: Readonly<GatewaySessionTimeout>): void;
   onError(error: ServerError | Error): void;
 }
 

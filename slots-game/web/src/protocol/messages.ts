@@ -1,7 +1,7 @@
 import type { MoneyMinor } from "../app/state/types";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const ENGINE_RULES_VERSION = "slots-game-ways3-features-v4" as const;
+export const ENGINE_RULES_VERSION = "slots-game-ways3-features-win-cap-paid-facts-v6" as const;
 
 export interface SessionOpenMessage {
   type: "session.open";

@@ -443,6 +443,14 @@ function baseAmountMinor(amountMinor: MoneyMinor, multiplier: number): MoneyMino
   return (BigInt(amountMinor) / BigInt(multiplier)).toString();
 }
 
+function authoritativeBaseAmountMinor(win: Readonly<Win>, multiplier: number): MoneyMinor {
+  if (win.pathAwards !== undefined && win.pathAwards.length > 0) {
+    return sumMinor(win.pathAwards.map((award) => award.baseAmountMinor));
+  }
+  // 旧归一化记录没有路径级事实；只在这条兼容路径从 nominal 而非已裁剪 paid 值推导。
+  return baseAmountMinor(win.nominalAmountMinor, multiplier);
+}
+
 /**
  * 将解码的中奖事实转换为视觉事实，无需检查网格、支付线、符号值或任何客户计算的结果。
  */
@@ -462,7 +470,7 @@ export function createWinCelebrationPlan(wins: readonly Win[]): WinCelebrationPl
       symbol: win.symbol,
       ways: win.ways,
       multiplier,
-      baseAmountMinor: baseAmountMinor(win.amountMinor, multiplier),
+      baseAmountMinor: authoritativeBaseAmountMinor(win, multiplier),
       amountMinor: win.amountMinor,
       cells: aggregateCells,
     });

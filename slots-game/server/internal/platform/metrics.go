@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,14 +49,16 @@ type Metrics struct {
 	HTTPRequests atomic.Uint64
 	// HTTPFailures 保留全部 4xx/5xx 供诊断；HTTPServerFailures 只计 5xx，
 	// 供可用性告警使用，避免认证攻击或客户端输入错误制造服务故障噪声。
-	HTTPFailures           atomic.Uint64
-	HTTPServerFailures     atomic.Uint64
-	AuthFailures           atomic.Uint64
-	AuthReplays            atomic.Uint64
-	RateLimited            atomic.Uint64
-	AccessLogsEmitted      atomic.Uint64
-	AccessLogsDropped      atomic.Uint64
-	SecurityLogsDropped    atomic.Uint64
+	HTTPFailures        atomic.Uint64
+	HTTPServerFailures  atomic.Uint64
+	AuthFailures        atomic.Uint64
+	AuthReplays         atomic.Uint64
+	RateLimited         atomic.Uint64
+	AccessLogsEmitted   atomic.Uint64
+	AccessLogsDropped   atomic.Uint64
+	SecurityLogsDropped atomic.Uint64
+	// TraceExportFailures 是单一固定类别计数器；记录前刻意丢弃 exporter 错误文本与 collector endpoint。
+	TraceExportFailures    atomic.Uint64
 	SharedAdmissionAllowed atomic.Uint64
 	SharedAdmissionLimited atomic.Uint64
 	SharedAdmissionErrors  atomic.Uint64
@@ -66,6 +69,16 @@ type Metrics struct {
 	EconomicAdmissionOperatorLimited atomic.Uint64
 	EconomicAdmissionBackendLimited  atomic.Uint64
 	EconomicAdmissionErrors          atomic.Uint64
+	// economicAdmission* 组合共享准入 PING/基础脚本和经济准入 Lua 的最近观测。
+	// 指标不携带运营商、key 或错误文本；未完成双路径验证时一律保持 0。
+	economicAdmissionHealthEnabled            atomic.Bool
+	economicAdmissionHealthMu                 sync.Mutex
+	sharedAdmissionHealthy                    bool
+	economicAdmissionHealthy                  bool
+	sharedAdmissionLastSuccessUnix            int64
+	economicAdmissionComponentLastSuccessUnix int64
+	economicAdmissionReady                    atomic.Int64
+	economicAdmissionLastSuccessUnix          atomic.Int64
 	// CapacityRejected 只计进程级公网并发硬闸门拒绝；不得与租户/速率限流混用，
 	// 以便值班人员区分资源饱和与攻击或调用方超额。
 	CapacityRejected atomic.Uint64
@@ -136,6 +149,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 		{"rgs_access_logs_emitted_total", "Access log records emitted after severity and sampling decisions.", m.AccessLogsEmitted.Load()},
 		{"rgs_access_logs_dropped_total", "Access log records omitted by deterministic success sampling or bounded success/failure log budgets.", m.AccessLogsDropped.Load()},
 		{"rgs_security_logs_dropped_total", "Repeated physical security log records omitted by a fixed write budget; security event counters remain complete.", m.SecurityLogsDropped.Load()},
+		{"rgs_trace_export_failures_total", "OTLP trace batches or exporter shutdowns that failed after bounded retry; error text is not retained.", m.TraceExportFailures.Load()},
 		{"rgs_shared_admission_allowed_total", "Verified-identity requests allowed by shared admission control.", m.SharedAdmissionAllowed.Load()},
 		{"rgs_shared_admission_limited_total", "Verified-identity requests rejected by shared admission control.", m.SharedAdmissionLimited.Load()},
 		{"rgs_shared_admission_errors_total", "Shared admission backend or protocol failures.", m.SharedAdmissionErrors.Load()},
@@ -179,6 +193,11 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 			return err
 		}
 	}
+	if m.economicAdmissionHealthEnabled.Load() {
+		if err := m.writeEconomicAdmissionHealthMetrics(w, time.Now()); err != nil {
+			return err
+		}
+	}
 	if _, err := fmt.Fprintf(
 		w,
 		"# HELP rgs_http_active_requests Requests currently executing on the public RGS listener.\n"+
@@ -207,6 +226,33 @@ func (m *Metrics) WritePrometheus(w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+func (m *Metrics) writeEconomicAdmissionHealthMetrics(w io.Writer, observedAt time.Time) error {
+	lastSuccessUnix := m.economicAdmissionLastSuccessUnix.Load()
+	lastSuccessAgeSeconds := int64(-1)
+	if lastSuccessUnix > 0 {
+		lastSuccessAgeSeconds = observedAt.Unix() - lastSuccessUnix
+		if lastSuccessAgeSeconds < 0 {
+			lastSuccessAgeSeconds = 0
+		}
+	}
+	_, err := fmt.Fprintf(
+		w,
+		"# HELP rgs_economic_admission_ready Whether both shared admission and atomic economic admission have a current successful observation.\n"+
+			"# TYPE rgs_economic_admission_ready gauge\n"+
+			"rgs_economic_admission_ready %d\n"+
+			"# HELP rgs_economic_admission_last_success_timestamp_seconds Conservative earlier Unix timestamp of the latest successful observations for both admission paths.\n"+
+			"# TYPE rgs_economic_admission_last_success_timestamp_seconds gauge\n"+
+			"rgs_economic_admission_last_success_timestamp_seconds %d\n"+
+			"# HELP rgs_economic_admission_last_success_age_seconds Age of the conservative earlier successful observation across both admission paths; -1 means never verified.\n"+
+			"# TYPE rgs_economic_admission_last_success_age_seconds gauge\n"+
+			"rgs_economic_admission_last_success_age_seconds %d\n",
+		m.economicAdmissionReady.Load(),
+		lastSuccessUnix,
+		lastSuccessAgeSeconds,
+	)
+	return err
 }
 
 func (m *Metrics) writeRecoveryMetrics(w io.Writer) error {
@@ -462,6 +508,70 @@ func (m *Metrics) SecurityLogDropped() {
 	if m != nil {
 		m.SecurityLogsDropped.Add(1)
 	}
+}
+
+// TraceExportFailure 记录无标签固定失败类别，不包含底层错误、endpoint、请求、trace 或身份值。
+func (m *Metrics) TraceExportFailure() {
+	if m != nil {
+		m.TraceExportFailures.Add(1)
+	}
+}
+
+// EnableEconomicAdmissionHealthMetrics 只由实际配置 shared/economic admission
+// 的 API/combined 角色调用。这样 worker 不会暴露从未验证的合成零值；启用后的
+// 默认值仍为 fail-closed 的 0，直到 PING/基础脚本和经济 Lua 都成功。
+func (m *Metrics) EnableEconomicAdmissionHealthMetrics() {
+	if m != nil {
+		m.economicAdmissionHealthEnabled.Store(true)
+	}
+}
+
+// ObserveSharedAdmissionHealth 更新无标签的共享准入组件状态。成功观测必须带有
+// 有效服务端时间；失败观测立即将组合健康置零，但保留最后成功时间供值班判断年龄。
+func (m *Metrics) ObserveSharedAdmissionHealth(healthy bool, observedAt time.Time) {
+	if m == nil {
+		return
+	}
+	m.observeEconomicAdmissionComponent(true, healthy, observedAt)
+}
+
+// ObserveEconomicAdmissionHealth 更新无标签的原子经济 Lua 组件状态。
+func (m *Metrics) ObserveEconomicAdmissionHealth(healthy bool, observedAt time.Time) {
+	if m == nil {
+		return
+	}
+	m.observeEconomicAdmissionComponent(false, healthy, observedAt)
+}
+
+func (m *Metrics) observeEconomicAdmissionComponent(shared, healthy bool, observedAt time.Time) {
+	m.economicAdmissionHealthEnabled.Store(true)
+	if healthy && (observedAt.IsZero() || observedAt.Unix() <= 0) {
+		healthy = false
+	}
+	m.economicAdmissionHealthMu.Lock()
+	defer m.economicAdmissionHealthMu.Unlock()
+	if shared {
+		m.sharedAdmissionHealthy = healthy
+		if healthy && observedAt.Unix() > m.sharedAdmissionLastSuccessUnix {
+			m.sharedAdmissionLastSuccessUnix = observedAt.UTC().Unix()
+		}
+	} else {
+		m.economicAdmissionHealthy = healthy
+		if healthy && observedAt.Unix() > m.economicAdmissionComponentLastSuccessUnix {
+			m.economicAdmissionComponentLastSuccessUnix = observedAt.UTC().Unix()
+		}
+	}
+	if !m.sharedAdmissionHealthy || !m.economicAdmissionHealthy {
+		m.economicAdmissionReady.Store(0)
+		return
+	}
+	// 组合成功时间取两条依赖路径最近成功时间的较早值。某一侧的高频成功不能
+	// 刷新另一侧的陈旧证据，否则 age 会错误掩盖 PING 或 Lua 路径长期未验证。
+	combinedLastSuccessUnix := min(m.sharedAdmissionLastSuccessUnix, m.economicAdmissionComponentLastSuccessUnix)
+	if combinedLastSuccessUnix > m.economicAdmissionLastSuccessUnix.Load() {
+		m.economicAdmissionLastSuccessUnix.Store(combinedLastSuccessUnix)
+	}
+	m.economicAdmissionReady.Store(1)
 }
 
 func (m *Metrics) RoundPrepared() {

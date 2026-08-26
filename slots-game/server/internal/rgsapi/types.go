@@ -18,8 +18,10 @@ import (
 const (
 	OperatorLaunchPath        = "/operator/v1/launches"
 	OperatorRoundStatusPath   = "/operator/v1/rounds/status"
+	OperatorRiskDecisionPath  = "/operator/v1/risk-decisions"
 	ClientSessionExchangePath = "/client/v1/sessions/exchange"
 	ClientSessionRefreshPath  = "/client/v1/sessions/refresh"
+	ClientSessionStatusPath   = "/client/v1/sessions/status"
 	ClientSpinPath            = "/client/v1/spins"
 	ClientRoundStatusPath     = "/client/v1/rounds/status"
 	ClientPendingResultPath   = "/client/v1/results/pending"
@@ -113,6 +115,7 @@ type LaunchService interface {
 	CreateLaunch(context.Context, LaunchCommand) (LaunchResult, error)
 	ExchangeSession(context.Context, ExchangeCommand) (ExchangeResult, error)
 	RefreshSession(context.Context, RefreshCommand) (ExchangeResult, error)
+	AuthorizeSession(context.Context, SessionAuthorizationCommand) (rgs.Session, error)
 }
 
 type SpinCoordinator interface {
@@ -130,6 +133,10 @@ type RoundStatusReader interface {
 	GetRound(context.Context, rgs.RoundKey) (rgs.RoundRecord, error)
 }
 
+type RiskDecisionService interface {
+	DecideRisk(context.Context, rgs.RiskDecisionCommand) (rgs.RiskDecisionResult, error)
+}
+
 type Config struct {
 	OperatorRequests    OperatorRequestVerifier
 	AccessTokens        AccessTokenVerifier
@@ -137,6 +144,7 @@ type Config struct {
 	Launches            LaunchService
 	Spins               SpinCoordinator
 	Rounds              RoundStatusReader
+	RiskDecisions       RiskDecisionService
 	Admission           Admission
 	// ClientAdmission 的键只能来自已验证声明，禁止使用请求头、RemoteAddr
 	// 或 X-Forwarded-For 构造，避免伪造键和反向代理后的跨玩家误限流。
@@ -175,6 +183,7 @@ type LaunchCommand struct {
 	Jurisdiction      string
 	BalanceMinor      int64
 	SessionTTL        time.Duration
+	IdleDisconnect    time.Duration
 }
 
 // LaunchResult 是运营商启动器交给游戏客户端的短期凭据；消费语义由
@@ -205,6 +214,11 @@ type RefreshCommand struct {
 	RequestID string
 }
 
+type SessionAuthorizationCommand struct {
+	Claims            operator.AccessTokenClaims
+	AllowIdleRecovery bool
+}
+
 type sessionBindingRequest struct {
 	OperatorID        string `json:"operatorId"`
 	SessionID         string `json:"sessionId"`
@@ -217,18 +231,19 @@ type sessionBindingRequest struct {
 }
 
 type operatorLaunchRequest struct {
-	PlayerID          string `json:"playerId"`
-	WalletAccountID   string `json:"walletAccountId"`
-	WalletSessionID   string `json:"walletSessionId"`
-	SessionID         string `json:"sessionId"`
-	GameID            string `json:"gameId"`
-	DefinitionVersion string `json:"definitionVersion"`
-	DefinitionHash    string `json:"definitionHash"`
-	Currency          string `json:"currency"`
-	CurrencyExponent  int    `json:"currencyExponent"`
-	Jurisdiction      string `json:"jurisdiction"`
-	BalanceMinor      string `json:"balanceMinor"`
-	SessionTTLSeconds int64  `json:"sessionTtlSeconds"`
+	PlayerID              string `json:"playerId"`
+	WalletAccountID       string `json:"walletAccountId"`
+	WalletSessionID       string `json:"walletSessionId"`
+	SessionID             string `json:"sessionId"`
+	GameID                string `json:"gameId"`
+	DefinitionVersion     string `json:"definitionVersion"`
+	DefinitionHash        string `json:"definitionHash"`
+	Currency              string `json:"currency"`
+	CurrencyExponent      int    `json:"currencyExponent"`
+	Jurisdiction          string `json:"jurisdiction"`
+	BalanceMinor          string `json:"balanceMinor"`
+	SessionTTLSeconds     int64  `json:"sessionTtlSeconds"`
+	IdleDisconnectSeconds int64  `json:"idleDisconnectSeconds"`
 }
 
 type clientSessionExchangeRequest struct {
@@ -238,6 +253,10 @@ type clientSessionExchangeRequest struct {
 }
 
 type clientSessionRefreshRequest struct {
+	sessionBindingRequest
+}
+
+type clientSessionStatusRequest struct {
 	sessionBindingRequest
 }
 
@@ -285,23 +304,34 @@ type launchResponse struct {
 type sessionExchangeResponse struct {
 	AccessToken string          `json:"accessToken"`
 	Session     sessionResponse `json:"session"`
+	ServerTime  string          `json:"serverTime"`
+}
+
+type sessionStatusResponse struct {
+	OperatorID       string            `json:"operatorId"`
+	SessionID        string            `json:"sessionId"`
+	Status           rgs.SessionStatus `json:"status"`
+	IdleDisconnectAt string            `json:"idleDisconnectAt"`
+	ServerTime       string            `json:"serverTime"`
 }
 
 type sessionResponse struct {
-	OperatorID        string               `json:"operatorId"`
-	SessionID         string               `json:"sessionId"`
-	GameID            string               `json:"gameId"`
-	DefinitionVersion string               `json:"definitionVersion"`
-	DefinitionHash    string               `json:"definitionHash"`
-	Currency          string               `json:"currency"`
-	CurrencyExponent  int                  `json:"currencyExponent"`
-	Jurisdiction      string               `json:"jurisdiction"`
-	Status            rgs.SessionStatus    `json:"status"`
-	ExpiresAt         string               `json:"expiresAt"`
-	BalanceMinor      string               `json:"balanceMinor"`
-	Revision          string               `json:"revision"`
-	Sequence          string               `json:"sequence"`
-	Feature           featureStateResponse `json:"feature"`
+	OperatorID         string               `json:"operatorId"`
+	SessionID          string               `json:"sessionId"`
+	GameID             string               `json:"gameId"`
+	DefinitionVersion  string               `json:"definitionVersion"`
+	DefinitionHash     string               `json:"definitionHash"`
+	EngineRulesVersion string               `json:"engineRulesVersion"`
+	Currency           string               `json:"currency"`
+	CurrencyExponent   int                  `json:"currencyExponent"`
+	Jurisdiction       string               `json:"jurisdiction"`
+	Status             rgs.SessionStatus    `json:"status"`
+	ExpiresAt          string               `json:"expiresAt"`
+	IdleDisconnectAt   string               `json:"idleDisconnectAt"`
+	BalanceMinor       string               `json:"balanceMinor"`
+	Revision           string               `json:"revision"`
+	Sequence           string               `json:"sequence"`
+	Feature            featureStateResponse `json:"feature"`
 }
 
 type roundStatusResponse struct {
@@ -310,6 +340,24 @@ type roundStatusResponse struct {
 	RoundID    string              `json:"roundId"`
 	Status     rgs.RoundStatus     `json:"status"`
 	Result     *spinResultResponse `json:"result,omitempty"`
+}
+
+type operatorRiskDecisionRequest struct {
+	OperatorID string           `json:"operatorId"`
+	SessionID  string           `json:"sessionId"`
+	RoundID    string           `json:"roundId"`
+	Decision   rgs.RiskDecision `json:"decision"`
+	ReasonCode string           `json:"reasonCode"`
+}
+
+type operatorRiskDecisionResponse struct {
+	OperatorID string           `json:"operatorId"`
+	SessionID  string           `json:"sessionId"`
+	RoundID    string           `json:"roundId"`
+	Decision   rgs.RiskDecision `json:"decision"`
+	Status     rgs.RoundStatus  `json:"status"`
+	DecidedAt  string           `json:"decidedAt"`
+	Replayed   bool             `json:"replayed"`
 }
 
 type pendingResultDeliveryResponse struct {
@@ -350,6 +398,7 @@ type spinResultResponse struct {
 	ChargedBetMinor     string               `json:"chargedBetMinor"`
 	BalanceMinor        string               `json:"balanceMinor"`
 	TotalWinMinor       string               `json:"totalWinMinor"`
+	IdleDisconnectAt    string               `json:"idleDisconnectAt,omitempty"`
 	Grid                game.Grid            `json:"grid"`
 	Wins                []winResponse        `json:"wins"`
 	Events              []eventResponse      `json:"events"`
@@ -357,20 +406,22 @@ type spinResultResponse struct {
 }
 
 type winResponse struct {
-	ID          string              `json:"id"`
-	Symbol      game.Symbol         `json:"symbol"`
-	Ways        int                 `json:"ways"`
-	AmountMinor string              `json:"amountMinor"`
-	Multiplier  string              `json:"multiplier,omitempty"`
-	Cells       []game.Position     `json:"cells"`
-	PathAwards  []pathAwardResponse `json:"pathAwards"`
+	ID                 string              `json:"id"`
+	Symbol             game.Symbol         `json:"symbol"`
+	Ways               int                 `json:"ways"`
+	NominalAmountMinor string              `json:"nominalAmountMinor"`
+	AmountMinor        string              `json:"amountMinor"`
+	Multiplier         string              `json:"multiplier,omitempty"`
+	Cells              []game.Position     `json:"cells"`
+	PathAwards         []pathAwardResponse `json:"pathAwards"`
 }
 
 type pathAwardResponse struct {
-	Cells           []game.Position `json:"cells"`
-	Multiplier      string          `json:"multiplier"`
-	BaseAmountMinor string          `json:"baseAmountMinor"`
-	AmountMinor     string          `json:"amountMinor"`
+	Cells              []game.Position `json:"cells"`
+	Multiplier         string          `json:"multiplier"`
+	BaseAmountMinor    string          `json:"baseAmountMinor"`
+	NominalAmountMinor string          `json:"nominalAmountMinor"`
+	AmountMinor        string          `json:"amountMinor"`
 }
 
 type eventResponse struct {

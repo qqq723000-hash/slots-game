@@ -13,6 +13,7 @@ import type {
 } from "../app/state/types";
 import { createSpineView, type Spine } from "./spine/SpineAdapter";
 import { loadPrimalSpineSet } from "./spine/PrimalSpineAssets";
+import type { VerifiedFreeSpinArtwork } from "./VerifiedFeatureArtwork";
 import {
   resolveResponsiveMinBound,
   type MobileHandMode,
@@ -99,6 +100,25 @@ export const FREE_SPIN_HUD_DESKTOP_LAYOUT = Object.freeze({
   retrigger: Object.freeze({ x: 640, y: 280, scale: 0.8 }),
 });
 
+/**
+ * 1200x900 的编排游戏内容在 1280x720 渲染器中占据居中的 x=160..1120 区域。
+ * 计数器的 `stop` 剪辑是可读的核心 HUD；叠加 Glow/扫光图形刻意不纳入
+ * 此包含边界，并可继续溢出到渲染器两翼。
+ */
+export const FREE_SPIN_HUD_DESKTOP_CORE_REGION_X = Object.freeze({
+  left: 160,
+  right: 1_120,
+});
+
+/** 从已验证的 `freespin_counter.skel` stop 剪辑测得的精确水平边界。 */
+export const FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X = Object.freeze({
+  left: -137.75519768021778,
+  right: 146.48480825349785,
+});
+
+/** 1440x900 桌面视口以此逻辑内边距投影裁剪后的根节点。 */
+export const FREE_SPIN_HUD_DESKTOP_CONTAINMENT_INSET_X = 64;
+
 interface FreeSpinHudMobileNodeLayout {
   readonly minBound: ResponsiveMinBound;
   readonly horizontalAlign: number;
@@ -165,6 +185,36 @@ export interface FreeSpinHudResponsiveLayout {
 }
 
 /**
+ * 随桌面根节点开始裁剪，逐步采用编排的核心区域。inset=0 时，捕获的变换
+ * 逐字节保持不变；在 1440x900 裁剪（64 个逻辑像素）下，stop/可读核心完全
+ * 位于 x=160..1120 内。这里有意忽略非交互 VFX 边界。
+ */
+export function freeSpinHudDesktopCounterLayout(
+  visibleInsetX: number,
+): ResponsiveNodeTransform {
+  const canonical = FREE_SPIN_HUD_DESKTOP_LAYOUT.counter;
+  const inset = Number.isFinite(visibleInsetX) ? Math.max(0, visibleInsetX) : 0;
+  if (inset === 0) return canonical;
+
+  const coreLeft = canonical.x
+    + FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X.left * canonical.scale;
+  const coreRight = canonical.x
+    + FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X.right * canonical.scale;
+  const minimumShift = FREE_SPIN_HUD_DESKTOP_CORE_REGION_X.left - coreLeft;
+  const maximumShift = FREE_SPIN_HUD_DESKTOP_CORE_REGION_X.right - coreRight;
+  const containmentShift = Math.min(
+    maximumShift,
+    Math.max(minimumShift, 0),
+  );
+  const progress = Math.min(1, inset / FREE_SPIN_HUD_DESKTOP_CONTAINMENT_INSET_X);
+  return Object.freeze({
+    x: canonical.x + containmentShift * progress,
+    y: canonical.y,
+    scale: canonical.scale,
+  });
+}
+
+/**
  * 将 HUD 投影到当前连续 gameplay 设计域。参考档位只选择原版节点规则，
  * 不选择或锁定物理视口尺寸。
  */
@@ -172,7 +222,10 @@ export function freeSpinHudResponsiveLayout(
   snapshot: ResponsiveLayoutSnapshot,
 ): FreeSpinHudResponsiveLayout {
   if (snapshot.channel === "desktop") {
-    return FREE_SPIN_HUD_DESKTOP_LAYOUT;
+    return Object.freeze({
+      counter: freeSpinHudDesktopCounterLayout(snapshot.frame.visibleInsetX),
+      retrigger: FREE_SPIN_HUD_DESKTOP_LAYOUT.retrigger,
+    });
   }
   const profile = snapshot.mobileProfile;
   if (!profile) return FREE_SPIN_HUD_DESKTOP_LAYOUT;
@@ -304,6 +357,7 @@ export class FreeSpinHudView extends Container {
   private counterValue: Text | null = null;
   private retriggerValue: Text | null = null;
   private loadPromise: Promise<void> | null = null;
+  private artworkGeneration = 0;
   private desiredCounterPresentation: CounterPresentation = "hidden";
   private projectionValue: FreeSpinHudProjection = EMPTY_PROJECTION;
   private counterOperation = 0;
@@ -357,13 +411,34 @@ export class FreeSpinHudView extends Container {
     this.retriggerHost.scale.set(layout.retrigger.scale);
   }
 
-  loadArtwork(signal?: AbortSignal): Promise<void> {
+  loadArtwork(
+    signal?: AbortSignal,
+    verified?: VerifiedFreeSpinArtwork,
+  ): Promise<void> {
+    if (this.disposed || signal?.aborted) {
+      return Promise.reject(freeSpinArtworkAbortReason(signal));
+    }
+    if (this.artworkLoaded) return Promise.resolve();
     if (this.loadPromise) return this.loadPromise;
-    this.loadPromise = loadPrimalSpineSet(["freeSpinCounter", "freeSpinRetrigger"] as const)
+    const generation = this.artworkGeneration;
+    const source = verified
+      ? Promise.resolve({
+          freeSpinCounter: verified.spines.freeSpinCounter,
+          freeSpinRetrigger: verified.spines.freeSpinRetrigger,
+        })
+      : loadPrimalSpineSet(["freeSpinCounter", "freeSpinRetrigger"] as const);
+    const attempt = source
       .then((data) => {
-        if (this.disposed || signal?.aborted) return;
+        if (this.disposed || signal?.aborted || generation !== this.artworkGeneration) {
+          throw freeSpinArtworkAbortReason(signal);
+        }
         const counter = createSpineView(data.freeSpinCounter);
         const retrigger = createSpineView(data.freeSpinRetrigger);
+        if (this.disposed || signal?.aborted || generation !== this.artworkGeneration) {
+          counter.destroy({ children: true });
+          retrigger.destroy({ children: true });
+          throw freeSpinArtworkAbortReason(signal);
+        }
         prepareAuthoredView(counter);
         prepareAuthoredView(retrigger);
 
@@ -391,10 +466,33 @@ export class FreeSpinHudView extends Container {
         this.syncTextSlots();
       })
       .catch((error: unknown) => {
-        this.loadPromise = null;
+        if (this.loadPromise === attempt) this.loadPromise = null;
         throw error;
       });
-    return this.loadPromise;
+    this.loadPromise = attempt;
+    return attempt;
+  }
+
+  /** Free Spins 退出后销毁事件代视图；共享 atlas 仍由首启共享包拥有。 */
+  clearArtwork(): void {
+    this.artworkGeneration += 1;
+    this.loadPromise = null;
+    this.counterOperation += 1;
+    this.retriggerOperation += 1;
+    this.cancelCapContinue();
+    for (const host of [this.counterHost, this.retriggerHost]) {
+      for (const child of host.removeChildren()) {
+        try { child.destroy({ children: true }); } catch { /* 最佳努力 GPU/视图清理 */ }
+      }
+      host.visible = false;
+    }
+    this.counterView = null;
+    this.retriggerView = null;
+    this.counterLabel = null;
+    this.counterValue = null;
+    this.retriggerValue = null;
+    this.visible = false;
+    this.interactive = false;
   }
 
   /** 恢复重新连接快照而不重播显示/扫描/重新触发。 */
@@ -583,10 +681,8 @@ export class FreeSpinHudView extends Container {
 
   override destroy(options?: Parameters<Container["destroy"]>[0]): void {
     if (this.disposed) return;
+    this.clearArtwork();
     this.disposed = true;
-    this.counterOperation += 1;
-    this.retriggerOperation += 1;
-    this.cancelCapContinue();
     super.destroy(options);
   }
 
@@ -834,4 +930,11 @@ function validateFreeSpinCap(event: Readonly<FreeSpinCapReachedEvent>): void {
 
 function waitFor(durationMs: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, durationMs));
+}
+
+function freeSpinArtworkAbortReason(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("Free Spins artwork load was aborted");
+  error.name = "AbortError";
+  return error;
 }

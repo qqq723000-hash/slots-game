@@ -421,6 +421,7 @@ func executeHighConcurrencyRound(
 		GameID: session.GameID, DefinitionVersion: session.DefinitionVersion,
 		DefinitionHash: session.DefinitionHash, Currency: session.Currency,
 		RoundKind: rgs.RoundKindBase, BetMinor: 100, StartRevision: session.Revision,
+		TransportGeneration: session.TransportGeneration,
 	}
 	record, prepared, err := prepareRoundForLoad(
 		ctx, repository, request, rgs.FingerprintFor(request), profile, legacyPrepare,
@@ -455,7 +456,7 @@ func executeHighConcurrencyRound(
 	}
 	_, changed, err = repository.AcknowledgeResultDelivery(ctx, rgs.ResultDeliveryAcknowledgement{
 		OperatorID: operatorID, SessionID: sessionID, RoundID: roundID,
-		Sequence: committed.Result.Sequence, ResultHash: resultHash,
+		Sequence: committed.Result.Sequence, ResultHash: resultHash, TransportGeneration: 1,
 	})
 	if err != nil || !changed {
 		return errors.Join(errors.New("acknowledge result"), err)
@@ -669,6 +670,8 @@ func createHighConcurrencySession(
 		DefinitionHash: strings.Repeat("a", 64), Currency: "USD", CurrencyExponent: 2,
 		Jurisdiction: "MT", Status: rgs.SessionActive, BalanceMinor: 1_000_000_000,
 		Feature: gameEmptyFeatureStateForLoad(), ExpiresAt: time.Now().UTC().Add(time.Hour),
+		IdleDisconnect: 20 * time.Minute, IdleDisconnectAt: time.Now().UTC().Add(20 * time.Minute),
+		TransportGeneration: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -700,6 +703,7 @@ func runHotSessionReplayContention(
 		GameID: session.GameID, DefinitionVersion: session.DefinitionVersion,
 		DefinitionHash: session.DefinitionHash, Currency: session.Currency,
 		RoundKind: rgs.RoundKindBase, BetMinor: 100,
+		TransportGeneration: session.TransportGeneration,
 	}
 	profile := rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
 		"https://wallet.test.invalid/high-concurrency-ledger",
@@ -811,6 +815,7 @@ func seedRecoveryBacklog(
 			GameID:  session.GameID, DefinitionVersion: session.DefinitionVersion,
 			DefinitionHash: session.DefinitionHash, Currency: session.Currency,
 			RoundKind: rgs.RoundKindBase, BetMinor: 100,
+			TransportGeneration: session.TransportGeneration,
 		}
 		_, prepared, err := prepareRoundForLoad(
 			ctx, repository, request, rgs.FingerprintFor(request), profile, legacyPrepare,

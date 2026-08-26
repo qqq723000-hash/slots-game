@@ -166,6 +166,17 @@ groups:
           description: 五分钟认证失败超过 20；排查密钥轮换、时钟偏差及恶意请求。
           runbook_url: "__RUNBOOK_BASE_URL__/rgs-auth-failures"
 
+      - alert: RGSAuthenticationReplayDetected
+        expr: sum by (job, environment) (increase(rgs_auth_replays_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 检测到认证随机数重放
+          description: 已验证签名的请求重复使用随机数并被拒绝；检查调用方重试、凭据泄漏风险和同窗安全日志。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-auth-replay"
+
       - alert: RGSRateLimitingSustained
         expr: sum by (job, environment) (increase(rgs_rate_limited_total[5m])) > 20
         for: 5m
@@ -176,6 +187,17 @@ groups:
           summary: RGS 限流持续触发
           description: 五分钟本地限流超过 20；同时核查边缘限流、容量与攻击流量。
           runbook_url: "__RUNBOOK_BASE_URL__/rgs-rate-limiting"
+
+      - alert: RGSSharedAdmissionErrors
+        expr: sum by (job, environment) (increase(rgs_shared_admission_errors_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: rgs
+        annotations:
+          summary: RGS 共享准入后端持续故障
+          description: Valkey 共享准入错误持续发生；新启动和 Spin 已失败关闭，立即检查 TLS、ACL、网络策略和集群健康。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-shared-admission"
 
       - alert: RGSEconomicAdmissionLimitedSustained
         expr: |
@@ -210,6 +232,57 @@ groups:
           description: Valkey 双桶脚本、静态 operator/backend 路由或返回协议持续失败；新 Spin 已失败关闭，status/result/ACK 与 Worker 恢复必须继续可用。
           runbook_url: "__RUNBOOK_BASE_URL__/rgs-economic-admission"
 
+      - alert: RGSEconomicAdmissionUnavailable
+        # 经济新意图能力与基础 API readiness 解耦；status/result/ACK 仍须保持可用。
+        # gauge 缺失同样失败闭合，避免旧镜像或未接线 observer 静默变绿。
+        expr: |
+          (
+            rgs_economic_admission_ready{job="rgs"} == 0
+            and on (job, instance)
+            rgs_ready{job="rgs"} == 1
+          )
+          or
+          (
+            rgs_ready{job="rgs"} == 1
+            unless on (job, instance)
+            rgs_economic_admission_ready{job="rgs"}
+          )
+        for: 2m
+        labels:
+          severity: critical
+          service: rgs
+        annotations:
+          summary: RGS API 仍就绪但经济准入不可用
+          description: 基础状态、结果恢复和确认 API 仍可用，但 shared PING/基础脚本与经济 Lua 的组合健康连续失败或指标缺失；停止新经济意图并检查 Valkey TLS、ACL、Lua 与网络。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-economic-admission"
+
+      - alert: RGSEconomicAdmissionObservationStale
+        # age 由 shared 与 economic 两条路径最近成功时间的较早值计算，单侧高频
+        # 成功不能掩盖另一侧长期未验证。-1 表示进程启动后从未完成组合验证。
+        expr: |
+          (
+            (
+              rgs_economic_admission_last_success_age_seconds{job="rgs"} < 0
+              or rgs_economic_admission_last_success_age_seconds{job="rgs"} > 900
+            )
+            and on (job, instance)
+            rgs_ready{job="rgs"} == 1
+          )
+          or
+          (
+            rgs_ready{job="rgs"} == 1
+            unless on (job, instance)
+            rgs_economic_admission_last_success_age_seconds{job="rgs"}
+          )
+        for: 5m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 经济准入成功证据陈旧
+          description: API 仍就绪，但 shared 与 economic 两条路径中至少一条超过十五分钟没有成功观测，或年龄指标缺失；核查真实流量、PING/Lua canary 接线与 Valkey 可用性。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-economic-admission"
+
       - alert: RGSCapacityRejectionsSustained
         # 容量耗尽与租户/攻击限流语义不同；使用独立无标签 counter，避免误判根因。
         expr: sum(increase(rgs_capacity_rejected_total[5m])) > 20
@@ -221,6 +294,17 @@ groups:
           summary: RGS 公网并发容量持续耗尽
           description: 滑动五分钟内容量闸门拒绝超过 20 次并持续五分钟；检查请求并发、下游时延、实例资源与扩容预算，禁止通过放宽硬闸门掩盖故障。
           runbook_url: "__RUNBOOK_BASE_URL__/rgs-capacity-rejections"
+
+      - alert: RGSNewIntentCapacityRejected
+        expr: sum by (job, environment) (increase(rgs_new_intent_capacity_rejected_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: rgs
+        annotations:
+          summary: RGS 新经济意图因数据库保留容量被拒绝
+          description: 新启动或 Spin 已为保护状态查询、待交付结果和确认路径而拒绝；检查数据库池、HPA 与入口流量。
+          runbook_url: "__RUNBOOK_BASE_URL__/rgs-new-intent-capacity"
 
       - alert: RGSConnectionCapacityNearLimit
         expr: rgs:http_connection_utilization:ratio > 0.85

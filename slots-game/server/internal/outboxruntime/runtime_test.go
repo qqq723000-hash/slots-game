@@ -84,6 +84,19 @@ func TestRuntimeDispatchesChecksReadinessAndStops(t *testing.T) {
 	}
 }
 
+func TestRuntimeFailureLogUsesFixedClassWithoutStoreErrorText(t *testing.T) {
+	t.Parallel()
+	const secret = "event-123 operator-a postgres://user:password@database"
+	var output strings.Builder
+	runtime := &Runtime{logger: slog.New(slog.NewJSONHandler(&output, nil))}
+	runtime.observe(outbox.BatchResult{Claimed: 1}, errors.New(secret))
+	logOutput := output.String()
+	if strings.Contains(logOutput, secret) || strings.Contains(logOutput, "password") ||
+		!strings.Contains(logOutput, `"error_class":"internal"`) {
+		t.Fatalf("unsafe outbox runtime log: %s", logOutput)
+	}
+}
+
 func TestDisabledRuntimeDoesNotSendAndIsNotAReadinessDependency(t *testing.T) {
 	runtime, err := New(Config{}, nil, nil, nil)
 	if err != nil {

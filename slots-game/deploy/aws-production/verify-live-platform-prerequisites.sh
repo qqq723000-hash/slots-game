@@ -235,6 +235,7 @@ ruby -rjson -ruri -e '
       web_edge.fetch("origin_type") == "private-s3-oac" &&
       web_edge.fetch("origin_public_access_blocked") == true &&
       web_edge.fetch("api_proxy") == false &&
+      web_edge.fetch("viewer_http_version") == "http2and3" &&
       web_edge.fetch("web_acl_scope") == "CLOUDFRONT" &&
       web_edge.fetch("waf_ownership") == "enterprise-platform" &&
       web_edge.fetch("waf_home_region") == "us-east-1" &&
@@ -267,6 +268,230 @@ ruby -rjson -ruri -e '
     valid_rollout.call(web_rollout)
   abort "CloudFront rate rule Count→Block 状态或校准证据不合法" unless
     valid_rollout.call(web_edge.fetch("rate_rule_rollout"))
+
+  rds = value.fetch("rds_alarm_contract")
+  abort "RDS 告警合同键集合不精确" unless rds.keys.sort == %w[
+    alarm_names alert_topic_arn contract_version database_topology db_instance_identifier
+    deadlock_evidence deadlock_metric_filter metrics missing_data_policy multi_az namespace
+  ]
+  abort "RDS 告警合同身份或单实例拓扑不合法" unless
+    rds.fetch("contract_version") == "2.0.0" &&
+      rds.fetch("database_topology") == "single-db-instance" &&
+      [true, false].include?(rds.fetch("multi_az")) &&
+      rds.fetch("namespace") == "AWS/RDS" &&
+      rds.fetch("db_instance_identifier") == "#{value.fetch("cluster_name")}-postgresql" &&
+      rds.fetch("alert_topic_arn") == value.fetch("alert_topic_arn") &&
+      rds.fetch("missing_data_policy") == "notBreaching"
+  deadlock_filter = rds.fetch("deadlock_metric_filter")
+  abort "PostgreSQL deadlock 日志 metric filter 合同不合法" unless
+    deadlock_filter.keys.sort == %w[
+      default_value filter_name filter_pattern log_group_name metric_name metric_namespace metric_value unit
+    ] &&
+      deadlock_filter.fetch("filter_name") == "#{rds.fetch("db_instance_identifier")}-deadlock-detected" &&
+      deadlock_filter.fetch("log_group_name") ==
+        "/aws/rds/instance/#{rds.fetch("db_instance_identifier")}/postgresql" &&
+      deadlock_filter.fetch("filter_pattern") == %q{"deadlock detected"} &&
+      deadlock_filter.fetch("metric_namespace") == "Slots/RDSLogEvents" &&
+      deadlock_filter.fetch("metric_name") == "#{rds.fetch("db_instance_identifier")}-deadlock-detected" &&
+      deadlock_filter.fetch("metric_value") == "1" && deadlock_filter.fetch("default_value") == 0 &&
+      deadlock_filter.fetch("unit") == "Count"
+  expected_single_rds_units = {
+    "CPUUtilization" => "Percent", "DatabaseConnections" => "Count", "Deadlocks" => "Count",
+    "DiskQueueDepth" => "Count", "FreeableMemory" => "Bytes", "FreeStorageSpace" => "Bytes",
+    "ReadLatency" => "Seconds", "SwapUsage" => "Bytes", "WriteLatency" => "Seconds",
+  }
+  expected_single_rds_statistics = {
+    "CPUUtilization" => "Average", "DatabaseConnections" => "Maximum", "Deadlocks" => "Sum",
+    "DiskQueueDepth" => "Maximum", "FreeableMemory" => "Minimum", "FreeStorageSpace" => "Minimum",
+    "ReadLatency" => "Average", "SwapUsage" => "Maximum", "WriteLatency" => "Average",
+  }
+  expected_math_rds = {
+    "TotalIOPS" => {
+      "unit" => "Count/Second", "label" => "Total RDS IOPS",
+      "sources" => {"m1" => "ReadIOPS", "m2" => "WriteIOPS"},
+    },
+    "TotalThroughput" => {
+      "unit" => "Bytes/Second", "label" => "Total RDS throughput",
+      "sources" => {"m1" => "ReadThroughput", "m2" => "WriteThroughput"},
+    },
+  }
+  rds_metrics = rds.fetch("metrics")
+  expected_rds_metric_names = expected_single_rds_units.keys + expected_math_rds.keys
+  abort "RDS 告警指标集合缺失、夹带 ReplicaLag/虚构原生 Total 指标或名称重复" unless
+    rds_metrics.keys.sort == expected_rds_metric_names.sort &&
+      rds.fetch("alarm_names").sort == rds_metrics.values.map { |metric| metric.fetch("alarm_name") }.sort &&
+      rds.fetch("alarm_names").uniq.length == expected_rds_metric_names.length
+  rds_metrics.each do |metric_name, metric|
+    if expected_math_rds.key?(metric_name)
+      expected_math = expected_math_rds.fetch(metric_name)
+      abort "#{metric_name} metric-math 告警合同键集合不精确" unless metric.keys.sort == %w[
+        alarm_name comparison_operator datapoints_to_alarm evaluation_periods metric_data_queries
+        period_seconds threshold treat_missing_data unit
+      ]
+      abort "#{metric_name} metric-math 告警阈值、单位或窗口不合法" unless
+        metric.fetch("alarm_name").start_with?("#{rds.fetch("db_instance_identifier")}-") &&
+          metric.fetch("unit") == expected_math.fetch("unit") &&
+          metric.fetch("threshold").is_a?(Numeric) && metric.fetch("threshold") > 0 &&
+          metric.fetch("comparison_operator") == "GreaterThanOrEqualToThreshold" &&
+          metric.fetch("period_seconds") == 60 && metric.fetch("evaluation_periods") == 3 &&
+          metric.fetch("datapoints_to_alarm") == 2 && metric.fetch("treat_missing_data") == "notBreaching"
+      queries = metric.fetch("metric_data_queries")
+      abort "#{metric_name} metric-math query 数量或 ID 不精确" unless
+        queries.is_a?(Array) && queries.length == 3 && queries.map { |query| query.fetch("id") }.sort == %w[e1 m1 m2]
+      queries_by_id = queries.to_h { |query| [query.fetch("id"), query] }
+      expression = queries_by_id.fetch("e1")
+      abort "#{metric_name} metric-math expression 或 ReturnData 漂移" unless
+        expression.keys.sort == %w[expression id label return_data] &&
+          expression.fetch("expression") == "m1 + m2" && expression.fetch("label") == expected_math.fetch("label") &&
+          expression.fetch("return_data") == true
+      expected_math.fetch("sources").each do |id, source_metric_name|
+        source = queries_by_id.fetch(id)
+        abort "#{metric_name}/#{id} metric-math source 合同漂移" unless
+          source.keys.sort == %w[
+            dimension_name dimension_value id metric_name namespace period_seconds return_data statistic unit
+          ] && source.fetch("metric_name") == source_metric_name && source.fetch("namespace") == "AWS/RDS" &&
+            source.fetch("statistic") == "Average" && source.fetch("unit") == expected_math.fetch("unit") &&
+            source.fetch("period_seconds") == 60 && source.fetch("dimension_name") == "DBInstanceIdentifier" &&
+            source.fetch("dimension_value") == rds.fetch("db_instance_identifier") && source.fetch("return_data") == false
+      end
+      next
+    end
+    abort "#{metric_name} RDS 告警合同键集合不精确" unless metric.keys.sort == %w[
+      alarm_name comparison_operator datapoints_to_alarm evaluation_periods period_seconds
+      statistic threshold treat_missing_data unit
+    ]
+    low_capacity = %w[FreeableMemory FreeStorageSpace].include?(metric_name)
+    abort "#{metric_name} RDS 告警单位、阈值或比较方向不合法" unless
+      metric.fetch("alarm_name").start_with?("#{rds.fetch("db_instance_identifier")}-") &&
+        metric.fetch("statistic") == expected_single_rds_statistics.fetch(metric_name) &&
+        metric.fetch("unit") == expected_single_rds_units.fetch(metric_name) &&
+        metric.fetch("threshold").is_a?(Numeric) && metric.fetch("threshold") > 0 &&
+        metric.fetch("comparison_operator") ==
+          (low_capacity ? "LessThanOrEqualToThreshold" : "GreaterThanOrEqualToThreshold") &&
+        metric.fetch("period_seconds") == 60 && metric.fetch("treat_missing_data") == "notBreaching"
+    if metric_name == "Deadlocks"
+      abort "Deadlocks 必须单次 Sum 观测即告警" unless
+        metric.fetch("threshold") == 1 && metric.fetch("evaluation_periods") == 1 &&
+          metric.fetch("datapoints_to_alarm") == 1
+    else
+      abort "#{metric_name} 容量告警必须保持 2/3 debounce" unless
+        metric.fetch("evaluation_periods") == 3 && metric.fetch("datapoints_to_alarm") == 2
+    end
+  end
+  deadlock_evidence = rds.fetch("deadlock_evidence")
+  abort "Deadlocks 日志证据外部门禁没有显式保留" unless
+    deadlock_evidence.keys.sort == %w[
+      alarm_name automatic_snapshot_implemented external_evidence_consumer_required postgresql_log_group_name
+    ] && deadlock_evidence.fetch("alarm_name") == rds_metrics.fetch("Deadlocks").fetch("alarm_name") &&
+      deadlock_evidence.fetch("postgresql_log_group_name") ==
+        deadlock_filter.fetch("log_group_name") &&
+      deadlock_evidence.fetch("automatic_snapshot_implemented") == false &&
+      deadlock_evidence.fetch("external_evidence_consumer_required") == true
+
+  read_scaling = value.fetch("rds_read_scaling_contract")
+  abort "RDS 读扩展合同键集合不精确" unless read_scaling.keys.sort == %w[
+    alarm_names alert_topic_arn application_routing_adopted backup_retention_days
+    connection_pooler_implemented contract_version cross_region_dr_implemented
+    db_subnet_group_name deletion_protection enabled engine_version expected_kms_key_arn
+    expected_storage_encrypted instance_class live_inheritance_check_required log_group_names
+    max_allocated_storage_gib metrics minimum_allocated_storage_gib parameter_group_name port
+    rds_proxy_implemented read_replica_is_backup
+    reader_db_instance_identifier reader_endpoint reader_multi_az same_region_kms_inheritance
+    same_region_only source_db_instance_identifier source_multi_az storage_type topology vpc_security_group_ids
+  ]
+  abort "RDS 读扩展必须保持同区域、非 DR、非代理且应用未采用的边界" unless
+    read_scaling.fetch("contract_version") == "1.0.0" &&
+      [true, false].include?(read_scaling.fetch("enabled")) &&
+      read_scaling.fetch("same_region_only") == true &&
+      read_scaling.fetch("source_db_instance_identifier") == rds.fetch("db_instance_identifier") &&
+      read_scaling.fetch("source_multi_az") == rds.fetch("multi_az") &&
+      read_scaling.fetch("port") == 5432 &&
+      read_scaling.fetch("application_routing_adopted") == false &&
+      read_scaling.fetch("connection_pooler_implemented") == false &&
+      read_scaling.fetch("rds_proxy_implemented") == false &&
+      read_scaling.fetch("cross_region_dr_implemented") == false &&
+      read_scaling.fetch("read_replica_is_backup") == false &&
+      read_scaling.fetch("same_region_kms_inheritance") == true &&
+      read_scaling.fetch("expected_storage_encrypted") == true &&
+      read_scaling.fetch("alert_topic_arn") == value.fetch("alert_topic_arn") &&
+      read_scaling.fetch("expected_kms_key_arn").match?(%r{\Aarn:(aws|aws-us-gov):kms:#{value.fetch("aws_region")}:#{value.fetch("aws_account_id")}:key/[0-9a-f-]{36}\z}) &&
+      read_scaling.fetch("db_subnet_group_name") == rds.fetch("db_instance_identifier") &&
+      read_scaling.fetch("parameter_group_name").start_with?("#{rds.fetch("db_instance_identifier")}-") &&
+      read_scaling.fetch("vpc_security_group_ids").is_a?(Array) &&
+      read_scaling.fetch("vpc_security_group_ids").length == 1 &&
+      read_scaling.fetch("vpc_security_group_ids").fetch(0).match?(/\Asg-[0-9a-f]{17}\z/) &&
+      value.key?("rds_reader_endpoint")
+  if read_scaling.fetch("enabled")
+    reader_identifier = "#{rds.fetch("db_instance_identifier")}-reader"
+    abort "启用的 RDS 只读副本 identity、继承回读或 endpoint 合同不合法" unless
+      read_scaling.fetch("topology") == "single-writer-one-same-region-read-replica" &&
+        read_scaling.fetch("reader_db_instance_identifier") == reader_identifier &&
+        read_scaling.fetch("reader_endpoint") == value.fetch("rds_reader_endpoint") &&
+        read_scaling.fetch("reader_endpoint").match?(%r{\A[a-z0-9.-]+\.rds\.amazonaws\.com\z}) &&
+        [true, false].include?(read_scaling.fetch("reader_multi_az")) &&
+        (!value.fetch("environment").start_with?("prod-") || read_scaling.fetch("reader_multi_az") == true) &&
+        read_scaling.fetch("engine_version").match?(/\A[0-9]+\.[0-9]+\z/) &&
+        read_scaling.fetch("instance_class").match?(/\Adb\.[a-z0-9.-]+\z/) &&
+        read_scaling.fetch("storage_type") == "gp3" &&
+        read_scaling.fetch("minimum_allocated_storage_gib").is_a?(Integer) &&
+        read_scaling.fetch("minimum_allocated_storage_gib") >= 20 &&
+        read_scaling.fetch("max_allocated_storage_gib").is_a?(Integer) &&
+        read_scaling.fetch("max_allocated_storage_gib") >=
+          read_scaling.fetch("minimum_allocated_storage_gib") * 2 &&
+        read_scaling.fetch("backup_retention_days").is_a?(Integer) &&
+        read_scaling.fetch("backup_retention_days").between?(7, 35) &&
+        read_scaling.fetch("deletion_protection") == true &&
+        read_scaling.fetch("live_inheritance_check_required") == true &&
+        read_scaling.fetch("log_group_names").sort == %W[
+          /aws/rds/instance/#{reader_identifier}/postgresql
+          /aws/rds/instance/#{reader_identifier}/upgrade
+        ].sort
+    expected_reader_units = {
+      "CPUUtilization" => "Percent", "DatabaseConnections" => "Count", "DiskQueueDepth" => "Count",
+      "FreeableMemory" => "Bytes", "FreeStorageSpace" => "Bytes", "ReadLatency" => "Seconds",
+      "ReplicaLag" => "Seconds", "SwapUsage" => "Bytes",
+    }
+    expected_reader_statistics = {
+      "CPUUtilization" => "Average", "DatabaseConnections" => "Maximum", "DiskQueueDepth" => "Maximum",
+      "FreeableMemory" => "Minimum", "FreeStorageSpace" => "Minimum", "ReadLatency" => "Average",
+      "ReplicaLag" => "Maximum", "SwapUsage" => "Maximum",
+    }
+    reader_metrics = read_scaling.fetch("metrics")
+    abort "RDS 只读副本 ReplicaLag 或容量指标集合不精确" unless
+      reader_metrics.keys.sort == expected_reader_units.keys.sort &&
+        read_scaling.fetch("alarm_names").sort == reader_metrics.values.map { |metric| metric.fetch("alarm_name") }.sort &&
+        read_scaling.fetch("alarm_names").uniq.length == expected_reader_units.length
+    reader_metrics.each do |metric_name, metric|
+      abort "#{metric_name} RDS 只读副本告警合同键集合不精确" unless metric.keys.sort == %w[
+        alarm_name comparison_operator datapoints_to_alarm evaluation_periods period_seconds
+        statistic threshold treat_missing_data unit
+      ]
+      low_capacity = %w[FreeableMemory FreeStorageSpace].include?(metric_name)
+      abort "#{metric_name} RDS 只读副本告警阈值、窗口或语义不合法" unless
+        metric.fetch("alarm_name").start_with?("#{reader_identifier}-") &&
+          metric.fetch("statistic") == expected_reader_statistics.fetch(metric_name) &&
+          metric.fetch("unit") == expected_reader_units.fetch(metric_name) &&
+          metric.fetch("threshold").is_a?(Numeric) && metric.fetch("threshold") > 0 &&
+          metric.fetch("comparison_operator") ==
+            (low_capacity ? "LessThanOrEqualToThreshold" : "GreaterThanOrEqualToThreshold") &&
+          metric.fetch("period_seconds") == 60 && metric.fetch("evaluation_periods") == 3 &&
+          metric.fetch("datapoints_to_alarm") == 2 &&
+          metric.fetch("treat_missing_data") == (metric_name == "ReplicaLag" ? "breaching" : "notBreaching")
+    end
+  else
+    abort "关闭的 RDS 读扩展合同仍夹带 endpoint、资源或告警" unless
+      read_scaling.fetch("topology") == "single-writer" &&
+        read_scaling.fetch("reader_db_instance_identifier").nil? &&
+        read_scaling.fetch("reader_endpoint").nil? && value.fetch("rds_reader_endpoint").nil? &&
+        read_scaling.fetch("engine_version").nil? && read_scaling.fetch("instance_class").nil? &&
+        read_scaling.fetch("storage_type").nil? && read_scaling.fetch("minimum_allocated_storage_gib").nil? &&
+        read_scaling.fetch("max_allocated_storage_gib").nil? &&
+        read_scaling.fetch("reader_multi_az").nil? && read_scaling.fetch("backup_retention_days").nil? &&
+        read_scaling.fetch("deletion_protection").nil? &&
+        read_scaling.fetch("live_inheritance_check_required") == false &&
+        read_scaling.fetch("log_group_names") == [] && read_scaling.fetch("alarm_names") == [] &&
+        read_scaling.fetch("metrics") == {}
+  end
 
   %w[
     alb_egress_target_ports
@@ -303,6 +528,8 @@ ruby -rjson -ruri -e '
     public_subnet_ids
     public_subnet_cidrs
     regional_acm_certificate_arn
+    rds_alarm_contract
+    rds_read_scaling_contract
     secret_sync_role_arn
     valkey_endpoint_url
     valkey_active_slot
@@ -935,6 +1162,7 @@ cloudfront_distribution_id=$(json_value cloudfront_distribution_id)
       value.fetch("Id") == delivery.fetch("cloudfront_distribution_id") &&
         value.fetch("DomainName") == delivery.fetch("cloudfront_distribution_domain_name") &&
         config.fetch("Enabled") == true &&
+        config.fetch("HttpVersion") == delivery.fetch("cloudfront_edge_security_contract").fetch("viewer_http_version") &&
         config.fetch("WebACLId") == delivery.fetch("cloudfront_waf_web_acl_arn")
     aliases = config.fetch("Aliases")
     abort "CloudFront alias 或默认根漂移" unless
@@ -1109,6 +1337,215 @@ alarm_blocked=$(printf '%s\n' "$alarm_names" | sed -n '2p')
           dimensions == {"Region" => delivery.fetch("aws_region"), "Rule" => "ALL", "WebACL" => contract.fetch("web_acl_metric_name")}
     end
   ' "$delivery_json" || fail '区域 API WAF CloudWatch 告警不满足'
+
+read -r deadlock_log_group deadlock_filter_prefix <<EOF
+$(ruby -rjson -e '
+  contract = JSON.parse(File.binread(ARGV.fetch(0))).fetch("rds_alarm_contract")
+  filter = contract.fetch("deadlock_metric_filter")
+  puts [filter.fetch("log_group_name"), filter.fetch("filter_name")].join(" ")
+' "$delivery_json")
+EOF
+"$aws_binary" logs describe-metric-filters \
+  --log-group-name "$deadlock_log_group" \
+  --filter-name-prefix "$deadlock_filter_prefix" \
+  --region "$aws_region" \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read)
+    contract = JSON.parse(File.binread(ARGV.fetch(0))).fetch("rds_alarm_contract")
+    expected = contract.fetch("deadlock_metric_filter")
+    filters = value.fetch("metricFilters")
+    abort "PostgreSQL deadlock metric filter 集合缺失、重复或夹带未批准过滤器" unless filters.length == 1
+    filter = filters.fetch(0)
+    transformations = filter.fetch("metricTransformations")
+    abort "PostgreSQL deadlock metric filter 变换数量不精确" unless transformations.length == 1
+    transformation = transformations.fetch(0)
+    abort "PostgreSQL deadlock metric filter 日志组或 pattern 漂移" unless
+      filter.fetch("filterName") == expected.fetch("filter_name") &&
+        filter.fetch("logGroupName") == expected.fetch("log_group_name") &&
+        filter.fetch("filterPattern") == expected.fetch("filter_pattern")
+    abort "PostgreSQL deadlock metric filter namespace、指标、默认值或单位漂移" unless
+      transformation.fetch("metricNamespace") == expected.fetch("metric_namespace") &&
+        transformation.fetch("metricName") == expected.fetch("metric_name") &&
+        transformation.fetch("metricValue") == expected.fetch("metric_value") &&
+        transformation.fetch("defaultValue") == expected.fetch("default_value") &&
+        transformation.fetch("unit") == expected.fetch("unit") &&
+        transformation.fetch("dimensions", {}) == {}
+  ' "$delivery_json" || fail 'PostgreSQL deadlock CloudWatch Logs metric filter 实际状态不满足'
+
+rds_alarm_prefix=$(ruby -rjson -e '
+  contract = JSON.parse(File.binread(ARGV.fetch(0))).fetch("rds_alarm_contract")
+  STDOUT.write("#{contract.fetch("db_instance_identifier")}-")
+' "$delivery_json") || fail '无法读取 RDS 告警名称前缀'
+"$aws_binary" cloudwatch describe-alarms \
+  --alarm-name-prefix "$rds_alarm_prefix" \
+  --region "$aws_region" \
+  --output json | ruby -rjson -e '
+    value = JSON.parse(STDIN.read)
+    delivery = JSON.parse(File.binread(ARGV.fetch(0)))
+    contract = delivery.fetch("rds_alarm_contract")
+    expected_by_name = contract.fetch("metrics").to_h do |metric_name, metric|
+      [metric.fetch("alarm_name"), metric.merge("metric_name" => metric_name)]
+    end
+    returned_alarm_items = value.fetch("MetricAlarms")
+    returned_alarms = returned_alarm_items.to_h { |alarm| [alarm.fetch("AlarmName"), alarm] }
+    read_scaling = delivery.fetch("rds_read_scaling_contract")
+    allowed_names = contract.fetch("alarm_names") +
+      (read_scaling.fetch("enabled") ? read_scaling.fetch("alarm_names") : [])
+    alarms = returned_alarms.select { |name, _alarm| contract.fetch("alarm_names").include?(name) }
+    abort "RDS writer 告警集合缺失、重复或前缀下夹带未批准告警" unless
+      returned_alarm_items.length == returned_alarms.length &&
+        (returned_alarms.keys - allowed_names).empty? &&
+        alarms.keys.sort == contract.fetch("alarm_names").sort && alarms.length == expected_by_name.length
+    alarms.each do |name, alarm|
+      expected = expected_by_name.fetch(name)
+      abort "#{name} RDS 告警动作、阈值或窗口漂移" unless
+        alarm.fetch("ActionsEnabled") == true && alarm.fetch("AlarmActions") == [contract.fetch("alert_topic_arn")] &&
+          alarm.fetch("OKActions") == [contract.fetch("alert_topic_arn")] &&
+          alarm.fetch("InsufficientDataActions", []) == [] &&
+          alarm.fetch("ComparisonOperator") == expected.fetch("comparison_operator") &&
+          alarm.fetch("EvaluationPeriods") == expected.fetch("evaluation_periods") &&
+          alarm.fetch("DatapointsToAlarm") == expected.fetch("datapoints_to_alarm") &&
+          alarm.fetch("TreatMissingData") == expected.fetch("treat_missing_data") &&
+          alarm.fetch("Threshold") == expected.fetch("threshold")
+      if expected.key?("metric_data_queries")
+        abort "#{name} 把虚拟 Total 指标错误声明为 AWS/RDS 原生指标" unless
+          %w[Namespace MetricName Statistic Unit Dimensions Period].none? { |key| alarm.key?(key) }
+        actual_queries = alarm.fetch("Metrics")
+        expected_queries = expected.fetch("metric_data_queries")
+        abort "#{name} MetricDataQueries 数量或 ID 漂移" unless
+          actual_queries.length == expected_queries.length &&
+            actual_queries.map { |query| query.fetch("Id") }.sort == expected_queries.map { |query| query.fetch("id") }.sort
+        actual_by_id = actual_queries.to_h { |query| [query.fetch("Id"), query] }
+        expected_queries.each do |query|
+          actual = actual_by_id.fetch(query.fetch("id"))
+          if query.key?("expression")
+            abort "#{name}/#{query.fetch("id")} expression、label 或 ReturnData 漂移" unless
+              actual.fetch("Expression") == query.fetch("expression") && actual.fetch("Label") == query.fetch("label") &&
+                actual.fetch("ReturnData") == query.fetch("return_data") && !actual.key?("MetricStat")
+            next
+          end
+          metric_stat = actual.fetch("MetricStat")
+          source_metric = metric_stat.fetch("Metric")
+          dimensions = source_metric.fetch("Dimensions").to_h do |dimension|
+            [dimension.fetch("Name"), dimension.fetch("Value")]
+          end
+          abort "#{name}/#{query.fetch("id")} source metric、单位、窗口、维度或 ReturnData 漂移" unless
+            !actual.key?("Expression") && actual.fetch("ReturnData") == query.fetch("return_data") &&
+              source_metric.fetch("Namespace") == query.fetch("namespace") &&
+              source_metric.fetch("MetricName") == query.fetch("metric_name") &&
+              dimensions == {query.fetch("dimension_name") => query.fetch("dimension_value")} &&
+              metric_stat.fetch("Period") == query.fetch("period_seconds") &&
+              metric_stat.fetch("Stat") == query.fetch("statistic") && metric_stat.fetch("Unit") == query.fetch("unit")
+        end
+        next
+      end
+      deadlock = expected.fetch("metric_name") == "Deadlocks"
+      deadlock_filter = contract.fetch("deadlock_metric_filter")
+      expected_namespace = deadlock ? deadlock_filter.fetch("metric_namespace") : contract.fetch("namespace")
+      expected_metric_name = deadlock ? deadlock_filter.fetch("metric_name") : expected.fetch("metric_name")
+      expected_dimensions = deadlock ? {} : {"DBInstanceIdentifier" => contract.fetch("db_instance_identifier")}
+      dimensions = alarm.fetch("Dimensions").to_h { |dimension| [dimension.fetch("Name"), dimension.fetch("Value")] }
+      abort "#{name} RDS 单指标告警指标源、单位或维度漂移" unless
+        alarm.fetch("Namespace") == expected_namespace &&
+          alarm.fetch("MetricName") == expected_metric_name && alarm.fetch("Statistic") == expected.fetch("statistic") &&
+          alarm.fetch("Unit") == expected.fetch("unit") &&
+          alarm.fetch("Period") == expected.fetch("period_seconds") &&
+          dimensions == expected_dimensions
+    end
+  ' "$delivery_json" || fail '单实例 RDS CloudWatch 告警实际状态不满足'
+
+rds_reader_enabled=$(ruby -rjson -e '
+  contract = JSON.parse(File.binread(ARGV.fetch(0))).fetch("rds_read_scaling_contract")
+  STDOUT.write(contract.fetch("enabled") ? "true" : "false")
+' "$delivery_json") || fail '无法读取 RDS 读扩展开关'
+if test "$rds_reader_enabled" = true; then
+  rds_reader_identifier=$(ruby -rjson -e '
+    contract = JSON.parse(File.binread(ARGV.fetch(0))).fetch("rds_read_scaling_contract")
+    STDOUT.write(contract.fetch("reader_db_instance_identifier"))
+  ' "$delivery_json") || fail '无法读取 RDS 只读副本 identity'
+  "$aws_binary" rds describe-db-instances \
+    --db-instance-identifier "$rds_reader_identifier" \
+    --region "$aws_region" \
+    --output json | ruby -rjson -e '
+      value = JSON.parse(STDIN.read)
+      delivery = JSON.parse(File.binread(ARGV.fetch(0)))
+      contract = delivery.fetch("rds_read_scaling_contract")
+      instances = value.fetch("DBInstances")
+      abort "RDS 只读副本缺失、重复或查询夹带其他实例" unless instances.length == 1
+      instance = instances.fetch(0)
+      endpoint = instance.fetch("Endpoint")
+      parameter_groups = instance.fetch("DBParameterGroups")
+      security_groups = instance.fetch("VpcSecurityGroups")
+      abort "RDS 只读副本 identity、源实例、状态或 endpoint 漂移" unless
+        instance.fetch("DBInstanceIdentifier") == contract.fetch("reader_db_instance_identifier") &&
+          instance.fetch("DBInstanceStatus") == "available" &&
+          instance.fetch("ReadReplicaSourceDBInstanceIdentifier") == contract.fetch("source_db_instance_identifier") &&
+          endpoint.fetch("Address") == contract.fetch("reader_endpoint") &&
+          endpoint.fetch("Port") == contract.fetch("port") &&
+          instance.fetch("DBInstanceArn").match?(%r{\Aarn:(aws|aws-us-gov):rds:#{delivery.fetch("aws_region")}:#{delivery.fetch("aws_account_id")}:db:#{Regexp.escape(contract.fetch("reader_db_instance_identifier"))}\z})
+      abort "RDS 只读副本网络、参数组或公开访问边界漂移" unless
+        instance.fetch("PubliclyAccessible") == false &&
+          instance.fetch("DBSubnetGroup").fetch("DBSubnetGroupName") == contract.fetch("db_subnet_group_name") &&
+          parameter_groups.length == 1 &&
+          parameter_groups.fetch(0) == {
+            "DBParameterGroupName" => contract.fetch("parameter_group_name"),
+            "ParameterApplyStatus" => "in-sync",
+          } &&
+          security_groups.map { |group| group.fetch("VpcSecurityGroupId") }.sort ==
+            contract.fetch("vpc_security_group_ids").sort &&
+          security_groups.all? { |group| group.fetch("Status") == "active" }
+      abort "RDS 只读副本 KMS、备份、删除保护或运行参数漂移" unless
+        instance.fetch("Engine") == "postgres" &&
+          instance.fetch("EngineVersion") == contract.fetch("engine_version") &&
+          instance.fetch("DBInstanceClass") == contract.fetch("instance_class") &&
+          instance.fetch("StorageType") == contract.fetch("storage_type") &&
+          instance.fetch("AllocatedStorage") >= contract.fetch("minimum_allocated_storage_gib") &&
+          instance.fetch("MaxAllocatedStorage") == contract.fetch("max_allocated_storage_gib") &&
+          instance.fetch("StorageEncrypted") == true &&
+          instance.fetch("KmsKeyId") == contract.fetch("expected_kms_key_arn") &&
+          instance.fetch("MultiAZ") == contract.fetch("reader_multi_az") &&
+          instance.fetch("BackupRetentionPeriod") == contract.fetch("backup_retention_days") &&
+          instance.fetch("DeletionProtection") == contract.fetch("deletion_protection") &&
+          instance.fetch("IAMDatabaseAuthenticationEnabled") == true &&
+          instance.fetch("AutoMinorVersionUpgrade") == false &&
+          instance.fetch("MonitoringInterval") == 60 && instance.fetch("PerformanceInsightsEnabled") == true &&
+          instance.fetch("EnabledCloudwatchLogsExports").sort == %w[postgresql upgrade] &&
+          instance.fetch("PendingModifiedValues", {}) == {}
+    ' "$delivery_json" || fail 'RDS 同区域只读副本实际继承与保护边界不满足'
+
+  "$aws_binary" cloudwatch describe-alarms \
+    --alarm-name-prefix "$rds_reader_identifier-" \
+    --region "$aws_region" \
+    --output json | ruby -rjson -e '
+      value = JSON.parse(STDIN.read)
+      contract = JSON.parse(File.binread(ARGV.fetch(0))).fetch("rds_read_scaling_contract")
+      expected_by_name = contract.fetch("metrics").to_h do |metric_name, metric|
+        [metric.fetch("alarm_name"), metric.merge("metric_name" => metric_name)]
+      end
+      alarm_items = value.fetch("MetricAlarms")
+      alarms = alarm_items.to_h { |alarm| [alarm.fetch("AlarmName"), alarm] }
+      abort "RDS 只读副本告警缺失、重复或夹带未批准告警" unless
+        alarm_items.length == alarms.length &&
+          alarms.keys.sort == contract.fetch("alarm_names").sort && alarms.length == expected_by_name.length
+      alarms.each do |name, alarm|
+        expected = expected_by_name.fetch(name)
+        dimensions = alarm.fetch("Dimensions").to_h { |dimension| [dimension.fetch("Name"), dimension.fetch("Value")] }
+        abort "#{name} RDS 只读副本告警动作、指标、阈值或窗口漂移" unless
+          alarm.fetch("ActionsEnabled") == true && alarm.fetch("AlarmActions") == [contract.fetch("alert_topic_arn")] &&
+            alarm.fetch("OKActions") == [contract.fetch("alert_topic_arn")] &&
+            alarm.fetch("InsufficientDataActions", []) == [] && alarm.fetch("Namespace") == "AWS/RDS" &&
+            alarm.fetch("MetricName") == expected.fetch("metric_name") &&
+            alarm.fetch("Statistic") == expected.fetch("statistic") && alarm.fetch("Unit") == expected.fetch("unit") &&
+            alarm.fetch("ComparisonOperator") == expected.fetch("comparison_operator") &&
+            alarm.fetch("Period") == expected.fetch("period_seconds") &&
+            alarm.fetch("EvaluationPeriods") == expected.fetch("evaluation_periods") &&
+            alarm.fetch("DatapointsToAlarm") == expected.fetch("datapoints_to_alarm") &&
+            alarm.fetch("Threshold") == expected.fetch("threshold") &&
+            alarm.fetch("TreatMissingData") == expected.fetch("treat_missing_data") &&
+            dimensions == {"DBInstanceIdentifier" => contract.fetch("reader_db_instance_identifier")}
+      end
+    ' "$delivery_json" || fail 'RDS 只读副本 ReplicaLag/容量告警实际状态不满足'
+fi
 
 autoscaler_image_tag=$(json_value application_handoff cluster_autoscaler_image_tag)
 metrics_server_addon_version=$(json_value application_handoff metrics_server_addon_version)

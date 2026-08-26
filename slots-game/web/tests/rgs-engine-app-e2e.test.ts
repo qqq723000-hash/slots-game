@@ -29,6 +29,10 @@ import type { LaunchPhase } from "../src/startup/LaunchStateMachine";
 
 const TEST_ORIGIN = "https://game.e2e";
 const SERVER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../server");
+// 全新执行器会在这里完成 Go 夹具的冷编译；进程级超时必须先于 Vitest hook，
+// 避免同步子进程失去控制，同时给受限 CI 留出有界余量。
+const FIXTURE_BUILD_PROCESS_TIMEOUT_MS = 180_000;
+const FIXTURE_BUILD_HOOK_TIMEOUT_MS = 190_000;
 // 在共享 CI 工作进程上，编译后的 Go 夹具可能排在并发 `go test -race` 之后执行。
 // 启动时间窗口要足以容纳这种资源竞争，但仍需保持有限；下方进程退出和生成错误
 // 仍会立即失败，而不会耗尽全部允许时间。
@@ -141,15 +145,23 @@ beforeAll(() => {
     {
       cwd: SERVER_ROOT,
       encoding: "utf8",
-// Vitest 会并行执行文件。应避免跨运行时链接器在小型 CI 执行器上挤占资源，
-// 导致现有的短超时资源工具测试无法运行。
+      // Vitest 会并行执行文件。应避免跨运行时链接器在小型 CI 执行器上挤占资源，
+      // 导致现有的短超时资源工具测试无法运行。
       env: { ...process.env, GOMAXPROCS: "1" },
+      timeout: FIXTURE_BUILD_PROCESS_TIMEOUT_MS,
     },
   );
+  if (built.error) {
+    const reason = built.error.code === "ETIMEDOUT" ? "timed out" : "could not start";
+    throw new Error(`could not build the loopback RGS fixture: ${reason}`);
+  }
+  if (built.signal) {
+    throw new Error(`could not build the loopback RGS fixture: terminated by ${built.signal}`);
+  }
   if (built.status !== 0) {
     throw new Error(`could not build the loopback RGS fixture:\n${built.stdout}${built.stderr}`);
   }
-}, 60_000);
+}, FIXTURE_BUILD_HOOK_TIMEOUT_MS);
 
 afterEach(async () => {
   activeController?.destroy();
@@ -168,7 +180,9 @@ afterAll(() => {
 });
 
 describe.sequential("signed engine -> durable RGS -> guarded AppController rare-feature E2E", () => {
-  it("keeps the fixture bootstrap allowance bounded for contended CI workers", () => {
+  it("keeps fixture build and bootstrap allowances bounded for contended CI workers", () => {
+    expect(FIXTURE_BUILD_PROCESS_TIMEOUT_MS).toBe(180_000);
+    expect(FIXTURE_BUILD_HOOK_TIMEOUT_MS).toBe(190_000);
     expect(FIXTURE_BOOTSTRAP_TIMEOUT_MS).toBe(15_000);
   });
 

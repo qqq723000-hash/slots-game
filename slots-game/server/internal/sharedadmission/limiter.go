@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -49,6 +50,12 @@ const (
 	// 避免客户端发送 ACL 未授权的 CLUSTER SLOTS 并制造误告警。
 	forceSingleValkeyClient = true
 	maximumBucketTTL        = 24 * time.Hour
+	// 启动 canary 使用两个 token，连续两次成功都会走 SET；极高回填率把每次
+	// 写入的 TTL 固定在约一秒。第二次调用因此必须读取同一个尚未过期的状态并
+	// 执行 PTTL，而随机 key 不含运营商、玩家、会话或钱包身份。
+	basicCanaryCapacityMilli      int64 = 2_000
+	basicCanaryRateMilliPerSecond int64 = 2_000_000
+	basicCanaryNonceBytes               = 16
 )
 
 const tokenBucketScriptBody = `
@@ -116,8 +123,8 @@ type Config struct {
 }
 
 type scriptExecutor interface {
+	EvaluateDirect(context.Context, string, []string) ([]int64, error)
 	Evaluate(context.Context, string, []string) ([]int64, error)
-	Ping(context.Context) error
 	Close()
 }
 
@@ -140,12 +147,32 @@ func (executor *valkeyExecutor) Evaluate(ctx context.Context, key string, args [
 		})
 	}
 	eval := func() scriptCallResult {
-		return executor.call(ctx, func() valkey.ValkeyResult {
-			return executor.client.Do(ctx, executor.client.B().Eval().Script(tokenBucketScriptBody).
-				Numkeys(1).Key(key).Arg(args...).Build())
-		})
+		return executor.evaluateTokenBucketBody(ctx, key, args)
 	}
 	return executor.evaluateCached(ctx, evalsha, eval)
+}
+
+// EvaluateDirect 只用于监听器启动前的匿名 canary，强制携带完整 Lua body，确保
+// 热脚本缓存不能掩盖缺失的 EVAL ACL。普通 Admit 继续使用 Evaluate 的
+// EVALSHA/NOSCRIPT 单飞恢复路径，不改变热路径语义。
+func (executor *valkeyExecutor) EvaluateDirect(
+	ctx context.Context,
+	key string,
+	args []string,
+) ([]int64, error) {
+	result := executor.evaluateTokenBucketBody(ctx, key, args)
+	return result.values, result.err
+}
+
+func (executor *valkeyExecutor) evaluateTokenBucketBody(
+	ctx context.Context,
+	key string,
+	args []string,
+) scriptCallResult {
+	return executor.call(ctx, func() valkey.ValkeyResult {
+		return executor.client.Do(ctx, executor.client.B().Eval().Script(tokenBucketScriptBody).
+			Numkeys(1).Key(key).Arg(args...).Build())
+	})
 }
 
 func (executor *valkeyExecutor) EvaluateEconomic(
@@ -272,14 +299,6 @@ func (executor *valkeyExecutor) evaluateEconomicCached(
 	}
 }
 
-func (executor *valkeyExecutor) Ping(ctx context.Context) error {
-	if err := executor.acquireTransport(ctx); err != nil {
-		return err
-	}
-	defer executor.releaseTransport()
-	return executor.client.Do(ctx, executor.client.B().Ping().Build()).Error()
-}
-
 func (executor *valkeyExecutor) Close() { executor.client.Close() }
 
 type Limiter struct {
@@ -384,7 +403,7 @@ func newLimiter(executor scriptExecutor, config Config, hmacKey []byte, metrics 
 	if fillMilliseconds+1_000 > float64(maximumBucketTTL/time.Millisecond) {
 		return nil, errors.New("shared admission full-refill TTL exceeds 24 hours")
 	}
-	return &Limiter{
+	limiter := &Limiter{
 		executor: executor,
 		hmacKey:  append([]byte(nil), hmacKey...),
 		timeout:  config.Timeout,
@@ -394,14 +413,18 @@ func newLimiter(executor scriptExecutor, config Config, hmacKey []byte, metrics 
 		},
 		metrics: metrics,
 		now:     time.Now,
-	}, nil
+	}
+	if metrics != nil {
+		metrics.EnableEconomicAdmissionHealthMetrics()
+	}
+	return limiter, nil
 }
 
 func (limiter *Limiter) Admit(parent context.Context, identity string, _ time.Time) rgsapi.AdmissionResult {
 	if limiter == nil || limiter.executor == nil || len(limiter.hmacKey) != sha256.Size || identity == "" {
 		return limiter.backendUnavailable()
 	}
-	now := limiter.now()
+	now := limiter.observationTime()
 	unavailableUntil := limiter.unavailableUntil.Load()
 	if unavailableUntil > now.UnixNano() {
 		return limiter.backendUnavailable()
@@ -423,12 +446,16 @@ func (limiter *Limiter) Admit(parent context.Context, identity string, _ time.Ti
 	if err != nil || len(result) != 2 || (result[0] != 0 && result[0] != 1) || result[1] < 0 {
 		// 调用方主动取消不代表共享后端故障；本次仍 fail-closed，但不能让单个取消请求
 		// 打开全局熔断并隔离其他运营商/会话。内部超时和真实协议错误仍开启熔断。
-		if parent.Err() == nil {
-			limiter.unavailableUntil.Store(now.Add(time.Second).UnixNano())
+		if parent.Err() != nil {
+			return limiter.requestUnavailable()
 		}
+		limiter.unavailableUntil.Store(now.Add(time.Second).UnixNano())
 		return limiter.backendUnavailable()
 	}
 	limiter.unavailableUntil.Store(0)
+	if limiter.metrics != nil {
+		limiter.metrics.ObserveSharedAdmissionHealth(true, now)
+	}
 	if result[0] == 0 {
 		if limiter.metrics != nil {
 			limiter.metrics.SharedAdmissionLimited.Add(1)
@@ -447,8 +474,23 @@ func (limiter *Limiter) Admit(parent context.Context, identity string, _ time.Ti
 func (limiter *Limiter) backendUnavailable() rgsapi.AdmissionResult {
 	if limiter != nil && limiter.metrics != nil {
 		limiter.metrics.SharedAdmissionErrors.Add(1)
+		limiter.metrics.ObserveSharedAdmissionHealth(false, time.Time{})
 	}
 	return rgsapi.AdmissionResult{Decision: rgsapi.AdmissionBackendUnavailable, RetryAfter: time.Second}
+}
+
+func (limiter *Limiter) requestUnavailable() rgsapi.AdmissionResult {
+	if limiter != nil && limiter.metrics != nil {
+		limiter.metrics.SharedAdmissionErrors.Add(1)
+	}
+	return rgsapi.AdmissionResult{Decision: rgsapi.AdmissionBackendUnavailable, RetryAfter: time.Second}
+}
+
+func (limiter *Limiter) observationTime() time.Time {
+	if limiter != nil && limiter.now != nil {
+		return limiter.now()
+	}
+	return time.Now()
 }
 
 func (limiter *Limiter) Name() string { return "shared_admission" }
@@ -459,8 +501,34 @@ func (limiter *Limiter) Check(parent context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(parent, limiter.timeout)
 	defer cancel()
-	if err := limiter.executor.Ping(ctx); err != nil {
-		return fmt.Errorf("shared admission ping: %w", err)
+	var nonce [basicCanaryNonceBytes]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		if limiter.metrics != nil {
+			limiter.metrics.ObserveSharedAdmissionHealth(false, time.Time{})
+		}
+		return errors.New("shared admission basic canary entropy unavailable")
+	}
+	key := keyPrefix + "startup-canary:" + hex.EncodeToString(nonce[:]) + "}"
+	arguments := []string{
+		strconv.FormatInt(basicCanaryCapacityMilli, 10),
+		strconv.FormatInt(basicCanaryRateMilliPerSecond, 10),
+	}
+	evaluations := []func(context.Context, string, []string) ([]int64, error){
+		limiter.executor.EvaluateDirect,
+		limiter.executor.Evaluate,
+	}
+	for _, evaluate := range evaluations {
+		result, err := evaluate(ctx, key, arguments)
+		if err != nil || len(result) != 2 || result[0] != 1 || result[1] != 0 {
+			if limiter.metrics != nil {
+				limiter.metrics.ObserveSharedAdmissionHealth(false, time.Time{})
+			}
+			// 不拼接 Valkey 错误：ACL、端点或传输细节不能进入上层启动错误。
+			return errors.New("shared admission basic canary failed")
+		}
+	}
+	if limiter.metrics != nil {
+		limiter.metrics.ObserveSharedAdmissionHealth(true, limiter.observationTime())
 	}
 	return nil
 }

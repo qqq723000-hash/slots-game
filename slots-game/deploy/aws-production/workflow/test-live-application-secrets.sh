@@ -467,6 +467,79 @@ do
   fi
 done
 
+for unsafe_rds_alarm_mode in \
+  rds-alarm-missing \
+  rds-alarm-action-drift \
+  rds-alarm-metric-drift \
+  rds-alarm-unit-drift \
+  rds-alarm-threshold-drift \
+  rds-alarm-missing-data-drift \
+  rds-alarm-dimension-drift \
+  rds-deadlock-window-drift \
+  rds-deadlock-statistic-drift \
+  rds-deadlock-alarm-namespace-drift \
+  rds-deadlock-alarm-metric-name-drift \
+  rds-deadlock-alarm-dimension-drift \
+  rds-deadlock-filter-missing \
+  rds-deadlock-filter-log-group-drift \
+  rds-deadlock-filter-pattern-drift \
+  rds-deadlock-filter-namespace-drift \
+  rds-deadlock-filter-metric-name-drift \
+  rds-deadlock-filter-value-drift \
+  rds-deadlock-filter-default-drift \
+  rds-deadlock-filter-unit-drift \
+  rds-deadlock-filter-dimension-drift \
+  rds-math-expression-drift \
+  rds-math-expression-return-data-drift \
+  rds-math-source-return-data-drift \
+  rds-math-source-statistic-drift \
+  rds-math-source-period-drift \
+  rds-math-source-namespace-drift \
+  rds-math-source-dimension-drift \
+  rds-math-extra-query
+do
+  if MOCK_PLATFORM_MODE=$unsafe_rds_alarm_mode KUBECTL_BIN=$mock_live_kubectl AWS_BIN=$mock_live_aws \
+    "$platform_verifier" "$delivery_file" slots-production >/dev/null 2>&1; then
+    fail "平台门禁未拒绝单实例 RDS 告警合同或实时状态漂移：$unsafe_rds_alarm_mode"
+  fi
+done
+
+for unsafe_rds_reader_mode in \
+  rds-reader-missing \
+  rds-reader-status-drift \
+  rds-reader-source-drift \
+  rds-reader-endpoint-drift \
+  rds-reader-engine-version-drift \
+  rds-reader-instance-class-drift \
+  rds-reader-storage-type-drift \
+  rds-reader-allocated-storage-drift \
+  rds-reader-max-storage-drift \
+  rds-reader-public \
+  rds-reader-multi-az-drift \
+  rds-reader-subnet-drift \
+  rds-reader-parameter-drift \
+  rds-reader-parameter-pending \
+  rds-reader-security-group-drift \
+  rds-reader-unencrypted \
+  rds-reader-kms-drift \
+  rds-reader-backup-drift \
+  rds-reader-deletion-protection-drift \
+  rds-reader-log-export-drift \
+  rds-reader-pending-modification \
+  rds-reader-alarm-missing \
+  rds-reader-alarm-action-drift \
+  rds-reader-alarm-metric-drift \
+  rds-reader-alarm-statistic-drift \
+  rds-reader-alarm-threshold-drift \
+  rds-reader-alarm-missing-data-drift \
+  rds-reader-alarm-dimension-drift
+do
+  if MOCK_PLATFORM_MODE=$unsafe_rds_reader_mode KUBECTL_BIN=$mock_live_kubectl AWS_BIN=$mock_live_aws \
+    "$platform_verifier" "$delivery_file" slots-production >/dev/null 2>&1; then
+    fail "平台门禁未拒绝 RDS 同区域只读副本或告警实时漂移：$unsafe_rds_reader_mode"
+  fi
+done
+
 if MOCK_PLATFORM_MODE=cloudfront-waf-rate-drift KUBECTL_BIN=$mock_live_kubectl AWS_BIN=$mock_live_aws \
   "$platform_verifier" "$delivery_file" slots-production >/dev/null 2>&1; then
   fail '平台门禁未拒绝 CloudFront WAF 限额漂移'
@@ -535,6 +608,7 @@ do
 done
 
 for unsafe_distribution_mode in \
+  cloudfront-http-version-drift \
   cloudfront-lambda-association \
   cloudfront-extra-cache-behavior \
   cloudfront-extra-function-association \

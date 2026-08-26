@@ -34,8 +34,10 @@ export interface RgsBinding {
 
 export interface DecodedRgsSession {
   readonly binding: RgsBinding;
+  readonly engineRulesVersion: typeof ENGINE_RULES_VERSION;
   readonly status: "ACTIVE" | "BLOCKED" | "CLOSED" | "EXPIRED";
   readonly expiresAt: string;
+  readonly idleDisconnectAt: string;
   readonly balanceMinor: MoneyMinor;
   readonly revision: string;
   readonly sequence: number;
@@ -45,7 +47,17 @@ export interface DecodedRgsSession {
 export interface DecodedRgsExchange {
   readonly requestId: string;
   readonly accessToken: string;
+  readonly serverTime: string;
   readonly session: DecodedRgsSession;
+}
+
+export interface DecodedRgsSessionStatus {
+  readonly requestId: string;
+  readonly operatorId: string;
+  readonly sessionId: string;
+  readonly status: "ACTIVE" | "EXPIRED";
+  readonly idleDisconnectAt: string;
+  readonly serverTime: string;
 }
 
 export type RgsRoundKind = "BASE" | "FREE_SPIN" | "BONUS";
@@ -69,6 +81,8 @@ export interface DecodedRgsSpin {
   readonly startRevision: string;
   readonly endRevision: string;
   readonly resultHash: string;
+  /** 本次权威轮次提交后更新的服务端空闲断开绝对时间。 */
+  readonly idleDisconnectAt: string;
 }
 
 /** 仅用于定位旋转响应解码边界，不得携带响应值、标识或异常内容。 */
@@ -332,8 +346,17 @@ export function decodeRgsExchange(
   const decodedEnvelope = envelope(value, "response");
   requireMatchingRequestId(decodedEnvelope.requestId, expectedRequestId);
   const data = record(decodedEnvelope.data, "response.data");
-  exactKeys(data, ["accessToken", "session"], ["accessToken", "session"], "response.data");
+  exactKeys(
+    data,
+    ["accessToken", "serverTime", "session"],
+    ["accessToken", "serverTime", "session"],
+    "response.data",
+  );
   const accessToken = text(data.accessToken, "response.data.accessToken", 80, 8_192);
+  const serverTime = text(data.serverTime, "response.data.serverTime", 20, 64);
+  if (!Number.isFinite(Date.parse(serverTime))) {
+    throw new RgsProtocolError("response.data.serverTime must be an RFC3339 timestamp");
+  }
   const rawSession = record(data.session, "response.data.session");
   const sessionKeys = [
     "operatorId",
@@ -341,11 +364,13 @@ export function decodeRgsExchange(
     "gameId",
     "definitionVersion",
     "definitionHash",
+    "engineRulesVersion",
     "currency",
     "currencyExponent",
     "jurisdiction",
     "status",
     "expiresAt",
+    "idleDisconnectAt",
     "balanceMinor",
     "revision",
     "sequence",
@@ -353,6 +378,17 @@ export function decodeRgsExchange(
   ] as const;
   exactKeys(rawSession, sessionKeys, sessionKeys, "response.data.session");
   const decodedBinding = binding(rawSession, "response.data.session");
+  const engineRulesVersion = text(
+    rawSession.engineRulesVersion,
+    "response.data.session.engineRulesVersion",
+    1,
+    128,
+  );
+  if (engineRulesVersion !== ENGINE_RULES_VERSION) {
+    throw new RgsProtocolError(
+      `response.data.session.engineRulesVersion must equal ${ENGINE_RULES_VERSION}`,
+    );
+  }
   if (decodedBinding.operatorId !== expectedOperatorId || decodedBinding.sessionId !== expectedSessionId) {
     throw new RgsProtocolError("exchange returned a foreign operator/session binding");
   }
@@ -364,13 +400,33 @@ export function decodeRgsExchange(
   if (!Number.isFinite(Date.parse(expiresAt))) {
     throw new RgsProtocolError("response.data.session.expiresAt must be an RFC3339 timestamp");
   }
+  const idleDisconnectAt = text(
+    rawSession.idleDisconnectAt,
+    "response.data.session.idleDisconnectAt",
+    20,
+    64,
+  );
+  const idleDisconnectTime = Date.parse(idleDisconnectAt);
+  if (!Number.isFinite(idleDisconnectTime)) {
+    throw new RgsProtocolError(
+      "response.data.session.idleDisconnectAt must be an RFC3339 timestamp",
+    );
+  }
+  if (idleDisconnectTime > Date.parse(expiresAt)) {
+    throw new RgsProtocolError(
+      "response.data.session.idleDisconnectAt must not exceed the session expiry",
+    );
+  }
   return Object.freeze({
     requestId: decodedEnvelope.requestId,
     accessToken,
+    serverTime,
     session: Object.freeze({
       binding: decodedBinding,
+      engineRulesVersion: ENGINE_RULES_VERSION,
       status,
       expiresAt,
+      idleDisconnectAt,
       balanceMinor: decimal(rawSession.balanceMinor, "response.data.session.balanceMinor"),
       revision: revision(rawSession.revision, "response.data.session.revision"),
       sequence: sequence(rawSession.sequence, "response.data.session.sequence"),
@@ -380,16 +436,16 @@ export function decodeRgsExchange(
 }
 
 export function rgsSessionOpened(
-  exchange: DecodedRgsExchange,
+  exchange: Pick<DecodedRgsExchange, "requestId" | "session">,
   betOptionsMinor: readonly MoneyMinor[],
   defaultBetMinor: MoneyMinor,
 ): SessionOpened {
   const decoded = decodeServerMessage({
     type: "session.opened",
     protocolVersion: 1,
-    // RGS 另行绑定不可变数学定义；共享客户端状态机仍必须证明当前浏览器构建与其他
-    // gateway 使用同一套表现/校验规则版本。
-    engineRulesVersion: ENGINE_RULES_VERSION,
+    // 必须使用 RGS 返回的服务端权威版本；共享解码器会严格拒绝
+    // 与当前浏览器构建 ENGINE_RULES_VERSION 不匹配的会话。
+    engineRulesVersion: exchange.session.engineRulesVersion,
     requestId: exchange.requestId,
     sessionId: exchange.session.binding.sessionId,
     currency: exchange.session.binding.currency,
@@ -403,12 +459,68 @@ export function rgsSessionOpened(
   // 通用消息解码器只负责共享玩法协议；RGS 在其已验证的完整绑定上追加表现规则身份。
   return {
     ...decoded,
+    idleDisconnectAt: exchange.session.idleDisconnectAt,
     definitionBinding: Object.freeze({
       gameId: exchange.session.binding.gameId,
       definitionVersion: exchange.session.binding.definitionVersion,
       definitionHash: exchange.session.binding.definitionHash,
     }),
   };
+}
+
+/**
+ * 原版 FLUSH 的 HTTP 等价物：只读取会话终止状态与服务端时间，绝不携带或更新
+ * 余额、轮次、特性、revision 或 sequence。
+ */
+export function decodeRgsSessionStatus(
+  value: unknown,
+  expectedRequestId: string,
+  expectedOperatorId: string,
+  expectedSessionId: string,
+): DecodedRgsSessionStatus {
+  const decodedEnvelope = envelope(value, "response");
+  requireMatchingRequestId(decodedEnvelope.requestId, expectedRequestId);
+  const decoded = record(decodedEnvelope.data, "response.data");
+  const keys = [
+    "operatorId",
+    "sessionId",
+    "status",
+    "idleDisconnectAt",
+    "serverTime",
+  ] as const;
+  exactKeys(decoded, keys, keys, "response.data");
+  const operatorId = identifier(decoded.operatorId, "response.data.operatorId");
+  const sessionId = identifier(decoded.sessionId, "response.data.sessionId");
+  if (operatorId !== expectedOperatorId || sessionId !== expectedSessionId) {
+    throw new RgsProtocolError("session status returned a foreign operator/session binding");
+  }
+  const status = text(decoded.status, "response.data.status") as DecodedRgsSessionStatus["status"];
+  if (status !== "ACTIVE" && status !== "EXPIRED") {
+    throw new RgsProtocolError("response.data.status is unsupported");
+  }
+  const idleDisconnectAt = text(
+    decoded.idleDisconnectAt,
+    "response.data.idleDisconnectAt",
+    20,
+    64,
+  );
+  const serverTime = text(decoded.serverTime, "response.data.serverTime", 20, 64);
+  if (!Number.isFinite(Date.parse(idleDisconnectAt))) {
+    throw new RgsProtocolError(
+      "response.data.idleDisconnectAt must be an RFC3339 timestamp",
+    );
+  }
+  if (!Number.isFinite(Date.parse(serverTime))) {
+    throw new RgsProtocolError("response.data.serverTime must be an RFC3339 timestamp");
+  }
+  return Object.freeze({
+    requestId: decodedEnvelope.requestId,
+    operatorId,
+    sessionId,
+    status,
+    idleDisconnectAt,
+    serverTime,
+  });
 }
 
 function position(value: unknown, path: string): { reel: number; row: number } {
@@ -477,29 +589,81 @@ function translatedWins(value: unknown): unknown[] {
   return value.map((rawWin, winIndex) => {
     const path = `response.data.wins[${winIndex}]`;
     const decoded = record(rawWin, path);
-    const required = ["id", "symbol", "ways", "amountMinor", "cells", "pathAwards"] as const;
+    const required = [
+      "id",
+      "symbol",
+      "ways",
+      "nominalAmountMinor",
+      "amountMinor",
+      "cells",
+      "pathAwards",
+    ] as const;
     exactKeys(decoded, [...required, "multiplier"], required, path);
     if (!Array.isArray(decoded.pathAwards) || decoded.pathAwards.length < 1 || decoded.pathAwards.length > 512) {
       throw new RgsProtocolError(`${path}.pathAwards must contain 1-512 entries`);
+    }
+    const nominalAmountMinor = decimal(
+      decoded.nominalAmountMinor,
+      `${path}.nominalAmountMinor`,
+      true,
+    );
+    const amountMinor = decimal(decoded.amountMinor, `${path}.amountMinor`);
+    if (BigInt(amountMinor) > BigInt(nominalAmountMinor)) {
+      throw new RgsProtocolError(`${path}.amountMinor must not exceed ${path}.nominalAmountMinor`);
+    }
+    const pathAwards = decoded.pathAwards.map((rawAward, awardIndex) => {
+      const awardPath = `${path}.pathAwards[${awardIndex}]`;
+      const award = record(rawAward, awardPath);
+      const keys = [
+        "cells",
+        "multiplier",
+        "baseAmountMinor",
+        "nominalAmountMinor",
+        "amountMinor",
+      ] as const;
+      exactKeys(award, keys, keys, awardPath);
+      const pathNominalAmountMinor = decimal(
+        award.nominalAmountMinor,
+        `${awardPath}.nominalAmountMinor`,
+      );
+      const pathAmountMinor = decimal(award.amountMinor, `${awardPath}.amountMinor`);
+      if (BigInt(pathAmountMinor) > BigInt(pathNominalAmountMinor)) {
+        throw new RgsProtocolError(
+          `${awardPath}.amountMinor must not exceed ${awardPath}.nominalAmountMinor`,
+        );
+      }
+      return {
+        cells: positions(award.cells, `${awardPath}.cells`, 3, 3),
+        multiplier: positivePresentationInteger(award.multiplier, `${awardPath}.multiplier`),
+        baseAmountMinor: decimal(award.baseAmountMinor, `${awardPath}.baseAmountMinor`),
+        nominalAmountMinor: pathNominalAmountMinor,
+        amountMinor: pathAmountMinor,
+      };
+    });
+    const paidPathTotal = pathAwards.reduce(
+      (total, award) => total + BigInt(award.amountMinor),
+      0n,
+    );
+    if (paidPathTotal !== BigInt(amountMinor)) {
+      throw new RgsProtocolError(`${path}.pathAwards amounts must sum to ${path}.amountMinor`);
+    }
+    const nominalPathTotal = pathAwards.reduce(
+      (total, award) => total + BigInt(award.nominalAmountMinor),
+      0n,
+    );
+    if (nominalPathTotal !== BigInt(nominalAmountMinor)) {
+      throw new RgsProtocolError(
+        `${path}.pathAwards nominal amounts must sum to ${path}.nominalAmountMinor`,
+      );
     }
     const translated: Record<string, unknown> = {
       id: identifier(decoded.id, `${path}.id`),
       symbol: identifier(decoded.symbol, `${path}.symbol`),
       ways: integer(decoded.ways, `${path}.ways`, 1, 512),
-      amountMinor: decimal(decoded.amountMinor, `${path}.amountMinor`, true),
+      nominalAmountMinor,
+      amountMinor,
       cells: positions(decoded.cells, `${path}.cells`, 1, 24),
-      pathAwards: decoded.pathAwards.map((rawAward, awardIndex) => {
-        const awardPath = `${path}.pathAwards[${awardIndex}]`;
-        const award = record(rawAward, awardPath);
-        const keys = ["cells", "multiplier", "baseAmountMinor", "amountMinor"] as const;
-        exactKeys(award, keys, keys, awardPath);
-        return {
-          cells: positions(award.cells, `${awardPath}.cells`, 3, 3),
-          multiplier: positivePresentationInteger(award.multiplier, `${awardPath}.multiplier`),
-          baseAmountMinor: decimal(award.baseAmountMinor, `${awardPath}.baseAmountMinor`),
-          amountMinor: decimal(award.amountMinor, `${awardPath}.amountMinor`),
-        };
-      }),
+      pathAwards,
     };
     if (decoded.multiplier !== undefined) {
       translated.multiplier = positivePresentationInteger(decoded.multiplier, `${path}.multiplier`);
@@ -619,6 +783,12 @@ function translatedEvents(value: unknown): unknown[] {
         return { type, count, reel, row };
       case "free_spin.cap_reached":
         return { type, reel, row };
+      case "win_cap.reached":
+        return {
+          type,
+          multiplier: positivePresentationInteger(multiplier, `${path}.multiplier`),
+          cumulativeWinMinor,
+        };
       case "vaults.upgrade.started":
         return { type, count, step };
       case "vault.upgraded":
@@ -661,6 +831,7 @@ function decodedSpinData(
     "startRevision",
     "endRevision",
     "resultHash",
+    "idleDisconnectAt",
     "sequence",
     "betMinor",
     "chargedBetMinor",
@@ -749,6 +920,17 @@ function decodedSpinData(
   if (!DIGEST_PATTERN.test(resultHash)) {
     throw new RgsProtocolError("response.data.resultHash is invalid");
   }
+  const idleDisconnectAt = text(
+    decoded.idleDisconnectAt,
+    "response.data.idleDisconnectAt",
+    20,
+    64,
+  );
+  if (!Number.isFinite(Date.parse(idleDisconnectAt))) {
+    throw new RgsProtocolError(
+      "response.data.idleDisconnectAt must be an RFC3339 timestamp",
+    );
+  }
 
   const result = Object.freeze({
     result: translated,
@@ -766,6 +948,7 @@ function decodedSpinData(
     startRevision,
     endRevision,
     resultHash,
+    idleDisconnectAt,
   });
   onStage?.("decode-complete");
   return result;

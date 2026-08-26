@@ -20,23 +20,13 @@ const replace = (contents) => contents
   .replaceAll("__ENVIRONMENT__", "production")
   .replaceAll("__CLUSTER_ID__", "local-mac")
   .replaceAll("__ALERTMANAGER_TARGET__", "alert-proxy:8443")
+  .replaceAll("__ALERTMANAGER_SERVER_NAME__", "alert-proxy")
   .replaceAll("__RUNBOOK_BASE_URL__", "https://slots.localhost:8443/operator/runbooks");
 
 let prometheus = replace(readFileSync(
   resolve(repositoryRoot, "deploy/observability/prometheus.yml"),
   "utf8",
 ));
-prometheus = prometheus.replace(
-  "        credentials_file: /run/secrets/alertmanager_bearer_token\n",
-  [
-    "        credentials_file: /run/secrets/alertmanager_bearer_token",
-    "      tls_config:",
-    "        ca_file: /run/secrets/local-production-root-ca.pem",
-    "        server_name: alert-proxy",
-    "        min_version: TLS12",
-    "",
-  ].join("\n"),
-);
 prometheus = prometheus.replace(
   "  - job_name: vector\n",
   [
@@ -51,6 +41,7 @@ prometheus = prometheus.replace(
     "      ca_file: /run/secrets/local-production-root-ca.pem",
     "      server_name: wallet",
     "      min_version: TLS12",
+    "      insecure_skip_verify: false",
     "    static_configs:",
     "      - targets:",
     "          - wallet:8443",
@@ -154,7 +145,7 @@ const dashboard = JSON.parse(replace(readFileSync(
   "utf8",
 )));
 const readinessPanel = structuredClone(dashboard.panels.find((panel) => panel.id === 1));
-readinessPanel.id = 10;
+readinessPanel.id = 20;
 readinessPanel.title = "本机运营服务就绪状态";
 readinessPanel.description = "同时显示 TLS/Bearer 指标抓取状态与数据库、审计/日志容量就绪状态。";
 readinessPanel.gridPos = { h: 6, w: 8, x: 0, y: 21 };
@@ -176,7 +167,7 @@ readinessPanel.targets = [
 ];
 
 const trafficPanel = structuredClone(dashboard.panels.find((panel) => panel.id === 2));
-trafficPanel.id = 11;
+trafficPanel.id = 21;
 trafficPanel.title = "本机运营流量与异常";
 trafficPanel.gridPos = { h: 6, w: 16, x: 8, y: 21 };
 trafficPanel.targets = [
@@ -188,7 +179,7 @@ trafficPanel.targets = [
 ].map(([expr, legendFormat, refId]) => ({ editorMode: "code", expr, legendFormat, range: true, refId }));
 dashboard.panels.push(readinessPanel, trafficPanel);
 const storagePanel = structuredClone(dashboard.panels.find((panel) => panel.id === 2));
-storagePanel.id = 12;
+storagePanel.id = 22;
 storagePanel.title = "本机持久化容量使用率";
 storagePanel.description = "审计、脱敏日志和 Alertmanager 本地通知的分段归档容量；75% 触发预警。";
 storagePanel.gridPos = { h: 6, w: 12, x: 0, y: 27 };
@@ -209,7 +200,7 @@ storagePanel.targets = ["audit", "log", "alert"].flatMap((name, index) => [
   },
 ]);
 const backupPanel = structuredClone(dashboard.panels.find((panel) => panel.id === 1));
-backupPanel.id = 13;
+backupPanel.id = 23;
 backupPanel.title = "本机备份健康与新鲜度";
 backupPanel.description = "显示状态文件有效性、连续失败次数和距离最近成功备份的秒数。";
 backupPanel.gridPos = { h: 6, w: 12, x: 12, y: 27 };
@@ -219,6 +210,10 @@ backupPanel.targets = [
   ["time() - local_production_backup_last_success_timestamp_seconds", "backup age seconds", "C"],
 ].map(([expr, legendFormat, refId]) => ({ editorMode: "code", expr, legendFormat, range: true, refId }));
 dashboard.panels.push(storagePanel, backupPanel);
+const panelIds = dashboard.panels.map((panel) => panel.id);
+if (panelIds.some((id) => !Number.isInteger(id)) || new Set(panelIds).size !== panelIds.length) {
+  throw new Error("rendered dashboard panel IDs must be unique integers");
+}
 writeFileSync(
   resolve(outputRoot, "grafana/dashboards/rgs-overview.json"),
   `${JSON.stringify(dashboard, null, 2)}\n`,
