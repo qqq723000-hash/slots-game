@@ -51,7 +51,8 @@ Release 撤回标记和下游允许列表禁止上线。
 
 仓库级 Dependabot 每周覆盖固定 SHA 的 GitHub Actions、Go module、npm，以及六个带锁文件的
 Terraform 根；PR dependency review 拒绝新增 HIGH/CRITICAL 漏洞，CodeQL 以最小
-`security-events: write` 权限分析 Go 与 JavaScript/TypeScript。结构化 Issue 表单和 `SUPPORT.md`
+`security-events: write` 权限分析 Go 与 JavaScript/TypeScript，并在上传后解析同次 SARIF，拒绝
+`security-severity >= 7.0`、缺失结果、损坏文档和安全规则元数据漂移。结构化 Issue 表单和 `SUPPORT.md`
 只提供普通支持与私密安全入口，不承诺生产 SLA，也禁止公开上传秘密、真实业务数据、原始抓包或日志。
 
 仓库级 CI 位于 `.github/workflows/supply-chain.yml`：
@@ -105,7 +106,8 @@ Terraform 分别写入 `trivy-terraform-dev.json`、`trivy-terraform-staging.jso
 不能证明设置已经启用：
 
 - 保护 `main`，要求评审、禁止直接/强制推送，并把全部 conformance、dependency review 和 CodeQL
-  结果设为 required checks；检查名称变化时必须同步保护规则；
+  结果设为 required checks；检查名称变化时必须同步保护规则；另设无 bypass 的 CodeQL
+  High-or-higher code-scanning ruleset，作为工作流 SARIF 全树阈值之外的托管侧第二道门禁；
 - 保护 `v*` Tag，禁止创建后删除、移动或覆盖；启用不可变 Releases，撤回版本只增加显著撤回标记，
   不改写历史 Tag；
 - Actions 只允许组织批准的 Action/可复用工作流，保持完整 SHA 固定，并要求所有外部 fork 的
