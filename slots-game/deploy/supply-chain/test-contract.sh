@@ -32,7 +32,8 @@ fixture="$test_root/repository"
 
 reset_fixture() {
   rm -rf "$fixture"
-  mkdir -p "$fixture/deploy/cluster-production" "$fixture/deploy/observability" "$fixture/.github" "$fixture/web" "$fixture/docs"
+  mkdir -p "$fixture/deploy/cluster-production" "$fixture/deploy/observability" \
+    "$fixture/deploy/web" "$fixture/deploy/local-production" "$fixture/.github" "$fixture/web" "$fixture/docs"
   cp "$repository_root/Makefile" "$fixture/Makefile"
   cp "$repository_root/web/package.json" "$fixture/web/package.json"
   cp "$repository_root/docs/aws-production-deployment.md" "$fixture/docs/aws-production-deployment.md"
@@ -46,6 +47,9 @@ reset_fixture() {
   chmod 0755 "$fixture/deploy/observability/verify-release-workflow.sh"
   cp "$repository_root/deploy/observability/test-vector-bounded-flush.sh" "$fixture/deploy/observability/test-vector-bounded-flush.sh"
   chmod 0755 "$fixture/deploy/observability/test-vector-bounded-flush.sh"
+  cp "$repository_root/deploy/web/Dockerfile" "$fixture/deploy/web/Dockerfile"
+  cp "$repository_root/deploy/local-production/Dockerfile.web" "$fixture/deploy/local-production/Dockerfile.web"
+  cp "$repository_root/deploy/local-production/Dockerfile.nginx-proxy" "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
   cp -R "$workflows_root" "$fixture/.github/workflows"
 }
 
@@ -61,6 +65,25 @@ replace_once() {
       print prefix new suffix
       done = 1
       next
+    }
+    { print }
+  ' "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+replace_last_exact_line() {
+  old=$1
+  new=$2
+  file=$3
+  match_count=$(grep -F -x -c -- "$old" "$file" || true)
+  test "$match_count" -gt 0 || fail "test fixture is missing exact line '$old'"
+  awk -v old="$old" -v new="$new" -v wanted="$match_count" '
+    $0 == old {
+      seen++
+      if (seen == wanted) {
+        print new
+        next
+      }
     }
     { print }
   ' "$file" > "$file.tmp"
@@ -189,6 +212,7 @@ const configurationTargets = [
   ["cluster/chart/templates/web-deployment.yaml", "config", "helm"],
   ["cluster/chart/templates/worker-deployment.yaml", "config", "helm"],
   ["dockerfiles/cluster/Dockerfile.services", "config", "dockerfile"],
+  ["dockerfiles/local-nginx-proxy/Dockerfile.nginx-proxy", "config", "dockerfile"],
   ["dockerfiles/local-services/Dockerfile.services", "config", "dockerfile"],
   ["dockerfiles/local-web/Dockerfile.web", "config", "dockerfile"],
   ["dockerfiles/root/Dockerfile", "config", "dockerfile"],
@@ -470,6 +494,34 @@ replace_once '@sha256:678bfa565b60f747aac0f8e964fe5588a24445b8d0a480e91f6efd7002
 expect_rejected 'mutable Syft image tag'
 
 reset_fixture
+replace_once 'apk add --no-network --no-cache' 'apk add --allow-untrusted --no-network --no-cache' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx APK signature verification allowed untrusted packages'
+
+reset_fixture
+replace_once 'apk add --no-network --no-cache' 'apk add --force-overwrite --no-network --no-cache' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx APK install accepted a force bypass flag'
+
+reset_fixture
+replace_once 'apk add --no-network --no-cache' 'apk add --keys-dir /tmp/apk-keys --no-network --no-cache' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx APK install accepted a custom keys directory'
+
+reset_fixture
+replace_once '# 入口与告警代理共用这个仅修补 Alpine OpenSSL 的 nginxinc 运行镜像。固定远端' 'COPY attacker.rsa.pub /etc/apk/keys/attacker.rsa.pub' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx image accepted a custom APK signing key'
+
+reset_fixture
+replace_once 'libssl3.apk" &&' 'libssl3.apk" curl &&' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx image appended an unreviewed APK to the approved install'
+
+reset_fixture
+replace_last_exact_line 'USER 101:101' 'USER 0:0' "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
+expect_rejected 'local Nginx final effective user regressed to root'
+
+reset_fixture
+replace_once 'USER 101:101' 'USER 0:0' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'web Nginx runtime stage did not restore effective user 101:101'
+
+reset_fixture
 replace_once '--env GOPATH=/tmp/go' '--env GOPATH=/go' "$fixture/deploy/supply-chain/scan.sh"
 expect_rejected 'govulncheck inherited an unwritable image GOPATH'
 
@@ -652,6 +704,10 @@ expect_rejected 'weakened filesystem vulnerability threshold'
 reset_fixture
 replace_once 'trivy config /scan' 'trivy config /scan/dockerfiles' "$fixture/deploy/supply-chain/scan.sh"
 expect_rejected 'Helm production configuration was omitted from the IaC scan'
+
+reset_fixture
+replace_once 'cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.nginx-proxy" /scan/dockerfiles/local-nginx-proxy/Dockerfile.nginx-proxy' ': # local Nginx proxy Dockerfile omitted' "$fixture/deploy/supply-chain/scan.sh"
+expect_rejected 'local Nginx proxy Dockerfile was omitted from the IaC scan'
 
 reset_fixture
 replace_once 'terraform_pathspec=":(glob)$terraform_git_prefix/**/*.tf"' 'terraform_pathspec=":(glob)$terraform_git_prefix/modules/**/*.tf"' "$fixture/deploy/supply-chain/scan.sh"

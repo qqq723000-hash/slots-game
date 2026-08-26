@@ -887,7 +887,8 @@ func sessionKey(operatorID, sessionID string) string {
 }
 
 func validatePreparedResult(session Session, request SpinRequest, result SpinResult) error {
-	if result.OperatorID != request.OperatorID || result.SessionID != request.SessionID ||
+	if result.ResultSchemaVersion != ResultSchemaPaidFactsV1 ||
+		result.OperatorID != request.OperatorID || result.SessionID != request.SessionID ||
 		result.RoundID != request.RoundID || result.GameID != request.GameID ||
 		result.DefinitionVersion != request.DefinitionVersion || result.DefinitionHash != request.DefinitionHash ||
 		result.Currency != request.Currency || result.RoundKind != request.RoundKind ||

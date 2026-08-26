@@ -316,21 +316,22 @@ type sessionStatusResponse struct {
 }
 
 type sessionResponse struct {
-	OperatorID        string               `json:"operatorId"`
-	SessionID         string               `json:"sessionId"`
-	GameID            string               `json:"gameId"`
-	DefinitionVersion string               `json:"definitionVersion"`
-	DefinitionHash    string               `json:"definitionHash"`
-	Currency          string               `json:"currency"`
-	CurrencyExponent  int                  `json:"currencyExponent"`
-	Jurisdiction      string               `json:"jurisdiction"`
-	Status            rgs.SessionStatus    `json:"status"`
-	ExpiresAt         string               `json:"expiresAt"`
-	IdleDisconnectAt  string               `json:"idleDisconnectAt"`
-	BalanceMinor      string               `json:"balanceMinor"`
-	Revision          string               `json:"revision"`
-	Sequence          string               `json:"sequence"`
-	Feature           featureStateResponse `json:"feature"`
+	OperatorID         string               `json:"operatorId"`
+	SessionID          string               `json:"sessionId"`
+	GameID             string               `json:"gameId"`
+	DefinitionVersion  string               `json:"definitionVersion"`
+	DefinitionHash     string               `json:"definitionHash"`
+	EngineRulesVersion string               `json:"engineRulesVersion"`
+	Currency           string               `json:"currency"`
+	CurrencyExponent   int                  `json:"currencyExponent"`
+	Jurisdiction       string               `json:"jurisdiction"`
+	Status             rgs.SessionStatus    `json:"status"`
+	ExpiresAt          string               `json:"expiresAt"`
+	IdleDisconnectAt   string               `json:"idleDisconnectAt"`
+	BalanceMinor       string               `json:"balanceMinor"`
+	Revision           string               `json:"revision"`
+	Sequence           string               `json:"sequence"`
+	Feature            featureStateResponse `json:"feature"`
 }
 
 type roundStatusResponse struct {
@@ -405,20 +406,22 @@ type spinResultResponse struct {
 }
 
 type winResponse struct {
-	ID          string              `json:"id"`
-	Symbol      game.Symbol         `json:"symbol"`
-	Ways        int                 `json:"ways"`
-	AmountMinor string              `json:"amountMinor"`
-	Multiplier  string              `json:"multiplier,omitempty"`
-	Cells       []game.Position     `json:"cells"`
-	PathAwards  []pathAwardResponse `json:"pathAwards"`
+	ID                 string              `json:"id"`
+	Symbol             game.Symbol         `json:"symbol"`
+	Ways               int                 `json:"ways"`
+	NominalAmountMinor string              `json:"nominalAmountMinor"`
+	AmountMinor        string              `json:"amountMinor"`
+	Multiplier         string              `json:"multiplier,omitempty"`
+	Cells              []game.Position     `json:"cells"`
+	PathAwards         []pathAwardResponse `json:"pathAwards"`
 }
 
 type pathAwardResponse struct {
-	Cells           []game.Position `json:"cells"`
-	Multiplier      string          `json:"multiplier"`
-	BaseAmountMinor string          `json:"baseAmountMinor"`
-	AmountMinor     string          `json:"amountMinor"`
+	Cells              []game.Position `json:"cells"`
+	Multiplier         string          `json:"multiplier"`
+	BaseAmountMinor    string          `json:"baseAmountMinor"`
+	NominalAmountMinor string          `json:"nominalAmountMinor"`
+	AmountMinor        string          `json:"amountMinor"`
 }
 
 type eventResponse struct {

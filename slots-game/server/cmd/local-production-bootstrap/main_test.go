@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,7 +61,10 @@ func TestGeneratedBundlePassesProductionLoadersAndUsesRestrictedPermissions(t *t
 	if err != nil {
 		t.Fatalf("production definition loader rejected bundle: %v", err)
 	}
-	if configured.GameID != "iron-colossus" || configured.DefinitionVersion != "local-production-2026-08-16.1" || len(digest) != 64 {
+	const wantDefinitionDigest = "9e9b9b5f23f0f2cfed0a4a5ff5961dbc76a91ba9e614f3cfadb47824a46d2205"
+	if configured.GameID != "iron-colossus" || configured.DefinitionVersion != "local-production-2026-08-26.3" ||
+		configured.EngineRulesVersion != game.EngineRulesVersion ||
+		configured.MaxWinMultiplier != 2_500 || digest != wantDefinitionDigest {
 		t.Fatalf("unexpected production definition identity: game=%q version=%q digest=%q", configured.GameID, configured.DefinitionVersion, digest)
 	}
 	loadedOperators, err := bootstrap.LoadOperatorDocument(
@@ -110,6 +115,108 @@ func TestGeneratedBundlePassesProductionLoadersAndUsesRestrictedPermissions(t *t
 		!strings.Contains(string(approvalJSON), authorityRef) ||
 		strings.Contains(string(approvalJSON), "CI"+"_ONLY") {
 		t.Fatalf("approval does not carry the local production authority boundary: %s", approvalJSON)
+	}
+}
+
+func TestDefinitionRotationStatusBindsTheExactTargetAndPredecessor(t *testing.T) {
+	directory := generateTestBundle(t)
+	status, err := inspectDefinitionRotationStatus(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Required || status.GameID != "iron-colossus" ||
+		status.DefinitionVersion != "local-production-2026-08-26.3" ||
+		status.DefinitionHash != "9e9b9b5f23f0f2cfed0a4a5ff5961dbc76a91ba9e614f3cfadb47824a46d2205" {
+		t.Fatalf("current definition rotation status = %+v", status)
+	}
+
+	predecessor := localProductionDefinition()
+	predecessor.DefinitionVersion = preRulesDefinitionVersion
+	installDefinitionGeneration(t, directory, predecessor)
+	status, err = inspectDefinitionRotationStatus(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Required || status.DefinitionVersion != "local-production-2026-08-26.3" {
+		t.Fatalf("predecessor definition rotation status = %+v", status)
+	}
+
+	prePaidFacts := localProductionDefinition()
+	prePaidFacts.DefinitionVersion = prePaidFactsDefinitionVersion
+	installDefinitionGeneration(t, directory, prePaidFacts)
+	status, err = inspectDefinitionRotationStatus(directory)
+	if err != nil || !status.Required {
+		t.Fatalf("pre-paid-facts definition rotation status = %+v, %v", status, err)
+	}
+}
+
+func TestDefinitionRotationRejectsUnknownValidDefinitionWithoutMutation(t *testing.T) {
+	now := time.Date(2026, 8, 26, 1, 30, 0, 0, time.UTC)
+	directory := generateTestBundle(t)
+	backupRoot := filepath.Join(t.TempDir(), "backups")
+	if err := os.Mkdir(backupRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	unknown := localProductionDefinition()
+	unknown.DefinitionVersion = "local-production-custom-v6"
+	unknown.Paytable[game.SymbolOrbit]++
+	installDefinitionGeneration(t, directory, unknown)
+	definitionBefore := readFile(t, filepath.Join(directory, "definition.json"))
+	approvalBefore := readFile(t, filepath.Join(directory, "definition-approval.json"))
+
+	_, statusErr := inspectDefinitionRotationStatus(directory)
+	if statusErr == nil || !strings.Contains(statusErr.Error(), "not the exact local production target") {
+		t.Fatalf("unknown valid definition status error = %v", statusErr)
+	}
+	rotationErr := rotateLocalProductionDefinition(directory, backupRoot, now)
+	if rotationErr == nil || !strings.Contains(rotationErr.Error(), "not the exact local production target") {
+		t.Fatalf("unknown valid definition rotation error = %v", rotationErr)
+	}
+	if !bytes.Equal(readFile(t, filepath.Join(directory, "definition.json")), definitionBefore) ||
+		!bytes.Equal(readFile(t, filepath.Join(directory, "definition-approval.json")), approvalBefore) {
+		t.Fatal("rejected unknown definition was modified")
+	}
+	backups, err := os.ReadDir(backupRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("rejected unknown definition created backups: %v", backups)
+	}
+}
+
+func TestDefinitionRotationRejectsKnownDigestWithForeignEvidenceProfile(t *testing.T) {
+	directory := generateTestBundle(t)
+	predecessor := localProductionDefinition()
+	predecessor.DefinitionVersion = preRulesDefinitionVersion
+	installDefinitionGeneration(t, directory, predecessor)
+
+	var envelope game.SignedDefinitionApproval
+	decodeJSONFile(t, filepath.Join(directory, "definition-approval.json"), &envelope)
+	envelope.Approval.ApprovalRef = "external-release:unrelated"
+	envelope.Approval.ProductionEvidence = &game.DefinitionApprovalEvidence{
+		MathReportRefs: []string{"external-math:unrelated"},
+		RNGReportRefs:  []string{"external-rng:unrelated"},
+		JurisdictionApprovals: []game.DefinitionJurisdictionEvidence{{
+			Jurisdiction: "GB", ApprovalRef: "external-jurisdiction:unrelated",
+		}},
+	}
+	privateKey := readEd25519PrivateKey(t, filepath.Join(directory, "definition-approval-private.pem"))
+	defer clear(privateKey)
+	foreignEnvelope, err := game.SignProductionDefinitionApproval(
+		envelope.Approval,
+		envelope.KeyID,
+		privateKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestJSON(t, filepath.Join(directory, "definition-approval.json"), foreignEnvelope)
+
+	_, err = inspectDefinitionRotationStatus(directory)
+	if err == nil || !strings.Contains(err.Error(), "recognized local production approval evidence profile") {
+		t.Fatalf("foreign predecessor evidence status error = %v", err)
 	}
 }
 
@@ -257,6 +364,227 @@ func TestAddSharedAdmissionMaterialUpgradesAnExistingBundleWithoutRotation(t *te
 	}
 }
 
+func TestRotateDefinitionReusesAuthorityBacksUpOnlyDefinitionAndPreservesOtherMaterial(t *testing.T) {
+	now := time.Date(2026, 8, 26, 2, 0, 0, 0, time.UTC)
+	directory := filepath.Join(t.TempDir(), "bundle")
+	if err := run([]string{directory}, func() time.Time { return now }); err != nil {
+		t.Fatal(err)
+	}
+	backupRoot := filepath.Join(t.TempDir(), "backups")
+	if err := os.Mkdir(backupRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	predecessor := localProductionDefinition()
+	predecessor.DefinitionVersion = preRulesDefinitionVersion
+	installDefinitionGeneration(t, directory, predecessor)
+	oldDefinition := readFile(t, filepath.Join(directory, "definition.json"))
+	oldApproval := readFile(t, filepath.Join(directory, "definition-approval.json"))
+	var oldEnvelope game.SignedDefinitionApproval
+	decodeJSONFile(t, filepath.Join(directory, "definition-approval.json"), &oldEnvelope)
+
+	unrelated := make(map[string][sha256.Size]byte)
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "definition.json" || entry.Name() == "definition-approval.json" {
+			continue
+		}
+		unrelated[entry.Name()] = fileSHA256(t, filepath.Join(directory, entry.Name()))
+	}
+
+	if err := run(
+		[]string{"rotate-definition", directory, backupRoot},
+		func() time.Time { return now.Add(time.Hour) },
+	); err != nil {
+		t.Fatalf("rotate definition: %v", err)
+	}
+	configured, digest, err := bootstrap.LoadDefinition(
+		filepath.Join(directory, "definition.json"),
+		filepath.Join(directory, "definition-approval.json"),
+		filepath.Join(directory, "definition-approval-public.pem"),
+		bootstrap.RequireProductionDefinitionApproval(),
+	)
+	if err != nil {
+		t.Fatalf("load rotated definition: %v", err)
+	}
+	if configured.DefinitionVersion != "local-production-2026-08-26.3" ||
+		configured.EngineRulesVersion != game.EngineRulesVersion ||
+		configured.MaxWinMultiplier != 2_500 ||
+		digest != "9e9b9b5f23f0f2cfed0a4a5ff5961dbc76a91ba9e614f3cfadb47824a46d2205" {
+		t.Fatalf("unexpected rotated definition identity: %+v digest=%s", configured, digest)
+	}
+	var rotatedEnvelope game.SignedDefinitionApproval
+	decodeJSONFile(t, filepath.Join(directory, "definition-approval.json"), &rotatedEnvelope)
+	if rotatedEnvelope.KeyID != oldEnvelope.KeyID ||
+		rotatedEnvelope.Approval.ApprovalRef != oldEnvelope.Approval.ApprovalRef {
+		t.Fatalf("definition approval authority changed during rotation: old=%+v new=%+v", oldEnvelope, rotatedEnvelope)
+	}
+	oldEvidence, err := json.Marshal(oldEnvelope.Approval.ProductionEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newEvidence, err := json.Marshal(rotatedEnvelope.Approval.ProductionEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(oldEvidence, newEvidence) {
+		t.Fatal("definition production evidence references changed during rotation")
+	}
+	for name, want := range unrelated {
+		if got := fileSHA256(t, filepath.Join(directory, name)); got != want {
+			t.Fatalf("unrelated local production material %s was modified", name)
+		}
+	}
+
+	backups, err := os.ReadDir(backupRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 1 || !backups[0].IsDir() {
+		t.Fatalf("definition rotation backups = %v, want one directory", backups)
+	}
+	backupDirectory := filepath.Join(backupRoot, backups[0].Name())
+	backupEntries, err := os.ReadDir(backupDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backupEntries) != 2 ||
+		backupEntries[0].Name() != "definition-approval.json" ||
+		backupEntries[1].Name() != "definition.json" {
+		t.Fatalf("backup contains files other than rotated definition artifacts: %v", backupEntries)
+	}
+	if !bytes.Equal(readFile(t, filepath.Join(backupDirectory, "definition.json")), oldDefinition) ||
+		!bytes.Equal(readFile(t, filepath.Join(backupDirectory, "definition-approval.json")), oldApproval) {
+		t.Fatal("definition rotation backup does not preserve the previous generation exactly")
+	}
+
+	if err := run(
+		[]string{"rotate-definition", directory, backupRoot},
+		func() time.Time { return now.Add(2 * time.Hour) },
+	); err != nil {
+		t.Fatalf("idempotent definition rotation: %v", err)
+	}
+	backupsAfterRetry, err := os.ReadDir(backupRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backupsAfterRetry) != 1 {
+		t.Fatalf("idempotent definition rotation created %d backups, want 1", len(backupsAfterRetry))
+	}
+	if _, err := os.Lstat(filepath.Join(directory, definitionRotationMarkerName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("definition rotation transaction marker remains after success: %v", err)
+	}
+}
+
+func TestRotateDefinitionRecoversAnInterruptedTwoFileReplacement(t *testing.T) {
+	now := time.Date(2026, 8, 26, 3, 0, 0, 0, time.UTC)
+	directory := filepath.Join(t.TempDir(), "bundle")
+	if err := run([]string{directory}, func() time.Time { return now }); err != nil {
+		t.Fatal(err)
+	}
+	backupRoot := filepath.Join(t.TempDir(), "backups")
+	if err := os.Mkdir(backupRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := localProductionDefinition()
+	legacy.DefinitionVersion = "local-production-2026-08-16.1"
+	legacy.MaxWinMultiplier = 0
+	installDefinitionGeneration(t, directory, legacy)
+	legacyDefinition := readFile(t, filepath.Join(directory, "definition.json"))
+	legacyApproval := readFile(t, filepath.Join(directory, "definition-approval.json"))
+	legacyDigest := legacyDefinitionDigest
+	target := localProductionDefinition()
+	targetDigest, err := game.DefinitionDigest(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupDirectory, err := createDefinitionRotationBackup(
+		backupRoot, now, legacyDigest, legacyDefinition, legacyApproval,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(directory, definitionRotationMarkerName), definitionRotationMarker{
+		Schema:          "local-production-definition-rotation-v1",
+		BackupDirectory: filepath.Base(backupDirectory),
+		PreviousSHA256:  legacyDigest,
+		TargetSHA256:    targetDigest,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟审批文件已替换、但 definition.json 尚未替换时进程终止。
+	installSignedApprovalOnly(t, directory, target)
+	if _, _, err := bootstrap.LoadDefinition(
+		filepath.Join(directory, "definition.json"),
+		filepath.Join(directory, "definition-approval.json"),
+		filepath.Join(directory, "definition-approval-public.pem"),
+		bootstrap.RequireProductionDefinitionApproval(),
+	); err == nil {
+		t.Fatal("interrupted mixed definition generation unexpectedly validated")
+	}
+
+	if err := run(
+		[]string{"rotate-definition", directory, backupRoot},
+		func() time.Time { return now.Add(time.Minute) },
+	); err != nil {
+		t.Fatalf("recover and rotate definition: %v", err)
+	}
+	_, digest, err := bootstrap.LoadDefinition(
+		filepath.Join(directory, "definition.json"),
+		filepath.Join(directory, "definition-approval.json"),
+		filepath.Join(directory, "definition-approval-public.pem"),
+		bootstrap.RequireProductionDefinitionApproval(),
+	)
+	if err != nil || digest != targetDigest {
+		t.Fatalf("definition after interrupted recovery: digest=%q err=%v", digest, err)
+	}
+	if _, err := os.Lstat(filepath.Join(directory, definitionRotationMarkerName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("transaction marker remains after recovery: %v", err)
+	}
+}
+
+func TestRotateDefinitionFailsClosedWithoutExistingApprovalPrivateKey(t *testing.T) {
+	now := time.Date(2026, 8, 26, 4, 0, 0, 0, time.UTC)
+	directory := filepath.Join(t.TempDir(), "bundle")
+	if err := run([]string{directory}, func() time.Time { return now }); err != nil {
+		t.Fatal(err)
+	}
+	backupRoot := filepath.Join(t.TempDir(), "backups")
+	if err := os.Mkdir(backupRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := localProductionDefinition()
+	legacy.DefinitionVersion = "local-production-2026-08-16.1"
+	legacy.MaxWinMultiplier = 0
+	installDefinitionGeneration(t, directory, legacy)
+	oldDefinition := readFile(t, filepath.Join(directory, "definition.json"))
+	oldApproval := readFile(t, filepath.Join(directory, "definition-approval.json"))
+	if err := os.Remove(filepath.Join(directory, "definition-approval-private.pem")); err != nil {
+		t.Fatal(err)
+	}
+	err := run(
+		[]string{"rotate-definition", directory, backupRoot},
+		func() time.Time { return now.Add(time.Hour) },
+	)
+	if err == nil || !strings.Contains(err.Error(), "definition approval private key") {
+		t.Fatalf("expected missing approval key rejection, got %v", err)
+	}
+	if !bytes.Equal(readFile(t, filepath.Join(directory, "definition.json")), oldDefinition) ||
+		!bytes.Equal(readFile(t, filepath.Join(directory, "definition-approval.json")), oldApproval) {
+		t.Fatal("failed definition rotation modified the existing definition generation")
+	}
+	backups, err := os.ReadDir(backupRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("failed preflight created %d backups", len(backups))
+	}
+}
+
 func TestRunRefusesToOverwriteOrFollowOutputSymlink(t *testing.T) {
 	now := func() time.Time { return time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC) }
 	directory := filepath.Join(t.TempDir(), "bundle")
@@ -285,6 +613,124 @@ func generateTestBundle(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return directory
+}
+
+func installDefinitionGeneration(t *testing.T, directory string, definition game.Config) {
+	t.Helper()
+	installSignedDefinitionMaterial(t, directory, definition, true)
+}
+
+func installSignedApprovalOnly(t *testing.T, directory string, definition game.Config) {
+	t.Helper()
+	installSignedDefinitionMaterial(t, directory, definition, false)
+}
+
+func installSignedDefinitionMaterial(
+	t *testing.T,
+	directory string,
+	definition game.Config,
+	writeDefinition bool,
+) {
+	t.Helper()
+	var existing game.SignedDefinitionApproval
+	decodeJSONFile(t, filepath.Join(directory, "definition-approval.json"), &existing)
+	definitionMaterial, err := json.MarshalIndent(definition, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitionMaterial = append(definitionMaterial, '\n')
+	digest := ""
+	if definition.DefinitionVersion == legacyDefinitionVersion ||
+		definition.DefinitionVersion == preRulesDefinitionVersion ||
+		definition.DefinitionVersion == prePaidFactsDefinitionVersion {
+		legacyEncoding := definition
+		removeEngineRules := definition.DefinitionVersion != prePaidFactsDefinitionVersion
+		if removeEngineRules {
+			legacyEncoding.EngineRulesVersion = ""
+		} else {
+			legacyEncoding.EngineRulesVersion = prePaidFactsEngineRules
+		}
+		if definition.DefinitionVersion == legacyDefinitionVersion {
+			legacyEncoding.MaxWinMultiplier = 2_500
+		}
+		definitionMaterial, err = json.MarshalIndent(legacyEncoding, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		definitionMaterial = append(definitionMaterial, '\n')
+		if removeEngineRules {
+			definitionMaterial = bytes.Replace(
+				definitionMaterial,
+				[]byte("  \"engineRulesVersion\": \"\",\n"),
+				nil,
+				1,
+			)
+		}
+		if definition.DefinitionVersion == legacyDefinitionVersion {
+			definitionMaterial = bytes.Replace(
+				definitionMaterial,
+				[]byte("  \"maxWinMultiplier\": 2500,\n"),
+				nil,
+				1,
+			)
+		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, definitionMaterial); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(compact.Bytes())
+		digest = hex.EncodeToString(sum[:])
+		wantDigest := preRulesDefinitionDigest
+		if definition.DefinitionVersion == prePaidFactsDefinitionVersion {
+			wantDigest = prePaidFactsDefinitionDigest
+		} else if definition.DefinitionVersion == legacyDefinitionVersion {
+			wantDigest = legacyDefinitionDigest
+		}
+		if digest != wantDigest {
+			t.Fatalf("predecessor fixture digest = %s, want %s", digest, wantDigest)
+		}
+	} else {
+		digest, err = game.DefinitionDigest(definition)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	privateKey := readEd25519PrivateKey(t, filepath.Join(directory, "definition-approval-private.pem"))
+	defer clear(privateKey)
+	approval := existing.Approval
+	approval.GameID = definition.GameID
+	approval.Version = definition.DefinitionVersion
+	approval.SHA256 = digest
+	signed, err := game.SignProductionDefinitionApproval(approval, existing.KeyID, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writeDefinition {
+		if err := os.WriteFile(filepath.Join(directory, "definition.json"), definitionMaterial, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTestJSON(t, filepath.Join(directory, "definition-approval.json"), signed)
+}
+
+func writeTestJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(encoded, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
 }
 
 func fileSHA256(t *testing.T, path string) [sha256.Size]byte {

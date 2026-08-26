@@ -6,6 +6,8 @@ set -eu
 require_docker
 require_node22
 require_state
+acquire_deployment_lock
+verify_state_definition_binding
 compose config --quiet
 # 源码、依赖或构建配置变化后必须重新执行 bootstrap。这里禁止重建，避免把
 # 新工作区字节错误标记为旧 compose.env 中记录的 revision。

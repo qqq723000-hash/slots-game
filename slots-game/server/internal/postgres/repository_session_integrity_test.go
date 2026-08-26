@@ -369,7 +369,8 @@ func expectSessionQuarantineLocked(mock sqlmock.Sqlmock, fixture sessionRowFixtu
 
 func validPreparedSessionIntegrityResult(request rgs.SpinRequest, sequence uint64) rgs.SpinResult {
 	return rgs.SpinResult{
-		OperatorID: request.OperatorID, SessionID: request.SessionID, RoundID: request.RoundID,
+		ResultSchemaVersion: rgs.ResultSchemaPaidFactsV1,
+		OperatorID:          request.OperatorID, SessionID: request.SessionID, RoundID: request.RoundID,
 		GameID: request.GameID, DefinitionVersion: request.DefinitionVersion,
 		DefinitionHash: request.DefinitionHash, Currency: request.Currency,
 		RoundKind: request.RoundKind, ServerTransactionID: "rgs-op-v1:session-integrity",

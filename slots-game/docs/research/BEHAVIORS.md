@@ -11,8 +11,8 @@
 ## 视口与黑边
 
 - PC 使用固定 1280×720 设计表面。手机和平板以 844 逻辑长边和当前真实宽高比连续生成设计域；`phone-pt/tablet-pt/...` 只保留为诊断标签，不再选择画布尺寸。
-- 缩放固定为 `min(viewportWidth / designWidth, viewportHeight / designHeight)`，禁止 X/Y 独立拉伸、cover 裁切或把盘面弹性铺满。
-- 多余区域统一为纯黑 letterbox/pillarbox；常规移动宽高比因设计域连续匹配而无需黑边，极端比例仍等比居中。画布、DOM、点击区域和帮助页共享同一设计坐标系。
+- PC 恢复原版 1200×900 authored composition：按 authored 高度一次等比缩放 1280×720 渲染器，常见 16:9/16:10 视口贴住物理底边，窄视口只对称裁掉渲染器左右翼，并通过 `visibleInsetX` 约束 HUD 与特殊玩法控件。
+- 手机和平板固定为 `min(viewportWidth / designWidth, viewportHeight / designHeight)`；多余区域统一为纯黑 letterbox/pillarbox。画布、DOM、点击区域和帮助页共享同一设计坐标系。
 - `ResizeObserver`、`window.resize` 与 `visualViewport.resize` 的重复通知合并到同一动画帧；切换开发者设备和旋转不得重载资源或改变游戏状态。
 - 资源通道在会话启动时冻结；布局通道在每次提交按显式 `layout=`、输入能力与视口重新判定，避免 DevTools 从 PC 切到手机后仍保留桌面构图。
 
@@ -26,7 +26,7 @@
 
 ## Balance / Bet / Win
 
-- PC：状态栏基准来自 1600×900 的 30px/18px 投影；1280×720 应为 24px 高、14.4px `ROBOTO_CONDENSED_REGULAR`。
+- PC：当前原游戏实机与已验收本地对照在 1280×720 使用 16px 可见 footer、12.8px `ROBOTO_CONDENSED_REGULAR`；provider、Balance/Bet/Win 与游戏名必须共用同一 16px 投影。
 - 手机和平板：使用官方移动默认 `ROBOTO_CONDENSED_BOLD`，字号由响应式布局变量决定，不写死为桌面值。
 - 金额使用会话绑定的 currency 与 currencyExponent；不得使用浮点数，也不得默认为两位小数。
 - 不添加来源外的千位分隔符；PC 不添加移动端 Balance/Bet 背板。
@@ -50,4 +50,8 @@
 - 交互模型：菜单点击 + 内容区域滚动。
 - 章节顺序取自官方配置：Wild、Vault Bonus、Rage Symbol、Primal Wheel、Kong Quest、King Spin、Paying Symbols、Way Wins。
 - 手机和平板使用顶部页签与纵向内容卡；PC 使用固定侧栏。三端内容区均可滚动。
-- 玩家页不展示内部 RGS/部署说明，不声明未经当前签名数学定义认证的 RTP、概率或最大赢额。
+- PAYTABLE 每次从顶部打开；切换页签时各页滚动位置互不污染。章节之间保留 9 条官方橙色分隔线。
+- Paying Symbols 固定为 Jet/Tank、Radio/Helmet、K/Q，显示 x3 与当前总投注计算出的金额；禁止显示内部符号 ID 或 `total bet` 占位文案。
+- 原版顶部、底部的 `Win up to 2500x your bet!` 只在签名玩法定义同时强制执行 2500x 局内封顶时显示。
+- GAME RULES 的固定公开玩法说明可随客户端提供；运营商留存、故障、司法辖区等条款继续要求单独批准，不能用固定副本伪装成运营商批准文本。
+- 玩家页不展示内部 RGS/部署说明，不猜测未取得的 RTP、转轴权重或隐藏概率。

@@ -181,6 +181,8 @@ const DESKTOP_VIEWPORT_SURFACE = Object.freeze({
   designWidth: 1_280,
   designHeight: 720,
 });
+const DESKTOP_AUTHORED_WIDTH = 1_200;
+const DESKTOP_AUTHORED_HEIGHT = 900;
 const MOBILE_DESIGN_LONG_EDGE = 844;
 const MOBILE_MIN_DESIGN_ASPECT = 9 / 22;
 const MOBILE_MAX_DESIGN_ASPECT = 22 / 9;
@@ -189,8 +191,8 @@ const TABLET_SHORT_EDGE_MIN = 600;
 const MAXIMUM_STATUS_VALUE = "92233720368547758.07";
 const PRESENTATION_APPROVED_BINDING = Object.freeze({
   gameId: "iron-colossus",
-  definitionVersion: "local-production-2026-08-16.1",
-  definitionHash: "96caac1ea4f82292ba96e0e0397459687638d6ff904471a8363e69f6e824d35d",
+  definitionVersion: "local-production-2026-08-26.3",
+  definitionHash: "9e9b9b5f23f0f2cfed0a4a5ff5961dbc76a91ba9e614f3cfadb47824a46d2205",
 });
 const TRANSACTION_FIXTURE_BINDING = Object.freeze({
   gameId: "primal-rampage",
@@ -202,7 +204,7 @@ const browserRgsBaseUrl = process.env.VITE_RGS_BASE_URL;
 const browserHostOrigin = process.env.VITE_RGS_HOST_ORIGIN;
 const browserBetMinor = process.env.VITE_RGS_DEFAULT_BET_MINOR;
 const initialBalanceMinor = (BigInt(browserBetMinor) + 800n).toString();
-const finalBalanceMinor = "800";
+const finalBalanceMinor = "850";
 const expectedInitialBalance = formatMinor(initialBalanceMinor, 2);
 const expectedFinalBalance = formatMinor(finalBalanceMinor, 2);
 const browserContentSecurityPolicy = createReleaseContentSecurityPolicy({
@@ -363,8 +365,8 @@ try {
     }
   }
   const finalState = result.finalState;
-  if (finalState.balance !== "8.00" || finalState.balance !== expectedFinalBalance
-    || finalState.lastWin !== "0.00"
+  if (finalState.balance !== "8.50" || finalState.balance !== expectedFinalBalance
+    || finalState.lastWin !== "0.50"
     || finalState.reelState !== "Idle"
     || finalState.hasReelRoundId
     || finalState.spinMode !== "ready"
@@ -997,9 +999,9 @@ async function verifyBootstrap(
     throw new Error("生产浏览器事务夹具没有启用系统级减少动态效果配置");
   }
 
-  // 资产会话固定为 desktop，布局通道则必须随着当前输入能力与视口在同一文档中重算。
-  // 先建立节点/玩家状态/RGS 三重基线，再用 CDP 的真实 touch capability 迁移布局；
-  // 期间不导航、不刷新，也不允许预先消费 Spin/ACK 事务。
+  // 资产会话固定为 desktop；显式 launcher 通道也必须让触屏 PC 保持 PC 构图。
+  // 浏览器矩阵只通过更高优先级的 layout= 测试接缝在同一文档切换构图，期间不
+  // 导航、不刷新，也不允许预先消费 Spin/ACK 事务。
   const preTransitionLayout = await readViewportLayout(send);
   if (!preTransitionLayout || preTransitionLayout.frameCount !== 1
     || !preTransitionLayout.nodeIdentityPreserved
@@ -1012,6 +1014,7 @@ async function verifyBootstrap(
   const preTransitionDocumentIdentity = preTransitionLayout.documentIdentityToken;
 
   await setBrowserProbePhase(send, "mobile-matrix");
+  await setLayoutChannelOverride(send, "mobile");
   await setTouchLayoutCapability(send, true);
   const mobileViewportEvidence = await verifyContinuousViewportTransitions(
     send,
@@ -1039,6 +1042,7 @@ async function verifyBootstrap(
   );
 
   await setBrowserProbePhase(send, "desktop-matrix");
+  await setLayoutChannelOverride(send, "desktop");
   await setTouchLayoutCapability(send, false);
   const desktopViewportEvidence = await verifyContinuousViewportTransitions(
     send,
@@ -1183,6 +1187,9 @@ async function verifyContinuousViewportTransitions(send, fixture, options) {
     const controlLayout = options.channel === "mobile" && surface.regularAspect
       ? assertMobileControlLayout(snapshot, viewport)
       : null;
+    const desktopStatusLayout = options.channel === "desktop"
+      ? assertDesktopStatusLayout(snapshot, viewport)
+      : null;
     const maximumStatusLayout = options.channel === "mobile"
       ? await verifyMaximumStatusValues(send, viewport)
       : null;
@@ -1239,6 +1246,8 @@ async function verifyContinuousViewportTransitions(send, fixture, options) {
       frameHeight: snapshot.frameRect.height,
       frameWidth: snapshot.frameRect.width,
       scale: snapshot.datasetScale,
+      statusLayout: desktopStatusLayout,
+      visibleInsetX: snapshot.visibleInsetX,
       x: snapshot.frameRect.left,
       y: snapshot.frameRect.top,
       coarsePointer: snapshot.coarsePointer,
@@ -1295,6 +1304,24 @@ async function setTouchLayoutCapability(send, enabled) {
   await delay(50);
 }
 
+async function setLayoutChannelOverride(send, channel) {
+  if (channel !== "desktop" && channel !== "mobile") {
+    throw new Error(`生产浏览器布局测试接缝不受支持：${channel}`);
+  }
+  const accepted = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `(() => {
+      const url = new URL(location.href);
+      url.searchParams.set('layout', ${JSON.stringify(channel)});
+      history.replaceState(history.state, '', url);
+      window.dispatchEvent(new Event('resize'));
+      return new URL(location.href).searchParams.get('layout') === ${JSON.stringify(channel)};
+    })()`,
+  });
+  if (!accepted) throw new Error("生产浏览器无法提交同文档布局测试接缝");
+  await delay(50);
+}
+
 async function setBrowserProbePhase(send, phase) {
   if (!BROWSER_RUNTIME_PHASES.includes(phase)) {
     throw new Error("生产浏览器运行时探针阶段不受支持");
@@ -1336,7 +1363,45 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
   const expectedTransaction = fixture.snapshot();
   const steps = [];
 
+  // URL 中的 channel=desktop 是正式 launcher 合约。即使浏览器暴露 coarse pointer，
+  // Feature Preview 与游戏根也必须先保持 PC 构图，避免桌面资产落入移动坐标域。
   await setTouchLayoutCapability(send, true);
+  const desktopTouchViewport = Object.freeze({ width: 1_440, height: 900 });
+  await send("Emulation.setDeviceMetricsOverride", {
+    width: desktopTouchViewport.width,
+    height: desktopTouchViewport.height,
+    deviceScaleFactor: 1,
+    mobile: false,
+    screenWidth: desktopTouchViewport.width,
+    screenHeight: desktopTouchViewport.height,
+  });
+  const desktopTouchLayout = await waitForStableViewportLayout(
+    send,
+    desktopTouchViewport,
+    DESKTOP_VIEWPORT_SURFACE,
+    "desktop",
+    transportFailure,
+  );
+  assertViewportGeometry(
+    desktopTouchLayout,
+    desktopTouchViewport,
+    DESKTOP_VIEWPORT_SURFACE,
+    "desktop",
+  );
+  if (!desktopTouchLayout.coarsePointer || desktopTouchLayout.maxTouchPoints <= 0) {
+    throw new Error(`触屏 PC 能力探针没有生效：${JSON.stringify(desktopTouchLayout)}`);
+  }
+  assertViewportStatePreserved(expectedState, desktopTouchLayout.state, desktopTouchViewport,
+    "desktop");
+  assertTransactionStatePreserved(expectedTransaction, fixture.snapshot(), desktopTouchViewport,
+    "desktop");
+  if (desktopTouchLayout.documentIdentityToken !== expectedDocumentIdentity) {
+    throw new Error("触屏 PC Feature Preview 视口切换替换了文档");
+  }
+  opening = await readOpeningOverlayLayout(send);
+  assertOpeningOverlayGeometry(opening, desktopTouchViewport, DESKTOP_VIEWPORT_SURFACE);
+
+  await setLayoutChannelOverride(send, "mobile");
   for (const viewport of OFFICIAL_HELP_VIEWPORTS) {
     const surface = responsiveSurfaceForViewport(viewport, "mobile");
     await send("Emulation.setDeviceMetricsOverride", {
@@ -1367,41 +1432,7 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
       throw new Error(`开场 overlay 视口切换替换了文档或游戏节点：${viewport.width}x${viewport.height}`);
     }
     opening = await readOpeningOverlayLayout(send);
-    const detail = () => JSON.stringify({ viewport, surface, opening });
-    if (!opening?.visible || !opening.authored || opening.continueDisabled
-      || !opening.previewRect || !opening.frameRect || !opening.featuresMatrix) {
-      throw new Error(`开场 Feature Preview 缺少完整布局证据：${detail()}`);
-    }
-    requireNear(opening.featuresMatrix.a, opening.featuresMatrix.d, 0.000_01,
-      "开场 overlay scaleX/scaleY", detail);
-    if (opening.featuresMatrix.a <= 0) {
-      throw new Error(`开场 Feature Preview 没有正向等比投影：${detail()}`);
-    }
-    requireNear(opening.featuresMatrix.b, 0, 0.000_001, "开场 overlay skewY", detail);
-    requireNear(opening.featuresMatrix.c, 0, 0.000_001, "开场 overlay skewX", detail);
-    requireNear(opening.previewRect.left, opening.frameRect.left, 0.75,
-      "开场 overlay 左边界", detail);
-    requireNear(opening.previewRect.top, opening.frameRect.top, 0.75,
-      "开场 overlay 上边界", detail);
-    requireNear(opening.previewRect.width, opening.frameRect.width, 0.75,
-      "开场 overlay 宽度", detail);
-    requireNear(opening.previewRect.height, opening.frameRect.height, 0.75,
-      "开场 overlay 高度", detail);
-    for (const [name, rectangle] of Object.entries(opening.controls ?? {})) {
-      if (!rectangle
-        || rectangle.width <= 0 || rectangle.height <= 0
-        || rectangle.left < opening.previewRect.left - 0.75
-        || rectangle.right > opening.previewRect.right + 0.75
-        || rectangle.top < opening.previewRect.top - 0.75
-        || rectangle.bottom > opening.previewRect.bottom + 0.75) {
-        throw new Error(`开场 Feature Preview ${name} 控件越出画面：${detail()}`);
-      }
-    }
-    if (rectangleIntersectionArea(opening.controls.continue, opening.controls.optOut) > 0.75
-      || rectangleIntersectionArea(opening.controls.continue, opening.controls.sound) > 0.75
-      || rectangleIntersectionArea(opening.controls.optOut, opening.controls.sound) > 0.75) {
-      throw new Error(`开场 Feature Preview 控件发生交叠：${detail()}`);
-    }
+    assertOpeningOverlayGeometry(opening, viewport, surface);
     steps.push(Object.freeze({
       height: viewport.height,
       noControlOverlap: true,
@@ -1421,6 +1452,17 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
     "mobile",
   );
   return Object.freeze({
+    desktopTouchLocked: Object.freeze({
+      coarsePointer: desktopTouchLayout.coarsePointer,
+      featurePreviewContained: true,
+      frameHeight: desktopTouchLayout.frameRect.height,
+      frameWidth: desktopTouchLayout.frameRect.width,
+      maxTouchPoints: desktopTouchLayout.maxTouchPoints,
+      verified: desktopTouchLayout.channel === "desktop",
+      visibleInsetX: desktopTouchLayout.visibleInsetX,
+      x: desktopTouchLayout.frameRect.left,
+      y: desktopTouchLayout.frameRect.top,
+    }),
     freeSpinsHud: Object.freeze({
       reachable: false,
       reason: "controlled-transaction-fixture-feature-mode-none",
@@ -1428,6 +1470,46 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
     }),
     steps: Object.freeze(steps),
   });
+}
+
+function assertOpeningOverlayGeometry(opening, viewport, surface) {
+  const detail = () => JSON.stringify({ viewport, surface, opening });
+  if (!opening?.visible || !opening.authored || opening.continueDisabled
+    || !opening.previewRect || !opening.frameRect || !opening.featuresMatrix) {
+    throw new Error(`开场 Feature Preview 缺少完整布局证据：${detail()}`);
+  }
+  requireNear(opening.featuresMatrix.a, opening.featuresMatrix.d, 0.000_01,
+    "开场 overlay scaleX/scaleY", detail);
+  if (opening.featuresMatrix.a <= 0) {
+    throw new Error(`开场 Feature Preview 没有正向等比投影：${detail()}`);
+  }
+  requireNear(opening.featuresMatrix.b, 0, 0.000_001, "开场 overlay skewY", detail);
+  requireNear(opening.featuresMatrix.c, 0, 0.000_001, "开场 overlay skewX", detail);
+  requireNear(opening.previewRect.left, opening.frameRect.left, 0.75,
+    "开场 overlay 左边界", detail);
+  requireNear(opening.previewRect.top, opening.frameRect.top, 0.75,
+    "开场 overlay 上边界", detail);
+  requireNear(opening.previewRect.width, opening.frameRect.width, 0.75,
+    "开场 overlay 宽度", detail);
+  requireNear(opening.previewRect.height, opening.frameRect.height, 0.75,
+    "开场 overlay 高度", detail);
+  for (const [name, rectangle] of Object.entries(opening.controls ?? {})) {
+    if (!rectangle
+      || rectangle.width <= 0 || rectangle.height <= 0
+      || rectangle.left < opening.previewRect.left - 0.75
+      || rectangle.right > opening.previewRect.right + 0.75
+      || rectangle.top < opening.previewRect.top - 0.75
+      || rectangle.bottom > opening.previewRect.bottom + 0.75
+      || rectangle.left < -0.75 || rectangle.right > viewport.width + 0.75
+      || rectangle.top < -0.75 || rectangle.bottom > viewport.height + 0.75) {
+      throw new Error(`开场 Feature Preview ${name} 控件越出可见画面：${detail()}`);
+    }
+  }
+  if (rectangleIntersectionArea(opening.controls.continue, opening.controls.optOut) > 0.75
+    || rectangleIntersectionArea(opening.controls.continue, opening.controls.sound) > 0.75
+    || rectangleIntersectionArea(opening.controls.optOut, opening.controls.sound) > 0.75) {
+    throw new Error(`开场 Feature Preview 控件发生交叠：${detail()}`);
+  }
 }
 
 async function readOpeningOverlayLayout(send) {
@@ -1619,6 +1701,8 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
       || rectangleIntersectionArea(help.tabsRect, help.closeRect) > 0.75) {
       throw new Error(`正式浏览器帮助页标签与关闭按钮发生交叠：${detail()}`);
     }
+    const paytableContent = await verifyOfficialHelpBottomLayout(send, viewport);
+    const gameRulesContent = await verifyBoundGameRulesLayout(send, viewport);
     const postHelpLayout = await readViewportLayout(send);
     if (!postHelpLayout.nodeIdentityPreserved
       || postHelpLayout.documentIdentityToken !== options.expectedDocumentIdentity) {
@@ -1641,6 +1725,9 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
       bound: true,
       height: viewport.height,
       horizontalOverflow: false,
+      gameRulesBottomVisible: gameRulesContent.bottomVisible,
+      gameRulesBound: gameRulesContent.bound,
+      paytableBottomVisible: paytableContent.bottomVisible,
       scaleX: help.scaleX,
       scaleY: help.scaleY,
       width: viewport.width,
@@ -1654,7 +1741,11 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
 
 function officialHelpProjectionSettled(help) {
   if (!help?.viewportRect || !help?.projectionRect || !help?.authoredRect) return false;
+  const expectedScale = help.viewportClientWidth / 750;
   return help.projectionScrollWidth <= help.projectionClientWidth + 1
+    && Math.abs(help.scaleX - expectedScale) <= 0.000_000_1
+    && Math.abs(help.scaleY - expectedScale) <= 0.000_000_1
+    && Math.abs(help.projectionRect.width - help.viewportClientWidth) <= 0.75
     && Math.abs(help.authoredRect.width - help.projectionRect.width) <= 0.75
     && help.projectionRect.left >= help.viewportRect.left - 0.75
     && help.projectionRect.right <= help.viewportRect.right + 0.75
@@ -1716,6 +1807,278 @@ async function readOfficialHelpLayout(send) {
   });
 }
 
+async function setGameMenuScrollPosition(send, position) {
+  const requested = position === "bottom" ? "bottom" : "top";
+  const deadline = Date.now() + 5_000;
+  let metrics = null;
+  let previousGeometry = null;
+  let stableSamples = 0;
+  while (Date.now() < deadline) {
+    await evaluateValue(send, {
+      returnByValue: true,
+      expression: `
+        (() => {
+          const content = document.querySelector('.game-menu__content');
+          if (!(content instanceof HTMLElement)) return null;
+          content.scrollTop = ${requested === "bottom" ? "content.scrollHeight" : "0"};
+          return true;
+        })()
+      `,
+    });
+    // 冷缓存下帮助页素材与投影可能在首次滚动后继续改变 scrollHeight。
+    // 等一帧布局窗口再取样，并要求最大滚动位置连续稳定，避免把旧最大值误判为底边。
+    await delay(50);
+    metrics = await evaluateValue(send, {
+      returnByValue: true,
+      expression: `
+        (() => {
+          const content = document.querySelector('.game-menu__content');
+          if (!(content instanceof HTMLElement)) return null;
+          return {
+            clientHeight: content.clientHeight,
+            scrollHeight: content.scrollHeight,
+            scrollTop: content.scrollTop,
+          };
+        })()
+      `,
+    });
+    if (metrics) {
+      const maximum = Math.max(0, metrics.scrollHeight - metrics.clientHeight);
+      const settled = requested === "bottom"
+        ? Math.abs(metrics.scrollTop - maximum) <= 1
+        : metrics.scrollTop <= 1;
+      if (settled) {
+        const geometry = `${metrics.clientHeight}:${metrics.scrollHeight}:${maximum}`;
+        stableSamples = previousGeometry === geometry
+          ? stableSamples + 1
+          : 1;
+        previousGeometry = geometry;
+        if (stableSamples >= 3) return metrics;
+      } else {
+        stableSamples = 0;
+        previousGeometry = null;
+      }
+    }
+  }
+  throw new Error(`正式浏览器游戏菜单无法滚动到${requested === "bottom" ? "底部" : "顶部"}：${JSON.stringify(metrics)}`);
+}
+
+async function verifyOfficialHelpBottomLayout(send, viewport) {
+  await setGameMenuScrollPosition(send, "bottom");
+  const evidence = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const content = document.querySelector('.game-menu__content');
+        const panel = document.querySelector('#game-menu-paytable');
+        const bottomHeading = document.querySelector('[data-help-anchor="maximum-win-bottom"]');
+        const lastSeparator = document.querySelector('[data-separator-index="8"]');
+        const authoredSections = document.querySelector('[data-role="official-help-sections"]');
+        const rectangle = (element) => {
+          if (!(element instanceof HTMLElement)) return null;
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        return {
+          amountTexts: [...document.querySelectorAll('.base-paytable__amount')]
+            .map((element) => element.textContent?.trim() ?? ''),
+          authorHeight: authoredSections instanceof HTMLElement
+            ? authoredSections.dataset.authorHeight ?? null
+            : null,
+          bottomHeadingRect: rectangle(bottomHeading),
+          bottomHeadingText: bottomHeading
+            ?.querySelector('.official-help__title-fill')
+            ?.textContent?.trim() ?? null,
+          contentClientHeight: content instanceof HTMLElement ? content.clientHeight : -1,
+          contentClientWidth: content instanceof HTMLElement ? content.clientWidth : -1,
+          contentRect: rectangle(content),
+          contentScrollHeight: content instanceof HTMLElement ? content.scrollHeight : -1,
+          contentScrollTop: content instanceof HTMLElement ? content.scrollTop : -1,
+          contentScrollWidth: content instanceof HTMLElement ? content.scrollWidth : -1,
+          lastSeparatorRect: rectangle(lastSeparator),
+          panelHidden: !(panel instanceof HTMLElement) || panel.hidden,
+          selected: document.querySelector('[data-menu-tab="paytable"]')?.getAttribute('aria-selected'),
+          separatorCount: document.querySelectorAll('[data-separator-index]').length,
+          titles: [...document.querySelectorAll('.official-help__title-fill')]
+            .map((element) => element.textContent?.trim() ?? ''),
+        };
+      })()
+    `,
+  });
+  const requiredTitles = [
+    "Win up to 2500x your bet!",
+    "WILD",
+    "VAULT BONUS",
+    "RAGE SYMBOL",
+    "PRIMAL WHEEL",
+    "KONG QUEST",
+    "KING SPIN",
+    "PAYING SYMBOLS",
+    "WAY WINS",
+  ];
+  const detail = () => JSON.stringify({ viewport, evidence });
+  const maximumScrollTop = evidence
+    ? Math.max(0, evidence.contentScrollHeight - evidence.contentClientHeight)
+    : Number.NaN;
+  if (!evidence || evidence.panelHidden || evidence.selected !== "true"
+    || evidence.authorHeight !== String(7_565) || evidence.separatorCount !== 9
+    || !requiredTitles.every((title) => evidence.titles?.includes(title))
+    || evidence.bottomHeadingText !== "Win up to 2500x your bet!"
+    || evidence.amountTexts?.length !== 6
+    || evidence.amountTexts.some((value) => value === "" || value === "—")
+    || Math.abs(evidence.contentScrollTop - maximumScrollTop) > 1
+    || evidence.contentScrollWidth > evidence.contentClientWidth + 1
+    || !evidence.contentRect || !evidence.bottomHeadingRect || !evidence.lastSeparatorRect
+    || evidence.bottomHeadingRect.top < evidence.contentRect.top - 1
+    || evidence.bottomHeadingRect.bottom > evidence.contentRect.bottom + 1
+    || evidence.lastSeparatorRect.top < evidence.contentRect.top - 1
+    || evidence.lastSeparatorRect.bottom > evidence.contentRect.bottom + 1
+    || evidence.bottomHeadingRect.bottom > evidence.lastSeparatorRect.top + 1) {
+    throw new Error(`正式浏览器 PAYTABLE 关键内容或底边不可达：${detail()}`);
+  }
+  return Object.freeze({ bottomVisible: true });
+}
+
+async function verifyBoundGameRulesLayout(send, viewport) {
+  await clickElement(send, '[data-menu-tab="rules"]');
+  await setGameMenuScrollPosition(send, "top");
+  const topEvidence = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const menu = document.querySelector('[data-role="game-menu"]');
+        const content = document.querySelector('.game-menu__content');
+        const documentSurface = document.querySelector('[data-role="game-rules-document"]');
+        const unavailable = document.querySelector('[data-role="game-rules-unavailable"]');
+        const pageTitle = document.querySelector('[data-role="packaged-primal-game-rules-title"]');
+        const rectangle = (element) => {
+          if (!(element instanceof HTMLElement)) return null;
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        return {
+          actionTerms: [...document.querySelectorAll('.packaged-game-rules__actions dt')]
+            .map((element) => element.textContent?.trim() ?? ''),
+          background: documentSurface instanceof HTMLElement
+            ? getComputedStyle(documentSurface).backgroundColor
+            : null,
+          contentClientWidth: content instanceof HTMLElement ? content.clientWidth : -1,
+          contentRect: rectangle(content),
+          contentScrollWidth: content instanceof HTMLElement ? content.scrollWidth : -1,
+          documentHidden: !(documentSurface instanceof HTMLElement) || documentSurface.hidden,
+          documentRect: rectangle(documentSurface),
+          pageTitleRect: rectangle(pageTitle),
+          pageTitleText: pageTitle?.textContent?.trim() ?? null,
+          rulesStatus: menu instanceof HTMLElement ? menu.dataset.gameRulesStatus ?? null : null,
+          sectionTitles: [...document.querySelectorAll('[data-game-rules-section] > h4')]
+            .map((element) => element.textContent?.trim() ?? ''),
+          selected: document.querySelector('[data-menu-tab="rules"]')?.getAttribute('aria-selected'),
+          unavailableHidden: unavailable instanceof HTMLElement && unavailable.hidden,
+          visibleText: documentSurface?.textContent ?? '',
+        };
+      })()
+    `,
+  });
+  const requiredSectionTitles = [
+    "Information",
+    "Game Rules",
+    "WILD",
+    "VAULT BONUS",
+    "RAGE SYMBOL",
+    "PRIMAL WHEEL",
+    "KONG QUEST FREE SPINS",
+    "KING SPIN FREE SPINS",
+    "Actions",
+  ];
+  const expectedActionTerms = [
+    "Paytable",
+    "Auto Play",
+    "Spin / Start / Spacebar",
+    "Stop",
+    "Fast Play",
+  ];
+  const topDetail = () => JSON.stringify({ viewport, topEvidence });
+  if (!topEvidence || topEvidence.documentHidden || !topEvidence.unavailableHidden
+    || topEvidence.rulesStatus !== "bound" || topEvidence.selected !== "true"
+    || topEvidence.pageTitleText !== "Primal Rampage"
+    || JSON.stringify(topEvidence.sectionTitles) !== JSON.stringify(requiredSectionTitles)
+    || JSON.stringify(topEvidence.actionTerms) !== JSON.stringify(expectedActionTerms)
+    || /Hyper Spin|holding down the SPACE button|Auto adjust bet|Automatically reduces the total bet/u
+      .test(topEvidence.visibleText)
+    || topEvidence.background !== "rgb(255, 255, 255)"
+    || topEvidence.contentScrollWidth > topEvidence.contentClientWidth + 1
+    || !topEvidence.contentRect || !topEvidence.documentRect || !topEvidence.pageTitleRect
+    || topEvidence.documentRect.left < topEvidence.contentRect.left - 1
+    || topEvidence.documentRect.right > topEvidence.contentRect.right + 1
+    || topEvidence.pageTitleRect.top < topEvidence.contentRect.top - 1
+    || topEvidence.pageTitleRect.bottom > topEvidence.contentRect.bottom + 1) {
+    throw new Error(`正式浏览器 Game Rules 绑定、关键标题或顶部几何失真：${topDetail()}`);
+  }
+
+  await setGameMenuScrollPosition(send, "bottom");
+  const bottomEvidence = await evaluateValue(send, {
+    returnByValue: true,
+    expression: `
+      (() => {
+        const content = document.querySelector('.game-menu__content');
+        const documentSurface = document.querySelector('[data-role="game-rules-document"]');
+        const descriptions = document.querySelectorAll('.packaged-game-rules__actions dd');
+        const finalDescription = descriptions.item(descriptions.length - 1);
+        const rectangle = (element) => {
+          if (!(element instanceof HTMLElement)) return null;
+          const bounds = element.getBoundingClientRect();
+          return {
+            bottom: bounds.bottom,
+            height: bounds.height,
+            left: bounds.left,
+            right: bounds.right,
+            top: bounds.top,
+            width: bounds.width,
+          };
+        };
+        return {
+          contentClientHeight: content instanceof HTMLElement ? content.clientHeight : -1,
+          contentRect: rectangle(content),
+          contentScrollHeight: content instanceof HTMLElement ? content.scrollHeight : -1,
+          contentScrollTop: content instanceof HTMLElement ? content.scrollTop : -1,
+          documentRect: rectangle(documentSurface),
+          finalDescriptionRect: rectangle(finalDescription),
+          finalDescriptionText: finalDescription?.textContent?.trim() ?? null,
+        };
+      })()
+    `,
+  });
+  const bottomDetail = () => JSON.stringify({ viewport, bottomEvidence });
+  const maximumScrollTop = bottomEvidence
+    ? Math.max(0, bottomEvidence.contentScrollHeight - bottomEvidence.contentClientHeight)
+    : Number.NaN;
+  if (!bottomEvidence || Math.abs(bottomEvidence.contentScrollTop - maximumScrollTop) > 1
+    || !bottomEvidence.contentRect || !bottomEvidence.documentRect
+    || !bottomEvidence.finalDescriptionRect
+    || bottomEvidence.documentRect.bottom > bottomEvidence.contentRect.bottom + 1
+    || bottomEvidence.documentRect.bottom < bottomEvidence.contentRect.top - 1
+    || bottomEvidence.finalDescriptionRect.top < bottomEvidence.contentRect.top - 1
+    || bottomEvidence.finalDescriptionRect.bottom > bottomEvidence.contentRect.bottom + 1
+    || bottomEvidence.finalDescriptionText !== "- Toggle on for a significantly faster gameplay.") {
+    throw new Error(`正式浏览器 Game Rules 底边不可达：${bottomDetail()}`);
+  }
+  return Object.freeze({ bound: true, bottomVisible: true });
+}
+
 async function clickElement(send, selector) {
   const point = await evaluateValue(send, {
     returnByValue: true,
@@ -1768,12 +2131,7 @@ async function waitForStableViewportLayout(
     const transportError = transportFailure?.();
     if (transportError) throw transportError;
     snapshot = await readViewportLayout(send);
-    const expectedScale = Math.min(
-      viewport.width / surface.designWidth,
-      viewport.height / surface.designHeight,
-    );
-    const expectedWidth = surface.designWidth * expectedScale;
-    const expectedHeight = surface.designHeight * expectedScale;
+    const expected = expectedViewportGeometry(viewport, surface, channel);
     const eligible = snapshot?.viewportWidth === viewport.width
       && snapshot?.viewportHeight === viewport.height
       && snapshot?.frameCount === 1
@@ -1781,9 +2139,9 @@ async function waitForStableViewportLayout(
       && snapshot?.profile === surface.profile
       && Math.abs(snapshot?.designWidth - surface.designWidth) <= 0.000_001
       && Math.abs(snapshot?.designHeight - surface.designHeight) <= 0.000_001
-      && Math.abs(snapshot.datasetScale - expectedScale) <= 0.000_001
-      && Math.abs(snapshot.frameRect.width - expectedWidth) <= 0.75
-      && Math.abs(snapshot.frameRect.height - expectedHeight) <= 0.75;
+      && Math.abs(snapshot.datasetScale - expected.scale) <= 0.000_001
+      && Math.abs(snapshot.frameRect.width - expected.width) <= 0.75
+      && Math.abs(snapshot.frameRect.height - expected.height) <= 0.75;
     if (eligible) {
       const stabilityKey = JSON.stringify([
         snapshot.viewportWidth,
@@ -1845,6 +2203,9 @@ async function readViewportLayout(send) {
           };
         };
         const statusPanel = root?.querySelector('.status-panel');
+        const statusPanelStyle = statusPanel instanceof HTMLElement
+          ? getComputedStyle(statusPanel)
+          : null;
         const statusValues = [...(root?.querySelectorAll('.status-metric') ?? [])]
           .filter((element) => element instanceof HTMLElement)
           .map((element) => ({
@@ -1951,6 +2312,7 @@ async function readViewportLayout(send) {
             spin: rectangle('[data-role="spin-dock"]'),
             utility: rectangle('[data-role="tool-strip"]'),
             status: rectangle('.status-panel'),
+            statusBoxShadow: statusPanelStyle?.boxShadow ?? null,
             statusClientHeight: statusPanel instanceof HTMLElement ? statusPanel.clientHeight : -1,
             statusScrollHeight: statusPanel instanceof HTMLElement ? statusPanel.scrollHeight : -1,
             statusValues,
@@ -1968,6 +2330,7 @@ async function readViewportLayout(send) {
             spinMode: spin?.dataset.mode ?? null,
           },
           transformOrigin: frameStyle.transformOrigin,
+          visibleInsetX: Number.parseFloat(frameStyle.getPropertyValue('--visible-inset-x')),
           viewportHeight: innerHeight,
           viewportWidth: innerWidth,
         };
@@ -1977,14 +2340,7 @@ async function readViewportLayout(send) {
 }
 
 function assertViewportGeometry(snapshot, viewport, surface, channel) {
-  const expectedScale = Math.min(
-    viewport.width / surface.designWidth,
-    viewport.height / surface.designHeight,
-  );
-  const expectedWidth = surface.designWidth * expectedScale;
-  const expectedHeight = surface.designHeight * expectedScale;
-  const expectedX = (viewport.width - expectedWidth) / 2;
-  const expectedY = (viewport.height - expectedHeight) / 2;
+  const expected = expectedViewportGeometry(viewport, surface, channel);
   const detail = () => JSON.stringify({ viewport, surface, snapshot });
   if (snapshot.frameCount !== 1 || !snapshot.nodeIdentityPreserved
     || snapshot.channel !== channel || snapshot.profile !== surface.profile
@@ -1992,22 +2348,37 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
     || Math.abs(snapshot.designHeight - surface.designHeight) > 0.000_001) {
     throw new Error(`生产布局没有唯一且动态匹配当前能力的设计框架：${detail()}`);
   }
-  requireNear(snapshot.datasetScale, expectedScale, 0.000_001, "数据 scale", detail);
-  requireNear(snapshot.datasetX, expectedX, 0.000_001, "数据 x", detail);
-  requireNear(snapshot.datasetY, expectedY, 0.000_001, "数据 y", detail);
-  requireNear(snapshot.frameRect.width, expectedWidth, 0.75, "框架宽度", detail);
-  requireNear(snapshot.frameRect.height, expectedHeight, 0.75, "框架高度", detail);
-  requireNear(snapshot.frameRect.left, expectedX, 0.75, "左黑边", detail);
-  requireNear(snapshot.frameRect.top, expectedY, 0.75, "上黑边", detail);
-  requireNear(viewport.width - snapshot.frameRect.right, expectedX, 0.75, "右黑边", detail);
-  requireNear(viewport.height - snapshot.frameRect.bottom, expectedY, 0.75, "下黑边", detail);
+  requireNear(snapshot.datasetScale, expected.scale, 0.000_001, "数据 scale", detail);
+  requireNear(snapshot.datasetX, expected.x, 0.000_001, "数据 x", detail);
+  requireNear(snapshot.datasetY, expected.y, 0.000_001, "数据 y", detail);
+  requireNear(snapshot.frameRect.width, expected.width, 0.75, "框架宽度", detail);
+  requireNear(snapshot.frameRect.height, expected.height, 0.75, "框架高度", detail);
+  requireNear(snapshot.frameRect.left, expected.x, 0.75, "框架左偏移", detail);
+  requireNear(snapshot.frameRect.top, expected.y, 0.75, "框架上偏移", detail);
+  requireNear(
+    viewport.width - snapshot.frameRect.right,
+    expected.x,
+    0.75,
+    "框架右偏移",
+    detail,
+  );
+  requireNear(
+    viewport.height - snapshot.frameRect.bottom,
+    expected.y,
+    0.75,
+    "框架下偏移",
+    detail,
+  );
+  requireNear(snapshot.visibleInsetX, expected.visibleInsetX, 0.000_001, "可见横向内缩", detail);
   requireNear(snapshot.safeAreaRect.left, 0, 0.25, "安全区左边", detail);
   requireNear(snapshot.safeAreaRect.top, 0, 0.25, "安全区上边", detail);
   requireNear(snapshot.safeAreaRect.width, viewport.width, 0.25, "安全区宽度", detail);
   requireNear(snapshot.safeAreaRect.height, viewport.height, 0.25, "安全区高度", detail);
-  if (snapshot.frameRect.left < -0.75 || snapshot.frameRect.top < -0.75
+  if (channel === "mobile" && (
+    snapshot.frameRect.left < -0.75 || snapshot.frameRect.top < -0.75
     || snapshot.frameRect.right > viewport.width + 0.75
-    || snapshot.frameRect.bottom > viewport.height + 0.75) {
+    || snapshot.frameRect.bottom > viewport.height + 0.75
+  )) {
     throw new Error(`生产布局发生视口裁切：${detail()}`);
   }
   const matrix = snapshot.matrix;
@@ -2015,8 +2386,8 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
     throw new Error(`生产布局没有唯一二维缩放矩阵：${detail()}`);
   }
   // getComputedStyle() 会把 CSS matrix 小数序列化为约 6 位；数据集仍保持完整精度。
-  requireNear(matrix.a, expectedScale, 0.000_01, "矩阵 scaleX", detail);
-  requireNear(matrix.d, expectedScale, 0.000_01, "矩阵 scaleY", detail);
+  requireNear(matrix.a, expected.scale, 0.000_01, "矩阵 scaleX", detail);
+  requireNear(matrix.d, expected.scale, 0.000_01, "矩阵 scaleY", detail);
   requireNear(matrix.b, 0, 0.000_001, "矩阵 skewY", detail);
   requireNear(matrix.c, 0, 0.000_001, "矩阵 skewX", detail);
   requireNear(matrix.e, 0, 0.000_001, "矩阵 translateX", detail);
@@ -2041,6 +2412,41 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
     requireNear(snapshot.frameRect.width, viewport.width, 0.75, "常规比例全视口宽度", detail);
     requireNear(snapshot.frameRect.height, viewport.height, 0.75, "常规比例全视口高度", detail);
   }
+}
+
+function expectedViewportGeometry(viewport, surface, channel) {
+  if (channel === "desktop") {
+    const height = Math.min(
+      viewport.height,
+      viewport.width * (DESKTOP_AUTHORED_HEIGHT / DESKTOP_AUTHORED_WIDTH),
+    );
+    const scale = height / surface.designHeight;
+    const width = surface.designWidth * scale;
+    const x = (viewport.width - width) / 2;
+    const y = (viewport.height - height) / 2;
+    return Object.freeze({
+      height,
+      scale,
+      visibleInsetX: scale > 0 ? Math.max(0, -x / scale) : 0,
+      width,
+      x,
+      y,
+    });
+  }
+  const scale = Math.min(
+    viewport.width / surface.designWidth,
+    viewport.height / surface.designHeight,
+  );
+  const width = surface.designWidth * scale;
+  const height = surface.designHeight * scale;
+  return Object.freeze({
+    height,
+    scale,
+    visibleInsetX: 0,
+    width,
+    x: (viewport.width - width) / 2,
+    y: (viewport.height - height) / 2,
+  });
 }
 
 function assertViewportStatePreserved(expected, actual, viewport, channel) {
@@ -2102,6 +2508,40 @@ function assertMobileControlLayout(snapshot, viewport) {
       && (controls.statusValues ?? []).every(
         (metric) => metric.scrollHeight <= metric.clientHeight + 1,
       ),
+  });
+}
+
+function assertDesktopStatusLayout(snapshot, viewport) {
+  const status = snapshot.controlLayout?.status;
+  const expected = expectedViewportGeometry(
+    viewport,
+    DESKTOP_VIEWPORT_SURFACE,
+    "desktop",
+  );
+  const detail = () => JSON.stringify({ viewport, expected, status, snapshot });
+  if (!status) throw new Error(`PC 状态栏缺少浏览器几何证据：${detail()}`);
+  requireNear(status.left, 0, 0.75, "PC 状态栏可见左边", detail);
+  requireNear(status.right, viewport.width, 0.75, "PC 状态栏可见右边", detail);
+  requireNear(status.width, viewport.width, 0.75, "PC 状态栏可见宽度", detail);
+  requireNear(status.height, 16 * expected.scale, 0.75, "PC 状态栏物理高度", detail);
+  requireNear(status.bottom, viewport.height, 0.75, "PC 状态栏物理底边", detail);
+  if (typeof snapshot.controlLayout.statusBoxShadow !== "string"
+    || !/rgb\(19, 10, 3\) 0px -1px 0px(?: 0px)?/.test(
+      snapshot.controlLayout.statusBoxShadow,
+    )) {
+    throw new Error(`PC 状态栏缺少原版顶部 1px 纹理接缝：${detail()}`);
+  }
+  if (snapshot.controlLayout.statusScrollHeight
+      > snapshot.controlLayout.statusClientHeight + 1
+    || snapshot.controlLayout.statusValues.some(
+      (metric) => metric.scrollHeight > metric.clientHeight + 1,
+    )) {
+    throw new Error(`PC 状态栏内容发生纵向裁切：${detail()}`);
+  }
+  return Object.freeze({
+    contained: true,
+    height: status.height,
+    physicalBottom: status.bottom,
   });
 }
 
@@ -2258,7 +2698,7 @@ async function dispatchMouseClick(send, point) {
 
 function requireNear(actual, expected, tolerance, label, detail) {
   if (!Number.isFinite(actual) || Math.abs(actual - expected) > tolerance) {
-    throw new Error(`生产布局 ${label} 不符合等比居中契约：${detail()}`);
+    throw new Error(`生产布局 ${label} 不符合根投影契约：${detail()}`);
   }
 }
 
@@ -2277,11 +2717,20 @@ function validateContinuousViewportEvidence(viewportEvidence) {
     || mobile.steps?.length !== CONTINUOUS_VIEWPORTS.length
     || help.steps?.length !== OFFICIAL_HELP_VIEWPORTS.length
     || openingOverlay.steps?.length !== OFFICIAL_HELP_VIEWPORTS.length
+    || openingOverlay.desktopTouchLocked?.verified !== true
+    || openingOverlay.desktopTouchLocked?.coarsePointer !== true
+    || openingOverlay.desktopTouchLocked?.maxTouchPoints <= 0
+    || openingOverlay.desktopTouchLocked?.featurePreviewContained !== true
+    || Math.abs(openingOverlay.desktopTouchLocked?.x - (-80)) > 0.75
+    || Math.abs(openingOverlay.desktopTouchLocked?.y) > 0.75
+    || Math.abs(openingOverlay.desktopTouchLocked?.frameWidth - 1_600) > 0.75
+    || Math.abs(openingOverlay.desktopTouchLocked?.frameHeight - 900) > 0.75
+    || Math.abs(openingOverlay.desktopTouchLocked?.visibleInsetX - 64) > 0.000_001
     || openingOverlay.freeSpinsHud?.reachable !== false
     || openingOverlay.freeSpinsHud?.verified !== false
     || openingOverlay.freeSpinsHud?.reason
       !== "controlled-transaction-fixture-feature-mode-none"
-    || desktop.blackBorderClickCount !== 3
+    || desktop.blackBorderClickCount !== 0
     || mobile.blackBorderClickCount !== 2) {
     throw new Error(`生产浏览器连续视口证据不完整：${JSON.stringify(viewportEvidence)}`);
   }
@@ -2310,18 +2759,30 @@ function validateContinuousViewportEvidence(viewportEvidence) {
     if (step.width !== expected.width || step.height !== expected.height
       || step.channel !== "desktop" || step.maxTouchPoints !== 0
       || !step.nodeIdentityPreserved || !step.documentIdentityPreserved || !step.statePreserved
-      || !step.transactionStatePreserved) {
+      || !step.transactionStatePreserved || step.blackBorderClicked
+      || !Number.isFinite(step.visibleInsetX) || !step.statusLayout?.contained
+      || Math.abs(step.statusLayout.physicalBottom - expected.height) > 0.75) {
       throw new Error(`生产浏览器桌面连续视口顺序或状态证据失真：${JSON.stringify({
         expected,
         step,
       })}`);
+    }
+    if (expected.width === 1_440 && expected.height === 900
+      && (Math.abs(step.x - (-80)) > 0.75 || Math.abs(step.y) > 0.75
+        || Math.abs(step.frameWidth - 1_600) > 0.75
+        || Math.abs(step.frameHeight - 900) > 0.75
+        || Math.abs(step.scale - 1.25) > 0.000_001
+        || Math.abs(step.visibleInsetX - 64) > 0.000_001)) {
+      throw new Error(`生产浏览器 1440x900 PC authored 投影证据失真：${JSON.stringify(step)}`);
     }
   }
   for (let index = 0; index < OFFICIAL_HELP_VIEWPORTS.length; index += 1) {
     const expected = OFFICIAL_HELP_VIEWPORTS[index];
     const step = help.steps[index];
     if (step.width !== expected.width || step.height !== expected.height
-      || !step.bound || step.horizontalOverflow || step.scaleX !== step.scaleY) {
+      || !step.bound || step.horizontalOverflow || step.scaleX !== step.scaleY
+      || step.paytableBottomVisible !== true || step.gameRulesBound !== true
+      || step.gameRulesBottomVisible !== true) {
       throw new Error(`正式浏览器帮助页视口证据失真：${JSON.stringify({
         expected,
         step,

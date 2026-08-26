@@ -35,7 +35,7 @@ func (e *Engine) Spin(ctx context.Context, input SpinInput) (SpinOutcome, error)
 	if err := e.config.ValidateBet(input.BetMinor); err != nil {
 		return SpinOutcome{}, err
 	}
-	if err := validateFeatureState(input.Feature, input.BetMinor, e.config.Feature); err != nil {
+	if err := validateFeatureState(input.Feature, input.BetMinor, e.config); err != nil {
 		return SpinOutcome{}, err
 	}
 
@@ -165,24 +165,12 @@ func (e *Engine) Spin(ctx context.Context, input SpinInput) (SpinOutcome, error)
 		}
 	}
 
-	if input.Feature.Active() {
-		featureWin, err := safeAdd(input.Feature.WinMinor, total)
-		if err != nil {
-			return SpinOutcome{}, err
-		}
-		if next.Remaining == 0 {
-			events = append(events, Event{
-				Type: "free_spins.completed", Mode: input.Feature.Mode,
-				Awarded: next.Awarded, CumulativeWinMinor: featureWin,
-			})
-			next = next.WithoutFreeSpins()
-		} else {
-			next.WinMinor = featureWin
-		}
-	}
 	outcome := SpinOutcome{
 		Grid: grid, Wins: wins, Events: events,
 		TotalWinMinor: total, NextFeature: next,
+	}
+	if err := applyWinCap(e.config, input, &outcome); err != nil {
+		return SpinOutcome{}, err
 	}
 	if err := validateOutcomeAgainstValidatedConfig(e.config, input, outcome); err != nil {
 		return SpinOutcome{}, fmt.Errorf("game engine produced an invalid outcome: %w", err)
@@ -537,16 +525,17 @@ func cloneConfig(config Config) Config {
 	return cloned
 }
 
-func validateFeatureState(state FeatureState, bet int64, config FeatureConfig) error {
+func validateFeatureState(state FeatureState, bet int64, config Config) error {
 	state = canonicalFeatureState(state)
+	featureConfig := config.Feature
 	if state.RageCollected < 0 || state.RageCollected > MaxRageCollected ||
-		state.RageLevel < DefaultRageLevel || state.RageLevel > len(config.RageLevelThresholds) {
+		state.RageLevel < DefaultRageLevel || state.RageLevel > len(featureConfig.RageLevelThresholds) {
 		return errors.New("invalid Rage meter state")
 	}
 	if state.RageCollected == 0 && state.RageLevel != DefaultRageLevel {
 		return errors.New("empty Rage meter must be at the default level")
 	}
-	if state.RageCollected > 0 && state.RageLevel != rageLevelFor(state.RageCollected, config.RageLevelThresholds) {
+	if state.RageCollected > 0 && state.RageLevel != rageLevelFor(state.RageCollected, featureConfig.RageLevelThresholds) {
 		return errors.New("Rage meter level does not match its collected count")
 	}
 	if !state.Active() {
@@ -567,16 +556,20 @@ func validateFeatureState(state FeatureState, bet int64, config FeatureConfig) e
 	if state.WinMinor < 0 {
 		return errors.New("feature win cannot be negative")
 	}
+	capMinor, err := safeMul(bet, config.MaxWinMultiplier)
+	if err != nil || state.WinMinor > capMinor {
+		return errors.New("feature win exceeds the definition max win")
+	}
 	if state.Awarded < state.Remaining || state.Awarded <= 0 {
 		return errors.New("invalid feature counters")
 	}
 	if state.Remaining > MaxFeatureSpins || state.Awarded > MaxFeatureSpins {
 		return errors.New("feature counters exceed the protocol limit")
 	}
-	if state.Mode == FeatureExpansion && state.Awarded > config.MaxExpansionSpins {
+	if state.Mode == FeatureExpansion && state.Awarded > featureConfig.MaxExpansionSpins {
 		return errors.New("expansion spin cap exceeded")
 	}
-	if state.Mode == FeatureOverdrive && state.Awarded != config.InitialFreeSpins {
+	if state.Mode == FeatureOverdrive && state.Awarded != featureConfig.InitialFreeSpins {
 		return errors.New("overdrive cannot be extended")
 	}
 	return nil

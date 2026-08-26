@@ -110,6 +110,7 @@ func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win,
 						Multiplier:      pathMultiplier,
 						BaseAmountMinor: base,
 						AmountMinor:     pathAmount,
+						PaidAmountMinor: pathAmount,
 					})
 					wayCount++
 				}
@@ -128,9 +129,9 @@ func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win,
 			ID:          strings.ToLower(string(target)) + "-3",
 			Symbol:      target,
 			Ways:        wayCount,
-			AmountMinor: amount,
-			Cells:       cells,
-			PathAwards:  pathAwards,
+			AmountMinor: amount, PaidAmountMinor: amount,
+			Cells:      cells,
+			PathAwards: pathAwards,
 		}
 		wins = append(wins, win)
 		total, err = safeAdd(total, amount)
@@ -166,6 +167,7 @@ func EvaluateWaysForBet(
 			return nil, 0, fmt.Errorf("ways: %s scaled paths: %w", wins[index].Symbol, scaleErr)
 		}
 		wins[index].AmountMinor = scaled
+		wins[index].PaidAmountMinor = scaled
 		total, err = safeAdd(total, scaled)
 		if err != nil {
 			return nil, 0, fmt.Errorf("ways: total scaled award: %w", err)
@@ -195,6 +197,7 @@ func scalePathAwards(
 			return err
 		}
 		paths[index].AmountMinor = numerator / payUnitMinor
+		paths[index].PaidAmountMinor = paths[index].AmountMinor
 		floorTotal, err = safeAdd(floorTotal, paths[index].AmountMinor)
 		if err != nil {
 			return err
@@ -214,6 +217,7 @@ func scalePathAwards(
 	for index := int64(0); index < remaining; index++ {
 		pathIndex := remainders[index].index
 		paths[pathIndex].AmountMinor++
+		paths[pathIndex].PaidAmountMinor++
 	}
 	for index := range paths {
 		// BaseAmountMinor 是服务器独立解析出的展示事实。应直接缩放并取整未乘倍数的路径值，

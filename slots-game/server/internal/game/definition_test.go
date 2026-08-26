@@ -30,6 +30,11 @@ func TestDefinitionDigestIsStableAndEconomicallySensitive(t *testing.T) {
 	if different == first {
 		t.Fatal("economic change did not change definition digest")
 	}
+	changed = config
+	changed.MaxWinMultiplier--
+	if _, err = DefinitionDigest(changed); err == nil {
+		t.Fatal("foreign max-win contract unexpectedly produced an approved-engine digest")
+	}
 }
 
 func TestDefinitionApprovalFailsClosed(t *testing.T) {
@@ -53,6 +58,22 @@ func TestDefinitionApprovalFailsClosed(t *testing.T) {
 	approval.Status = "DRAFT"
 	if err := VerifyDefinitionApproval(config, approval); err == nil {
 		t.Fatal("draft approval unexpectedly accepted")
+	}
+}
+
+func TestDefinitionApprovalRejectsAConfigForForeignEngineRules(t *testing.T) {
+	config := DemoConfig()
+	digest, err := DefinitionDigest(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval := DefinitionApproval{
+		GameID: config.GameID, Version: config.DefinitionVersion,
+		SHA256: digest, Status: "APPROVED", ApprovalRef: "lab-report-123",
+	}
+	config.EngineRulesVersion = "slots-game-ways3-features-v999"
+	if err := VerifyDefinitionApproval(config, approval); err == nil {
+		t.Fatal("approval accepted a definition for foreign engine rules")
 	}
 }
 

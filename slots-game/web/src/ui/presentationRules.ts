@@ -1,7 +1,7 @@
 import type { GameDefinitionBinding, SessionOpened } from "../app/state/types";
 import { ENGINE_RULES_VERSION } from "../protocol/messages";
 
-export const PRIMAL_PRESENTATION_RULES_VERSION = "primal-rampage-help-en-gb-v2" as const;
+export const PRIMAL_PRESENTATION_RULES_VERSION = "primal-rampage-help-en-gb-v3" as const;
 
 /**
  * 这份白名单只批准固定玩法文案的展示，不批准数学定义本身。
@@ -10,8 +10,8 @@ export const PRIMAL_PRESENTATION_RULES_VERSION = "primal-rampage-help-en-gb-v2" 
 export const PRIMAL_PRESENTATION_DEFINITION_BINDINGS = Object.freeze([
   Object.freeze({
     gameId: "iron-colossus",
-    definitionVersion: "local-production-2026-08-16.1",
-    definitionHash: "96caac1ea4f82292ba96e0e0397459687638d6ff904471a8363e69f6e824d35d",
+    definitionVersion: "local-production-2026-08-26.3",
+    definitionHash: "9e9b9b5f23f0f2cfed0a4a5ff5961dbc76a91ba9e614f3cfadb47824a46d2205",
   }),
 ] as const satisfies readonly GameDefinitionBinding[]);
 
@@ -21,8 +21,9 @@ export const PRIMAL_PRESENTATION_DEFINITION_BINDINGS = Object.freeze([
  */
 export const PRIMAL_HELP_AUTHORING = Object.freeze({
   logicalWidthPx: 750,
+  logicalHeightPx: 7_565,
   title: Object.freeze({
-    fontFamily: "ROBOTO_CONDENSED_BOLD",
+    fontFamily: "KANIT_BOLD",
     fontSizePx: 45,
     lineHeightPx: 60,
     gradientColors: Object.freeze(["#ff250a", "#ff710a"] as const),
@@ -39,7 +40,37 @@ export const PRIMAL_HELP_AUTHORING = Object.freeze({
   }),
 });
 
+/** 实时 `config_mobile.json` 编排坐标；浏览器布局最多可相差 1px。 */
+export const PRIMAL_HELP_AUTHOR_Y = Object.freeze({
+  maximumWinTop: 51.5,
+  wild: 176,
+  vault: 868,
+  rage: 1_718.25,
+  primalWheel: 2_384.1,
+  kongQuestPage1: 3_178.15,
+  kongQuestPage2: 3_902.2,
+  kingSpinPage1: 4_735.9,
+  kingSpinPage2: 5_563.85,
+  payingSymbols: 6_153.65,
+  wayWins: 6_848.9,
+  maximumWinBottom: 7_445,
+} as const);
+
+/** 捕获的九个 T0AB 帧界定编排的 PAYTABLE 章节。 */
+export const PRIMAL_HELP_SEPARATOR_AUTHOR_Y = Object.freeze([
+  159,
+  858.05,
+  1_699.3,
+  2_371.5,
+  3_154.45,
+  4_720.6,
+  6_131.35,
+  6_825.75,
+  7_527.6,
+] as const);
+
 export const PRIMAL_HELP_REQUIRED_LOCALE_KEYS = Object.freeze([
+  "IDS_WINUPTO_YOURBET",
   "IDS_PR_WILD",
   "IDS_PR_PT1",
   "IDS_PR_PT2",
@@ -99,11 +130,13 @@ type PrimalHelpLocaleBundleValidationInput = Readonly<{
 }>;
 
 export const PRIMAL_HELP_PACKAGED_FONT_FAMILIES = Object.freeze([
+  "KANIT_BOLD",
   "ROBOTO_CONDENSED_BOLD",
   "ROBOTO_CONDENSED_REGULAR",
 ] as const);
 
 const EN_GB_HELP_MESSAGES = Object.freeze({
+  IDS_WINUPTO_YOURBET: "Win up to 2500x your bet!",
   IDS_PR_WILD: "WILD",
   IDS_PR_PT1: "Wild can land on reel 2.",
   IDS_PR_PT2: "It substitute for all symbols except Vault Bonus and Rage Symbols.",
@@ -466,6 +499,9 @@ export const PRIMAL_HELP_SECTIONS = Object.freeze([
 export const PRIMAL_WAY_WINS_COPY =
   EN_GB_HELP_MESSAGES.IDS_PR_WW_LR;
 
+export const PRIMAL_MAXIMUM_WIN_COPY =
+  EN_GB_HELP_MESSAGES.IDS_WINUPTO_YOURBET;
+
 export const PRIMAL_PRESENTATION_RULES = Object.freeze({
   schema: "slots-game-presentation-rules-v1",
   version: PRIMAL_PRESENTATION_RULES_VERSION,
@@ -478,6 +514,7 @@ export const PRIMAL_PRESENTATION_RULES = Object.freeze({
   }),
   sections: PRIMAL_HELP_SECTIONS,
   wayWins: PRIMAL_WAY_WINS_COPY,
+  maximumWin: PRIMAL_MAXIMUM_WIN_COPY,
 });
 
 export type PresentationRulesBindingStatus =

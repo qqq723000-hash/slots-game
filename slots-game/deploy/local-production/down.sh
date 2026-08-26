@@ -5,4 +5,5 @@ set -eu
 . "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/common.sh"
 require_docker
 require_state
+acquire_deployment_lock
 compose down --remove-orphans

@@ -25,6 +25,7 @@ browser_smoke="$repo_root/web/scripts/verify-production-browser-bootstrap.mjs"
 browser_smoke_contract_test="$repo_root/web/tests/production-browser-bootstrap-contract.test.ts"
 operations_readme="$script_dir/README.md"
 frontend_workflow="$repo_root/../.github/workflows/frontend-conformance.yml"
+nginx_openssl_patch_verifier="$repo_root/deploy/supply-chain/verify-nginx-openssl-patch.sh"
 
 fail() {
   printf '%s\n' "web container contract: $*" >&2
@@ -69,13 +70,36 @@ for required_file in \
   "$browser_smoke" \
   "$browser_smoke_contract_test" \
   "$operations_readme" \
-  "$frontend_workflow"
+  "$frontend_workflow" \
+  "$nginx_openssl_patch_verifier"
 do
   test -f "$required_file" || fail "missing ${required_file#"$repo_root/"}"
 done
 
+"$nginx_openssl_patch_verifier" web "$dockerfile" >/dev/null \
+  || fail 'Nginx OpenSSL patch contract failed'
+
 require_regex '^ARG NODE_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$dockerfile"
 require_regex '^ARG NGINX_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$dockerfile"
+require_line 'ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:bcf91d2c73ab64fa1c4ac7fbac5ac523057c8af7d553ab9251c7aef38c260979' "$dockerfile"
+require_line 'FROM scratch AS openssl-patches' "$dockerfile"
+require_line 'ADD --checksum=sha256:161223a16f042b8e469e9441291e071464fd91d4f4bbe6f496ee8d0abd4e0701 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk /x86_64/libcrypto3.apk' "$dockerfile"
+require_line 'ADD --checksum=sha256:aca521e5ae4a321322a9d47ed64a1775f5ab1ffd215d1e9fc0433c58f7bfd037 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk /x86_64/libssl3.apk' "$dockerfile"
+require_line 'ADD --checksum=sha256:35b892813c23664a3592e4fc8c12a03538a22c579057655361c7043305272a9a https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libcrypto3-3.5.8-r0.apk /aarch64/libcrypto3.apk' "$dockerfile"
+require_line 'ADD --checksum=sha256:d6ec970cc10e01539e41626f720c4e0ac69016eaa2079a10ef776ffd3243db5b https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libssl3-3.5.8-r0.apk /aarch64/libssl3.apk' "$dockerfile"
+test "$(grep -F -c -- '--mount=type=bind,from=openssl-patches,source=/,target=/patches,readonly' "$dockerfile")" -eq 3 \
+  || fail 'all three Nginx stages must consume the digest-bound OpenSSL patch through a read-only mount'
+test "$(grep -F -c -- 'apk add --no-network --no-cache --repositories-file /dev/null "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk"' "$dockerfile")" -eq 3 \
+  || fail 'all three Nginx stages must install the exact offline OpenSSL patch pair'
+test "$(grep -F -c -- 'case "$openssl_patch_arch" in x86_64|aarch64) ;; *) exit 1 ;; esac' "$dockerfile")" -eq 3 \
+  || fail 'all three Nginx stages must reject unreviewed patch architectures'
+test "$(grep -F -c -- "apk info -e 'libcrypto3=3.5.8-r0'" "$dockerfile")" -eq 3 \
+  || fail 'all three Nginx stages must prove the fixed libcrypto3 version'
+test "$(grep -F -c -- "apk info -e 'libssl3=3.5.8-r0'" "$dockerfile")" -eq 3 \
+  || fail 'all three Nginx stages must prove the fixed libssl3 version'
+if grep -E 'apk[[:space:]]+(upgrade|add)([[:space:]]|$)' "$dockerfile" | grep -Fv 'apk add --no-network --no-cache --repositories-file /dev/null "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk"' >/dev/null; then
+  fail 'Nginx stages contain an unreviewed or network-dependent apk mutation'
+fi
 require_fixed '"build:determinism-check": "node scripts/verify-deterministic-release-build.mjs"' "$repo_root/web/package.json"
 require_fixed '"licenses:generate": "node scripts/generate-third-party-notices.mjs --write"' "$repo_root/web/package.json"
 require_fixed '"licenses:check": "node scripts/generate-third-party-notices.mjs --check"' "$repo_root/web/package.json"

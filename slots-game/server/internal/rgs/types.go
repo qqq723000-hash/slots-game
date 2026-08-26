@@ -161,6 +161,10 @@ func (r SpinRequest) Key() RoundKey {
 
 // SpinResult 是可规范重放的结果模型；BalanceMinor 只能在提交时由已验证钱包回执填入。
 type SpinResult struct {
+	// ResultSchemaVersion 绑定持久化的经济表示。空值专用于在名义奖励与已支付奖励
+	// 拆分前写入的历史结果；所有新准备的结果都必须使用当前模式。
+	// omitempty 可保持历史 JSON 和哈希投影完全不变。
+	ResultSchemaVersion string `json:",omitempty"`
 	OperatorID          string
 	SessionID           string
 	RoundID             string
@@ -378,6 +382,9 @@ func ValidateResultDeliveryAcknowledgement(receipt ResultDeliveryAcknowledgement
 // 恢复方不得使用已推进的会话或局后 FeatureState 反推该输入。
 func ValidateResultDelivery(delivery ResultDelivery) error {
 	result := delivery.Result
+	if err := NormalizePersistedSpinResult(&result); err != nil {
+		return fmt.Errorf("%w: invalid result schema", ErrInvalidRequest)
+	}
 	if !identifierPattern.MatchString(delivery.OperatorID) ||
 		!identifierPattern.MatchString(delivery.SessionID) ||
 		!identifierPattern.MatchString(delivery.RoundID) ||

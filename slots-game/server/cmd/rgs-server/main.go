@@ -164,6 +164,15 @@ func run(logger *slog.Logger) error {
 	if err := validateLoadedDefinitionIdentity(config, definition, definitionHash); err != nil {
 		return err
 	}
+	if _, err := postgres.CheckDefinitionContinuity(
+		startupContext,
+		database,
+		definition.GameID,
+		definition.DefinitionVersion,
+		definitionHash,
+	); err != nil {
+		return fmt.Errorf("verify game definition continuity before startup: %w", err)
+	}
 	operatorOptions := make([]bootstrap.OperatorLoadOption, 0, 1)
 	if config.Environment == platform.Development {
 		operatorOptions = append(operatorOptions, bootstrap.AllowInsecureWalletHTTPForDevelopment())

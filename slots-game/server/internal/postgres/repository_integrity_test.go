@@ -759,6 +759,56 @@ func TestGetRoundReplaysAuthoritativePreMultiplierPathAmount(t *testing.T) {
 	assertRepositoryExpectations(t, mock)
 }
 
+func TestGetRoundHydratesLegacyPaidFactsWithoutChangingOutcomeHash(t *testing.T) {
+	db, mock := newRepositoryMock(t)
+	repository, err := NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := newRoundRowFixture(t, rgs.RoundPrepared)
+	setFixturePathAward(t, &fixture)
+	fixture.result.ResultSchemaVersion = ""
+	fixture.result.Wins[0].PaidAmountMinor = 0
+	fixture.result.Wins[0].PathAwards[0].PaidAmountMinor = 0
+	fixture.outcomeHash, err = rgs.PreparedOutcomeHashFor(fixture.result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(fixture.result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(encoded, &document); err != nil {
+		t.Fatal(err)
+	}
+	wins := document["Wins"].([]any)
+	win := wins[0].(map[string]any)
+	delete(win, "PaidAmountMinor")
+	paths := win["PathAwards"].([]any)
+	delete(paths[0].(map[string]any), "PaidAmountMinor")
+	fixture.resultJSON, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectGetRound(t, mock, fixture)
+
+	record, err := repository.GetRound(context.Background(), fixture.request.Key())
+	if err != nil {
+		t.Fatalf("GetRound() error = %v", err)
+	}
+	if record.Result.ResultSchemaVersion != "" || len(record.Result.Wins) != 1 ||
+		record.Result.Wins[0].PaidAmountMinor != 250 ||
+		record.Result.Wins[0].PathAwards[0].PaidAmountMinor != 250 {
+		t.Fatalf("hydrated legacy result = %+v", record.Result)
+	}
+	actualHash, err := rgs.PreparedOutcomeHashFor(record.Result)
+	if err != nil || actualHash != fixture.outcomeHash {
+		t.Fatalf("legacy outcome hash = %q error=%v, want %q", actualHash, err, fixture.outcomeHash)
+	}
+	assertRepositoryExpectations(t, mock)
+}
+
 func TestDecodeStrictRoundResultRequiresExplicitZeroPreMultiplierAmount(t *testing.T) {
 	fixture := newRoundRowFixture(t, rgs.RoundPrepared)
 	setFixtureZeroPathAward(t, &fixture)
@@ -1062,7 +1112,8 @@ func newRoundRowFixture(t *testing.T, status rgs.RoundStatus) roundRowFixture {
 		TransportGeneration: 1,
 	}
 	result := rgs.SpinResult{
-		OperatorID: request.OperatorID, SessionID: request.SessionID, RoundID: request.RoundID,
+		ResultSchemaVersion: rgs.ResultSchemaPaidFactsV1,
+		OperatorID:          request.OperatorID, SessionID: request.SessionID, RoundID: request.RoundID,
 		GameID: request.GameID, DefinitionVersion: request.DefinitionVersion,
 		DefinitionHash: request.DefinitionHash, Currency: request.Currency,
 		RoundKind: request.RoundKind, ServerTransactionID: "rgs-op-v1:fixture",
@@ -1120,13 +1171,15 @@ func setFixturePathAward(t *testing.T, fixture *roundRowFixture) {
 	t.Helper()
 	fixture.result.Grid[1][0] = game.Cell{Symbol: game.SymbolWild, Multiplier: 5}
 	fixture.result.Wins = []game.Win{{
-		ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 1, AmountMinor: 250,
+		ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 1,
+		AmountMinor: 250, PaidAmountMinor: 250,
 		Cells: []game.Position{{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0}},
 		PathAwards: []game.PathAward{{
 			Cells: []game.Position{
 				{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0},
 			},
-			Multiplier: 5, BaseAmountMinor: 50, AmountMinor: 250,
+			Multiplier: 5, BaseAmountMinor: 50,
+			AmountMinor: 250, PaidAmountMinor: 250,
 		}},
 	}}
 	fixture.result.TotalWinMinor = 250
@@ -1143,7 +1196,8 @@ func setFixtureZeroPathAward(t *testing.T, fixture *roundRowFixture) {
 	fixture.result.Grid[1][0] = game.Cell{Symbol: game.SymbolWild, Multiplier: 5}
 	fixture.result.Grid[1][1] = game.Cell{Symbol: game.SymbolOrbit}
 	fixture.result.Wins = []game.Win{{
-		ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 2, AmountMinor: 250,
+		ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 2,
+		AmountMinor: 250, PaidAmountMinor: 250,
 		Cells: []game.Position{
 			{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 1, Row: 1}, {Reel: 2, Row: 0},
 		},
@@ -1152,7 +1206,8 @@ func setFixtureZeroPathAward(t *testing.T, fixture *roundRowFixture) {
 				Cells: []game.Position{
 					{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0},
 				},
-				Multiplier: 5, BaseAmountMinor: 50, AmountMinor: 250,
+				Multiplier: 5, BaseAmountMinor: 50,
+				AmountMinor: 250, PaidAmountMinor: 250,
 			},
 			{
 				Cells: []game.Position{

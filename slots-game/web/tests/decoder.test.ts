@@ -21,6 +21,7 @@ const result = {
   wins: [{
     id: "win-1",
     symbol: "ORBIT",
+    // 旧版共享解码器夹具有意省略 nominalAmountMinor。
     amountMinor: "225",
     cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
   }],
@@ -37,6 +38,7 @@ const authoritativeWaysResult = {
     id: "win-1",
     symbol: "ORBIT",
     ways: 2,
+    nominalAmountMinor: "225",
     amountMinor: "225",
     cells: [
       { reel: 0, row: 0 },
@@ -49,12 +51,14 @@ const authoritativeWaysResult = {
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
         multiplier: 1,
         baseAmountMinor: "75",
+        nominalAmountMinor: "75",
         amountMinor: "75",
       },
       {
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 1 }, { reel: 2, row: 0 }],
         multiplier: 2,
         baseAmountMinor: "75",
+        nominalAmountMinor: "150",
         amountMinor: "150",
       },
     ],
@@ -78,9 +82,20 @@ describe("decodeServerMessage", () => {
     if (decoded.type !== "spin.result") throw new Error("unexpected message");
     expect(decoded.wins[0]).toMatchObject({
       ways: 2,
+      nominalAmountMinor: "225",
       pathAwards: [
-        { multiplier: 1, baseAmountMinor: "75", amountMinor: "75" },
-        { multiplier: 2, baseAmountMinor: "75", amountMinor: "150" },
+        {
+          multiplier: 1,
+          baseAmountMinor: "75",
+          nominalAmountMinor: "75",
+          amountMinor: "75",
+        },
+        {
+          multiplier: 2,
+          baseAmountMinor: "75",
+          nominalAmountMinor: "150",
+          amountMinor: "150",
+        },
       ],
     });
 
@@ -88,6 +103,7 @@ describe("decodeServerMessage", () => {
     if (legacy.type !== "spin.result") throw new Error("unexpected message");
     expect(legacy.wins[0]).not.toHaveProperty("ways");
     expect(legacy.wins[0]).not.toHaveProperty("pathAwards");
+    expect(legacy.wins[0]?.nominalAmountMinor).toBe("225");
   });
 
   it("accepts only a uniform modern record multiplier and keeps legacy presentation metadata", () => {
@@ -99,6 +115,7 @@ describe("decodeServerMessage", () => {
       wins: [{
         ...modernWin,
         ways: 1,
+        nominalAmountMinor: uniformPath.nominalAmountMinor,
         amountMinor: uniformPath.amountMinor,
         multiplier: uniformPath.multiplier,
         cells: uniformPath.cells,
@@ -140,10 +157,21 @@ describe("decodeServerMessage", () => {
       totalWinMinor: total,
       wins: [{
         ...modernWin,
+        nominalAmountMinor: total,
         amountMinor: total,
         pathAwards: [
-          { ...modernWin.pathAwards[0]!, baseAmountMinor: base, amountMinor: base },
-          { ...modernWin.pathAwards[1]!, baseAmountMinor: base, amountMinor: doubled },
+          {
+            ...modernWin.pathAwards[0]!,
+            baseAmountMinor: base,
+            nominalAmountMinor: base,
+            amountMinor: base,
+          },
+          {
+            ...modernWin.pathAwards[1]!,
+            baseAmountMinor: base,
+            nominalAmountMinor: doubled,
+            amountMinor: doubled,
+          },
         ],
       }],
     });
@@ -155,17 +183,232 @@ describe("decodeServerMessage", () => {
       totalWinMinor: total,
       wins: [{
         ...modernWin,
+        nominalAmountMinor: total,
         amountMinor: total,
         pathAwards: [
-          { ...modernWin.pathAwards[0]!, baseAmountMinor: base, amountMinor: base },
+          {
+            ...modernWin.pathAwards[0]!,
+            baseAmountMinor: base,
+            nominalAmountMinor: base,
+            amountMinor: base,
+          },
           {
             ...modernWin.pathAwards[1]!,
             baseAmountMinor: (BigInt(doubled) + 1n).toString(),
+            nominalAmountMinor: doubled,
             amountMinor: doubled,
           },
         ],
       }],
     })).toThrow(/baseAmountMinor is inconsistent/);
+  });
+
+  it("preserves capped nominal and paid facts while rejecting overpayment or mismatched sums", () => {
+    const cappedWin = {
+      ...authoritativeWaysResult.wins[0]!,
+      nominalAmountMinor: "300000",
+      amountMinor: "250000",
+      pathAwards: [
+        {
+          ...authoritativeWaysResult.wins[0]!.pathAwards[0]!,
+          baseAmountMinor: "100000",
+          nominalAmountMinor: "100000",
+          amountMinor: "100000",
+        },
+        {
+          ...authoritativeWaysResult.wins[0]!.pathAwards[1]!,
+          baseAmountMinor: "100000",
+          nominalAmountMinor: "200000",
+          amountMinor: "150000",
+        },
+      ],
+    };
+    const capEvent = {
+      type: "win_cap.reached",
+      multiplier: 2_500,
+      cumulativeWinMinor: "250000",
+    };
+    const capped = decodeServerMessage({
+      ...authoritativeWaysResult,
+      totalWinMinor: "250000",
+      wins: [cappedWin],
+      events: [capEvent],
+    });
+    if (capped.type !== "spin.result") throw new Error("unexpected message");
+    expect(capped.wins[0]).toMatchObject({
+      nominalAmountMinor: "300000",
+      amountMinor: "250000",
+      pathAwards: [
+        { nominalAmountMinor: "100000", amountMinor: "100000" },
+        { nominalAmountMinor: "200000", amountMinor: "150000" },
+      ],
+    });
+
+    expect(() => decodeServerMessage({
+      ...authoritativeWaysResult,
+      totalWinMinor: "300001",
+      wins: [{ ...cappedWin, amountMinor: "300001" }],
+      events: [capEvent],
+    })).toThrow(/amountMinor must not exceed.*nominalAmountMinor/);
+    expect(() => decodeServerMessage({
+      ...authoritativeWaysResult,
+      totalWinMinor: "250001",
+      wins: [{
+        ...cappedWin,
+        amountMinor: "250001",
+        pathAwards: cappedWin.pathAwards.map((award, index) => (
+          index === 0 ? { ...award, amountMinor: "100001" } : award
+        )),
+      }],
+      events: [capEvent],
+    })).toThrow(/pathAwards\[0\].amountMinor must not exceed.*nominalAmountMinor/);
+    expect(() => decodeServerMessage({
+      ...authoritativeWaysResult,
+      totalWinMinor: "250000",
+      wins: [{
+        ...cappedWin,
+        nominalAmountMinor: "299999",
+      }],
+      events: [capEvent],
+    })).toThrow(/nominal amounts must sum/);
+    expect(() => decodeServerMessage({
+      ...authoritativeWaysResult,
+      totalWinMinor: "250000",
+      wins: [cappedWin],
+      events: [],
+    })).toThrow(/authoritative win-cap projection/);
+  });
+
+  it("requires one exact 2500x cap boundary in server clipping order", () => {
+    const capEvent = {
+      type: "win_cap.reached",
+      multiplier: 2_500,
+      cumulativeWinMinor: "250000",
+    };
+    const path = authoritativeWaysResult.wins[0]!.pathAwards[0]!;
+    const secondPath = authoritativeWaysResult.wins[0]!.pathAwards[1]!;
+    const orderedWins = [
+      {
+        ...authoritativeWaysResult.wins[0]!,
+        id: "ordered-win-1",
+        ways: 1,
+        nominalAmountMinor: "100000",
+        amountMinor: "100000",
+        cells: path.cells,
+        pathAwards: [{
+          ...path,
+          multiplier: 1,
+          baseAmountMinor: "100000",
+          nominalAmountMinor: "100000",
+          amountMinor: "100000",
+        }],
+      },
+      {
+        ...authoritativeWaysResult.wins[0]!,
+        id: "ordered-win-2",
+        ways: 1,
+        nominalAmountMinor: "200000",
+        amountMinor: "150000",
+        cells: secondPath.cells,
+        pathAwards: [{
+          ...secondPath,
+          multiplier: 2,
+          baseAmountMinor: "100000",
+          nominalAmountMinor: "200000",
+          amountMinor: "150000",
+        }],
+      },
+    ];
+    const cappedMessage = {
+      ...authoritativeWaysResult,
+      totalWinMinor: "250000",
+      wins: orderedWins,
+      events: [capEvent],
+    };
+    expect(() => decodeServerMessage(cappedMessage)).not.toThrow();
+
+    expect(() => decodeServerMessage({
+      ...cappedMessage,
+      events: [{ ...capEvent, multiplier: 2_499 }],
+    })).toThrow(/multiplier must equal 2500/);
+    expect(() => decodeServerMessage({
+      ...cappedMessage,
+      events: [{ ...capEvent, cumulativeWinMinor: "249999" }],
+    })).toThrow(/cumulativeWinMinor must equal betMinor multiplied by 2500/);
+    expect(() => decodeServerMessage({
+      ...cappedMessage,
+      events: [capEvent, capEvent],
+    })).toThrow(/must not contain duplicate win_cap\.reached/);
+
+    const reordered = structuredClone(orderedWins);
+    reordered[0]!.amountMinor = "50000";
+    reordered[0]!.pathAwards[0]!.amountMinor = "50000";
+    reordered[1]!.amountMinor = "200000";
+    reordered[1]!.pathAwards[0]!.amountMinor = "200000";
+    expect(() => decodeServerMessage({ ...cappedMessage, wins: reordered }))
+      .toThrow(/wins\[0\]\.amountMinor does not match the authoritative win-cap projection/);
+
+    const surgeGrid = authoritativeWaysResult.grid.map((reel, reelIndex) => (
+      reel.map((cell, rowIndex) => (
+        reelIndex === 0 && rowIndex === 2 ? { symbol: "SURGE" } : cell
+      ))
+    ));
+    expect(() => decodeServerMessage({
+      ...cappedMessage,
+      grid: surgeGrid,
+      events: [
+        capEvent,
+        {
+          type: "surge.collected",
+          count: 2,
+          cells: [{ reel: 0, row: 2 }, { reel: 2, row: 2 }],
+          triggered: false,
+          guaranteed: false,
+          level: 1,
+          total: 1,
+        },
+      ],
+    })).toThrow(/win_cap\.reached must be final/);
+  });
+
+  it("allows win_cap.reached immediately before the terminal Free Spins event", () => {
+    const path = authoritativeWaysResult.wins[0]!.pathAwards[0]!;
+    const decoded = decodeServerMessage({
+      ...authoritativeWaysResult,
+      totalWinMinor: "150000",
+      wins: [{
+        ...authoritativeWaysResult.wins[0]!,
+        ways: 1,
+        nominalAmountMinor: "300000",
+        amountMinor: "150000",
+        cells: path.cells,
+        pathAwards: [{
+          ...path,
+          multiplier: 1,
+          baseAmountMinor: "300000",
+          nominalAmountMinor: "300000",
+          amountMinor: "150000",
+        }],
+      }],
+      events: [
+        {
+          type: "win_cap.reached",
+          multiplier: 2_500,
+          cumulativeWinMinor: "250000",
+        },
+        {
+          type: "free_spins.completed",
+          mode: "OVERDRIVE",
+          awarded: 8,
+          cumulativeWinMinor: "250000",
+        },
+      ],
+    });
+    if (decoded.type !== "spin.result") throw new Error("unexpected message");
+    expect(decoded.events.map((event) => event.type)).toEqual([
+      "win_cap.reached",
+      "free_spins.completed",
+    ]);
   });
 
   it("strictly validates every server-resolved Ways invariant", () => {
@@ -509,7 +752,7 @@ describe("decodeServerMessage", () => {
     expect(() => decodeServerMessage(instantResult({
       type: "wheel.awarded", outcome: "INSTANT", prize: "MINI",
       multiplier: 10, amountMinor: "999",
-    }, "999"))).toThrow(/amountMinor must equal betMinor multiplied by multiplier/);
+    }, "999"))).toThrow(/authoritative win-cap projection/);
     expect(() => decodeServerMessage(instantResult({
       type: "wheel.awarded", outcome: "INSTANT", prize: "MINI",
       multiplier: 10, amountMinor: "01000",
@@ -753,7 +996,7 @@ describe("decodeServerMessage", () => {
       events: kingEvents.map((event) => event.type === "vault.awarded"
         ? { ...event, amountMinor: "1999" }
         : event),
-    })).toThrow(/chain, grid, or amount/);
+    })).toThrow(/authoritative win-cap projection/);
     expect(() => decodeServerMessage({
       ...kingMessage,
       grid: result.grid.map((reel, reelIndex) => reel.map((cell, rowIndex) => (
@@ -976,11 +1219,20 @@ describe("decodeServerMessage", () => {
       events: [guaranteedEvent, wheelStarted, wheelEvent, freeSpinsStarted],
       featureState: {
         mode: "EXPANSION", freeSpinsRemaining: 8, freeSpinsPlayed: 0,
-        baseBetMinor: "100", freeSpinsWinMinor: "0", rageLevel: 1, rageCollected: 0,
+        baseBetMinor: "100", freeSpinsWinMinor: "225", rageLevel: 1, rageCollected: 0,
       },
     });
     if (decoded.type !== "spin.result") throw new Error("unexpected message");
     expect(decoded.events[0]).toEqual(guaranteedEvent);
+    expect(() => decodeServerMessage({
+      ...result,
+      grid: guaranteedGrid,
+      events: [guaranteedEvent, wheelStarted, wheelEvent, freeSpinsStarted],
+      featureState: {
+        mode: "EXPANSION", freeSpinsRemaining: 8, freeSpinsPlayed: 0,
+        baseBetMinor: "100", freeSpinsWinMinor: "0", rageLevel: 1, rageCollected: 0,
+      },
+    })).toThrow(/carrying this round's paid win/);
 
     expect(() => decodeServerMessage({
       ...result,
@@ -1012,7 +1264,7 @@ describe("decodeServerMessage", () => {
       }, wheelStarted, wheelEvent, freeSpinsStarted],
       featureState: {
         mode: "EXPANSION", freeSpinsRemaining: 8, freeSpinsPlayed: 0,
-        baseBetMinor: "100", freeSpinsWinMinor: "0", rageLevel: 1, rageCollected: 0,
+        baseBetMinor: "100", freeSpinsWinMinor: "225", rageLevel: 1, rageCollected: 0,
       },
     })).toThrow(/count must be an integer from 1 to 3/);
   });
@@ -1042,7 +1294,7 @@ describe("decodeServerMessage", () => {
       events: [surge, transformed, started, wheel, freeSpins],
       featureState: {
         mode: "EXPANSION", freeSpinsRemaining: 8, freeSpinsPlayed: 0,
-        baseBetMinor: "100", freeSpinsWinMinor: "0", rageLevel: 1, rageCollected: 0,
+        baseBetMinor: "100", freeSpinsWinMinor: "225", rageLevel: 1, rageCollected: 0,
       },
     });
     if (decoded.type !== "spin.result") throw new Error("unexpected message");
@@ -1317,6 +1569,7 @@ describe("decodeServerMessage", () => {
         ...modernWin,
         id: "win-2",
         ways: 1,
+        nominalAmountMinor: "75",
         amountMinor: "75",
         cells: firstPath.cells,
         pathAwards: [firstPath],

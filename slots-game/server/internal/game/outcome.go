@@ -21,7 +21,8 @@ func ValidateOutcomeStructure(input SpinInput, outcome SpinOutcome) error {
 	var accounted int64
 	for index, win := range outcome.Wins {
 		if !outcomeNamePattern.MatchString(win.ID) || !isPayingSymbol(win.Symbol) ||
-			win.Ways < 1 || win.AmountMinor <= 0 || len(win.Cells) == 0 {
+			win.Ways < 1 || win.AmountMinor <= 0 || win.PaidAmountMinor < 0 ||
+			win.PaidAmountMinor > win.AmountMinor || len(win.Cells) == 0 {
 			return fmt.Errorf("outcome: invalid win %d", index)
 		}
 		if err := validatePositions(win.Cells, rows); err != nil {
@@ -30,7 +31,7 @@ func ValidateOutcomeStructure(input SpinInput, outcome SpinOutcome) error {
 		if err := validatePathAwards(win, outcome.Grid); err != nil {
 			return fmt.Errorf("outcome: win %d path awards: %w", index, err)
 		}
-		accounted, err = addOutcomeMoney(accounted, win.AmountMinor)
+		accounted, err = addOutcomeMoney(accounted, win.PaidAmountMinor)
 		if err != nil {
 			return err
 		}
@@ -99,7 +100,7 @@ func validateOutcomeAgainstValidatedConfig(config Config, input SpinInput, outco
 	if err := ValidateOutcomeStructure(input, outcome); err != nil {
 		return err
 	}
-	wins, _, err := EvaluateWaysForBet(
+	wins, waysAward, err := EvaluateWaysForBet(
 		outcome.Grid,
 		config.Paytable,
 		input.BetMinor,
@@ -108,10 +109,7 @@ func validateOutcomeAgainstValidatedConfig(config Config, input SpinInput, outco
 	if err != nil {
 		return fmt.Errorf("outcome: recompute Ways: %w", err)
 	}
-	if !sameWins(wins, outcome.Wins) {
-		return errors.New("outcome: Ways wins do not match the authoritative grid and definition")
-	}
-	return nil
+	return validateCappedAwardsAgainstConfig(config, input, outcome, wins, waysAward)
 }
 
 func sameWins(left, right []Win) bool {
@@ -120,7 +118,9 @@ func sameWins(left, right []Win) bool {
 	}
 	for index := range left {
 		if left[index].ID != right[index].ID || left[index].Symbol != right[index].Symbol ||
-			left[index].Ways != right[index].Ways || left[index].AmountMinor != right[index].AmountMinor ||
+			left[index].Ways != right[index].Ways ||
+			left[index].AmountMinor != right[index].AmountMinor ||
+			left[index].PaidAmountMinor != right[index].PaidAmountMinor ||
 			!samePositions(left[index].Cells, right[index].Cells) ||
 			!samePathAwards(left[index].PathAwards, right[index].PathAwards) {
 			return false
@@ -137,6 +137,7 @@ func samePathAwards(left, right []PathAward) bool {
 		if left[index].Multiplier != right[index].Multiplier ||
 			left[index].BaseAmountMinor != right[index].BaseAmountMinor ||
 			left[index].AmountMinor != right[index].AmountMinor ||
+			left[index].PaidAmountMinor != right[index].PaidAmountMinor ||
 			!samePositions(left[index].Cells, right[index].Cells) {
 			return false
 		}
@@ -154,10 +155,11 @@ func validatePathAwards(win Win, grid Grid) error {
 	}
 	pathCells := make(map[Position]struct{}, len(win.Cells))
 	seenPaths := make(map[[3]int]struct{}, len(win.PathAwards))
-	var pathTotal int64
+	var pathTotal, paidPathTotal int64
 	for pathIndex, award := range win.PathAwards {
 		if len(award.Cells) != 3 || award.Multiplier < 1 ||
 			award.BaseAmountMinor < 0 || award.AmountMinor < 0 ||
+			award.PaidAmountMinor < 0 || award.PaidAmountMinor > award.AmountMinor ||
 			award.BaseAmountMinor > award.AmountMinor ||
 			(award.AmountMinor == 0 && award.BaseAmountMinor != 0) ||
 			(award.AmountMinor > 0 && award.BaseAmountMinor == 0) ||
@@ -200,9 +202,16 @@ func validatePathAwards(win Win, grid Grid) error {
 		if err != nil {
 			return err
 		}
+		paidPathTotal, err = addOutcomeMoney(paidPathTotal, award.PaidAmountMinor)
+		if err != nil {
+			return err
+		}
 	}
 	if pathTotal != win.AmountMinor {
-		return errors.New("path amounts do not sum to the aggregate award")
+		return errors.New("nominal path amounts do not sum to the aggregate award")
+	}
+	if paidPathTotal != win.PaidAmountMinor {
+		return errors.New("paid path amounts do not sum to the settled aggregate award")
 	}
 	if len(pathCells) != len(aggregateCells) {
 		return errors.New("aggregate cells do not match path cells")
@@ -329,6 +338,9 @@ func isVaultCellEvent(eventType string) bool {
 
 func validateFeatureEventOrder(input SpinInput, outcome SpinOutcome) error {
 	input.Feature = canonicalFeatureState(input.Feature)
+	if err := validateWinCapEvent(input, outcome); err != nil {
+		return err
+	}
 	if err := validateExpansionEvents(input, outcome); err != nil {
 		return err
 	}
@@ -339,6 +351,43 @@ func validateFeatureEventOrder(input SpinInput, outcome SpinOutcome) error {
 		return err
 	}
 	return validateFeatureCompletion(input, outcome)
+}
+
+func validateWinCapEvent(input SpinInput, outcome SpinOutcome) error {
+	indexes := eventIndexes(outcome.Events, "win_cap.reached")
+	if len(indexes) > 1 {
+		return errors.New("outcome: duplicate win cap event")
+	}
+	if len(indexes) == 0 {
+		return nil
+	}
+	index := indexes[0]
+	event := outcome.Events[index]
+	capMinor, err := safeMul(input.BetMinor, event.Multiplier)
+	priorWin := int64(0)
+	if input.Feature.Active() {
+		priorWin = input.Feature.WinMinor
+	}
+	cycleWin, cycleErr := addOutcomeMoney(priorWin, outcome.TotalWinMinor)
+	if err != nil || event.Multiplier <= 0 || event.CumulativeWinMinor != capMinor ||
+		cycleErr != nil || cycleWin != capMinor ||
+		event.AmountMinor != 0 || event.Count != 0 || len(event.Cells) != 0 ||
+		event.Triggered || event.Guaranteed || event.Outcome != "" || event.Prize != "" ||
+		event.Mode != "" || event.Awarded != 0 || event.Rows != 0 || event.Ways != 0 ||
+		event.Reel != 0 || event.Row != 0 || event.Level != 0 || event.Total != 0 || event.Step != 0 ||
+		event.FromMultiplier != 0 || event.ToMultiplier != 0 {
+		return errors.New("outcome: invalid win cap event")
+	}
+	completed := eventIndexes(outcome.Events, "free_spins.completed")
+	if index != len(outcome.Events)-1 &&
+		(len(completed) != 1 || completed[0] != len(outcome.Events)-1 || index != completed[0]-1) {
+		return errors.New("outcome: win cap event must terminate the result before feature completion")
+	}
+	return nil
+}
+
+func hasWinCapEvent(outcome SpinOutcome) bool {
+	return len(eventIndexes(outcome.Events, "win_cap.reached")) == 1
 }
 
 func validateExpansionEvents(input SpinInput, outcome SpinOutcome) error {
@@ -427,7 +476,7 @@ func validateVaultEvents(input SpinInput, outcome SpinOutcome) error {
 			reveals[position] = event
 		case "vault.awarded":
 			if !containsPosition(positions, position) || event.Multiplier <= 0 ||
-				event.AmountMinor <= 0 || event.Prize == "" ||
+				event.AmountMinor < 0 || event.Prize == "" ||
 				(input.Feature.Mode != FeatureOverdrive &&
 					(index <= unlockStarted[0] || index >= unlockCompleted[0])) ||
 				(input.Feature.Mode == FeatureOverdrive && index <= unlockCompleted[0]) {
@@ -482,7 +531,8 @@ func validateVaultEvents(input SpinInput, outcome SpinOutcome) error {
 			}
 			if reveal.Prize != award.Prize || reveal.Multiplier != award.Multiplier ||
 				reveal.Multiplier <= 0 || award.Prize != vaultPrizeName(award.Multiplier, false) ||
-				award.AmountMinor != wantAmount || cell.Multiplier != award.Multiplier ||
+				(award.AmountMinor != wantAmount && !hasWinCapEvent(outcome)) ||
+				award.AmountMinor > wantAmount || cell.Multiplier != award.Multiplier ||
 				cell.Prize != award.Prize {
 				return errors.New("outcome: Vault reveal and payable award disagree")
 			}
@@ -534,7 +584,8 @@ func validateKingSpinVaultEvents(
 		return errors.New("outcome: King Spin Vault awards must follow unlock and upgrades")
 	}
 	for index := firstAward; index < len(events); index++ {
-		if events[index].Type != "vault.awarded" && events[index].Type != "free_spins.completed" {
+		if events[index].Type != "vault.awarded" && events[index].Type != "win_cap.reached" &&
+			events[index].Type != "free_spins.completed" {
 			return errors.New("outcome: King Spin final awards are not contiguous")
 		}
 	}
@@ -591,7 +642,8 @@ func validateKingSpinVaultEvents(
 			return err
 		}
 		if award.Multiplier != currentMultiplier[position] || award.Prize != currentPrize[position] ||
-			award.AmountMinor != wantAmount || cell.Multiplier != award.Multiplier ||
+			(award.AmountMinor != wantAmount && len(eventIndexes(events, "win_cap.reached")) != 1) ||
+			award.AmountMinor > wantAmount || cell.Multiplier != award.Multiplier ||
 			cell.Prize != award.Prize {
 			return errors.New("outcome: final King Spin Vault award does not match its upgrade chain")
 		}
@@ -701,7 +753,8 @@ func validateRageAndWheelEvents(input SpinInput, outcome SpinOutcome) error {
 		}
 		if outcome.NextFeature.Active() || len(freeStarted) != 0 || award.Prize == "" ||
 			award.Prize != vaultPrizeName(award.Multiplier, false) ||
-			award.Multiplier <= 0 || award.AmountMinor != wantAmount {
+			award.Multiplier <= 0 || award.AmountMinor > wantAmount ||
+			(award.AmountMinor != wantAmount && !hasWinCapEvent(outcome)) {
 			return errors.New("outcome: invalid instant wheel award")
 		}
 	case string(WheelExpansion), string(WheelOverdrive):
@@ -729,8 +782,8 @@ func validateFeatureCompletion(input SpinInput, outcome SpinOutcome) error {
 		if len(completed) != 0 {
 			return errors.New("outcome: base spin cannot complete Free Spins")
 		}
-		if outcome.NextFeature.Active() && outcome.NextFeature.WinMinor != 0 {
-			return errors.New("outcome: newly started Free Spins must have a zero running win")
+		if outcome.NextFeature.Active() && outcome.NextFeature.WinMinor != outcome.TotalWinMinor {
+			return errors.New("outcome: newly started Free Spins must carry the triggering game win")
 		}
 		return nil
 	}

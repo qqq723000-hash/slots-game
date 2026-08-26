@@ -5,6 +5,7 @@ set -eu
 . "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/common.sh"
 require_docker
 require_state
+acquire_deployment_lock
 test "${1:-}" = --confirm || { printf '%s\n' '用法: destroy.sh --confirm slots-game-production' >&2; exit 2; }
 test "${2:-}" = slots-game-production || { printf '%s\n' '项目名不匹配，拒绝删除。' >&2; exit 2; }
 project_name="$(compose config --format json | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"

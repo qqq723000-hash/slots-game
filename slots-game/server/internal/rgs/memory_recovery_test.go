@@ -43,7 +43,8 @@ func prepareMemoryRecoveryRoundWithProfile(
 	request.SessionID = sessionID
 	outcome := payableOutcome(game.EmptyFeatureState())
 	result := SpinResult{
-		OperatorID: operatorID, SessionID: sessionID, RoundID: roundID,
+		ResultSchemaVersion: ResultSchemaPaidFactsV1,
+		OperatorID:          operatorID, SessionID: sessionID, RoundID: roundID,
 		GameID: request.GameID, DefinitionVersion: request.DefinitionVersion,
 		DefinitionHash: request.DefinitionHash, Currency: request.Currency,
 		RoundKind: request.RoundKind, ServerTransactionID: walletOperationID(request),

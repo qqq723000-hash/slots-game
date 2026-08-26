@@ -12,7 +12,10 @@ import { publicAssetUrl } from "../assets/publicAssetUrl";
 import type { GatewayStatus } from "../protocol/GameGateway";
 import type { LaunchPhase } from "../startup/LaunchStateMachine";
 import type { PreloadProgress } from "../startup/PreloadGate";
-import type { ResponsiveLayoutSnapshot } from "../renderer/ResponsiveLayout";
+import type {
+  MobileHandMode,
+  ResponsiveLayoutSnapshot,
+} from "../renderer/ResponsiveLayout";
 import {
   DEFAULT_MINOR_UNIT_FORMATTER,
   MoneyDisplayBindingError,
@@ -21,9 +24,12 @@ import {
   type MinorUnitFormatter,
 } from "../protocol/moneyFormatter";
 import {
+  PRIMAL_HELP_AUTHOR_Y,
   PRIMAL_HELP_AUTHORING,
   PRIMAL_HELP_LOCALE_BUNDLES,
+  PRIMAL_HELP_SEPARATOR_AUTHOR_Y,
   PRIMAL_HELP_SECTIONS,
+  PRIMAL_MAXIMUM_WIN_COPY,
   PRIMAL_PRESENTATION_RULES,
   PRIMAL_WAY_WINS_COPY,
   applyPrimalHelpLocaleBundle,
@@ -32,6 +38,12 @@ import {
   resolvePrimalHelpLocale,
   type PresentationRulesBindingResult,
 } from "./presentationRules";
+import {
+  validateOperatorApprovedGameRulesBundle,
+} from "./operatorApprovedGameRules";
+import {
+  PACKAGED_PRIMAL_GAME_RULES_EN_GB,
+} from "./packagedPrimalGameRules";
 
 const DOM_OVERLAY_STATIC_HTML_POLICY_NAME = "slots-game-static-html";
 
@@ -94,6 +106,7 @@ type SkipHandler = () => void;
 type PreviewContinueHandler = () => void;
 type SoundToggleHandler = () => void;
 type FastPlayHandler = (enabled: boolean) => void;
+type HandModeHandler = (handMode: MobileHandMode) => void;
 type SessionTimeoutExitHandler = () => void;
 interface SessionTimeoutIsolationSnapshot {
   readonly element: HTMLElement;
@@ -101,8 +114,27 @@ interface SessionTimeoutIsolationSnapshot {
   readonly ariaHidden: string | null;
 }
 export type GameMenuTab = "settings" | "paytable" | "rules";
+export type GameMenuTabAxis = "horizontal" | "vertical";
 export type UiPanelId = "bet" | "autoplay" | GameMenuTab;
 export type UiPanelHandler = (panel: UiPanelId) => void;
+
+/** 视觉轴与键盘轴必须一致；非当前轴方向键交回页面，不吞掉事件。 */
+export function gameMenuTabNavigationIndex(
+  currentIndex: number,
+  itemCount: number,
+  key: string,
+  axis: GameMenuTabAxis,
+): number | null {
+  if (!Number.isInteger(currentIndex) || !Number.isInteger(itemCount)
+    || itemCount <= 0 || currentIndex < 0 || currentIndex >= itemCount) return null;
+  if (key === "Home") return 0;
+  if (key === "End") return itemCount - 1;
+  const previousKey = axis === "horizontal" ? "ArrowLeft" : "ArrowUp";
+  const nextKey = axis === "horizontal" ? "ArrowRight" : "ArrowDown";
+  if (key === previousKey) return (currentIndex - 1 + itemCount) % itemCount;
+  if (key === nextKey) return (currentIndex + 1) % itemCount;
+  return null;
+}
 /** @deprecated Use 四个捕获 `AutoPlayStopSettings` 的条件。 */
 export type AutoPlayStopRule = "complete" | "win";
 
@@ -290,15 +322,37 @@ export const PAYTABLE_WILD_ENTRIES = [
   { label: "WILD", asset: "10038.png" },
 ] as const;
 
-/** 获得三卷轴 Base Ways 奖励，相对于每路总投注额表示。 */
+/** 官方 PAYING SYMBOLS：玩家域顺序、作者缩放和十进制赔率均不经过浮点数。 */
 export const BASE_PAYTABLE_ENTRIES = [
-  { symbol: "PRISM", label: "Q", multiplier: 0.1, asset: "10012.png" },
-  { symbol: "ORBIT", label: "K", multiplier: 0.3, asset: "10013.png" },
-  { symbol: "PULSE", label: "Helmet", multiplier: 0.8, asset: "10014.png" },
-  { symbol: "NOVA", label: "Radio", multiplier: 1, asset: "10015.png" },
-  { symbol: "TANK", label: "Tank", multiplier: 1.5, asset: "10016.png" },
-  { symbol: "CIRCUIT", label: "Jet", multiplier: 2, asset: "10017.png" },
+  { label: "Jet", awardTenths: 20, asset: "10017.png", widthPx: 150.8, heightPx: 110.2 },
+  { label: "Tank", awardTenths: 15, asset: "10016.png", widthPx: 150.8, heightPx: 110.2 },
+  { label: "Radio", awardTenths: 10, asset: "10015.png", widthPx: 124, heightPx: 111.6 },
+  { label: "Helmet", awardTenths: 8, asset: "10014.png", widthPx: 146.25, heightPx: 112.5 },
+  { label: "K", awardTenths: 3, asset: "10013.png", widthPx: 113.1, heightPx: 128.7 },
+  { label: "Q", awardTenths: 1, asset: "10012.png", widthPx: 106.5, heightPx: 127.8 },
 ] as const;
+
+const CANONICAL_PAYTABLE_MONEY_MINOR = /^(0|[1-9]\d*)$/;
+
+/**
+ * 三卷轴 x3 奖励使用十分之一投注单位；BigInt half-up 保持与 RGS minor-unit 结算一致。
+ */
+export function paytableAwardMinorForBet(
+  totalBetMinor: MoneyMinor,
+  awardTenths: number,
+): MoneyMinor {
+  if (!CANONICAL_PAYTABLE_MONEY_MINOR.test(totalBetMinor)) {
+    throw new RangeError("paytable bet must be a canonical non-negative minor-unit integer");
+  }
+  if (!Number.isSafeInteger(awardTenths) || awardTenths <= 0) {
+    throw new RangeError("paytable award tenths must be a positive safe integer");
+  }
+  const numerator = BigInt(totalBetMinor) * BigInt(awardTenths);
+  let rounded = numerator / 10n;
+  if (numerator % 10n >= 5n) rounded += 1n;
+  if (totalBetMinor !== "0" && rounded === 0n) rounded = 1n;
+  return rounded.toString();
+}
 
 export interface AutoPlayRunState {
   readonly active: boolean;
@@ -731,167 +785,343 @@ export function spinControlPresentation(
 }
 const FEATURE_PREVIEW_PREFERENCE_KEY = "primal-rampage.feature-preview.dismissed.v1";
 const PRIMAL_REFERENCE_ROOT = publicAssetUrl("assets/primal-reference");
+const PRIMAL_PAYTABLE_ATLAS = publicAssetUrl(
+  "assets/primal-runtime/mobile/interface/paytable/paytable_mobile_texture0_level2.avif",
+);
 const POWERED_BY_GM_GO = publicAssetUrl("assets/brand/powered-by-gm-go.png");
 const STATUSBAR_GM_GO = publicAssetUrl("assets/brand/statusbar-gm-go.png");
 
-function appendOfficialHelpArtwork(
-  parent: ParentNode,
-  artwork: readonly {
-    readonly asset: string;
-    readonly alt: string;
-    readonly authoredWidthPx: number;
-    readonly authoredHeightPx: number;
-  }[],
-): void {
-  if (artwork.length === 0) return;
-  const container = document.createElement("div");
-  container.className = "official-help__artwork";
-  container.setAttribute("aria-label", "Feature artwork");
-  for (const { asset, alt, authoredWidthPx, authoredHeightPx } of artwork) {
-    const image = document.createElement("img");
-    image.src = `${PRIMAL_REFERENCE_ROOT}/${asset}`;
-    image.alt = alt;
-    image.style.setProperty("--official-help-art-width", `${authoredWidthPx}px`);
-    image.style.setProperty("--official-help-art-height", `${authoredHeightPx}px`);
-    container.append(image);
-  }
-  parent.appendChild(container);
+interface OfficialHelpBox {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
 }
 
-function appendOfficialHelpCopy(
+function setOfficialHelpBox(element: HTMLElement, box: OfficialHelpBox): void {
+  element.style.left = `${box.left}px`;
+  element.style.top = `${box.top}px`;
+  element.style.width = `${box.width}px`;
+  element.style.height = `${box.height}px`;
+}
+
+function createOfficialHelpTitle(
+  id: string,
+  localeKey: keyof typeof PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages,
+  text: string,
+  extraClass = "",
+): HTMLHeadingElement {
+  const heading = document.createElement("h4");
+  heading.id = id;
+  heading.className = `official-help__title ${extraClass}`.trim();
+  const stroke = document.createElement("span");
+  stroke.className = "official-help__title-stroke";
+  stroke.setAttribute("aria-hidden", "true");
+  stroke.textContent = text;
+  const fill = document.createElement("span");
+  fill.className = "official-help__title-fill";
+  fill.dataset.localeKey = localeKey;
+  fill.textContent = text;
+  heading.append(stroke, fill);
+  return heading;
+}
+
+function appendOfficialHelpCopyAt(
   parent: ParentNode,
   section: typeof PRIMAL_HELP_SECTIONS[number],
-  paragraphIndexes: readonly number[],
+  paragraphIndex: number,
+  top: number,
+  left = 0,
+  width = PRIMAL_HELP_AUTHORING.logicalWidthPx,
 ): void {
+  const key = section.paragraphKeys[paragraphIndex];
+  const paragraphText = section.paragraphs[paragraphIndex];
+  const boxHeight = section.paragraphBoxHeightsPx[paragraphIndex];
+  if (key === undefined || paragraphText === undefined || boxHeight === undefined) {
+    throw new Error(`Invalid official help paragraph index: ${section.id}:${paragraphIndex}`);
+  }
   const copy = document.createElement("div");
   copy.className = "official-help__copy";
-  for (const index of paragraphIndexes) {
-    const key = section.paragraphKeys[index];
-    const paragraphText = section.paragraphs[index];
-    const boxHeight = section.paragraphBoxHeightsPx[index];
-    if (key === undefined || paragraphText === undefined || boxHeight === undefined) {
-      throw new Error(`Invalid official help paragraph index: ${section.id}:${index}`);
-    }
-    const paragraph = document.createElement("p");
-    paragraph.dataset.localeKey = key;
-    paragraph.style.setProperty("--official-help-line-box-height", `${boxHeight}px`);
-    paragraph.textContent = paragraphText;
-    copy.append(paragraph);
-  }
+  setOfficialHelpBox(copy, { left, top, width, height: boxHeight });
+  const paragraph = document.createElement("p");
+  paragraph.dataset.localeKey = key;
+  paragraph.style.setProperty("--official-help-line-box-height", `${boxHeight}px`);
+  paragraph.textContent = paragraphText;
+  copy.append(paragraph);
   parent.appendChild(copy);
 }
 
-function appendOfficialHelpSectionContent(
+function appendOfficialHelpArtworkAt(
   parent: ParentNode,
-  section: typeof PRIMAL_HELP_SECTIONS[number],
-): void {
-  const allParagraphs = section.paragraphs.map((_, index) => index);
-  if (section.id === "wild") {
-    const paytable = document.createElement("div");
-    paytable.className = "wild-paytable";
-    paytable.setAttribute("aria-label", "Wild multiplier artwork");
-    for (const { label, asset } of PAYTABLE_WILD_ENTRIES) {
-      const figure = document.createElement("figure");
-      figure.className = "wild-paytable__item";
-      const image = document.createElement("img");
-      image.src = `${PRIMAL_REFERENCE_ROOT}/${asset}`;
-      image.alt = `${label} wild symbol`;
-      const caption = document.createElement("figcaption");
-      caption.textContent = label;
-      figure.append(image, caption);
-      paytable.append(figure);
-    }
-    parent.appendChild(paytable);
-    appendOfficialHelpCopy(parent, section, allParagraphs);
-    return;
-  }
-  if (section.id === "vault") {
-    appendOfficialHelpArtwork(parent, section.artwork.slice(0, 1));
-    appendOfficialHelpCopy(parent, section, [0, 1]);
-    appendOfficialHelpArtwork(parent, section.artwork.slice(1));
-    appendOfficialHelpCopy(parent, section, [2]);
-    return;
-  }
-  if (section.id === "kong-quest") {
-    appendOfficialHelpArtwork(parent, section.artwork.slice(0, 1));
-    appendOfficialHelpCopy(parent, section, [0, 1, 2, 3]);
-    appendOfficialHelpArtwork(parent, section.artwork.slice(1, 2));
-    appendOfficialHelpCopy(parent, section, [4, 5]);
-    appendOfficialHelpArtwork(parent, section.artwork.slice(2));
-    return;
-  }
-  if (section.id === "king-spin") {
-    appendOfficialHelpArtwork(parent, section.artwork.slice(0, 1));
-    appendOfficialHelpCopy(parent, section, [0, 1, 2]);
-    appendOfficialHelpArtwork(parent, section.artwork.slice(1, 2));
-    appendOfficialHelpCopy(parent, section, [3, 4]);
-    appendOfficialHelpArtwork(parent, section.artwork.slice(2));
-    return;
-  }
-  appendOfficialHelpArtwork(parent, section.artwork);
-  appendOfficialHelpCopy(parent, section, allParagraphs);
+  artwork: typeof PRIMAL_HELP_SECTIONS[number]["artwork"][number] | undefined,
+  left: number,
+  top: number,
+  extraClass = "",
+): HTMLImageElement {
+  if (artwork === undefined) throw new Error("Missing official help artwork");
+  const image = document.createElement("img");
+  image.className = `official-help__positioned-art ${extraClass}`.trim();
+  image.src = `${PRIMAL_REFERENCE_ROOT}/${artwork.asset}`;
+  image.alt = artwork.alt;
+  setOfficialHelpBox(image, {
+    left,
+    top,
+    width: artwork.authoredWidthPx,
+    height: artwork.authoredHeightPx,
+  });
+  parent.appendChild(image);
+  return image;
 }
 
-function appendOfficialHelpSections(parent: ParentNode): void {
-  for (const section of PRIMAL_HELP_SECTIONS) {
-    const article = document.createElement("article");
-    article.className = `official-help__section official-help__section--${section.id}`;
-    article.dataset.helpSection = section.id;
-    article.setAttribute("aria-labelledby", `official-help-${section.id}`);
-    const heading = document.createElement("h4");
-    heading.id = `official-help-${section.id}`;
-    heading.dataset.localeKey = section.titleKey;
-    heading.textContent = section.title;
-    article.append(heading);
-    appendOfficialHelpSectionContent(article, section);
-    parent.appendChild(article);
-  }
+function createOfficialHelpSection(
+  parent: ParentNode,
+  section: typeof PRIMAL_HELP_SECTIONS[number],
+  authorY: number,
+): HTMLElement {
+  const article = document.createElement("article");
+  article.className = `official-help__section official-help__section--${section.id}`;
+  article.dataset.helpSection = section.id;
+  article.dataset.authorY = String(authorY);
+  article.style.setProperty("--official-help-section-y", `${authorY}px`);
+  article.setAttribute("aria-labelledby", `official-help-${section.id}`);
+  article.append(createOfficialHelpTitle(
+    `official-help-${section.id}`,
+    section.titleKey,
+    section.title,
+  ));
+  parent.appendChild(article);
+  return article;
+}
 
-  const paytable = document.createElement("section");
-  paytable.className = "base-paytable official-help__section official-help__section--paying-symbols";
-  paytable.dataset.helpSection = "paying-symbols";
-  paytable.setAttribute("aria-labelledby", "base-paytable-title");
-  const paytableHeading = document.createElement("h4");
-  paytableHeading.id = "base-paytable-title";
-  paytableHeading.dataset.localeKey = "IDS_PAYINGSYMBOLS_UC";
-  paytableHeading.textContent = PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PAYINGSYMBOLS_UC;
-  const grid = document.createElement("div");
-  grid.className = "base-paytable__grid";
-  for (const { label, multiplier, asset } of BASE_PAYTABLE_ENTRIES) {
+function markOfficialHelpPage(parent: ParentNode, page: string, top: number): void {
+  const marker = document.createElement("span");
+  marker.className = "official-help__page-anchor";
+  marker.dataset.helpPage = page;
+  marker.dataset.authorY = String(top);
+  marker.style.top = `${top}px`;
+  marker.setAttribute("aria-hidden", "true");
+  parent.appendChild(marker);
+}
+
+function appendOfficialHelpAtlasFrame(
+  parent: ParentNode,
+  frame: string,
+  box: OfficialHelpBox,
+  accessibleLabel?: string,
+): HTMLElement {
+  const element = document.createElement("span");
+  element.className = `official-help__atlas-frame official-help__atlas-frame--${frame.toLowerCase()}`;
+  element.dataset.atlasFrame = frame;
+  element.style.backgroundImage = `url("${PRIMAL_PAYTABLE_ATLAS}")`;
+  setOfficialHelpBox(element, box);
+  if (accessibleLabel === undefined) {
+    element.setAttribute("aria-hidden", "true");
+  } else {
+    element.setAttribute("role", "img");
+    element.setAttribute("aria-label", accessibleLabel);
+  }
+  parent.appendChild(element);
+  return element;
+}
+
+function appendOfficialMaximumWin(parent: ParentNode, location: "top" | "bottom", top: number): void {
+  const heading = createOfficialHelpTitle(
+    `official-help-maximum-win-${location}`,
+    "IDS_WINUPTO_YOURBET",
+    PRIMAL_MAXIMUM_WIN_COPY,
+    "official-help__maximum-win",
+  );
+  heading.dataset.helpAnchor = `maximum-win-${location}`;
+  heading.dataset.authorY = String(top);
+  heading.style.top = `${top}px`;
+  parent.appendChild(heading);
+}
+
+function appendOfficialWild(parent: ParentNode): void {
+  const section = PRIMAL_HELP_SECTIONS[0];
+  const article = createOfficialHelpSection(parent, section, PRIMAL_HELP_AUTHOR_Y.wild);
+  const lefts = [63.7, 222.8, 382.55, 541.6] as const;
+  for (const [index, { label, asset }] of PAYTABLE_WILD_ENTRIES.entries()) {
     const figure = document.createElement("figure");
-    figure.className = "base-paytable__item";
+    figure.className = "wild-paytable__item";
+    const row = Math.floor(index / 4);
+    setOfficialHelpBox(figure, {
+      left: lefts[index % 4] ?? 0,
+      top: row === 0 ? 74 : 208.1,
+      width: 150,
+      height: 128,
+    });
     const image = document.createElement("img");
     image.src = `${PRIMAL_REFERENCE_ROOT}/${asset}`;
-    image.alt = `${label} symbol`;
+    image.alt = `${label} Wild symbol`;
+    figure.append(image);
+    article.append(figure);
+  }
+  [378, 423, 506, 590].forEach((top, index) => {
+    appendOfficialHelpCopyAt(article, section, index, top);
+  });
+}
+
+function appendOfficialVault(parent: ParentNode): void {
+  const section = PRIMAL_HELP_SECTIONS[1];
+  const article = createOfficialHelpSection(parent, section, PRIMAL_HELP_AUTHOR_Y.vault);
+  appendOfficialHelpArtworkAt(article, section.artwork[0], 281.95, 103.05);
+  appendOfficialHelpCopyAt(article, section, 0, 263);
+  appendOfficialHelpCopyAt(article, section, 1, 308);
+  appendOfficialHelpArtworkAt(article, section.artwork[2], 73.45, 422.41);
+  appendOfficialHelpArtworkAt(article, section.artwork[1], 418.56, 422.515);
+  appendOfficialHelpCopyAt(article, section, 2, 700);
+}
+
+function appendOfficialRage(parent: ParentNode): void {
+  const section = PRIMAL_HELP_SECTIONS[2];
+  const article = createOfficialHelpSection(parent, section, PRIMAL_HELP_AUTHOR_Y.rage);
+  appendOfficialHelpArtworkAt(article, section.artwork[0], 200.625, 72.1);
+  [344, 435.05, 527].forEach((top, index) => {
+    appendOfficialHelpCopyAt(article, section, index, top);
+  });
+}
+
+function appendOfficialWheel(parent: ParentNode): void {
+  const section = PRIMAL_HELP_SECTIONS[3];
+  const article = createOfficialHelpSection(parent, section, PRIMAL_HELP_AUTHOR_Y.primalWheel);
+  appendOfficialHelpArtworkAt(article, section.artwork[0], 244.356, 66.744);
+  [336.05, 502, 631.05].forEach((top, index) => {
+    appendOfficialHelpCopyAt(article, section, index, top);
+  });
+}
+
+function appendOfficialKongQuest(parent: ParentNode): void {
+  const section = PRIMAL_HELP_SECTIONS[4];
+  const article = createOfficialHelpSection(parent, section, PRIMAL_HELP_AUTHOR_Y.kongQuestPage1);
+  const page2 = PRIMAL_HELP_AUTHOR_Y.kongQuestPage2 - PRIMAL_HELP_AUTHOR_Y.kongQuestPage1;
+  markOfficialHelpPage(article, "kong-quest-1", 0);
+  markOfficialHelpPage(article, "kong-quest-2", page2);
+  appendOfficialHelpArtworkAt(article, section.artwork[0], 252.275, 87.025);
+  [368.95, 456.9, 505.35, 638.55].forEach((top, index) => {
+    appendOfficialHelpCopyAt(article, section, index, top);
+  });
+  appendOfficialHelpArtworkAt(article, section.artwork[1], 199.393, page2 + 2.261);
+  appendOfficialHelpCopyAt(article, section, 4, page2 + 433.25);
+  appendOfficialHelpCopyAt(article, section, 5, page2 + 564.4);
+  appendOfficialHelpArtworkAt(article, section.artwork[2], 258.28, page2 + 654.103);
+}
+
+function appendOfficialKingSpin(parent: ParentNode): void {
+  const section = PRIMAL_HELP_SECTIONS[5];
+  const article = createOfficialHelpSection(parent, section, PRIMAL_HELP_AUTHOR_Y.kingSpinPage1);
+  const page2 = PRIMAL_HELP_AUTHOR_Y.kingSpinPage2 - PRIMAL_HELP_AUTHOR_Y.kingSpinPage1;
+  markOfficialHelpPage(article, "king-spin-1", 0);
+  markOfficialHelpPage(article, "king-spin-2", page2);
+  appendOfficialHelpArtworkAt(article, section.artwork[0], 243.175, 65.625);
+  [333.9, 424.6, 507.55].forEach((top, index) => {
+    appendOfficialHelpCopyAt(article, section, index, top);
+  });
+  appendOfficialHelpArtworkAt(article, section.artwork[1], 241.844, 546.972);
+  appendOfficialHelpCopyAt(article, section, 3, page2 + 9.9);
+  appendOfficialHelpCopyAt(article, section, 4, page2 + 139.85);
+  appendOfficialHelpAtlasFrame(article, "T0DB", {
+    left: 137.506, top: page2 + 310.826, width: 499.2, height: 230.4,
+  });
+  appendOfficialHelpArtworkAt(article, section.artwork[3], 137.498, page2 + 355.14);
+  appendOfficialHelpArtworkAt(article, section.artwork[2], 425.168, page2 + 351.024);
+  appendOfficialHelpAtlasFrame(article, "T0EB", {
+    left: 369.883, top: page2 + 396.788, width: 45.75, height: 42.7,
+  });
+}
+
+function appendOfficialPayingSymbols(parent: ParentNode): void {
+  const article = document.createElement("section");
+  article.className = "base-paytable official-help__section official-help__section--paying-symbols";
+  article.dataset.helpSection = "paying-symbols";
+  article.dataset.authorY = String(PRIMAL_HELP_AUTHOR_Y.payingSymbols);
+  article.style.setProperty("--official-help-section-y", `${PRIMAL_HELP_AUTHOR_Y.payingSymbols}px`);
+  article.setAttribute("aria-labelledby", "base-paytable-title");
+  article.append(createOfficialHelpTitle(
+    "base-paytable-title",
+    "IDS_PAYINGSYMBOLS_UC",
+    PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PAYINGSYMBOLS_UC,
+  ));
+  const grid = document.createElement("div");
+  grid.className = "base-paytable__grid";
+  for (const [index, entry] of BASE_PAYTABLE_ENTRIES.entries()) {
+    const figure = document.createElement("figure");
+    figure.className = "base-paytable__item";
+    figure.dataset.paytableEntry = String(index);
+    figure.setAttribute("aria-label", `${entry.label}, x3, amount unavailable`);
+    const image = document.createElement("img");
+    image.src = `${PRIMAL_REFERENCE_ROOT}/${entry.asset}`;
+    image.alt = `${entry.label} symbol`;
+    image.style.width = `${entry.widthPx}px`;
+    image.style.height = `${entry.heightPx}px`;
     const caption = document.createElement("figcaption");
-    const title = document.createElement("strong");
-    title.textContent = label;
-    const value = document.createElement("span");
-    value.textContent = `${multiplier}× total bet`;
-    caption.append(title, value);
+    const multiplier = document.createElement("span");
+    multiplier.className = "base-paytable__multiplier";
+    multiplier.textContent = "x3";
+    const amount = document.createElement("span");
+    amount.className = "base-paytable__amount";
+    amount.textContent = "—";
+    caption.append(multiplier, amount);
     figure.append(image, caption);
     grid.append(figure);
   }
-  paytable.append(paytableHeading, grid);
-  parent.appendChild(paytable);
+  article.append(grid);
+  parent.appendChild(article);
+}
 
-  const ways = document.createElement("article");
-  ways.className = "official-help__section official-help__section--way-wins";
-  ways.dataset.helpSection = "way-wins";
-  ways.setAttribute("aria-labelledby", "official-help-way-wins");
-  const waysHeading = document.createElement("h4");
-  waysHeading.id = "official-help-way-wins";
-  waysHeading.dataset.localeKey = "IDS_PR_PAYWAYS";
-  waysHeading.textContent = PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PR_PAYWAYS;
+function appendOfficialWayWins(parent: ParentNode): void {
+  const article = document.createElement("article");
+  article.className = "official-help__section official-help__section--way-wins";
+  article.dataset.helpSection = "way-wins";
+  article.dataset.authorY = String(PRIMAL_HELP_AUTHOR_Y.wayWins);
+  article.style.setProperty("--official-help-section-y", `${PRIMAL_HELP_AUTHOR_Y.wayWins}px`);
+  article.setAttribute("aria-labelledby", "official-help-way-wins");
+  article.append(createOfficialHelpTitle(
+    "official-help-way-wins",
+    "IDS_PR_PAYWAYS",
+    PRIMAL_HELP_LOCALE_BUNDLES.en_GB.messages.IDS_PR_PAYWAYS,
+    "official-help__title--way-wins",
+  ));
+  appendOfficialHelpAtlasFrame(article, "T0RB", {
+    left: 65.3, top: 100.5, width: 280, height: 270,
+  }, "Accepted adjacent Way Win example");
+  appendOfficialHelpAtlasFrame(article, "T0QB", {
+    left: 415.6, top: 100.5, width: 280, height: 270,
+  }, "Rejected non-adjacent Way Win example");
   const copy = document.createElement("div");
-  copy.className = "official-help__copy";
+  copy.className = "official-help__copy official-help__copy--way-wins";
+  setOfficialHelpBox(copy, { left: 5, top: 410, width: 740, height: 120 });
   const paragraph = document.createElement("p");
   paragraph.dataset.localeKey = "IDS_PR_WW_LR";
   paragraph.style.setProperty("--official-help-line-box-height", "120px");
   paragraph.textContent = PRIMAL_WAY_WINS_COPY;
   copy.append(paragraph);
-  ways.append(waysHeading, copy);
-  parent.appendChild(ways);
+  article.append(copy);
+  parent.appendChild(article);
+}
+
+function appendOfficialHelpSections(parent: ParentNode): void {
+  if (parent instanceof HTMLElement) {
+    parent.dataset.authorHeight = String(PRIMAL_HELP_AUTHORING.logicalHeightPx);
+  }
+  appendOfficialMaximumWin(parent, "top", PRIMAL_HELP_AUTHOR_Y.maximumWinTop);
+  for (const [index, authorY] of PRIMAL_HELP_SEPARATOR_AUTHOR_Y.entries()) {
+    const separator = appendOfficialHelpAtlasFrame(parent, "T0AB", {
+      left: 0, top: authorY, width: 750, height: 10,
+    });
+    separator.classList.add("official-help__separator");
+    separator.dataset.separatorIndex = String(index);
+    separator.dataset.authorY = String(authorY);
+  }
+  appendOfficialWild(parent);
+  appendOfficialVault(parent);
+  appendOfficialRage(parent);
+  appendOfficialWheel(parent);
+  appendOfficialKongQuest(parent);
+  appendOfficialKingSpin(parent);
+  appendOfficialPayingSymbols(parent);
+  appendOfficialWayWins(parent);
+  appendOfficialMaximumWin(parent, "bottom", PRIMAL_HELP_AUTHOR_Y.maximumWinBottom);
 }
 
 export interface OfficialHelpProjectionGeometry {
@@ -910,6 +1140,8 @@ export interface MobileDomLayoutGeometry {
   readonly orientation: "portrait" | "landscape";
   readonly edge: number;
   readonly gap: number;
+  readonly utilityGap: number;
+  readonly utilityPadding: number;
   readonly utilityControlSize: number;
   readonly utilityWidth: number;
   readonly utilityHeight: number;
@@ -918,6 +1150,10 @@ export interface MobileDomLayoutGeometry {
   readonly utilityBottom: number;
   readonly spinBottom: number;
   readonly roundBottom: number;
+  readonly utilityInlineStart: number;
+  readonly spinInlineEnd: number;
+  readonly utilityCenterOffset: number;
+  readonly controlCenterOffset: number;
   readonly roundInlineStart: number;
   readonly roundInlineEnd: number;
 }
@@ -965,43 +1201,75 @@ export function mobileDomLayoutGeometry(
     ? clampedDomLayoutValue(statusHeight, 0, height - gameplay)
     : Math.max(0, height - gameplay);
   const shortEdge = Math.min(width, height);
-  const safeFrameScale = Number.isFinite(frameScale) && frameScale > 0 ? frameScale : 1;
-  const minimumTouchLogicalSize = 44 / safeFrameScale;
+  // frameScale 仅属于透明指针尺寸；视觉控件在作者坐标中独立求解。
+  void frameScale;
   const orientation = width > height ? "landscape" : "portrait";
   const edge = clampedDomLayoutValue(shortEdge * 0.024, 8, 18);
   const gap = clampedDomLayoutValue(shortEdge * 0.018, 5, 10);
 
+  /*
+   * 捕获的视觉控件以长宽比连续插值：390x844 手机的 Spin 外圈约 85.91，
+   * 633x844 平板纵向收敛为 79.59；到 4:3 横向再连续回到 85.91。
+   * utility 从纵向的 39.37 连续收敛到横向的 44.31。点击区仍由
+   * ResponsiveLayout 的物理指针合约独立发布，不能把 44px 最小点击区画出来。
+   */
+  const aspect = height > 0 ? width / height : 1;
+  const wideControlInterpolation = clampedDomLayoutValue(
+    (aspect - 0.75) / (4 / 3 - 0.75),
+    0,
+    1,
+  );
+  const authoredUtilitySize = 39.37 + (44.31 - 39.37) * wideControlInterpolation;
+  const compactPortraitAspect = 390 / 844;
+  const compactPortraitInterpolation = clampedDomLayoutValue(
+    (aspect - compactPortraitAspect) / (0.75 - compactPortraitAspect),
+    0,
+    1,
+  );
+  const portraitSpinSize = 85.91 + (79.59 - 85.91) * compactPortraitInterpolation;
+  const authoredSpinSize = aspect <= 0.75
+    ? portraitSpinSize
+    : 79.59 + (85.91 - 79.59) * wideControlInterpolation;
+
   if (orientation === "portrait") {
     const padding = clampedDomLayoutValue(shortEdge * 0.018, 6, 10);
     const usableWidth = Math.max(0, width - edge * 2);
-    const desiredControl = Math.max(
-      minimumTouchLogicalSize,
-      clampedDomLayoutValue(Math.min(width * 0.095, height * 0.055), 35, 44),
-    );
+    const utilityGap = gap;
+    const desiredControl = authoredUtilitySize;
     const controlCapacity = Math.max(0, (usableWidth - gap * 4 - padding * 2) / 5);
     const utilityControlSize = Math.min(desiredControl, controlCapacity);
-    const contentWidth = utilityControlSize * 5 + gap * 4 + padding * 2;
-    const desiredWidth = Math.min(width * 0.68, 330);
+    const contentWidth = utilityControlSize * 5 + utilityGap * 4 + padding * 2;
+    // 两个已捕获纵向端点都保持约 50.87px 的五钮节距；宽平板不能把组内空气拉宽。
+    const capturedUtilityWidth = 265.833125;
+    const desiredWidth = Math.min(
+      width * (capturedUtilityWidth / 390),
+      capturedUtilityWidth,
+    );
     const utilityWidth = Math.min(usableWidth, Math.max(contentWidth, desiredWidth));
     const utilityHeight = Math.min(gameplay, utilityControlSize + padding * 2);
-    const desiredSpin = clampedDomLayoutValue(
-      Math.min(width * 0.23, height * 0.12),
-      86,
-      104,
-    );
+    const desiredSpin = authoredSpinSize;
     const spinSize = Math.min(desiredSpin, usableWidth, gameplay);
     const roundHeight = Math.min(
       clampedDomLayoutValue(width * 0.075, 28, 34),
       gameplay,
     );
-    const utilityBottom = status + edge;
-    const spinBottom = utilityBottom + utilityHeight + gap;
-    const roundBottom = spinBottom + spinSize + gap;
+    // 两个纵向实机端点都把工具首行和 Spin 中心锁在同一长边作者锚点。
+    const utilityVisualTop = height * (705.2265625 / 844);
+    const utilityBottom = Math.max(
+      status,
+      height - utilityVisualTop - utilityControlSize - padding,
+    );
+    const stackGap = gap + edge / 2;
+    const spinCenter = height * (638.36328125 / 844);
+    const spinBottom = Math.max(0, height - spinCenter - spinSize / 2);
+    const roundBottom = spinBottom + spinSize + stackGap;
 
     return Object.freeze({
       orientation,
       edge,
       gap,
+      utilityGap,
+      utilityPadding: padding,
       utilityControlSize,
       utilityWidth,
       utilityHeight,
@@ -1010,6 +1278,10 @@ export function mobileDomLayoutGeometry(
       utilityBottom,
       spinBottom,
       roundBottom,
+      utilityInlineStart: edge,
+      spinInlineEnd: edge,
+      utilityCenterOffset: 0,
+      controlCenterOffset: 0,
       roundInlineStart: edge,
       roundInlineEnd: edge,
     });
@@ -1017,13 +1289,11 @@ export function mobileDomLayoutGeometry(
 
   const usableGameplayHeight = Math.max(0, gameplay - edge * 2);
   const padding = clampedDomLayoutValue(shortEdge * 0.02, 6, 10);
-  const desiredControl = Math.max(
-    minimumTouchLogicalSize,
-    clampedDomLayoutValue(Math.min(width * 0.055, height * 0.1), 36, 48),
-  );
+  const utilityGap = width * (12.41 / 844);
+  const desiredControl = authoredUtilitySize;
   const controlCapacity = Math.max(
     0,
-    (usableGameplayHeight - gap * 4 - padding * 2) / 5,
+    (usableGameplayHeight - utilityGap * 4 - padding * 2) / 5,
   );
   const utilityControlSize = Math.min(desiredControl, controlCapacity);
   const utilityWidth = Math.min(
@@ -1032,23 +1302,25 @@ export function mobileDomLayoutGeometry(
   );
   const utilityHeight = Math.min(
     usableGameplayHeight,
-    utilityControlSize * 5 + gap * 4 + padding * 2,
+    utilityControlSize * 5 + utilityGap * 4 + padding * 2,
   );
-  const desiredSpin = clampedDomLayoutValue(
-    Math.min(width * 0.128, height * 0.24),
-    78,
-    108,
-  );
+  const desiredSpin = authoredSpinSize;
   const spinSize = Math.min(desiredSpin, usableGameplayHeight, Math.max(0, width - edge * 2));
   const roundHeight = Math.min(
     clampedDomLayoutValue(height * 0.055, 22, 34),
     gameplay,
   );
 
+  const utilityInlineStart = Math.max(0, width * (20.88 / 844) - padding);
+  const spinInlineEnd = width * (15.79 / 844);
+  const controlCenterOffset = width * (2.915 / 844);
+
   return Object.freeze({
     orientation,
     edge,
     gap,
+    utilityGap,
+    utilityPadding: padding,
     utilityControlSize,
     utilityWidth,
     utilityHeight,
@@ -1057,8 +1329,12 @@ export function mobileDomLayoutGeometry(
     utilityBottom: 0,
     spinBottom: 0,
     roundBottom: status + edge,
-    roundInlineStart: edge + utilityWidth + gap,
-    roundInlineEnd: edge + spinSize + gap,
+    utilityInlineStart,
+    spinInlineEnd,
+    utilityCenterOffset: 0,
+    controlCenterOffset,
+    roundInlineStart: utilityInlineStart + utilityWidth + gap,
+    roundInlineEnd: spinInlineEnd + spinSize + gap,
   });
 }
 
@@ -1071,7 +1347,7 @@ export function officialHelpProjectionGeometry(
 ): OfficialHelpProjectionGeometry {
   const available = Number.isFinite(availableWidthPx) ? Math.max(0, availableWidthPx) : 0;
   const authoredHeight = Number.isFinite(authoredHeightPx) ? Math.max(0, authoredHeightPx) : 0;
-  const scale = Math.min(1, available / PRIMAL_HELP_AUTHORING.logicalWidthPx);
+  const scale = available / PRIMAL_HELP_AUTHORING.logicalWidthPx;
   // IEEE-754 可能把 `750 * (available / 750)` 舍入到 available 右侧几个 ulp；
   // 物理滚动边界必须严格封闭，不能把这个误差发布成水平滚动范围。
   const projectedWidth = Math.min(
@@ -1091,16 +1367,17 @@ export function officialHelpProjectionGeometry(
 }
 
 /**
- * 将抓取到的原版 1600×900 闪光灯坐标按 0.8 比例投影到本项目 1280×720 舞台。
+ * 原版 PC UI 归一到本项目 1280×720 舞台的验收几何。信息行来自 1600×900
+ * 捕获的 0.8 投影；状态栏以原版 1280×720 live 底部裁片为准。
  */
 export const PRIMAL_DESKTOP_UI_GEOMETRY = Object.freeze({
   stageScale: 0.8,
   statusbar: Object.freeze({
-    sourceHeight: 30,
-    height: 24,
-    sourceFontSize: 18,
-    fontSize: 14.4,
-    gameNameSourceFontSize: 16,
+    sourceHeight: 20,
+    height: 16,
+    sourceFontSize: 16,
+    fontSize: 12.8,
+    gameNameSourceFontSize: 10,
     gameNameFontSize: 8,
     atlasWidth: 1_865,
     atlasHeight: 60,
@@ -1242,6 +1519,41 @@ function bindPresentationRulesContent(host: ParentNode): void {
   }
 }
 
+function mountPackagedPrimalGameRules(host: ParentNode): void {
+  const mount = requiredStaticMountPoint(host, "packaged-primal-game-rules-sections");
+  const pageTitle = requiredStaticMountPoint(host, "packaged-primal-game-rules-title");
+  const documentValue = mount.ownerDocument;
+  const fragment = documentValue.createDocumentFragment();
+  pageTitle.textContent = PACKAGED_PRIMAL_GAME_RULES_EN_GB.pageTitle;
+  for (const ruleSection of PACKAGED_PRIMAL_GAME_RULES_EN_GB.sections) {
+    const article = documentValue.createElement("section");
+    article.className = "packaged-game-rules__section";
+    article.dataset.gameRulesSection = ruleSection.id;
+    const heading = documentValue.createElement("h4");
+    heading.textContent = ruleSection.title;
+    article.append(heading);
+    for (const copy of ruleSection.paragraphs) {
+      const paragraph = documentValue.createElement("p");
+      paragraph.textContent = copy;
+      article.append(paragraph);
+    }
+    if (ruleSection.actions.length > 0) {
+      const actions = documentValue.createElement("dl");
+      actions.className = "packaged-game-rules__actions";
+      for (const entry of ruleSection.actions) {
+        const term = documentValue.createElement("dt");
+        term.textContent = entry.title;
+        const description = documentValue.createElement("dd");
+        description.textContent = `- ${entry.description}`;
+        actions.append(term, description);
+      }
+      article.append(actions);
+    }
+    fragment.append(article);
+  }
+  mount.replaceChildren(fragment);
+}
+
 function bindStaticShellContent(
   host: ParentNode,
   autoplayStopSettings: Readonly<AutoPlayStopSettings>,
@@ -1249,6 +1561,7 @@ function bindStaticShellContent(
   bindStaticImageSources(host);
   mountJackpotTiers(host);
   bindPresentationRulesContent(host);
+  mountPackagedPrimalGameRules(host);
   mountAutoplayOptions(host);
   mountAutoplayStopConditions(host, autoplayStopSettings);
 }
@@ -1501,6 +1814,8 @@ function eventTitle(
       return `King upgrade · step ${event.step}`;
     case "free_spin.cap_reached":
       return "Free Spin limit reached";
+    case "win_cap.reached":
+      return "Maximum win reached";
     case "free_spins.completed":
       return `${event.mode} complete · ${formatter.format(event.cumulativeWinMinor)} won`;
   }
@@ -1570,12 +1885,15 @@ export class DomOverlay {
   private readonly paytableButton: HTMLButtonElement;
   private readonly sound: HTMLButtonElement;
   private readonly gameMenu: HTMLElement;
+  private readonly gameMenuContent: HTMLElement;
   private readonly officialHelpViewport: HTMLElement;
   private readonly officialHelpProjection: HTMLElement;
   private readonly officialHelpAuthoredSurface: HTMLElement;
   private readonly gameMenuClose: HTMLButtonElement;
+  private readonly gameMenuTabList: HTMLElement;
   private readonly gameMenuTabs: readonly HTMLButtonElement[];
   private readonly gameMenuPanels: readonly HTMLElement[];
+  private readonly handModeSwitch: HTMLButtonElement;
   private readonly settingsSoundSwitch: HTMLButtonElement;
   private readonly autoplayScrim: HTMLElement;
   private readonly autoplayModal: HTMLElement;
@@ -1625,6 +1943,11 @@ export class DomOverlay {
   private hudInteractive = false;
   private spinMode: SpinMode = "waiting";
   private activeMenuTab: GameMenuTab = "settings";
+  private readonly gameMenuScrollPositions: Record<GameMenuTab, number> = {
+    settings: 0,
+    paytable: 0,
+    rules: 0,
+  };
   private autoplayCount = DEFAULT_AUTO_PLAY_SPINS;
   private autoplayRemaining = 0;
   private autoplayActive = false;
@@ -1645,8 +1968,8 @@ export class DomOverlay {
   private autoplayReturnFocus: HTMLElement | null = null;
   private betReturnFocus: HTMLElement | null = null;
   private fastPlay = false;
-  private autoAdjustBet = true;
   private spacebarToSpin = false;
+  private handMode: MobileHandMode = "right";
   private featurePreviewEnabled = false;
   private featurePreviewPending = false;
   private currentRoundPhase: GamePhase = "booting";
@@ -1664,6 +1987,7 @@ export class DomOverlay {
   private previewContinueHandler: PreviewContinueHandler = () => undefined;
   private soundToggleHandler: SoundToggleHandler = () => undefined;
   private fastPlayHandler: FastPlayHandler = () => undefined;
+  private handModeHandler: HandModeHandler = () => undefined;
   private sessionTimeoutExitHandler: SessionTimeoutExitHandler = () => undefined;
   private sessionTimeoutVisible = false;
   private sessionTimeoutExitRequested = false;
@@ -1867,7 +2191,7 @@ export class DomOverlay {
         aria-hidden="true"
       >
         <h2 id="game-menu-title" class="visually-hidden">Game menu</h2>
-        <nav class="game-menu__tabs" role="tablist" aria-label="Game menu sections">
+        <nav class="game-menu__tabs" role="tablist" aria-label="Game menu sections" aria-orientation="vertical">
           <button
             class="game-menu__tab is-active"
             data-menu-tab="settings"
@@ -1911,13 +2235,13 @@ export class DomOverlay {
                 <svg class="setting-row__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M13.5 2 4.5 13.5h7L10.5 22l9-12h-7L13.5 2Z" /></svg>
                 <span><strong>Fast play</strong><small>Use shorter pauses between presentation-only auto spins.</small></span><i aria-hidden="true"></i>
               </button>
-              <button class="setting-row" data-setting="auto-adjust-bet" type="button" role="switch" aria-checked="true">
-                <svg class="setting-row__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><ellipse cx="9" cy="6" rx="5.5" ry="2.5" /><path d="M3.5 6v4c0 1.4 2.5 2.5 5.5 2.5s5.5-1.1 5.5-2.5V6M3.5 10v4c0 1.4 2.5 2.5 5.5 2.5 1.1 0 2.1-.1 3-.4M18.5 13v7M15 16.5h7" /></svg>
-                <span><strong>Auto adjust bet</strong><small>Local preference only; server-supplied bet options stay authoritative.</small></span><i aria-hidden="true"></i>
-              </button>
               <button class="setting-row" data-setting="spacebar" type="button" role="switch" aria-checked="false">
                 <svg class="setting-row__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.2 5.8A8 8 0 0 1 19.5 10M19.5 10V5.5M19.5 10H15M17.8 18.2A8 8 0 0 1 4.5 14M4.5 14v4.5M4.5 14H9" /></svg>
                 <span><strong>Spacebar to spin</strong><small>Press Space while the base game is ready.</small></span><i aria-hidden="true"></i>
+              </button>
+              <button class="setting-row" data-setting="hand-mode" type="button" role="switch" aria-checked="false">
+                <svg class="setting-row__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8.5 4.5 4 9l4.5 4.5M4 9h11.5a4.5 4.5 0 0 1 0 9H13" /></svg>
+                <span><strong>Left hand mode</strong><small>Move the mobile utility rail to the right and Spin to the left.</small></span><i aria-hidden="true"></i>
               </button>
               <p class="settings-audio-label">Audio</p>
               <button class="setting-row" data-setting="sound" data-role="settings-sound" type="button" role="switch" aria-checked="true">
@@ -1944,9 +2268,6 @@ export class DomOverlay {
               <div class="official-help-projection" data-role="official-help-projection">
                 <div class="official-help" data-role="official-help-authored-surface">
                   <div data-role="official-help-sections"></div>
-                  <p class="presentation-rules-meta">
-                    <span data-static-presentation-rules-version></span> · exact session definition binding required
-                  </p>
                 </div>
               </div>
             </div>
@@ -1963,17 +2284,16 @@ export class DomOverlay {
             aria-label="Game rules"
             hidden
           >
-            <p class="game-menu__eyebrow">Session-bound presentation</p>
-            <h3>Game rules</h3>
-            <div class="rules-card" data-role="presentation-rules-summary" hidden>
-              <p>Round outcomes, balances, available bets and feature events are supplied by the authoritative RGS and validated before presentation.</p>
-              <p>This feature guide is fixed to <span data-static-presentation-rules-version></span> and is enabled only when the game, definition version and complete SHA-256 identity match its explicit allow-list.</p>
-              <p>A changed mathematical definition requires a reviewed presentationRules revision; this client never assumes that another definition is compatible.</p>
-              <p>Use Spin to request a round. The menu presents rules but never creates or changes an outcome.</p>
+            <div class="game-rules-document" data-role="game-rules-document" hidden>
+              <h3 data-role="packaged-primal-game-rules-title"></h3>
+              <div class="operator-approved-game-rules" data-role="operator-approved-game-rules" hidden>
+                <div data-role="operator-approved-game-rules-sections"></div>
+              </div>
+              <div class="packaged-game-rules" data-role="packaged-primal-game-rules-sections"></div>
             </div>
-            <div class="rules-card presentation-rules-unavailable" data-role="presentation-rules-unavailable-rules">
+            <div class="presentation-rules-unavailable" data-role="game-rules-unavailable">
               <strong>Game rules unavailable</strong>
-              <p>The current session has not matched this client build's fixed presentationRules identity.</p>
+              <p>This fixed guide is shown only for a session definition explicitly approved by this client build.</p>
             </div>
           </section>
         </div>
@@ -2321,12 +2641,15 @@ export class DomOverlay {
     this.paytableButton = this.require(host, "paytable") as HTMLButtonElement;
     this.sound = this.require(host, "sound") as HTMLButtonElement;
     this.gameMenu = this.require(host, "game-menu");
+    this.gameMenuContent = host.querySelector(".game-menu__content") as HTMLElement;
     this.officialHelpViewport = this.require(host, "presentation-rules-content");
     this.officialHelpProjection = this.require(host, "official-help-projection");
     this.officialHelpAuthoredSurface = this.require(host, "official-help-authored-surface");
     this.gameMenuClose = this.require(host, "game-menu-close") as HTMLButtonElement;
+    this.gameMenuTabList = host.querySelector(".game-menu__tabs") as HTMLElement;
     this.gameMenuTabs = [...host.querySelectorAll<HTMLButtonElement>("[data-menu-tab]")];
     this.gameMenuPanels = [...host.querySelectorAll<HTMLElement>("[data-menu-panel]")];
+    this.handModeSwitch = host.querySelector<HTMLButtonElement>('[data-setting="hand-mode"]') as HTMLButtonElement;
     this.settingsSoundSwitch = this.require(host, "settings-sound") as HTMLButtonElement;
     this.autoplayScrim = this.require(host, "autoplay-scrim");
     this.autoplayModal = this.require(host, "autoplay-modal");
@@ -2480,6 +2803,60 @@ export class DomOverlay {
 
   onFastPlayChange(handler: FastPlayHandler): void {
     this.fastPlayHandler = handler;
+  }
+
+  /** 左右手只改变同一响应式快照的表现布局，不改变下注或结果状态。 */
+  onHandModeChange(handler: HandModeHandler): void {
+    this.handModeHandler = handler;
+  }
+
+  /**
+   * 运营商规则是独立的玩家文案端口；玩法说明的定义绑定不会授权监管/会话文案。
+   * 所有外部值先完成封闭校验，再通过 textContent 原子提交；失败时只隐藏补充条款。
+   * 整份 Game Rules 文档是否可见仍由与 PAYTABLE 相同的 definition binding 决定。
+   */
+  setOperatorApprovedGameRules(
+    input: unknown,
+  ): boolean {
+    const content = this.gameMenu.querySelector<HTMLElement>(
+      '[data-role="operator-approved-game-rules"]',
+    );
+    const sections = this.gameMenu.querySelector<HTMLElement>(
+      '[data-role="operator-approved-game-rules-sections"]',
+    );
+    if (!content || !sections) return false;
+
+    const validation = validateOperatorApprovedGameRulesBundle(input);
+    sections.replaceChildren();
+    content.hidden = true;
+    delete this.gameMenu.dataset.operatorGameRulesLocale;
+    delete this.gameMenu.dataset.operatorGameRulesVersion;
+    if (!validation.ok) {
+      this.gameMenu.dataset.operatorGameRulesStatus = "unavailable";
+      return false;
+    }
+
+    const documentValue = this.host.ownerDocument;
+    const fragment = documentValue.createDocumentFragment();
+    for (const ruleSection of validation.projection.sections) {
+      const article = documentValue.createElement("section");
+      article.className = "operator-approved-game-rules__section";
+      const heading = documentValue.createElement("h4");
+      heading.textContent = ruleSection.title;
+      article.append(heading);
+      for (const copy of ruleSection.paragraphs) {
+        const paragraph = documentValue.createElement("p");
+        paragraph.textContent = copy;
+        article.append(paragraph);
+      }
+      fragment.append(article);
+    }
+    sections.append(fragment);
+    content.hidden = false;
+    this.gameMenu.dataset.operatorGameRulesStatus = "approved";
+    this.gameMenu.dataset.operatorGameRulesLocale = validation.projection.locale;
+    this.gameMenu.dataset.operatorGameRulesVersion = validation.projection.version;
+    return true;
   }
 
   /**
@@ -2809,7 +3186,7 @@ export class DomOverlay {
   private syncOfficialHelpProjection(): void {
     if (this.officialHelpViewport.hidden) return;
     const availableWidth = this.officialHelpViewport.clientWidth;
-    const authoredHeight = this.officialHelpAuthoredSurface.scrollHeight;
+    const authoredHeight = PRIMAL_HELP_AUTHORING.logicalHeightPx;
     if (availableWidth <= 0 || authoredHeight <= 0) return;
     const geometry = officialHelpProjectionGeometry(availableWidth, authoredHeight);
     const scale = geometry.scaleX.toFixed(8);
@@ -2827,6 +3204,14 @@ export class DomOverlay {
   /** ResponsiveLayout 的同一提交直接驱动 HUD；ResizeObserver 只保留为内容变化兜底。 */
   setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
     if (this.destroyed) return;
+    this.handMode = snapshot.handMode;
+    this.handModeSwitch.setAttribute("aria-checked", String(snapshot.handMode === "left"));
+    this.gameMenuTabList.setAttribute(
+      "aria-orientation",
+      snapshot.channel === "mobile" && snapshot.mobileProfile !== "ls"
+        ? "horizontal"
+        : "vertical",
+    );
     this.syncMobileDomLayout(snapshot);
     this.syncOfficialHelpProjection();
   }
@@ -2835,6 +3220,8 @@ export class DomOverlay {
     const properties = [
       "--mobile-hud-edge",
       "--mobile-control-gap",
+      "--mobile-utility-gap",
+      "--mobile-utility-padding",
       "--mobile-utility-control-size",
       "--mobile-utility-width",
       "--mobile-utility-height",
@@ -2843,6 +3230,10 @@ export class DomOverlay {
       "--mobile-utility-bottom",
       "--mobile-spin-bottom",
       "--mobile-round-bottom",
+      "--mobile-utility-inline-start",
+      "--mobile-spin-inline-end",
+      "--mobile-utility-center-offset",
+      "--mobile-control-center-offset",
       "--mobile-round-inline-start",
       "--mobile-round-inline-end",
     ] as const;
@@ -2876,6 +3267,8 @@ export class DomOverlay {
     const values = [
       geometry.edge,
       geometry.gap,
+      geometry.utilityGap,
+      geometry.utilityPadding,
       geometry.utilityControlSize,
       geometry.utilityWidth,
       geometry.utilityHeight,
@@ -2884,6 +3277,10 @@ export class DomOverlay {
       geometry.utilityBottom,
       geometry.spinBottom,
       geometry.roundBottom,
+      geometry.utilityInlineStart,
+      geometry.spinInlineEnd,
+      geometry.utilityCenterOffset,
+      geometry.controlCenterOffset,
       geometry.roundInlineStart,
       geometry.roundInlineEnd,
     ] as const;
@@ -2919,9 +3316,12 @@ export class DomOverlay {
       if (element) element.hidden = hidden;
     };
     setHidden("presentation-rules-content", !bound);
-    setHidden("presentation-rules-summary", !bound);
     setHidden("presentation-rules-unavailable", bound);
-    setHidden("presentation-rules-unavailable-rules", bound);
+    setHidden("game-rules-document", !bound);
+    setHidden("game-rules-unavailable", bound);
+    menu.dataset.gameRulesStatus = bound
+      ? "bound"
+      : this.presentationRulesBinding.status;
     menu.dataset.presentationRulesStatus = this.presentationRulesBinding.status === "bound"
       && !localeDomReady
       ? "locale-unavailable"
@@ -3300,6 +3700,7 @@ export class DomOverlay {
     this.previewContinueHandler = () => undefined;
     this.soundToggleHandler = () => undefined;
     this.fastPlayHandler = () => undefined;
+    this.handModeHandler = () => undefined;
     this.sessionTimeoutExitHandler = () => undefined;
     bestEffortDomOverlayCleanup(() => this.cancelObservedLayoutSync());
     bestEffortDomOverlayCleanup(() => this.cancelWinCounter());
@@ -3449,13 +3850,12 @@ export class DomOverlay {
         setting.setAttribute("aria-checked", String(this.fastPlay));
         this.fastPlayHandler(this.fastPlay);
         break;
-      case "auto-adjust-bet":
-        this.autoAdjustBet = !this.autoAdjustBet;
-        setting.setAttribute("aria-checked", String(this.autoAdjustBet));
-        break;
       case "spacebar":
         this.spacebarToSpin = !this.spacebarToSpin;
         setting.setAttribute("aria-checked", String(this.spacebarToSpin));
+        break;
+      case "hand-mode":
+        this.handModeHandler(this.handMode === "left" ? "right" : "left");
         break;
       case "sound":
         this.soundToggleHandler();
@@ -3465,14 +3865,19 @@ export class DomOverlay {
 
   private readonly handleGameMenuKeyDown = (event: KeyboardEvent): void => {
     const tab = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-menu-tab]");
-    if (!tab || !["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    if (!tab) return;
     const currentIndex = this.gameMenuTabs.indexOf(tab);
     if (currentIndex < 0) return;
-    let nextIndex = currentIndex;
-    if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + this.gameMenuTabs.length) % this.gameMenuTabs.length;
-    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % this.gameMenuTabs.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = this.gameMenuTabs.length - 1;
+    const axis = this.gameMenuTabList.getAttribute("aria-orientation") === "horizontal"
+      ? "horizontal"
+      : "vertical";
+    const nextIndex = gameMenuTabNavigationIndex(
+      currentIndex,
+      this.gameMenuTabs.length,
+      event.key,
+      axis,
+    );
+    if (nextIndex === null) return;
     const nextTab = this.gameMenuTabs[nextIndex];
     if (!nextTab?.dataset.menuTab) return;
     event.preventDefault();
@@ -3652,6 +4057,7 @@ export class DomOverlay {
     const previousTab = this.activeMenuTab;
     const changed = previousTab !== tab;
     const menuOpen = this.gameMenu.dataset.open === "true";
+    if (menuOpen) this.gameMenuScrollPositions[previousTab] = this.gameMenuContent.scrollTop;
     this.activeMenuTab = tab;
     for (const control of this.gameMenuTabs) {
       const selected = control.dataset.menuTab === tab;
@@ -3669,6 +4075,11 @@ export class DomOverlay {
       this.panelLifecycle.setVisible(previousTab, false);
       this.panelLifecycle.setVisible(tab, true);
     }
+    if (menuOpen) {
+      this.gameMenuContent.scrollTop = tab === "paytable"
+        ? 0
+        : this.gameMenuScrollPositions[tab];
+    }
     // 菜单从 inert/隐藏切为可见后，纵向滚动条才拥有最终宽度；下一帧按最终
     // clientWidth 重算作者面，避免沿用打开前的宽投影而裁掉右缘。
     if (tab === "paytable") this.scheduleObservedLayoutSync();
@@ -3677,6 +4088,9 @@ export class DomOverlay {
   private setGameMenuOpen(open: boolean, tab = this.activeMenuTab, restoreFocus = true): void {
     const wasOpen = this.gameMenu.dataset.open === "true";
     const closingTab = this.activeMenuTab;
+    if (!open && wasOpen) {
+      this.gameMenuScrollPositions[closingTab] = this.gameMenuContent.scrollTop;
+    }
     if (open) {
       if (!wasOpen) {
         this.menuReturnFocus = this.captureDialogOpener(
@@ -3695,6 +4109,9 @@ export class DomOverlay {
     this.paytableButton.setAttribute("aria-expanded", String(open && tab === "paytable"));
     this.syncModalBackgroundInert();
     if (open) {
+      this.gameMenuContent.scrollTop = tab === "paytable"
+        ? 0
+        : this.gameMenuScrollPositions[tab];
       if (!wasOpen) this.panelLifecycle.setVisible(tab, true);
       this.scheduleActiveDialogFocus(this.gameMenu, () => {
         if (this.activeMenuTab === tab) {
@@ -3939,6 +4356,7 @@ export class DomOverlay {
       : "—";
     this.syncStatusMoneyDensity();
     this.renderBetTicker();
+    this.syncPaytableAwards();
     const selectedIndex = this.betOptions.indexOf(this.bet.value);
     this.betDecrease.disabled = !this.canChangeBet || selectedIndex <= 0;
     this.betIncrease.disabled = !this.canChangeBet || selectedIndex < 0 || selectedIndex >= this.betOptions.length - 1;
@@ -3948,6 +4366,26 @@ export class DomOverlay {
       element.textContent = value === undefined
         ? "—"
         : this.activeMoneyFormatter().format(value);
+    });
+  }
+
+  private syncPaytableAwards(): void {
+    const betMinor = this.bet.value;
+    const figures = this.host.querySelectorAll<HTMLElement>("[data-paytable-entry]");
+    figures.forEach((figure) => {
+      const index = Number(figure.dataset.paytableEntry);
+      const entry = BASE_PAYTABLE_ENTRIES[index];
+      const amount = figure.querySelector<HTMLElement>(".base-paytable__amount");
+      if (entry === undefined || amount === null || !betMinor) {
+        if (amount !== null) amount.textContent = "—";
+        return;
+      }
+      const formatted = this.activeMoneyFormatter().format(
+        paytableAwardMinorForBet(betMinor, entry.awardTenths),
+        false,
+      );
+      amount.textContent = formatted;
+      figure.setAttribute("aria-label", `${entry.label}, x3, ${formatted}`);
     });
   }
 

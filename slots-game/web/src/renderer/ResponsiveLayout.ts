@@ -1,5 +1,8 @@
 import { LOGICAL_HEIGHT, LOGICAL_WIDTH } from "./theme";
 
+const DESKTOP_AUTHORED_WIDTH = 1_200;
+const DESKTOP_AUTHORED_HEIGHT = 900;
+const DESKTOP_AUTHORED_TO_RENDERER_SCALE = LOGICAL_HEIGHT / DESKTOP_AUTHORED_HEIGHT;
 const RESPONSIVE_COMPOSITION_BASE_WIDTH = 1_100;
 const MIN_RESPONSIVE_COMPOSITION_SCALE = 0.87;
 const MAX_RESPONSIVE_COMPOSITION_SCALE = 1.05;
@@ -15,6 +18,7 @@ const MOBILE_UTILITY_LANDSCAPE_CQW = 0.09;
 const MOBILE_UTILITY_POINTER_SCALE = 0.8;
 const MOBILE_SPIN_CQW = 0.12;
 const MOBILE_SPIN_POINTER_SCALE = 0.85;
+const MOBILE_MIN_POINTER_PHYSICAL_SIZE = 44;
 const FEATURE_PREVIEW_BASE_CONTENT_SCALE = 720 / 1_100;
 const FEATURE_PREVIEW_UI_PHONE_EDGE = 390;
 const FEATURE_PREVIEW_UI_TABLET_EDGE = 768;
@@ -29,7 +33,7 @@ export interface ResponsiveFrameGeometry {
   readonly scale: number;
   readonly designWidth: number;
   readonly designHeight: number;
-  /** Letterbox 从不裁切设计表面；保留该字段仅兼容现有官方节点投影。 */
+  /** PC authored 投影在左右裁切时不可见的逻辑宽度；移动 contain 始终为零。 */
   readonly visibleInsetX: number;
 }
 
@@ -346,12 +350,14 @@ export function computeResponsiveLayoutSnapshot(
     height: physicalHeight,
   });
   const viewportRegion = Object.freeze({ left: 0, top: 0, width, height });
-  const frame = computeResponsiveFrameGeometry(
-    physicalWidth,
-    physicalHeight,
-    width,
-    height,
-  );
+  const frame = channel === "desktop"
+    ? computeDesktopFrameGeometry(physicalWidth, physicalHeight)
+    : computeResponsiveFrameGeometry(
+      physicalWidth,
+      physicalHeight,
+      width,
+      height,
+    );
   const pixelRatio = finitePixelRatio(options.pixelRatio ?? globalThis.devicePixelRatio);
 
   if (channel === "desktop") {
@@ -436,9 +442,9 @@ export function responsiveChannelFromEnvironment(
 }
 
 /**
- * 解析当前构图通道。`layout=` 仍是最高优先级；官网移动启动器只提供
- * `channel=mobile`，因此在手机/平板尺寸范围内也把它作为移动构图的可靠提示。
- * 超出该范围的桌面窗口继续按输入能力选择，避免移动资产通道强制改写 PC 构图。
+ * 解析当前构图通道。`layout=` 仍是最高优先级；显式 `channel=desktop` 必须保持
+ * PC 构图。官网移动启动器只提供 `channel=mobile`，因此在手机/平板尺寸范围内也
+ * 把它作为移动构图的可靠提示。超出该范围的桌面窗口继续按输入能力选择。
  */
 export function responsiveLayoutChannel(
   viewportWidth: number,
@@ -448,6 +454,9 @@ export function responsiveLayoutChannel(
   const params = new URLSearchParams(environment.search ?? "");
   const explicit = params.get("layout")?.toLowerCase();
   if (explicit === "mobile" || explicit === "desktop") return explicit;
+  // ContainerLauncher 的显式桌面通道必须同时约束布局；否则触屏 PC 会加载桌面资源，
+  // 却因 coarse pointer 切到移动坐标域，导致 HUD 与特殊玩法使用两套投影。
+  if (params.get("channel")?.toLowerCase() === "desktop") return "desktop";
 
   const width = finiteDimension(viewportWidth);
   const height = finiteDimension(viewportHeight);
@@ -468,6 +477,42 @@ export function responsiveLayoutChannel(
   return height >= width
     ? (width <= 600 ? "mobile" : "desktop")
     : (height <= 480 ? "mobile" : "desktop");
+}
+
+/**
+ * 投影原版 PC 的 1200x900 authored composition。
+ *
+ * 逻辑渲染器仍是 1280x720；桌面先让 4:3 authored 区域完整适配视口，再对称裁掉
+ * 1280 渲染器的左右翼。这样 16:10/4:3 PC 的画面与状态栏贴住物理底边，同时
+ * `visibleInsetX` 让 DOM、Pixi HUD 和特殊玩法控件锚定到实际可见区域。
+ */
+export function computeDesktopFrameGeometry(
+  viewportWidth: number,
+  viewportHeight: number,
+): ResponsiveFrameGeometry {
+  const width = finiteDimension(viewportWidth);
+  const height = finiteDimension(viewportHeight);
+  const gameHeight = Math.min(
+    height,
+    width * (DESKTOP_AUTHORED_HEIGHT / DESKTOP_AUTHORED_WIDTH),
+  );
+  const scale = gameHeight / (
+    DESKTOP_AUTHORED_HEIGHT * DESKTOP_AUTHORED_TO_RENDERER_SCALE
+  );
+  const frameWidth = LOGICAL_WIDTH * scale;
+  const offsetX = (width - frameWidth) / 2;
+  const offsetY = (height - gameHeight) / 2;
+
+  return {
+    x: Math.abs(offsetX) < 1e-9 ? 0 : offsetX,
+    y: Math.abs(offsetY) < 1e-9 ? 0 : offsetY,
+    width: frameWidth,
+    height: gameHeight,
+    scale,
+    designWidth: LOGICAL_WIDTH,
+    designHeight: LOGICAL_HEIGHT,
+    visibleInsetX: scale > 0 ? Math.max(0, -offsetX / scale) : 0,
+  };
 }
 
 /** 将设计表面以一次等比 contain 缩放居中，绝不 cover、裁切或分别拉伸坐标轴。 */
@@ -616,10 +661,12 @@ export function responsiveControlGeometry(
       ? Math.min(MOBILE_CONTROL_MAX_SIZE, width * MOBILE_UTILITY_LANDSCAPE_CQW)
       : Math.min(MOBILE_CONTROL_MAX_SIZE, height * MOBILE_UTILITY_PORTRAIT_CQH);
     utilityHitPhysicalSize = Math.max(
+      MOBILE_MIN_POINTER_PHYSICAL_SIZE,
       utilityVisiblePhysicalSize,
       utilityWrapper * MOBILE_UTILITY_POINTER_SCALE,
     );
     spinHitPhysicalSize = Math.max(
+      MOBILE_MIN_POINTER_PHYSICAL_SIZE,
       spinVisiblePhysicalSize,
       width * MOBILE_SPIN_CQW * MOBILE_SPIN_POINTER_SCALE,
     );
@@ -681,6 +728,7 @@ export class ResponsiveLayout {
   private visualViewport: VisualViewport | null = null;
   private scheduledFrame: number | null = null;
   private lastCommitKey: string | null = null;
+  private handMode: MobileHandMode = "right";
   private readonly channelOverride: ResponsiveChannel | null;
   private readonly requestFrame: (callback: FrameRequestCallback) => number;
   private readonly cancelFrame: (handle: number) => void;
@@ -758,6 +806,18 @@ export class ResponsiveLayout {
     this.lastCommitKey = null;
   }
 
+  /**
+   * 左右手模式只重新发布表现布局；同一次提交同时驱动 DOM、Jackpot 与 FreeSpin HUD。
+   * 实例字段在旋转和 resize 间保持，绝不进入下注或结果协议。
+   */
+  setHandMode(handMode: MobileHandMode): void {
+    if (handMode !== "left" && handMode !== "right") return;
+    if (this.handMode === handMode) return;
+    this.handMode = handMode;
+    this.lastCommitKey = null;
+    if (this.running) this.apply();
+  }
+
   private readonly apply = (): void => {
     const width = this.viewport.clientWidth;
     const height = this.viewport.clientHeight;
@@ -773,6 +833,7 @@ export class ResponsiveLayout {
           finePointer: globalThis.matchMedia?.("(pointer: fine)").matches ?? false,
           touchPoints: globalThis.navigator?.maxTouchPoints,
         }),
+        handMode: this.handMode,
         pixelRatio: globalThis.devicePixelRatio,
       },
     );
@@ -781,6 +842,7 @@ export class ResponsiveLayout {
       width,
       height,
       snapshot.surfaceProfile,
+      snapshot.handMode,
       snapshot.pixelRatio,
       geometry.scale,
     ].join(":");
@@ -823,7 +885,7 @@ export class ResponsiveLayout {
     this.frame.style.setProperty("--design-width", `${geometry.designWidth}px`);
     this.frame.style.setProperty("--design-height", `${geometry.designHeight}px`);
     this.frame.style.setProperty("--frame-scale", `${geometry.scale}`);
-    this.frame.style.setProperty("--visible-inset-x", "0px");
+    this.frame.style.setProperty("--visible-inset-x", `${geometry.visibleInsetX}px`);
     const controls = responsiveControlGeometry(
       snapshot.physicalViewportRegion.width,
       snapshot.physicalViewportRegion.height,

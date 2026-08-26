@@ -100,6 +100,25 @@ export const FREE_SPIN_HUD_DESKTOP_LAYOUT = Object.freeze({
   retrigger: Object.freeze({ x: 640, y: 280, scale: 0.8 }),
 });
 
+/**
+ * 1200x900 的编排游戏内容在 1280x720 渲染器中占据居中的 x=160..1120 区域。
+ * 计数器的 `stop` 剪辑是可读的核心 HUD；叠加 Glow/扫光图形刻意不纳入
+ * 此包含边界，并可继续溢出到渲染器两翼。
+ */
+export const FREE_SPIN_HUD_DESKTOP_CORE_REGION_X = Object.freeze({
+  left: 160,
+  right: 1_120,
+});
+
+/** 从已验证的 `freespin_counter.skel` stop 剪辑测得的精确水平边界。 */
+export const FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X = Object.freeze({
+  left: -137.75519768021778,
+  right: 146.48480825349785,
+});
+
+/** 1440x900 桌面视口以此逻辑内边距投影裁剪后的根节点。 */
+export const FREE_SPIN_HUD_DESKTOP_CONTAINMENT_INSET_X = 64;
+
 interface FreeSpinHudMobileNodeLayout {
   readonly minBound: ResponsiveMinBound;
   readonly horizontalAlign: number;
@@ -166,6 +185,36 @@ export interface FreeSpinHudResponsiveLayout {
 }
 
 /**
+ * 随桌面根节点开始裁剪，逐步采用编排的核心区域。inset=0 时，捕获的变换
+ * 逐字节保持不变；在 1440x900 裁剪（64 个逻辑像素）下，stop/可读核心完全
+ * 位于 x=160..1120 内。这里有意忽略非交互 VFX 边界。
+ */
+export function freeSpinHudDesktopCounterLayout(
+  visibleInsetX: number,
+): ResponsiveNodeTransform {
+  const canonical = FREE_SPIN_HUD_DESKTOP_LAYOUT.counter;
+  const inset = Number.isFinite(visibleInsetX) ? Math.max(0, visibleInsetX) : 0;
+  if (inset === 0) return canonical;
+
+  const coreLeft = canonical.x
+    + FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X.left * canonical.scale;
+  const coreRight = canonical.x
+    + FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X.right * canonical.scale;
+  const minimumShift = FREE_SPIN_HUD_DESKTOP_CORE_REGION_X.left - coreLeft;
+  const maximumShift = FREE_SPIN_HUD_DESKTOP_CORE_REGION_X.right - coreRight;
+  const containmentShift = Math.min(
+    maximumShift,
+    Math.max(minimumShift, 0),
+  );
+  const progress = Math.min(1, inset / FREE_SPIN_HUD_DESKTOP_CONTAINMENT_INSET_X);
+  return Object.freeze({
+    x: canonical.x + containmentShift * progress,
+    y: canonical.y,
+    scale: canonical.scale,
+  });
+}
+
+/**
  * 将 HUD 投影到当前连续 gameplay 设计域。参考档位只选择原版节点规则，
  * 不选择或锁定物理视口尺寸。
  */
@@ -173,7 +222,10 @@ export function freeSpinHudResponsiveLayout(
   snapshot: ResponsiveLayoutSnapshot,
 ): FreeSpinHudResponsiveLayout {
   if (snapshot.channel === "desktop") {
-    return FREE_SPIN_HUD_DESKTOP_LAYOUT;
+    return Object.freeze({
+      counter: freeSpinHudDesktopCounterLayout(snapshot.frame.visibleInsetX),
+      retrigger: FREE_SPIN_HUD_DESKTOP_LAYOUT.retrigger,
+    });
   }
   const profile = snapshot.mobileProfile;
   if (!profile) return FREE_SPIN_HUD_DESKTOP_LAYOUT;

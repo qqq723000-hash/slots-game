@@ -256,7 +256,10 @@ func TestKingSpinUpgradeCatalogCanReachGrand(t *testing.T) {
 	config.Feature.KingSpinMaxUpgradeRounds = 3
 	config.Feature.OverdriveDoubleChanceBP = 0
 	engine := mustEngine(t, config, repeatedSequence(64, 0)...)
-	state := FeatureState{Mode: FeatureOverdrive, Remaining: 1, Awarded: 8, BetMinor: 100}
+	state := FeatureState{
+		Mode: FeatureOverdrive, Remaining: 1, Awarded: 8, BetMinor: 100,
+		WinMinor: 40_000, RageLevel: DefaultRageLevel,
+	}
 
 	outcome, err := engine.Spin(context.Background(), SpinInput{BetMinor: 100, Feature: state})
 	if err != nil {
@@ -277,8 +280,23 @@ func TestKingSpinUpgradeCatalogCanReachGrand(t *testing.T) {
 			t.Fatalf("final King Spin GRAND event = %+v", event)
 		}
 	}
-	if outcome.TotalWinMinor != 300_000 {
-		t.Fatalf("King Spin GRAND win = %d, want three x1000 Vaults", outcome.TotalWinMinor)
+	if outcome.TotalWinMinor != 210_000 {
+		t.Fatalf("King Spin GRAND win = %d, want only the remaining 210000 cap budget", outcome.TotalWinMinor)
+	}
+	if event := requireEvent(t, outcome.Events, "win_cap.reached"); event.Multiplier != 2_500 || event.CumulativeWinMinor != 250_000 {
+		t.Fatalf("King Spin max-win event = %+v", event)
+	}
+	amounts := []int64{}
+	for _, event := range outcome.Events {
+		if event.Type == "vault.awarded" {
+			amounts = append(amounts, event.AmountMinor)
+		}
+	}
+	if !reflect.DeepEqual(amounts, []int64{100_000, 100_000, 10_000}) {
+		t.Fatalf("capped King Spin Vault awards = %v", amounts)
+	}
+	if completed := requireEvent(t, outcome.Events, "free_spins.completed"); completed.CumulativeWinMinor != 250_000 {
+		t.Fatalf("capped King Spin completion = %+v", completed)
 	}
 }
 

@@ -2211,6 +2211,9 @@ export class PixiRenderer {
       case "free_spin.cap_reached":
         // CAPLIMIT 重新触发面板拥有此表现流程。
         return;
+      case "win_cap.reached":
+        // 纯经济边界事实，不虚构独立环境效果。
+        return;
       case "vaults.landed":
       case "vaults.locked":
       case "vault.unlocked":

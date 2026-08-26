@@ -18,6 +18,7 @@ fi
 
 server_dockerfile="$repository_root/deploy/Dockerfile"
 web_dockerfile="$repository_root/deploy/web/Dockerfile"
+nginx_openssl_patch_verifier="$repository_root/deploy/supply-chain/verify-nginx-openssl-patch.sh"
 web_release_renderer="$repository_root/deploy/web/render-release-nginx.mjs"
 web_release_renderer_test="$repository_root/deploy/web/render-release-nginx.test.mjs"
 web_package_json="$repository_root/web/package.json"
@@ -70,6 +71,7 @@ require_regex() {
 for required_file in \
   "$server_dockerfile" \
   "$web_dockerfile" \
+  "$nginx_openssl_patch_verifier" \
   "$web_release_renderer" \
   "$web_release_renderer_test" \
   "$web_package_json" \
@@ -95,6 +97,10 @@ do
   require_file "$required_file"
 done
 
+test -x "$nginx_openssl_patch_verifier" || fail 'Nginx OpenSSL patch verifier must be executable'
+"$nginx_openssl_patch_verifier" web "$web_dockerfile" >/dev/null \
+  || fail 'Nginx OpenSSL patch contract failed'
+
 require_line 'ARG GO_IMAGE=golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36' "$server_dockerfile"
 require_line 'ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a' "$server_dockerfile"
 require_line '# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e' "$server_dockerfile"
@@ -116,6 +122,22 @@ fi
 
 require_regex '^ARG NODE_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$web_dockerfile"
 require_regex '^ARG NGINX_IMAGE=[^[:space:]]+@sha256:[0-9a-f]{64}$' "$web_dockerfile"
+require_line 'ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:bcf91d2c73ab64fa1c4ac7fbac5ac523057c8af7d553ab9251c7aef38c260979' "$web_dockerfile"
+require_line 'FROM scratch AS openssl-patches' "$web_dockerfile"
+require_line 'ADD --checksum=sha256:161223a16f042b8e469e9441291e071464fd91d4f4bbe6f496ee8d0abd4e0701 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk /x86_64/libcrypto3.apk' "$web_dockerfile"
+require_line 'ADD --checksum=sha256:aca521e5ae4a321322a9d47ed64a1775f5ab1ffd215d1e9fc0433c58f7bfd037 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk /x86_64/libssl3.apk' "$web_dockerfile"
+require_line 'ADD --checksum=sha256:35b892813c23664a3592e4fc8c12a03538a22c579057655361c7043305272a9a https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libcrypto3-3.5.8-r0.apk /aarch64/libcrypto3.apk' "$web_dockerfile"
+require_line 'ADD --checksum=sha256:d6ec970cc10e01539e41626f720c4e0ac69016eaa2079a10ef776ffd3243db5b https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libssl3-3.5.8-r0.apk /aarch64/libssl3.apk' "$web_dockerfile"
+test "$(grep -F -c -- '--mount=type=bind,from=openssl-patches,source=/,target=/patches,readonly' "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must use the digest-bound OpenSSL patch mount'
+test "$(grep -F -c -- 'apk add --no-network --no-cache --repositories-file /dev/null "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk"' "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must install the offline OpenSSL patch pair'
+test "$(grep -F -c -- 'case "$openssl_patch_arch" in x86_64|aarch64) ;; *) exit 1 ;; esac' "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must reject unreviewed patch architectures'
+test "$(grep -F -c -- "apk info -e 'libcrypto3=3.5.8-r0'" "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must prove fixed libcrypto3'
+test "$(grep -F -c -- "apk info -e 'libssl3=3.5.8-r0'" "$web_dockerfile")" -eq 3 ||
+  fail 'all Nginx targets must prove fixed libssl3'
 require_line '# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e' "$web_dockerfile"
 # Docker ARG 在这里按 Dockerfile 字面量校验，不能让当前 shell 展开。
 # shellcheck disable=SC2016

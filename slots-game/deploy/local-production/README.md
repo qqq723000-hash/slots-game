@@ -30,6 +30,28 @@ Valkey 只加入未发布到宿主机的内部 `admission` 网络，使用固定
 `bootstrap.sh` 只补齐全部缺失的四个 Valkey 专用材料；若发现部分文件存在则失败关闭，
 不会轮换任何既有数据库、钱包、签名或入口密钥。
 
+当仓库固化的游戏定义版本变化时，`bootstrap.sh` 会先验证现有定义及 Ed25519 审批，
+只有在受本目录管理的 `rgs-server` 已停止，且 PostgreSQL 只读门禁证明旧定义的未过期会话、活跃特性、
+未终态轮次和有效期内未交付结果全部为零后，才复用原定义审批密钥签署新摘要，并把旧
+`definition.json` 和审批信封保存到受限备份目录；
+证书、口令、令牌和持久化数据不会随之轮换。只识别明确列入迁移器的旧定义，未知、损坏
+或签名不匹配的状态会失败关闭。受本机技术授权约束的资源审批也会与当前发布清单幂等核对：
+先在 0700 artifacts 目录生成并独立验证 0600 候选，不修改已提交审批；定义提交成功后才核对
+准备阶段记录的前序摘要、保留旧审批备份并原子提交候选。定义提交失败不会污染已提交审批，
+外部运营商审批也不会被自动覆盖。
+
+`bootstrap.sh`、`up.sh`、`down.sh` 与 `destroy.sh` 共用仓库外状态目录中的内核排他锁；
+macOS 本机部署使用 BSD `lockf`，Linux 合同门禁使用等价的 util-linux `flock`。进程退出时锁由
+内核释放，不依赖可陈旧的 PID 文件。bootstrap 先用唯一候选 tag 完成
+静态检查、来源证明构建和镜像存在性核对，不覆盖 Compose 当前选择的已提交镜像，且自有镜像
+设置 `pull_policy: never`，不会从远端补取本机候选 tag；排空、定义和资源审批提交全部通过后，
+才原子替换 `compose.env` 使下一次启动选择候选 tag。`up.sh` 还会在启动任何容器前核对 Compose
+中的游戏/定义身份、当前签名审批以及资源审批逐字节 SHA-256；若中断发生在定义或资源审批已经
+提交、但镜像选择器尚未提交的混合代际窗口，启动会失败关闭并要求重跑 bootstrap 收敛。若尚未
+提交任何新状态，旧代仍可安全启动；系统不会把“新审批 + 旧镜像”或“新定义 + 旧镜像”当成可启动状态。
+这些措施只协调本目录的单机命令；手工 Docker 操作、其他主机或多副本发布仍必须由外部发布栅栏
+阻止旧定义的新 launch，不能把本机锁当成集群级原子切换。
+
 本地镜像构建会注入 OCI `created/revision/source/version` 标签，并由 `bootstrap.sh`
 通过 BuildKit 命令行参数显式生成 `mode=max` SLSA provenance；Compose 文件本身
 保持兼容稳定版 schema。默认 revision 来自当前 Git commit；工作区未提交时追加
@@ -37,6 +59,13 @@ Valkey 只加入未发布到宿主机的内部 `admission` 网络，使用固定
 `LOCAL_PRODUCTION_IMAGE_CREATED`、`LOCAL_PRODUCTION_IMAGE_REVISION`、
 `LOCAL_PRODUCTION_IMAGE_SOURCE` 与 `LOCAL_PRODUCTION_IMAGE_VERSION`，格式会在写入
 Compose 环境前校验。静态约束可单独执行：
+
+Web、HTTPS 入口与告警代理继续使用固定多架构摘要的官方 `nginxinc/nginx-unprivileged`
+基线和 UID `101`。由于该上游基线尚未包含 Alpine 的 OpenSSL 安全修复，构建按
+`amd64`/`arm64` 从 Alpine v3.24 官方稳定仓库取得内容摘要固定的 `libcrypto3`、
+`libssl3` `3.5.8-r0` APK，并通过只读挂载离线安装和核对精确版本；不会执行可变
+`apk upgrade`。入口与告警代理共用同一 `slots-nginx-proxy` 候选 tag，仍保留各自
+带固定 CA 的 `wget` TLS 健康探针。
 
 ```sh
 ./deploy/local-production/verify-static-contract.sh

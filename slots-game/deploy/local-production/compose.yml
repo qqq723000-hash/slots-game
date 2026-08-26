@@ -30,6 +30,11 @@ x-go-build: &go-build
   context: ../..
   dockerfile: deploy/local-production/Dockerfile.services
 
+x-nginx-proxy-build: &nginx-proxy-build
+  <<: *build-metadata
+  context: ../..
+  dockerfile: deploy/local-production/Dockerfile.nginx-proxy
+
 services:
   service-volume-init:
     image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
@@ -199,7 +204,8 @@ services:
 
   rgs-migrator:
     <<: *hardened
-    image: slots-rgs-migrator:local-production
+    image: slots-rgs-migrator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: rgs-migrator}
     restart: "no"
     depends_on:
@@ -219,7 +225,8 @@ services:
 
   local-operator-bootstrap:
     <<: *hardened
-    image: slots-local-operator:local-production
+    image: slots-local-operator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: local-operator}
     restart: "no"
     depends_on:
@@ -245,7 +252,8 @@ services:
 
   local-operator-migrate:
     <<: *hardened
-    image: slots-local-operator:local-production
+    image: slots-local-operator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: local-operator}
     restart: "no"
     depends_on:
@@ -265,7 +273,8 @@ services:
 
   local-operator:
     <<: *hardened
-    image: slots-local-operator:local-production
+    image: slots-local-operator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: local-operator}
     restart: unless-stopped
     depends_on:
@@ -347,7 +356,8 @@ services:
 
   rgs-server:
     <<: *hardened
-    image: slots-rgs-runtime:local-production
+    image: slots-rgs-runtime:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: rgs-runtime}
     restart: unless-stopped
     depends_on:
@@ -422,7 +432,8 @@ services:
 
   web:
     <<: *hardened
-    image: slots-web:local-production
+    image: slots-web:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build:
       <<: *web-build-metadata
       context: ../..
@@ -442,7 +453,9 @@ services:
 
   ingress:
     <<: *hardened
-    image: nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:e88d990b349df8cf4aa82f16642d7a23375016638c9ace4e5c6ca25028e62e65
+    image: slots-nginx-proxy:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
+    build: *nginx-proxy-build
     restart: unless-stopped
     depends_on:
       web: {condition: service_healthy}
@@ -495,7 +508,9 @@ services:
 
   alert-proxy:
     <<: *hardened
-    image: nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:e88d990b349df8cf4aa82f16642d7a23375016638c9ace4e5c6ca25028e62e65
+    image: slots-nginx-proxy:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
+    build: *nginx-proxy-build
     restart: unless-stopped
     depends_on:
       alertmanager: {condition: service_healthy}

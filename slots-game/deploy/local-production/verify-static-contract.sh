@@ -5,13 +5,24 @@
 set -eu
 
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+repository_root="$(CDPATH='' cd -- "$script_dir/../.." && pwd)"
 compose_file="$script_dir/compose.yml"
 bootstrap_file="$script_dir/bootstrap.sh"
+common_file="$script_dir/common.sh"
 up_file="$script_dir/up.sh"
+down_file="$script_dir/down.sh"
+destroy_file="$script_dir/destroy.sh"
+prepare_state_file="$script_dir/prepare-state.mjs"
+prepare_state_test="$script_dir/prepare-state.test.mjs"
+deployment_transaction_test="$script_dir/deployment-transaction.test.sh"
 verify_file="$script_dir/verify.sh"
 operator_log_probe_verifier_file="$script_dir/verify-operator-log-probe.mjs"
 volume_initializer_file="$script_dir/initialize-volumes.sh"
 asset_approval_generator_file="$script_dir/create-asset-approval.mjs"
+asset_approval_rotator_file="$script_dir/rotate-asset-approval.mjs"
+asset_approval_rotator_test="$script_dir/rotate-asset-approval.test.mjs"
+nginx_proxy_dockerfile="$script_dir/Dockerfile.nginx-proxy"
+nginx_openssl_patch_verifier="$repository_root/deploy/supply-chain/verify-nginx-openssl-patch.sh"
 browser_verifier_file="$script_dir/verify-browser-session.mjs"
 browser_probe_file="$script_dir/browser-session-probe.mjs"
 browser_probe_test="$script_dir/browser-session-probe.test.mjs"
@@ -27,8 +38,48 @@ require_exact_line() {
   fi
 }
 
+verify_nginx_openssl_patch_contract() {
+  dockerfile="$1"
+  require_exact_line \
+    'ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:bcf91d2c73ab64fa1c4ac7fbac5ac523057c8af7d553ab9251c7aef38c260979' \
+    "$dockerfile" \
+    "$(basename "$dockerfile") 必须固定已审核的多架构 nginxinc 基础镜像索引摘要。"
+  for required_line in \
+    'FROM scratch AS openssl-patches' \
+    'ADD --checksum=sha256:161223a16f042b8e469e9441291e071464fd91d4f4bbe6f496ee8d0abd4e0701 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk /x86_64/libcrypto3.apk' \
+    'ADD --checksum=sha256:aca521e5ae4a321322a9d47ed64a1775f5ab1ffd215d1e9fc0433c58f7bfd037 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk /x86_64/libssl3.apk' \
+    'ADD --checksum=sha256:35b892813c23664a3592e4fc8c12a03538a22c579057655361c7043305272a9a https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libcrypto3-3.5.8-r0.apk /aarch64/libcrypto3.apk' \
+    'ADD --checksum=sha256:d6ec970cc10e01539e41626f720c4e0ac69016eaa2079a10ef776ffd3243db5b https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libssl3-3.5.8-r0.apk /aarch64/libssl3.apk' \
+    '    --mount=type=bind,from=openssl-patches,source=/,target=/patches,readonly \' \
+    '    openssl_patch_arch="$(apk --print-arch)" && \' \
+    '    case "$openssl_patch_arch" in x86_64|aarch64) ;; *) exit 1 ;; esac && \' \
+    '    apk add --no-network --no-cache --repositories-file /dev/null \' \
+    '      "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk" && \' \
+    "    apk info -e 'libcrypto3=3.5.8-r0' >/dev/null && \\" \
+    "    apk info -e 'libssl3=3.5.8-r0' >/dev/null"
+  do
+    require_exact_line "$required_line" "$dockerfile" \
+      "$(basename "$dockerfile") 缺少固定摘要、离线安装或版本证明：$required_line"
+  done
+  if grep -E '^[^#]*apk[[:space:]]+upgrade([[:space:]]|$)' "$dockerfile" >/dev/null; then
+    printf '%s\n' "$(basename "$dockerfile") 不得执行可变 apk upgrade。" >&2
+    exit 1
+  fi
+  test "$(grep -Fxc 'USER 0:0' "$dockerfile")" -eq 1 \
+    && test "$(grep -Fxc 'USER 101:101' "$dockerfile")" -ge 1 || {
+      printf '%s\n' "$(basename "$dockerfile") 必须只在离线补丁阶段临时提权并恢复 nginxinc UID 101。" >&2
+      exit 1
+    }
+}
+
 command -v docker >/dev/null 2>&1 || { printf '%s\n' 'Docker CLI 不可用。' >&2; exit 1; }
 command -v node >/dev/null 2>&1 || { printf '%s\n' 'Node.js 不可用。' >&2; exit 1; }
+test -x "$nginx_openssl_patch_verifier" || { printf '%s\n' 'Nginx OpenSSL 补丁机器门禁缺失。' >&2; exit 1; }
+test -f "$nginx_proxy_dockerfile"
+"$nginx_openssl_patch_verifier" local "$script_dir/Dockerfile.web" >/dev/null
+"$nginx_openssl_patch_verifier" local "$nginx_proxy_dockerfile" >/dev/null
+verify_nginx_openssl_patch_contract "$script_dir/Dockerfile.web"
+verify_nginx_openssl_patch_contract "$nginx_proxy_dockerfile"
 require_exact_line '      LOCAL_OPERATOR_IDLE_DISCONNECT: 20m' "$compose_file" '本地 operator 缺少 20 分钟空闲断开策略。'
 require_exact_line '      RGS_SESSION_IDLE_DISCONNECT_MIN: 1m' "$compose_file" '本地 RGS 缺少空闲断开下限。'
 require_exact_line '      RGS_SESSION_IDLE_DISCONNECT_MAX: 24h' "$compose_file" '本地 RGS 缺少空闲断开上限。'
@@ -42,11 +93,20 @@ test -f "$csp_verifier_file"
 test -f "$operator_log_probe_verifier_file"
 test -f "$volume_initializer_file"
 test -f "$asset_approval_generator_file"
+test -f "$asset_approval_rotator_file"
+test -f "$asset_approval_rotator_test"
+test -f "$deployment_transaction_test"
+test -f "$prepare_state_test"
 node --check "$browser_probe_file"
 node --check "$browser_verifier_file"
 node --check "$operator_log_probe_verifier_file"
 node --check "$asset_approval_generator_file"
+node --check "$asset_approval_rotator_file"
+node --check "$prepare_state_file"
 node --test "$browser_probe_test"
+node --test "$asset_approval_rotator_test"
+node --test "$prepare_state_test"
+sh "$deployment_transaction_test"
 
 temporary_root="$(mktemp -d -t slots-local-contract.XXXXXX)"
 trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
@@ -60,6 +120,8 @@ export LOCAL_PRODUCTION_IMAGE_CREATED="2026-01-01T00:00:00Z"
 export LOCAL_PRODUCTION_IMAGE_REVISION="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 export LOCAL_PRODUCTION_IMAGE_SOURCE="https://github.com/qqq723000-hash/slots-game"
 export LOCAL_PRODUCTION_IMAGE_VERSION="contract-version"
+export LOCAL_PRODUCTION_IMAGE_TAG="contract-candidate"
+export LOCAL_PRODUCTION_ASSET_APPROVAL_HASH="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
 cat >"$temporary_root/release-manifest.json" <<'JSON'
 {
@@ -123,12 +185,31 @@ if (volumeInitializer?.network_mode !== "none") {
 if (Object.keys(volumeInitializer?.networks ?? {}).length !== 0) {
   throw new Error("读取全部源秘密的初始化容器不得加入任何 Compose 网络");
 }
-for (const serviceName of ["rgs-migrator", "rgs-server", "local-operator", "web"]) {
+for (const serviceName of ["rgs-migrator", "rgs-server", "local-operator", "web", "ingress", "alert-proxy"]) {
   const build = document.services?.[serviceName]?.build;
   if (!build) throw new Error(`${serviceName} 缺少构建配置`);
   for (const [name, value] of Object.entries(expectedArgs)) {
     if (build.args?.[name] !== value) throw new Error(`${serviceName} is missing ${name}`);
   }
+  if (document.services?.[serviceName]?.pull_policy !== "never") {
+    throw new Error(`${serviceName} must never pull a candidate image from a registry`);
+  }
+}
+for (const [serviceName, image] of Object.entries({
+  "rgs-migrator": "slots-rgs-migrator:contract-candidate",
+  "rgs-server": "slots-rgs-runtime:contract-candidate",
+  "local-operator": "slots-local-operator:contract-candidate",
+  "web": "slots-web:contract-candidate",
+  "ingress": "slots-nginx-proxy:contract-candidate",
+  "alert-proxy": "slots-nginx-proxy:contract-candidate",
+})) {
+  if (document.services?.[serviceName]?.image !== image) {
+    throw new Error(`${serviceName} does not use the immutable candidate image tag`);
+  }
+}
+if (document.services?.ingress?.build?.dockerfile !== "deploy/local-production/Dockerfile.nginx-proxy"
+    || document.services?.["alert-proxy"]?.build?.dockerfile !== "deploy/local-production/Dockerfile.nginx-proxy") {
+  throw new Error("入口与告警代理必须共用固定的 Nginx 候选镜像 Dockerfile");
 }
 const grafana = document.services?.grafana?.environment ?? {};
 for (const [name, value] of Object.entries({
@@ -189,13 +270,141 @@ if grep -Eq '^[[:space:]]*provenance:' "$compose_file"; then
   exit 1
 fi
 require_exact_line \
-  'compose build --provenance=mode=max rgs-migrator rgs-server local-operator web' \
+  '  compose build --provenance=mode=max rgs-migrator rgs-server local-operator web ingress' \
   "$bootstrap_file" \
   'bootstrap.sh 必须使用 BuildKit mode=max 来源证明构建全部自有镜像。'
+require_exact_line \
+  '    /usr/bin/lockf -s -t 0 9 && lock_acquired=true' \
+  "$common_file" \
+  'macOS 本机部署必须使用进程退出后自动恢复的 BSD 排他锁。'
+require_exact_line \
+  '    /usr/bin/flock -n 9 && lock_acquired=true' \
+  "$common_file" \
+  'Linux 合同环境必须使用同样绑定文件描述符的排他锁。'
+for locked_entrypoint in "$bootstrap_file" "$up_file" "$down_file" "$destroy_file"; do
+  require_exact_line \
+    'acquire_deployment_lock' \
+    "$locked_entrypoint" \
+    "$(basename "$locked_entrypoint") 必须取得共享部署锁。"
+done
+require_exact_line \
+  'verify_state_definition_binding' \
+  "$up_file" \
+  'up.sh 必须在启动前核对签名定义与原子 Compose 状态。'
+grep -F 'LOCAL_PRODUCTION_ASSET_APPROVAL_HASH' "$common_file" >/dev/null || {
+  printf '%s\n' 'up.sh 的代际绑定必须覆盖已提交资源审批摘要。' >&2
+  exit 1
+}
+test "$(grep -Fxc '    image: slots-local-operator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}' "$compose_file")" -eq 3 || {
+  printf '%s\n' '全部本机 operator 服务必须选择同一不可变候选镜像 tag。' >&2
+  exit 1
+}
+for image_line in \
+  '    image: slots-rgs-migrator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}' \
+  '    image: slots-rgs-runtime:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}' \
+  '    image: slots-web:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}'
+do
+  require_exact_line "$image_line" "$compose_file" '自有镜像必须通过已提交的候选 tag 选择。'
+done
+test "$(grep -Fxc '    image: slots-nginx-proxy:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}' "$compose_file")" -eq 2 || {
+  printf '%s\n' '入口与告警代理必须绑定同一不可变 Nginx 候选镜像 tag。' >&2
+  exit 1
+}
+require_exact_line \
+  '      test: [CMD, env, SSL_CERT_FILE=/run/ingress-secrets/local-production-root-ca.pem, wget, -q, -T, "3", -O, /dev/null, https://slots.localhost:8443/healthz]' \
+  "$compose_file" \
+  'HTTPS 入口必须保留使用固定 CA 与主机名校验的 wget TLS 健康探针。'
+require_exact_line \
+  '      test: [CMD, env, SSL_CERT_FILE=/run/alert-secrets/local-production-root-ca.pem, wget, -q, -T, "3", -O, /dev/null, https://127.0.0.1:8443/healthz]' \
+  "$compose_file" \
+  '告警代理必须保留使用固定 CA 的 wget TLS 健康探针。'
+test "$(grep -Fxc '    pull_policy: never' "$compose_file")" -eq 8 || {
+  printf '%s\n' '全部自有镜像必须禁用候选 tag 的远端拉取。' >&2
+  exit 1
+}
+require_exact_line \
+  '  "slots-nginx-proxy:$candidate_image_tag"' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须在提交前检查共用 Nginx 候选镜像确实存在。'
+for metadata_verification in \
+  'verify_image_metadata "slots-rgs-runtime:$image_tag" slots-rgs-runtime' \
+  'verify_image_metadata "slots-rgs-migrator:$image_tag" slots-rgs-migrator' \
+  'verify_image_metadata "slots-local-operator:$image_tag" slots-local-operator' \
+  'verify_image_metadata "slots-web:$image_tag" slots-web' \
+  'verify_image_metadata "slots-nginx-proxy:$image_tag" slots-nginx-proxy'
+do
+  require_exact_line "$metadata_verification" "$verify_file" \
+    '动态验收必须按 compose.env 的同一候选 tag 核对全部自有镜像来源元数据。'
+done
+if grep -E '^verify_image_metadata slots-[^:]+:local-production' "$verify_file" >/dev/null; then
+  printf '%s\n' '动态验收不得退回与已提交候选选择器无关的固定镜像 tag。' >&2
+  exit 1
+fi
+if ! grep -F 'const expected=`slots-nginx-proxy:${process.argv[1]}`;' "$bootstrap_file" >/dev/null \
+  || ! grep -F 'for (const serviceName of ["ingress", "alert-proxy"]) {' "$bootstrap_file" >/dev/null; then
+  printf '%s\n' 'bootstrap.sh 必须在构建前证明入口与告警代理绑定同一候选 tag。' >&2
+  exit 1
+fi
+test "$(tr -d '\r\n' <"$script_dir/Dockerfile.nginx-proxy.dockerignore")" = '*' || {
+  printf '%s\n' '共用 Nginx 代理构建不得发送仓库内容作为上下文。' >&2
+  exit 1
+}
 grep -F 'go run ./cmd/local-production-bootstrap add-shared-admission "$secrets_root"' "$bootstrap_file" >/dev/null || {
   printf '%s\n' 'bootstrap.sh 必须幂等补齐旧本地状态的 Valkey 专用材料。' >&2
   exit 1
 }
+grep -F 'go run ./cmd/local-production-bootstrap definition-rotation-status "$secrets_root"' "$bootstrap_file" >/dev/null || {
+	printf '%s\n' 'bootstrap.sh 必须先验证当前与目标定义身份。' >&2
+	exit 1
+}
+grep -F '"$local_production_directory/verify-definition-drain.sh" \' "$bootstrap_file" >/dev/null || {
+		printf '%s\n' 'bootstrap.sh 必须在定义轮换前执行数据库排空门禁。' >&2
+		exit 1
+}
+grep -F 'go run ./cmd/local-production-bootstrap rotate-definition "$secrets_root" "$state_root/backups"' "$bootstrap_file" >/dev/null || {
+	printf '%s\n' 'bootstrap.sh 必须安全轮换已变更的本机签名游戏定义。' >&2
+	exit 1
+}
+test -x "$script_dir/verify-definition-drain.sh" || {
+	printf '%s\n' '本机定义排空门禁必须可执行。' >&2
+	exit 1
+}
+require_exact_line \
+  'node "$local_production_directory/rotate-asset-approval.mjs" \' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须显式提交先前验证的本机资源审批候选。'
+require_exact_line \
+  'asset_prepare_status="$(node "$local_production_directory/rotate-asset-approval.mjs" \' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须在定义提交前准备隔离的资源审批候选。'
+test "$(grep -Fxc '  "$repository_root/web/dist/release-manifest.json" \' "$bootstrap_file")" -eq 2 || {
+  printf '%s\n' '资源审批准备与提交必须绑定同一当前发布清单。' >&2
+  exit 1
+}
+test "$(grep -Fxc '  "$secrets_root/release-asset-approval.json" \' "$bootstrap_file")" -eq 2 || {
+  printf '%s\n' '资源审批准备与提交必须绑定同一已提交审批。' >&2
+  exit 1
+}
+require_exact_line \
+  '  "$state_root/backups" \' \
+  "$bootstrap_file" \
+  '本机资源审批轮换必须保留可恢复备份。'
+asset_prepare_line="$(grep -nF 'asset_prepare_status="$(node "$local_production_directory/rotate-asset-approval.mjs" \' "$bootstrap_file" | cut -d: -f1)"
+build_line="$(grep -nF 'compose build --provenance=mode=max rgs-migrator rgs-server local-operator web ingress' "$bootstrap_file" | cut -d: -f1)"
+status_line="$(grep -nF 'go run ./cmd/local-production-bootstrap definition-rotation-status "$secrets_root"' "$bootstrap_file" | cut -d: -f1)"
+asset_commit_line="$(grep -nF '  commit \' "$bootstrap_file" | cut -d: -f1)"
+definition_commit_line="$(grep -nF 'go run ./cmd/local-production-bootstrap rotate-definition "$secrets_root" "$state_root/backups"' "$bootstrap_file" | cut -d: -f1)"
+final_state_line="$(grep -nF 'node "$local_production_directory/prepare-state.mjs" "$state_root"' "$bootstrap_file" | tail -n 1 | cut -d: -f1)"
+if [ -z "$asset_prepare_line" ] || [ -z "$build_line" ] || [ -z "$status_line" ] || \
+   [ -z "$asset_commit_line" ] || \
+   [ -z "$definition_commit_line" ] || [ -z "$final_state_line" ] || \
+   [ "$asset_prepare_line" -ge "$build_line" ] || [ "$build_line" -ge "$status_line" ] || \
+   [ "$status_line" -ge "$definition_commit_line" ] || \
+   [ "$definition_commit_line" -ge "$asset_commit_line" ] || \
+   [ "$asset_commit_line" -ge "$final_state_line" ]; then
+  printf '%s\n' 'bootstrap.sh 必须按审批候选、镜像构建、排空、定义、审批、原子状态顺序提交。' >&2
+  exit 1
+fi
 require_exact_line \
   'compose up -d --no-build --force-recreate' \
   "$up_file" \
@@ -438,7 +647,7 @@ grep -F 'latestState.cspViolations.length > 0' "$browser_verifier_file" >/dev/nu
   exit 1
 }
 
-for dockerfile in "$script_dir/Dockerfile.services" "$script_dir/Dockerfile.web"; do
+for dockerfile in "$script_dir/Dockerfile.services" "$script_dir/Dockerfile.web" "$nginx_proxy_dockerfile"; do
   for label in \
     org.opencontainers.image.created \
     org.opencontainers.image.revision \

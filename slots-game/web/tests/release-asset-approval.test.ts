@@ -24,6 +24,7 @@ const temporaryDirectories: string[] = [];
 
 function makeFixture(options: {
   approval?: Record<string, unknown>;
+  approvalRaw?: string;
   manifestFiles?: Array<Record<string, unknown>>;
 } = {}) {
   const directory = mkdtempSync(resolve(tmpdir(), "slots-release-asset-approval-"));
@@ -50,7 +51,7 @@ function makeFixture(options: {
     requireRevision: true,
   });
   writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
-  writeFileSync(approvalPath, `${JSON.stringify(approval)}\n`);
+  writeFileSync(approvalPath, options.approvalRaw ?? `${JSON.stringify(approval, null, 2)}\n`);
   return { manifestPath, approvalPath };
 }
 
@@ -65,6 +66,91 @@ describe("release asset approval gate", () => {
     const fixture = makeFixture();
 
     expect(verifyReleaseAssetApproval(fixture)).toEqual({ approvedAssets: 4 });
+  });
+
+  it("rejects unsupported approval and asset fields", () => {
+    const unsupportedApproval = makeFixture({
+      approval: {
+        schemaVersion: 1,
+        status: "APPROVED",
+        approvalReference: "test-only-approval-reference",
+        jurisdictions: ["TEST-ONLY"],
+        expiresAt: "2035-01-01T00:00:00.000Z",
+        assets: protectedFiles,
+        operatorNote: "must not be ignored",
+      },
+    });
+    const unsupportedAsset = makeFixture({
+      approval: {
+        schemaVersion: 1,
+        status: "APPROVED",
+        approvalReference: "test-only-approval-reference",
+        jurisdictions: ["TEST-ONLY"],
+        expiresAt: "2035-01-01T00:00:00.000Z",
+        assets: [
+          { ...protectedFiles[0], source: "must not be ignored" },
+          ...protectedFiles.slice(1),
+        ],
+      },
+    });
+
+    expect(() => verifyReleaseAssetApproval(unsupportedApproval))
+      .toThrow("release asset approval contains unsupported fields");
+    expect(() => verifyReleaseAssetApproval(unsupportedAsset))
+      .toThrow("approval.assets[0] contains unsupported fields");
+  });
+
+  it("rejects duplicate JSON keys at approval and asset scope", () => {
+    const canonical = {
+      schemaVersion: 1,
+      status: "APPROVED",
+      approvalReference: "test-only-approval-reference",
+      jurisdictions: ["TEST-ONLY"],
+      expiresAt: "2035-01-01T00:00:00.000Z",
+      assets: protectedFiles,
+    };
+    const duplicateApprovalKey = makeFixture({
+      approvalRaw: `${JSON.stringify(canonical, null, 2).replace(
+        '  "status": "APPROVED",',
+        '  "status": "APPROVED",\n  "status": "APPROVED",',
+      )}\n`,
+    });
+    const duplicateAssetKey = makeFixture({
+      approvalRaw: `${JSON.stringify(canonical, null, 2).replace(
+        '      "bytes": 101,',
+        '      "bytes": 101,\n      "bytes": 101,',
+      )}\n`,
+    });
+
+    expect(() => verifyReleaseAssetApproval(duplicateApprovalKey))
+      .toThrow("release asset approval is not canonical JSON");
+    expect(() => verifyReleaseAssetApproval(duplicateAssetKey))
+      .toThrow("release asset approval is not canonical JSON");
+  });
+
+  it("rejects valid but non-canonical JSON encodings", () => {
+    const approval = {
+      schemaVersion: 1,
+      status: "APPROVED",
+      approvalReference: "test-only-approval-reference",
+      jurisdictions: ["TEST-ONLY"],
+      expiresAt: "2035-01-01T00:00:00.000Z",
+      assets: protectedFiles,
+    };
+    const compact = makeFixture({ approvalRaw: `${JSON.stringify(approval)}\n` });
+    const reordered = makeFixture({
+      approvalRaw: `${JSON.stringify({ status: approval.status, ...approval }, null, 2)}\n`,
+    });
+    const trailingWhitespace = makeFixture({
+      approvalRaw: `${JSON.stringify(approval, null, 2)}\n\n`,
+    });
+
+    expect(() => verifyReleaseAssetApproval(compact))
+      .toThrow("release asset approval is not canonical JSON");
+    expect(() => verifyReleaseAssetApproval(reordered))
+      .toThrow("release asset approval is not canonical JSON");
+    expect(() => verifyReleaseAssetApproval(trailingWhitespace))
+      .toThrow("release asset approval is not canonical JSON");
   });
 
   it("fails closed when RELEASE_ASSET_APPROVAL_FILE is absent", () => {

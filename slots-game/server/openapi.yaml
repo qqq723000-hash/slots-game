@@ -1309,6 +1309,10 @@ components:
     ExchangeResponse:
       type: object
       additionalProperties: false
+      description: >-
+        Session credential bundle. The nested SessionResponse always carries
+        the required engineRulesVersion and clients must validate it before
+        accepting the session.
       required: [accessToken, session, serverTime]
       properties:
         accessToken:
@@ -1330,6 +1334,7 @@ components:
         - gameId
         - definitionVersion
         - definitionHash
+        - engineRulesVersion
         - currency
         - currencyExponent
         - jurisdiction
@@ -1351,6 +1356,13 @@ components:
           $ref: '#/components/schemas/Identifier'
         definitionHash:
           $ref: '#/components/schemas/Digest'
+        engineRulesVersion:
+          allOf:
+            - $ref: '#/components/schemas/Identifier'
+          description: >-
+            Server-authoritative engine semantics identity bound to the game
+            definition. The client must match this value exactly to its
+            compiled engine/presentation rules before accepting the session.
         currency:
           $ref: '#/components/schemas/Currency'
         currencyExponent:
@@ -1562,6 +1574,12 @@ components:
     SpinResult:
       type: object
       additionalProperties: false
+      description: >-
+        HTTP projection of a committed result. The nominal/paid award split is
+        persisted under the internal ResultSchemaPaidFactsV1 identity
+        (`rgs-spin-result-paid-facts-v1`). That marker is intentionally not an
+        HTTP response property: resultHash follows the stored result schema,
+        and historical pre-marker replays retain their legacy hash projection.
       required:
         - operatorId
         - sessionId
@@ -1714,7 +1732,7 @@ components:
     PathAward:
       type: object
       additionalProperties: false
-      required: [cells, multiplier, baseAmountMinor, amountMinor]
+      required: [cells, multiplier, baseAmountMinor, nominalAmountMinor, amountMinor]
       properties:
         cells:
           type: array
@@ -1729,8 +1747,21 @@ components:
           allOf:
             - $ref: '#/components/schemas/MoneyMinor'
           description: Server-resolved amount shown before the WILD multiplier merge; clients must not derive it by division.
+        nominalAmountMinor:
+          allOf:
+            - $ref: '#/components/schemas/MoneyMinor'
+          description: >-
+            Full mathematical path award after the WILD multiplier and before
+            the signed whole-game maximum-win budget is applied. Zero is valid
+            for an individual path after deterministic minor-unit rounding;
+            the aggregate Win nominal amount remains positive.
         amountMinor:
-          $ref: '#/components/schemas/MoneyMinor'
+          allOf:
+            - $ref: '#/components/schemas/MoneyMinor'
+          description: >-
+            Amount actually settled for this path after the maximum-win
+            budget. Zero is valid when the nominal path remains in the result
+            after the budget has been exhausted.
     Win:
       type: object
       additionalProperties: false
@@ -1738,7 +1769,7 @@ components:
         One aggregate paying-symbol record. multiplier is optional presentation
         metadata and is emitted only when every pathAward has the same
         multiplier; mixed records retain only their per-path multipliers.
-      required: [id, symbol, ways, amountMinor, cells, pathAwards]
+      required: [id, symbol, ways, nominalAmountMinor, amountMinor, cells, pathAwards]
       properties:
         id:
           $ref: '#/components/schemas/Identifier'
@@ -1747,8 +1778,19 @@ components:
         ways:
           type: integer
           minimum: 1
+        nominalAmountMinor:
+          allOf:
+            - $ref: '#/components/schemas/PositiveMoneyMinor'
+          description: >-
+            Sum of nominalAmountMinor across every preserved pathAward before
+            the signed whole-game maximum-win budget is applied.
         amountMinor:
-          $ref: '#/components/schemas/PositiveMoneyMinor'
+          allOf:
+            - $ref: '#/components/schemas/MoneyMinor'
+          description: >-
+            Sum actually settled across pathAwards after the maximum-win
+            budget. Zero is valid when all nominal paths are preserved after
+            the budget has been exhausted.
         multiplier:
           allOf:
             - $ref: '#/components/schemas/PositiveIntegerString'

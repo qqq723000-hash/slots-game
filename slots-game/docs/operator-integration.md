@@ -38,7 +38,7 @@ sequenceDiagram
     R-->>O: Signed one-time launchCode + expiry
     O-->>B: Open approved game URL with launchCode in a protected hand-off
     B->>R: POST /client/v1/sessions/exchange
-    R-->>B: Short-lived access token + bound session projection
+    R-->>B: Short-lived access token + bound session projection + engineRulesVersion
     B->>R: Before token expiry, POST /client/v1/sessions/refresh
     R-->>B: Replacement token + same bound session projection
     B->>R: POST /client/v1/spins (stable roundId)
@@ -68,7 +68,7 @@ launch code 是密钥与一次性凭据，而非会话 ID。不要把它放在�
 4. 钱包将信任的 RGS 请求签名公钥。
 5. 运营商后端将信任的 RGS 响应签名公钥。
 6. 允许的浏览器 HTTPS origin、辖区、货币与货币指数。
-7. 获批 `gameId`、确切规范数学定义文件、不可变定义版本、SHA-256 定义哈希、允许的投注、生产签名
+7. 获批 `gameId`、确切规范数学定义文件、不可变定义版本、引擎规则版本、SHA-256 定义哈希、允许的投注、生产签名
    `rgs-definition-approval-v2` 封套、其独立管理的 Ed25519 验证密钥，以及至少一个数学报告、RNG
    报告和逐辖区审批的外部引用。开发/预发布可继续使用 v1；生产拒绝 v1 与带 `demo` 标记的身份。
 8. 运维联系、对账升级路径、维护窗口与密钥泄露程序。
@@ -368,6 +368,11 @@ go test -count=1 ./server/cmd/local-operator ./server/internal/wallet
   `RGS_DEFINITION_APPROVAL_PUBLIC_KEY_FILE` 加载其独立挂载 Ed25519 验证密钥。签名与所有定义
   身份/哈希以及数学、RNG、辖区证据引用必须匹配。缺失或不匹配文件必须失败启动。代码只认证这些
   引用的签名绑定，不证明引用内容真实、充分或已获监管接受。
+- 签名定义中的 `engineRulesVersion` 必须与运行二进制精确一致；会话兑换与刷新响应
+  会返回服务端权威值，浏览器必须拒绝与当前构建不匹配的会话。
+- 单定义副本启动前会只读拒绝仍有未过期会话、活跃特性、未终态轮次或有效期内
+  未交付结果的前代定义。多副本生产轮换还必须由发布系统先建栅旧定义的新 launch，
+  再等待该门禁归零；只有启动快照不能消除旧副本继续签发会话的竞态。
 - 演练钱包未知结果、幂等冲突、钱包尝试接近 `RGS_WALLET_MAX_ATTEMPTS`、`MANUAL_REVIEW`、就绪
   失败与对账滞后的告警。
 - 记录运营商专属上线审批；不要从通用适配器或另一运营商测试结果推断审批。

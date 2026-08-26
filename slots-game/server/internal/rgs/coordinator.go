@@ -317,7 +317,8 @@ func (c *Coordinator) prepareOutcome(ctx context.Context, session Session, reque
 		return SpinResult{}, fmt.Errorf("rgs: engine returned an invalid outcome: %w", err)
 	}
 	return SpinResult{
-		OperatorID: request.OperatorID, SessionID: request.SessionID,
+		ResultSchemaVersion: ResultSchemaPaidFactsV1,
+		OperatorID:          request.OperatorID, SessionID: request.SessionID,
 		RoundID: request.RoundID, GameID: request.GameID,
 		DefinitionVersion: request.DefinitionVersion, DefinitionHash: request.DefinitionHash,
 		Currency: request.Currency, RoundKind: request.RoundKind,

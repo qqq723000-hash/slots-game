@@ -120,6 +120,37 @@ function zeroResponse(): Response {
 }
 
 describe("StreamingAssetRuntime Phase-B shadow bridge", () => {
+  it("binds the default browser fetch receiver for manifests and feature resources", async () => {
+    const fetcher = vi.fn(function (
+      this: typeof globalThis,
+      input: RequestInfo | URL,
+    ): Promise<Response> {
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      return Promise.resolve(
+        String(input).includes("streaming-packages")
+          ? manifestResponse("desktop")
+          : binaryResponse(),
+      );
+    });
+    vi.stubGlobal("fetch", fetcher);
+    let runtime: StreamingAssetRuntime | null = null;
+    try {
+      runtime = new StreamingAssetRuntime({
+        channel: "desktop",
+        mode: "on-demand",
+      });
+
+      const lease = await runtime.acquirePackage("desktop-feature-wheel");
+      expect(lease.packageIds).toEqual(["desktop-shared", "desktop-feature-wheel"]);
+      expect(fetcher).toHaveBeenCalledTimes(3);
+      expect(fetcher.mock.instances).toEqual([globalThis, globalThis, globalThis]);
+      lease.release();
+    } finally {
+      runtime?.destroy();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("cancels a chunked manifest as soon as accumulated bytes cross the hard limit", async () => {
     const cancelled = vi.fn();
     const fullChunk = new Uint8Array(2 * 1024 * 1024);
@@ -817,6 +848,7 @@ describe("StreamingAssetRuntime Phase-B shadow bridge", () => {
     });
 
     it("unregisters a manually released lease exactly once without underflow", async () => {
+      const onDiagnostics = vi.fn();
       const runtime = new StreamingAssetRuntime({
         channel: "desktop",
         mode: "shadow",
@@ -825,12 +857,15 @@ describe("StreamingAssetRuntime Phase-B shadow bridge", () => {
             ? manifestResponse("desktop")
             : binaryResponse()
         )),
+        onDiagnostics,
       });
       const lease = await runtime.acquirePackage("desktop-feature-wheel");
 
+      expect(onDiagnostics.mock.lastCall?.[0].retainedPayloadBytes).toBe(2);
       expect(lease.release()).toBe(true);
       expect(lease.released).toBe(true);
       expect(runtime.diagnostics().retainedPayloadBytes).toBe(0);
+      expect(onDiagnostics.mock.lastCall?.[0].retainedPayloadBytes).toBe(0);
       expect(lease.release()).toBe(false);
       expect(() => runtime.destroy()).not.toThrow();
       expect(lease.release()).toBe(false);

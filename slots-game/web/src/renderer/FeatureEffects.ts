@@ -880,6 +880,8 @@ export function featureEffectLabel(
       return `KING UPGRADE // STEP ${event.step}`;
     case "free_spin.cap_reached":
       return "FREE SPIN LIMIT REACHED";
+    case "win_cap.reached":
+      return "MAXIMUM WIN REACHED";
     case "free_spins.completed":
       return `FREE SPINS COMPLETE // ${formatter.format(event.cumulativeWinMinor, false)}`;
   }
@@ -2447,6 +2449,9 @@ export class FeatureEffects {
       case "free_spin.awarded":
       case "free_spin.cap_reached":
         // 两个表现流程均归 FreeSpinHudView 所有。额外旋转使用批量预设的收集轨迹； CAPLIMIT 使用重新触发面板。
+        return;
+      case "win_cap.reached":
+        // 纯经济边界事实，保持可观测但不伪造原游戏不存在的独立动画。
         return;
       case "free_spins.completed":
         await this.presentFreeSpinsSummary(event, reducedMotion, token);

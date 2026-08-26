@@ -3840,7 +3840,8 @@ select {
   * 避免后面的 DOM 同级节点抢占相邻按钮中心的点击。两侧外部控件仍保留完整的向外触达范围。
    */
   --utility-hit-step: calc(
-    var(--mobile-utility-control-size, 44px) + var(--mobile-control-gap, 0px)
+    var(--mobile-utility-control-size, 44px) +
+      var(--mobile-utility-gap, var(--mobile-control-gap, 0px))
   );
   --utility-hit-trim: max(
     0px,
@@ -3948,8 +3949,10 @@ select {
 #game-menu-settings > h3 { display: none; }
 
 #game-menu-paytable {
-  margin-left: -96px;
-  padding-top: 40px;
+  margin-top: -7.2px;
+  margin-right: 33.6px;
+  margin-left: -134.4px;
+  padding-top: 0;
   text-align: center;
 }
 
@@ -4004,6 +4007,10 @@ select {
 
 .setting-row:first-child { border-radius: 8px 8px 0 0; }
 .setting-row[data-setting="spacebar"] { border-radius: 0 0 8px 8px; }
+.setting-row[data-setting="hand-mode"] {
+  display: none;
+  border-radius: 0 0 8px 8px;
+}
 .setting-row[data-setting="sound"] {
   margin-top: 0;
   border-radius: 8px;
@@ -4322,6 +4329,20 @@ select {
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .bet-trigger__icon {
   width: clamp(25px, 3.6cqw, 34px);
   height: clamp(25px, 3.6cqw, 34px);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-button__hit-area {
+  clip-path: inset(var(--utility-hit-trim) 0 var(--utility-hit-trim) 0);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"]
+  .utility-button--settings > .utility-button__hit-area {
+  clip-path: inset(0 0 var(--utility-hit-trim) 0);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"]
+  .utility-button--sound > .utility-button__hit-area {
+  clip-path: inset(var(--utility-hit-trim) 0 0 0);
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .spin-dock {
@@ -4964,6 +4985,122 @@ select {
   background: transparent;
 }
 
+/* 原版 GAME RULES 是独立的白色文档面；固定公开玩法与运营商补充条款保持来源分层。 */
+#game-menu-rules {
+  width: auto;
+  margin-top: -8px;
+  margin-right: 33.6px;
+  margin-left: -134.4px;
+}
+
+.game-rules-document {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
+  padding: 34px 14px 44px;
+  border-radius: 14px 14px 0 0;
+  color: #111;
+  background: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+  text-align: left;
+}
+
+#game-menu-rules .game-rules-document > h3 {
+  margin: 0 0 34px;
+  color: #070707;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+  text-transform: none;
+}
+
+.packaged-game-rules__section,
+.operator-approved-game-rules__section {
+  margin: 0 0 26px;
+  padding: 0;
+  border: 0;
+  color: #111;
+}
+
+.packaged-game-rules__section h4,
+.operator-approved-game-rules__section h4 {
+  margin: 0 0 18px;
+  color: #111;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.2;
+  text-align: left;
+}
+
+.packaged-game-rules__section[data-game-rules-section="game-rules"] > h4,
+.packaged-game-rules__section[data-game-rules-section="actions"] > h4,
+.packaged-game-rules__section[data-game-rules-section="information"] > h4,
+.operator-approved-game-rules__section > h4 {
+  font-size: 24px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.packaged-game-rules__section p,
+.operator-approved-game-rules__section p {
+  margin: 0 0 18px;
+  color: #111;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.22;
+}
+
+.operator-approved-game-rules__section + .operator-approved-game-rules__section {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.packaged-game-rules__actions {
+  margin: 0;
+  color: #111;
+  font: 400 16px/1.22 Arial, Helvetica, sans-serif;
+}
+
+.packaged-game-rules__actions dt {
+  margin: 0;
+}
+
+.packaged-game-rules__actions dd {
+  margin: 0 0 4px;
+}
+
+.game-rules-document[hidden],
+.operator-approved-game-rules[hidden] {
+  display: none;
+}
+
+.game-frame[data-channel="mobile"] #game-menu-rules {
+  width: 100%;
+  margin-top: 0;
+  margin-right: 0;
+  margin-left: 0;
+}
+
+.game-frame[data-channel="mobile"] .game-rules-document {
+  padding: clamp(24px, 5cqw, 34px) clamp(12px, 3cqw, 20px) 40px;
+  border-radius: 12px 12px 0 0;
+}
+
+.game-frame[data-channel="mobile"] #game-menu-rules .game-rules-document > h3 {
+  font-size: clamp(22px, 5.8cqw, 28px);
+}
+
+.game-frame[data-channel="mobile"] .packaged-game-rules__section p,
+.game-frame[data-channel="mobile"] .operator-approved-game-rules__section p,
+.game-frame[data-channel="mobile"] .packaged-game-rules__actions {
+  font-size: clamp(13px, 3.4cqw, 16px);
+}
+
 /* 服务端空闲终态：按官方 390×844 捕获还原，并在所有布局保持同一比例语义。 */
 [data-rgs-session-timeout="true"] .launch-loading-host,
 [data-rgs-session-timeout="true"] .orientation-lock {
@@ -5100,6 +5237,14 @@ select {
   --mobile-control-gap: clamp(5px, min(1.8cqw, 1.8cqh), 10px);
 }
 
+.game-frame[data-channel="mobile"] .setting-row[data-setting="spacebar"] {
+  display: none;
+}
+
+.game-frame[data-channel="mobile"] .setting-row[data-setting="hand-mode"] {
+  display: flex;
+}
+
 .game-frame[data-channel="mobile"] .game-menu__content {
   width: 100%;
   max-width: 100%;
@@ -5171,23 +5316,26 @@ select {
 
 /* 纵向手机与平板共享同一套比例式堆栈；iPad_pt 只影响 Pixi 作者节点，不改变 DOM 流。 */
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .dom-overlay {
-  --mobile-utility-control-size: clamp(35px, min(9.5cqw, 5.5cqh), 44px);
+  --mobile-utility-control-size: 39.37px;
+  --mobile-utility-gap: var(--mobile-control-gap);
+  --mobile-utility-padding: clamp(6px, 1.8cqw, 10px);
   --mobile-utility-width: min(
     calc(100cqw - var(--mobile-hud-edge) - var(--mobile-hud-edge)),
-    68cqw,
-    330px
+    68.1623cqw,
+    265.833px
   );
   --mobile-utility-height: calc(
-    var(--mobile-utility-control-size) + clamp(12px, 3.6cqw, 20px)
+    var(--mobile-utility-control-size) + var(--mobile-utility-padding) + var(--mobile-utility-padding)
   );
-  --mobile-spin-size: clamp(86px, min(23cqw, 12cqh), 104px);
+  /* 390x844 手机约 85.91px，633x844 平板约 79.59px；运行时按完整长宽比精确发布。 */
+  --mobile-spin-size: clamp(79.59px, calc(96.053px - 2.6008cqw), 85.91px);
   --mobile-round-height: clamp(28px, 7.5cqw, 34px);
-  --mobile-utility-bottom: calc(var(--status-height) + var(--mobile-hud-edge));
+  --mobile-utility-bottom: calc(var(--status-height) + 5px);
   --mobile-spin-bottom: calc(
-    var(--mobile-utility-bottom) + var(--mobile-utility-height) + var(--mobile-control-gap)
+    var(--mobile-utility-bottom) + var(--mobile-utility-height) + 17px
   );
   --mobile-round-bottom: calc(
-    var(--mobile-spin-bottom) + var(--mobile-spin-size) + var(--mobile-control-gap)
+    var(--mobile-spin-bottom) + var(--mobile-spin-size) + 17px
   );
 }
 
@@ -5200,9 +5348,13 @@ select {
   max-width: calc(100cqw - var(--mobile-hud-edge) - var(--mobile-hud-edge));
   height: var(--mobile-utility-height);
   min-height: 0;
-  gap: var(--mobile-control-gap);
-  padding: clamp(6px, 1.8cqw, 10px);
+  gap: var(--mobile-utility-gap);
+  padding: var(--mobile-utility-padding);
   transform: translateX(-50%) translateY(var(--launch-shift-y, 0));
+  border: 0;
+  background: rgba(3, 4, 4, 0.34);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 2px 5px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(2px);
 }
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .utility-button,
@@ -5306,21 +5458,28 @@ select {
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
   .status-panel[data-game-name-visible="true"] .status-panel__game {
-  right: var(--mobile-hud-edge);
-  left: auto;
+  right: auto;
+  left: calc(
+    var(--mobile-hud-edge) + clamp(42px, 13cqw, 62px) + clamp(4px, 1.2cqw, 8px)
+  );
   bottom: 5%;
-  max-width: 55%;
+  max-width: calc(
+    100% - var(--mobile-hud-edge) - var(--mobile-hud-edge) -
+      clamp(42px, 13cqw, 62px) - clamp(4px, 1.2cqw, 8px)
+  );
   overflow: hidden;
-  text-align: right;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* 横向手机与平板根据连续高度收缩；去掉旧的 250px 最小栏高，避免矮视口把两端控件顶出玩法区。 */
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .dom-overlay {
-  --mobile-utility-control-size: clamp(36px, min(5.5cqw, 10cqh), 48px);
+  --mobile-utility-control-size: 44.31px;
+  --mobile-utility-gap: 12.41px;
+  --mobile-utility-padding: clamp(6px, 2cqh, 10px);
   --mobile-utility-width: calc(
-    var(--mobile-utility-control-size) + clamp(12px, 4cqh, 20px)
+    var(--mobile-utility-control-size) + var(--mobile-utility-padding) + var(--mobile-utility-padding)
   );
   --mobile-utility-height: min(
     calc(var(--gameplay-height) - var(--mobile-hud-edge) - var(--mobile-hud-edge)),
@@ -5330,14 +5489,19 @@ select {
       var(--mobile-utility-control-size) +
       var(--mobile-utility-control-size) +
       var(--mobile-utility-control-size) +
-      var(--mobile-control-gap) +
-      var(--mobile-control-gap) +
-      var(--mobile-control-gap) +
-      var(--mobile-control-gap) +
-      clamp(12px, 4cqh, 20px)
+      var(--mobile-utility-gap) +
+      var(--mobile-utility-gap) +
+      var(--mobile-utility-gap) +
+      var(--mobile-utility-gap) +
+      var(--mobile-utility-padding) +
+      var(--mobile-utility-padding)
     )
   );
-  --mobile-spin-size: clamp(78px, min(12.8cqw, 24cqh), 108px);
+  --mobile-spin-size: 85.91px;
+  --mobile-utility-inline-start: calc(2.4739cqw - var(--mobile-utility-padding));
+  --mobile-spin-inline-end: 1.8709cqw;
+  --mobile-utility-center-offset: 0px;
+  --mobile-control-center-offset: 0.3454cqw;
   --mobile-round-height: clamp(22px, 5.5cqh, 34px);
   --mobile-round-bottom: calc(var(--status-height) + var(--mobile-hud-edge));
   --mobile-round-inline-start: calc(
@@ -5349,16 +5513,20 @@ select {
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-dock {
-  left: var(--mobile-hud-edge);
-  top: calc(var(--gameplay-height) / 2);
+  left: var(--mobile-utility-inline-start);
+  top: calc(var(--gameplay-height) / 2 + var(--mobile-utility-center-offset));
   right: auto;
   bottom: auto;
   width: var(--mobile-utility-width);
   height: var(--mobile-utility-height);
   min-height: 0;
-  gap: var(--mobile-control-gap);
-  padding: clamp(6px, 2cqh, 10px);
+  gap: var(--mobile-utility-gap);
+  padding: var(--mobile-utility-padding);
   transform: translateY(calc(-50% + var(--launch-shift-y, 0px)));
+  border: 0;
+  background: rgba(3, 4, 4, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 2px 5px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(2px);
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .utility-button,
@@ -5375,13 +5543,23 @@ select {
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .spin-dock {
-  right: var(--mobile-hud-edge);
+  right: var(--mobile-spin-inline-end);
   left: auto;
-  top: calc(var(--gameplay-height) / 2);
+  top: calc(var(--gameplay-height) / 2 + var(--mobile-control-center-offset));
   bottom: auto;
   width: var(--mobile-spin-size);
   height: var(--mobile-spin-size);
   transform: translateY(-50%);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"][data-hand-mode="left"] .utility-dock {
+  right: var(--mobile-utility-inline-start);
+  left: auto;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"][data-hand-mode="left"] .spin-dock {
+  right: auto;
+  left: var(--mobile-spin-inline-end);
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .round-state {
@@ -5393,6 +5571,11 @@ select {
   max-width: none;
   height: var(--mobile-round-height);
   transform: translateY(var(--launch-shift-y, 0));
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"][data-hand-mode="left"] .round-state {
+  right: var(--mobile-round-inline-start);
+  left: var(--mobile-round-inline-end);
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .round-state__title {
@@ -5526,19 +5709,19 @@ select {
 }
 
 /*
- * 固定玩法说明：桌面保留侧栏；手机与平板改为顶部标签，避免把 128px 桌面导航挤进窄视口。
+ * 固定玩法说明：纵向移动表面使用顶部标签，横向恢复捕获的左侧导航轨。
  * 文案区域只在精确 session definition 绑定成功后显示。
  */
 .official-help,
 .presentation-rules-unavailable,
-.rules-card[data-role="presentation-rules-summary"] {
+.rules-card[data-role="operator-approved-game-rules"] {
   margin-right: auto;
   margin-left: auto;
 }
 
 .official-help-viewport[hidden],
 .presentation-rules-unavailable[hidden],
-.rules-card[data-role="presentation-rules-summary"][hidden] {
+.rules-card[data-role="operator-approved-game-rules"][hidden] {
   display: none;
 }
 
@@ -5564,19 +5747,30 @@ select {
   display: block;
   width: 750px;
   max-width: none;
+  height: 7565px;
+  min-height: 7565px;
   transform: scale(var(--official-help-scale, 1));
   transform-origin: top left;
   text-align: center;
 }
 
+.official-help [data-role="official-help-sections"],
+.official-help [data-author-height="7565"] {
+  position: relative;
+  display: block;
+  width: 750px;
+  height: 7565px;
+}
+
 .official-help__section {
-  display: flex;
+  position: absolute;
+  left: 0;
+  top: var(--official-help-section-y);
+  display: block;
   width: 750px;
   min-width: 750px;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  margin: 0 0 80px;
+  height: 0;
+  margin: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -5584,53 +5778,85 @@ select {
 }
 
 .official-help__section > h4 {
+  position: absolute;
+  left: 0;
+  /* 投影编排的 45px 字体后，与 Canvas 文本基线对齐。 */
+  top: 3.3px;
   width: 750px;
   height: 60px;
-  margin: 0 0 20px;
-  color: #ff710a;
-  background: linear-gradient(180deg, #ff250a, #ff710a);
-  background-clip: text;
-  font-family: "ROBOTO_CONDENSED_BOLD", "Primal Roboto Condensed", "Arial Narrow", sans-serif;
+  margin: 0;
+  color: transparent;
+  font-family: "KANIT_BOLD", "Primal Kanit", "ROBOTO_CONDENSED_BOLD", "Arial Narrow", sans-serif;
   font-size: 45px;
   font-weight: normal;
   letter-spacing: 0;
   line-height: 60px;
-  paint-order: stroke fill;
   text-align: center;
   text-shadow: none;
+}
+
+.official-help__maximum-win {
+  position: absolute;
+  left: 0;
+  width: 750px;
+  height: 60px;
+  margin: 0;
+  color: transparent;
+  font-family: "KANIT_BOLD", "Primal Kanit", "ROBOTO_CONDENSED_BOLD", "Arial Narrow", sans-serif;
+  font-size: 45px;
+  font-weight: normal;
+  line-height: 60px;
+  text-align: center;
+}
+
+.official-help__title-stroke,
+.official-help__title-fill {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  white-space: nowrap;
+}
+
+.official-help__title-stroke {
+  z-index: 0;
+  color: #5c0001;
+  paint-order: stroke fill;
+  /* Canvas lineWidth=10 以字形边缘为中心；CSS text-stroke 使用类似半径的宽度，
+     因此 5px 是匹配的浏览器投影。 */
+  -webkit-text-stroke: 5px #5c0001;
+}
+
+.official-help__title-fill {
+  z-index: 1;
+  color: #ff710a;
+  background: linear-gradient(180deg, #ff250a, #ff710a);
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  -webkit-text-stroke: 10px #5c0001;
 }
 
-.official-help__artwork {
-  display: grid;
-  width: 750px;
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-  align-content: center;
-  align-items: center;
-  justify-items: center;
-  gap: 10px;
-  margin: 0 auto 20px;
+.official-help__title--way-wins {
+  font-size: 42px;
 }
 
-.official-help__artwork img {
+.official-help__positioned-art {
+  position: absolute;
   display: block;
-  width: var(--official-help-art-width);
   max-width: none;
-  height: var(--official-help-art-height);
   max-height: none;
   object-fit: contain;
   filter: none;
 }
 
 .official-help__copy {
-  width: 750px;
+  position: absolute;
 }
 
 .official-help__copy p {
   display: flex;
-  width: 750px;
+  width: 100%;
   height: var(--official-help-line-box-height, 40px);
   min-height: var(--official-help-line-box-height, 40px);
   align-items: center;
@@ -5645,55 +5871,143 @@ select {
   text-align: center;
 }
 
-.official-help__section--paying-symbols {
-  width: 750px;
-  max-width: none;
+.official-help__copy--way-wins p {
+  width: 740px;
+  /* 原始实时渲染器会忽略该字段在源时间线中的 lsp=3；
+     将其作为 CSS 像素会错误地产生第三行。 */
+  letter-spacing: 0;
 }
 
-.official-help__section--paying-symbols > h4 {
-  color: #ff710a;
+.official-help__page-anchor {
+  position: absolute;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
 }
 
-.official-help__section--wild .wild-paytable {
-  width: 750px;
-  max-width: 750px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px 0;
-  margin: 0 0 20px;
+.official-help__atlas-frame {
+  position: absolute;
+  display: block;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+.official-help__atlas-frame--t0ab {
+  background-position: -530px -1815px;
+  background-size: 1670px 1825px;
+}
+
+.official-help__atlas-frame--t0qb {
+  background-position: -1370px 0;
+  background-size: 1670px 1825px;
+}
+
+.official-help__atlas-frame--t0rb {
+  background-position: -1225px -765px;
+  background-size: 1670px 1825px;
+}
+
+.official-help__atlas-frame--t0db {
+  z-index: 0;
+  background-position: -374.4px 0;
+  background-size: 1068.8px 1168px;
+}
+
+.official-help__atlas-frame--t0eb {
+  z-index: 2;
+  background-position: -274.5px -951.6px;
+  background-size: 1018.7px 1113.25px;
+}
+
+.official-help__section--king-spin .official-help__positioned-art {
+  z-index: 1;
+}
+
+.official-help__separator {
+  overflow: hidden;
+}
+
+.official-help__section--wild .wild-paytable__item {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .official-help__section--wild .wild-paytable__item img {
+  display: block;
   width: 150px;
   height: 128px;
   object-fit: contain;
+  filter: none;
 }
 
 .official-help__section--paying-symbols .base-paytable__grid {
+  position: absolute;
+  left: 0;
+  top: 60px;
   display: grid;
   width: 750px;
+  height: 585px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, 195px);
   gap: 0;
 }
 
 .official-help__section--paying-symbols .base-paytable__item {
+  position: relative;
+  width: 375px;
+  height: 195px;
   min-height: 195px;
   margin: 0;
   padding: 0;
   border: 0;
+  border-radius: 0;
   background: transparent;
 }
 
 .official-help__section--paying-symbols .base-paytable__item img {
-  height: 150px;
+  position: absolute;
+  left: 50%;
+  top: 5px;
+  display: block;
+  max-width: none;
+  max-height: none;
+  transform: translateX(-50%);
   object-fit: contain;
+  filter: none;
 }
 
-.presentation-rules-meta {
+.official-help__section--paying-symbols .base-paytable__item figcaption {
+  position: absolute;
+  left: 0;
+  top: 142px;
+  display: flex;
+  width: 100%;
+  height: 45px;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  font-family: "ROBOTO_CONDENSED_BOLD", "Primal Roboto Condensed", "Arial Narrow", sans-serif;
+  font-size: 30px;
+  line-height: 40px;
+}
+
+.official-help__section--paying-symbols .base-paytable__multiplier {
   margin: 0;
-  color: rgba(255, 255, 255, 0.42);
-  font-size: 9px;
-  letter-spacing: 0.05em;
-  text-align: center;
+  color: #ffe000;
+  font-size: 30px;
+}
+
+.official-help__section--paying-symbols .base-paytable__amount {
+  min-width: 86px;
+  margin: 0;
+  color: #fff;
+  font-size: 30px;
+  text-align: left;
 }
 
 .presentation-rules-unavailable {
@@ -5724,7 +6038,7 @@ select {
 
 .game-frame[data-channel="mobile"] .game-menu__tabs {
   position: absolute;
-  right: 52px;
+  right: 76px;
   top: 0;
   left: 0;
   z-index: 2;
@@ -5748,22 +6062,24 @@ select {
 }
 
 .game-frame[data-channel="mobile"] .game-menu__close {
-  right: 6px;
-  top: 6px;
+  right: 8px;
+  top: 8px;
   z-index: 3;
-  width: 42px;
-  height: 42px;
-  border-radius: 21px;
-  font-size: 24px;
+  width: 60px;
+  height: 60px;
+  border-radius: 30px;
+  font-size: 32px;
 }
 
 .game-frame[data-channel="mobile"] .game-menu__content {
   min-height: 0;
   flex: 1 1 auto;
-  padding: 58px clamp(10px, 3.2cqw, 24px) 24px;
+  padding: clamp(118px, 15cqh, 128px) clamp(10px, 3.2cqw, 24px) 24px;
 }
 
 .game-frame[data-channel="mobile"] #game-menu-paytable {
+  margin-top: 0;
+  margin-right: 0;
   margin-left: 0;
   padding-top: 0;
   text-align: left;
@@ -5776,13 +6092,16 @@ select {
 .game-frame[data-channel="mobile"] .official-help {
   width: 750px;
   max-width: none;
+  height: 7565px;
+  min-height: 7565px;
+  padding-top: 0;
 }
 
 .game-frame[data-channel="mobile"] .official-help__section {
-  display: flex;
+  position: absolute;
+  display: block;
   width: 750px;
   min-width: 750px;
-  gap: 0;
   padding: 0;
 }
 
@@ -5795,15 +6114,11 @@ select {
   text-align: center;
 }
 
-.game-frame[data-channel="mobile"] .official-help__artwork img {
-  width: var(--official-help-art-width);
-  max-width: none;
-  height: var(--official-help-art-height);
-  max-height: none;
+.game-frame[data-channel="mobile"] .official-help__section > .official-help__title--way-wins {
+  font-size: 42px;
 }
 
 .game-frame[data-channel="mobile"] .official-help__copy p {
-  width: 750px;
   font-size: 30px;
   line-height: 40px;
 }
@@ -5839,37 +6154,73 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* 手机或平板旋转到横向时保持顶部菜单；它是旋转回归，不是独立第三端。 */
+/* 横向手机/平板使用捕获的 x=22/w=109 左轨；作者帮助面只在右侧内容槽等比投影。 */
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .wild-paytable {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px 0;
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .game-menu__content {
-  padding-top: 54px;
+  width: calc(100% - 21.4455cqw);
+  margin-left: 21.4455cqw;
+  padding: 22px clamp(12px, 2.8cqw, 24px) 24px 0;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .game-menu__tabs {
+  right: auto;
+  top: 2.6066cqw;
+  left: 2.6066cqw;
+  width: 12.9147cqw;
+  margin: 0;
+  flex-direction: column;
+  gap: 1.4218cqw;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .game-menu__tab {
+  width: 100%;
+  min-height: 4.2654cqw;
+  max-height: 4.2654cqw;
+  flex: 0 0 4.2654cqw;
+  font-size: clamp(8px, 1.3cqw, 11px);
+}
+
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .game-menu__close {
+  width: clamp(44px, 7.109cqw, 60px);
+  height: clamp(44px, 7.109cqw, 60px);
+  border-radius: 50%;
+  font-size: clamp(24px, 3.8cqw, 32px);
 }
 
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .official-help__section {
-  display: flex;
+  position: absolute;
+  display: block;
   width: 750px;
   min-width: 750px;
 }
 
-/* 三端状态栏最终合约：桌面使用 1280x720 官方投影，移动端只消费 ResponsiveLayout 注入的物理区域变量。 */
+/* 三端状态栏最终合约：PC 与移动端使用独立但完整的终态投影。
+ * 原版 PC 在 1280x720 的可见 footer 为 16px；整套几何必须
+ * 保持同一投影，不能把 24px 字号/行高叠到已验收的 16px provider 与锚点上。
+ * 移动端继续只消费 ResponsiveLayout 注入的物理区域变量。
+ */
 .game-frame:not([data-channel="mobile"]) .status-panel {
-  height: 24px;
-  min-height: 24px;
+  height: 16px;
+  min-height: 16px;
+  box-shadow: 0 -1px 0 #130a03;
   color: #cccccc;
   font-family: "ROBOTO_CONDENSED_REGULAR", "Primal Roboto Condensed Regular", "Arial Narrow", sans-serif;
-  font-size: 14.4px;
+  font-size: 12.8px;
   font-weight: 400;
-  line-height: 24px;
+  line-height: 16px;
 }
 
 .game-frame:not([data-channel="mobile"]) .status-metric {
-  height: 24px;
-  gap: 0;
-  line-height: 24px;
+  height: 16px;
+  gap: 3px;
+  line-height: 16px;
 }
 
 .status-metric__label {
@@ -5877,7 +6228,29 @@ select {
 }
 
 .game-frame:not([data-channel="mobile"]) .status-metric strong {
-  line-height: 24px;
+  line-height: 16px;
+}
+
+.game-frame:not([data-channel="mobile"]) .status-panel__provider {
+  left: 4px;
+  top: 50%;
+  width: 45.3333px;
+  height: 13.3333px;
+  transform: translateY(-50%);
+}
+
+.game-frame:not([data-channel="mobile"]) .status-metric--balance { left: 56px; }
+.game-frame:not([data-channel="mobile"]) .status-metric--bet { left: 165px; }
+
+.game-frame:not([data-channel="mobile"]) .status-metric--win {
+  right: 34px;
+  left: auto;
+}
+
+.game-frame:not([data-channel="mobile"]) .status-panel__game {
+  right: 6px;
+  height: 16px;
+  font: 400 8px/16px "Primal Roboto Condensed Regular", "Arial Narrow", sans-serif;
 }
 
 /* 桌面原版没有移动端 Balance/Bet 背板；保留状态条自身的官方纹理。 */
