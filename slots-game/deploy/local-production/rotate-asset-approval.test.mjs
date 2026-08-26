@@ -78,6 +78,11 @@ function mode(path) {
   return lstatSync(path).mode & 0o777;
 }
 
+function expectedVerification(path) {
+  const approval = JSON.parse(readFileSync(path, "utf8"));
+  return { approvedAssets: 3, expiresAt: approval.expiresAt };
+}
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
@@ -96,7 +101,7 @@ test("creates a missing local approval atomically without a backup", () => {
     manifestPath: fixture.manifestPath,
     approvalPath: fixture.approvalPath,
     now,
-  }), { approvedAssets: 3 });
+  }), expectedVerification(fixture.approvalPath));
 });
 
 test("leaves an exact unexpired approval byte-for-byte unchanged", () => {
@@ -145,7 +150,7 @@ test("backs up and rotates an exact manifest mismatch while preserving unrelated
     manifestPath: fixture.manifestPath,
     approvalPath: fixture.approvalPath,
     now: new Date("2026-08-26T04:00:00.000Z"),
-  }), { approvedAssets: 3 });
+  }), expectedVerification(fixture.approvalPath));
 
   assert.equal(rotate(fixture, new Date("2026-08-26T05:00:00.000Z")).action, "unchanged");
   assert.equal(readdirSync(fixture.backups).length, 1);
@@ -172,7 +177,7 @@ test("prepares a changed approval without polluting the committed approval when 
     manifestPath: fixture.manifestPath,
     approvalPath: fixture.pendingPath,
     now: new Date("2026-08-26T05:00:00.000Z"),
-  }), { approvedAssets: 3 });
+  }), expectedVerification(fixture.pendingPath));
   // 模拟随后定义提交失败：不调用 commit，已提交审批和备份必须保持不变。
   assert.equal(readFileSync(fixture.approvalPath, "utf8"), committedBefore);
   assert.deepEqual(readdirSync(fixture.backups), []);
@@ -208,7 +213,7 @@ test("commits only the exact prepared approval and retains a recoverable backup"
     manifestPath: fixture.manifestPath,
     approvalPath: fixture.approvalPath,
     now,
-  }), { approvedAssets: 3 });
+  }), expectedVerification(fixture.approvalPath));
   const [backupName] = readdirSync(fixture.backups);
   assert.equal(
     readFileSync(resolve(fixture.backups, backupName, "release-asset-approval.json"), "utf8"),

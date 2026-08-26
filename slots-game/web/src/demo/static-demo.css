@@ -1,0 +1,69 @@
+.static-demo-banner {
+  position: fixed;
+  z-index: 2147483647;
+  inset-block-start: max(0.45rem, env(safe-area-inset-top));
+  inset-inline-start: 50%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 0.55rem;
+  inline-size: min(calc(100vw - 1rem), 88rem);
+  padding: 0.42rem 0.72rem;
+  border: 1px solid rgb(255 205 75 / 72%);
+  border-radius: 999px;
+  background: rgb(5 10 13 / 88%);
+  box-shadow: 0 0.35rem 1.2rem rgb(0 0 0 / 45%);
+  color: #fff4c8;
+  font: 600 clamp(0.58rem, 0.75vw, 0.7rem)/1.2 system-ui, sans-serif;
+  letter-spacing: 0.01em;
+  text-align: center;
+  transform: translateX(-50%);
+  backdrop-filter: blur(0.35rem);
+  pointer-events: none;
+}
+
+.static-demo-banner span {
+  white-space: nowrap;
+}
+
+.static-demo-banner strong {
+  flex: 0 0 auto;
+  padding: 0.2rem 0.42rem;
+  border-radius: 999px;
+  background: #ffcc35;
+  color: #171000;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+@media (max-width: 560px) {
+  .static-demo-banner {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.18rem 0.4rem;
+    inline-size: calc(100vw - 1rem);
+    padding: 0.3rem 0.5rem;
+    border-radius: 0.75rem;
+    font-size: 0.55rem;
+  }
+
+  .static-demo-banner strong {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .static-demo-banner span {
+    white-space: normal;
+    text-align: left;
+  }
+
+  body:has(.game-menu[data-open="true"]) .static-demo-banner {
+    inset-block-start: auto;
+    inset-block-end: max(0.45rem, env(safe-area-inset-bottom));
+  }
+
+  body:has(.game-menu[data-open="true"]) .game-menu__content {
+    padding-bottom: 5.25rem;
+  }
+}

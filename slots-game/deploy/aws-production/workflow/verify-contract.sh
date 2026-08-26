@@ -543,7 +543,7 @@ if printf '%s\n' "$infrastructure_artifact_binding" | \
   fail 'Terraform plan artifact 元数据绑定 job 禁止 checkout、Environment、OIDC 与 secret'
 fi
 printf '%s\n' "$infrastructure_artifact_binding" | \
-  grep -F -x "    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'" >/dev/null || \
+  grep -F -x "    if: github.event_name == 'workflow_dispatch' && !inputs.static_only && inputs.operation == 'apply'" >/dev/null || \
   fail 'Terraform plan artifact 元数据绑定只能用于 apply'
 for plan_binding_control in \
   'PLAN_ARTIFACT_ID: ${{ needs.terraform-plan.outputs.artifact_id }}' \
@@ -561,18 +561,18 @@ printf '%s\n' "$infrastructure_apply" | grep -F -x '      - bind-terraform-plan'
   fail 'Terraform apply 必须等待 plan artifact 元数据绑定成功'
 
 printf '%s\n' "$infrastructure_plan" | \
-  grep -F -x "    if: github.event_name == 'workflow_dispatch'" >/dev/null || \
-  fail 'Terraform plan 必须只允许 workflow_dispatch 运行'
+  grep -F -x "    if: github.event_name == 'workflow_dispatch' && !inputs.static_only" >/dev/null || \
+  fail 'Terraform plan 必须只允许非 static-only 的 workflow_dispatch 运行'
 printf '%s\n' "$infrastructure_apply" | \
-  grep -F -x "    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'" >/dev/null || \
-  fail 'Terraform apply 必须只允许 workflow_dispatch 的 apply 操作运行'
+  grep -F -x "    if: github.event_name == 'workflow_dispatch' && !inputs.static_only && inputs.operation == 'apply'" >/dev/null || \
+  fail 'Terraform apply 必须只允许非 static-only 的 workflow_dispatch apply 运行'
 for credential_job in "$infrastructure_plan" "$infrastructure_apply"; do
   printf '%s\n' "$credential_job" | grep -F 'id-token: write' >/dev/null || \
     fail 'Terraform 凭据 job 缺少 OIDC 权限'
 done
 printf '%s\n' "$hmac_manage" | \
-  grep -F -x "    if: github.event_name == 'workflow_dispatch'" >/dev/null || \
-  fail 'HMAC 停机证据 job 必须只允许 workflow_dispatch'
+  grep -F -x "    if: github.event_name == 'workflow_dispatch' && !inputs.static_only" >/dev/null || \
+  fail 'HMAC 停机证据 job 必须只允许非 static-only 的 workflow_dispatch'
 printf '%s\n' "$hmac_manage" | grep -F 'id-token: write' >/dev/null || \
   fail 'HMAC 停机证据 job 缺少 OIDC 权限'
 require_fixed "      - \${{ 'slots-aws-private-hmac-quiescer' }}" "$hmac_workflow"
@@ -594,9 +594,26 @@ do
   require_fixed "$hmac_cluster_control" "$hmac_manager"
 done
 for workflow in "$infrastructure_workflow" "$application_workflow" "$hmac_workflow"; do
-  require_fixed "group: \${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}" "$workflow"
+  require_fixed '      static_only:' "$workflow"
+  require_fixed '        default: true' "$workflow"
+  require_fixed '        type: boolean' "$workflow"
+  require_fixed "group: \${{ github.event_name == 'workflow_dispatch' && !inputs.static_only && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}" "$workflow"
   require_fixed 'cancel-in-progress: false' "$workflow"
 done
+
+for protected_application_job in \
+  "$application_source_binding" \
+  "$application_verify" \
+  "$application_artifact_binding" \
+  "$application_deploy"
+do
+  printf '%s\n' "$protected_application_job" | \
+    grep -F -x "    if: github.event_name == 'workflow_dispatch' && !inputs.static_only" >/dev/null || \
+    fail '应用凭据 job 必须拒绝 static-only dispatch'
+done
+printf '%s\n' "$application_static" | \
+  grep -F -x "        if: github.event_name == 'workflow_dispatch' && !inputs.static_only" >/dev/null || \
+  fail '应用部署源码 artifact 必须拒绝 static-only dispatch'
 
 require_fixed 'name: aws-${{ inputs.target_environment }}-terraform-plan' "$infrastructure_workflow"
 require_fixed 'name: aws-${{ inputs.target_environment }}-terraform-apply' "$infrastructure_workflow"

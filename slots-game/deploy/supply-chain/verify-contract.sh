@@ -1,9 +1,9 @@
 #!/bin/sh
-# shellcheck disable=SC2016
+# shellcheck disable=SC1003,SC2016
 
 # 该门禁不调用 Docker 或网络；它验证发布工作流、扫描阈值、身份约束和工具引用没有被
-# 静默放宽。动态漏洞结果仍由 scan.sh 在 CI 中产生，二者不能互相替代。SC2016
-# 仅因本文件刻意匹配工作流/脚本中的字面量 `$` 而关闭。
+# 静默放宽。动态漏洞结果仍由 scan.sh 在 CI 中产生，二者不能互相替代。SC1003/SC2016
+# 仅因本文件刻意匹配工作流/脚本中的字面量 `$` 与 Dockerfile 行尾反斜杠而关闭。
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -24,6 +24,8 @@ if [ -d "$repository_root/.github/workflows" ]; then
 else
   workflows_root="$workspace_root/.github/workflows"
 fi
+github_root=${workflows_root%/workflows}
+delivery_root=${github_root%/.github}
 
 tool_file="$repository_root/deploy/supply-chain/tool-images.env"
 scan_script="$repository_root/deploy/supply-chain/scan.sh"
@@ -33,6 +35,8 @@ trivy_report_sanitizer="$repository_root/deploy/supply-chain/sanitize-trivy-repo
 nginx_openssl_patch_verifier="$repository_root/deploy/supply-chain/verify-nginx-openssl-patch.sh"
 release_script="$repository_root/deploy/supply-chain/release-sign.sh"
 release_bundle_script="$repository_root/deploy/supply-chain/release-bundle.sh"
+release_version_verifier="$repository_root/deploy/supply-chain/verify-release-version.mjs"
+release_version_test="$repository_root/deploy/supply-chain/verify-release-version.test.mjs"
 observability_release_workflow_script="$repository_root/deploy/observability/verify-release-workflow.sh"
 vector_bounded_flush_test="$repository_root/deploy/observability/test-vector-bounded-flush.sh"
 web_static_verifier="$repository_root/deploy/supply-chain/verify-web-static-root.mjs"
@@ -44,6 +48,14 @@ release_workflow="$workflows_root/supply-chain-release.yml"
 deployment_workflow="$workflows_root/deployment-conformance.yml"
 backend_workflow="$workflows_root/backend-conformance.yml"
 frontend_workflow="$workflows_root/frontend-conformance.yml"
+pages_demo_workflow="$workflows_root/pages-demo.yml"
+codeql_workflow="$workflows_root/codeql.yml"
+dependency_review_workflow="$workflows_root/dependency-review.yml"
+dependabot_config="$github_root/dependabot.yml"
+issue_config="$github_root/ISSUE_TEMPLATE/config.yml"
+bug_report_template="$github_root/ISSUE_TEMPLATE/bug_report.yml"
+change_proposal_template="$github_root/ISSUE_TEMPLATE/change_proposal.yml"
+support_doc="$delivery_root/SUPPORT.md"
 makefile="$repository_root/Makefile"
 web_package_json="$repository_root/web/package.json"
 cluster_dockerfile="$repository_root/deploy/cluster-production/Dockerfile.services"
@@ -94,6 +106,8 @@ for required_file in \
   "$nginx_openssl_patch_verifier" \
   "$release_script" \
   "$release_bundle_script" \
+  "$release_version_verifier" \
+  "$release_version_test" \
   "$observability_release_workflow_script" \
   "$vector_bounded_flush_test" \
   "$web_static_verifier" \
@@ -105,6 +119,14 @@ for required_file in \
   "$deployment_workflow" \
   "$backend_workflow" \
   "$frontend_workflow" \
+  "$pages_demo_workflow" \
+  "$codeql_workflow" \
+  "$dependency_review_workflow" \
+  "$dependabot_config" \
+  "$issue_config" \
+  "$bug_report_template" \
+  "$change_proposal_template" \
+  "$support_doc" \
   "$makefile" \
   "$web_package_json" \
   "$cluster_dockerfile" \
@@ -127,6 +149,37 @@ test -x "$nginx_openssl_patch_verifier" || fail 'Nginx OpenSSL patch verifier mu
   || fail 'local web Nginx OpenSSL patch contract failed'
 "$nginx_openssl_patch_verifier" local "$local_nginx_proxy_dockerfile" >/dev/null \
   || fail 'local proxy Nginx OpenSSL patch contract failed'
+
+test "$(grep -F -x -c -- '    npm ci --ignore-scripts' "$web_dockerfile" || true)" -eq 1 ||
+  fail 'Web image dependency installation must disable npm lifecycle scripts'
+test "$(grep -F -c -- 'npm --ignore-scripts run build' "$web_dockerfile" || true)" -eq 2 ||
+  fail 'both Web image builds must disable npm pre/post lifecycle scripts'
+test "$(grep -F -c -- 'node ./scripts/generate-third-party-notices.mjs --check' "$web_dockerfile" || true)" -eq 2 ||
+  fail 'both Web image builds must explicitly retain the license declaration check'
+test "$(grep -F -c -- 'node ./scripts/verify-asset-provenance.mjs' "$web_dockerfile" || true)" -eq 2 ||
+  fail 'both Web image builds must explicitly retain the asset provenance check'
+test "$(grep -F -c -- 'node ./scripts/finalize-production-assets.mjs --check' "$web_dockerfile" || true)" -eq 3 ||
+  fail 'Web image builds and approval must independently verify the complete dist tree'
+test "$(grep -F -c -- 'node ./scripts/verify-production-javascript-bundles.mjs' "$web_dockerfile" || true)" -eq 2 ||
+  fail 'both Web image builds must re-verify JavaScript bundles after npm returns'
+web_release_build_stage=$(awk '
+  /^FROM[[:space:]].*[[:space:]]AS[[:space:]]release-build$/ { capture = 1 }
+  capture && /^FROM[[:space:]]+/ && $NF != "release-build" { capture = 0 }
+  capture { print }
+' "$web_dockerfile")
+web_release_build_instructions=$(printf '%s\n' "$web_release_build_stage" | sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d')
+expected_web_release_build_instructions=$(printf '%s\n' \
+  'FROM release-config-build AS release-build' \
+  'RUN --network=none \' \
+  '    --mount=type=bind,from=release-config-build,source=/src/web,target=/src/web,readonly \' \
+  '    node ./scripts/finalize-production-assets.mjs --check' \
+  'RUN --network=none \' \
+  '    --mount=type=bind,from=release-config-build,source=/src/web,target=/src/web,readonly \' \
+  '    --mount=type=secret,id=release_asset_approval,required=true,target=/run/secrets/release_asset_approval \' \
+  '    RELEASE_ASSET_APPROVAL_FILE=/run/secrets/release_asset_approval \' \
+  '      node ./scripts/verify-release-asset-approval.mjs')
+test "$web_release_build_instructions" = "$expected_web_release_build_instructions" ||
+  fail 'Web release approval stage must verify the complete dist tree immediately before approval and perform no later mutation'
 
 require_line 'ARG GO_IMAGE=golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36' "$cluster_dockerfile"
 require_line 'ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a' "$cluster_dockerfile"
@@ -551,15 +604,22 @@ require_fixed 'Smoke the exact approval-gated Web bytes in a real browser' "$rel
 require_fixed '"docker-archive:/output/release-image.docker.tar:$local_ref"' "$release_workflow"
 require_fixed 'docker load --input "$conversion_root/release-image.docker.tar"' "$release_workflow"
 require_fixed 'docker cp "$container_id:/usr/share/nginx/html/." "$static_root"' "$release_workflow"
+require_fixed 'node deploy/supply-chain/verify-web-static-root.mjs "$static_root"' "$release_workflow"
 require_fixed "node web/scripts/verify-production-browser-bootstrap.mjs \\" "$release_workflow"
 require_fixed '--distribution-root "$static_root"' "$release_workflow"
 require_fixed "VITE_RGS_BASE_URL=\"\$RGS_BASE_URL\" \\" "$release_workflow"
 require_fixed "VITE_RGS_HOST_ORIGIN=\"\$RGS_HOST_ORIGIN\" \\" "$release_workflow"
 web_build_line=$(grep -n -F 'Build exact approval-gated Web result as an OCI archive' "$release_workflow" | head -n 1 | cut -d: -f1)
 web_browser_line=$(grep -n -F 'Smoke the exact approval-gated Web bytes in a real browser' "$release_workflow" | head -n 1 | cut -d: -f1)
+web_static_root_line=$(grep -n -F 'node deploy/supply-chain/verify-web-static-root.mjs "$static_root"' "$release_workflow" | head -n 1 | cut -d: -f1)
+web_browser_command_line=$(grep -n -F 'node web/scripts/verify-production-browser-bootstrap.mjs \' "$release_workflow" | head -n 1 | cut -d: -f1)
 web_scan_line=$(grep -n -F 'Scan the exact approved Web OCI archive and generate dual-format SBOM' "$release_workflow" | head -n 1 | cut -d: -f1)
-test -n "$web_build_line" && test -n "$web_browser_line" && test -n "$web_scan_line" \
-  && test "$web_build_line" -lt "$web_browser_line" && test "$web_browser_line" -lt "$web_scan_line" || \
+test -n "$web_build_line" && test -n "$web_browser_line" && test -n "$web_static_root_line" \
+  && test -n "$web_browser_command_line" && test -n "$web_scan_line" \
+  && test "$web_build_line" -lt "$web_browser_line" \
+  && test "$web_browser_line" -lt "$web_static_root_line" \
+  && test "$web_static_root_line" -lt "$web_browser_command_line" \
+  && test "$web_browser_command_line" -lt "$web_scan_line" || \
   fail 'exact approved Web browser smoke must run after build and before scan/upload'
 
 # 发布必须来自受保护 tag，身份须精确绑定本工作流；Cosign 禁止弱化 Registry/TLog/身份校验。
@@ -570,6 +630,8 @@ require_fixed 'web-runtime)' "$release_script"
 require_fixed 'RGS artifacts must not accept Web runtime configuration' "$release_script"
 require_fixed 'RGS_BASE_URL RGS_BET_OPTIONS_MINOR RGS_DEFAULT_BET_MINOR RGS_HOST_ORIGIN' "$release_script"
 require_fixed 'test "$SUPPLY_CHAIN_IMAGE_TAG" = "$GITHUB_REF_NAME"' "$release_script"
+require_fixed 'printf '\''%s\n'\'' "$release_version" | cmp -s - "$version_file"' "$release_script"
+require_fixed 'test "$GITHUB_REF_NAME" = "v$release_version"' "$release_script"
 require_fixed 'expected_workflow_ref="$GITHUB_REPOSITORY/.github/workflows/supply-chain-release.yml@$GITHUB_REF"' "$release_script"
 require_fixed 'test "$SUPPLY_CHAIN_EXPECTED_CERTIFICATE_IDENTITY" = "$computed_identity"' "$release_script"
 require_fixed "test \"\$SUPPLY_CHAIN_EXPECTED_OIDC_ISSUER\" = 'https://token.actions.githubusercontent.com'" "$release_script"
@@ -592,7 +654,11 @@ setup_go_sha='d35c59abb061a4a6fb18e82ac0862c26744d6ab5'
 setup_node_sha='49933ea5288caeca8642d1e84afbd3f7d6820020'
 setup_buildx_sha='bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'
 download_sha='3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
+configure_pages_sha='45bfe0192ca1faeb007ade9deae92b16b8254a0d'
+upload_pages_sha='fc324d3547104276b827a68afc52ff2a11cc49c9'
+deploy_pages_sha='cd2ce8fcbc39b97be8ca5fce6e763baed58fa128'
 
+require_line '        run: node deploy/supply-chain/verify-release-version.mjs --formal' "$release_workflow"
 require_line "        uses: actions/checkout@$checkout_sha # v7.0.1" "$source_workflow"
 require_line '          fetch-depth: 0' "$source_workflow"
 require_line '          persist-credentials: false' "$source_workflow"
@@ -620,6 +686,166 @@ test "$(grep -F -c -- '          lfs: true' "$frontend_workflow" || true)" -eq 2
   fail 'both frontend jobs must materialize LFS source'
 test "$(grep -F -c -- '          persist-credentials: false' "$frontend_workflow" || true)" -eq 2 ||
   fail 'both frontend jobs must remove checkout credentials'
+require_line '        run: npm run build:demo' "$frontend_workflow"
+
+# 公开静态试玩只允许从受保护 main 手动发布：无密钥验证、外部素材精确哈希审批/
+# 上传、Pages 部署三个权限域不得合并。正式 RGS 入口与生产密钥都不得进入此工作流。
+test "$(grep -F -c -- "uses: actions/checkout@$checkout_sha # v7.0.1" "$pages_demo_workflow" || true)" -eq 2 ||
+  fail 'Pages verification and approval jobs must each use the reviewed checkout once'
+test "$(grep -F -c -- "uses: actions/setup-node@$setup_node_sha # v4.4.0" "$pages_demo_workflow" || true)" -eq 2 ||
+  fail 'Pages verification and approval jobs must each use the reviewed setup-node once'
+require_line "        uses: actions/upload-pages-artifact@$upload_pages_sha # v5.0.0" "$pages_demo_workflow"
+require_line "        uses: actions/configure-pages@$configure_pages_sha # v6.0.0" "$pages_demo_workflow"
+require_line "        uses: actions/deploy-pages@$deploy_pages_sha # v5.0.0" "$pages_demo_workflow"
+test "$(grep -F -x -c -- '        run: npm ci --ignore-scripts' "$pages_demo_workflow" || true)" -eq 2 ||
+  fail 'Pages dependency installation must disable package lifecycle scripts'
+test "$(grep -F -x -c -- '        run: npm --ignore-scripts run build:demo' "$pages_demo_workflow" || true)" -eq 2 ||
+  fail 'Pages source verification and approval jobs must rebuild the isolated demo without lifecycle hooks'
+require_line '          path: slots-game/web/dist-demo' "$pages_demo_workflow"
+require_line '          include-hidden-files: true' "$pages_demo_workflow"
+require_line '          ref: ${{ github.sha }}' "$pages_demo_workflow"
+require_line '          STATIC_DEMO_ASSET_APPROVAL_B64: ${{ secrets.STATIC_DEMO_ASSET_APPROVAL_B64 }}' "$pages_demo_workflow"
+require_line '          node scripts/verify-static-demo-build.mjs' "$pages_demo_workflow"
+require_line '          approval_expires_at="$(STATIC_DEMO_ASSET_APPROVAL_FILE="$approval_file" node scripts/verify-static-demo-asset-approval.mjs --print-expires-at)"' "$pages_demo_workflow"
+require_line '          ASSET_APPROVAL_EXPIRES_AT: ${{ needs.approve-and-upload-static-demo.outputs.asset-approval-expires-at }}' "$pages_demo_workflow"
+require_line '          test "$expires_epoch" -gt "$now_epoch"' "$pages_demo_workflow"
+require_line '          WEB_RELEASE_REQUIRE_IDENTITY: "1"' "$pages_demo_workflow"
+require_line '          WEB_RELEASE_REVISION: ${{ github.sha }}' "$pages_demo_workflow"
+require_line '          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}' "$pages_demo_workflow"
+require_line '        run: test "$PAGES_BASE_PATH" = /slots-game' "$pages_demo_workflow"
+test "$(grep -F -c -- '${{ secrets.' "$pages_demo_workflow" || true)" -eq 1 ||
+  fail 'Pages workflow must consume exactly one Environment-scoped approval secret'
+pages_trigger=$(awk '/^on:$/ { inside = 1; next } /^permissions:$/ { inside = 0 } inside { print }' "$pages_demo_workflow")
+test "$pages_trigger" = '  workflow_dispatch:' ||
+  fail 'Pages deployment workflow must remain manual-only'
+reject_fixed 'pull_request_target:' "$pages_demo_workflow"
+reject_fixed 'pull_request:' "$pages_demo_workflow"
+reject_fixed 'push:' "$pages_demo_workflow"
+reject_fixed 'schedule:' "$pages_demo_workflow"
+reject_fixed 'workflow_run:' "$pages_demo_workflow"
+ruby -ryaml -e '
+  workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  abort "Pages top-level permissions drifted" unless workflow["permissions"] == { "contents" => "read" }
+  jobs = workflow.fetch("jobs")
+  abort "Pages job topology drifted" unless
+    jobs.keys.sort == %w[approve-and-upload-static-demo deploy-static-demo verify-static-demo]
+  build = jobs.fetch("verify-static-demo")
+  approval = jobs.fetch("approve-and-upload-static-demo")
+  deploy = jobs.fetch("deploy-static-demo")
+  protected_main = "github.ref == '\''refs/heads/main'\'' && github.ref_protected == true"
+  abort "Pages jobs must require protected main" unless
+    [build, approval, deploy].all? { |job| job["if"] == protected_main }
+  abort "Pages build step topology drifted" unless build.fetch("steps").map { |step| step["name"] } == [
+    "Check out protected main without persisted credentials",
+    "Set up fixed Node.js",
+    "Install locked dependencies",
+    "Reject high-risk dependency findings",
+    "Build and verify isolated non-economic demo",
+  ]
+  abort "Pages approval step topology drifted" unless approval.fetch("steps").map { |step| step["name"] } == [
+    "Check out the same protected main revision",
+    "Set up fixed Node.js",
+    "Install locked dependencies",
+    "Rebuild the exact reviewed demo revision",
+    "Verify external exact-hash asset approval",
+    "Upload the exact approved GitHub Pages artifact",
+  ]
+  abort "Pages deploy step topology drifted" unless deploy.fetch("steps").map { |step| step["name"] } == [
+    "Revalidate asset approval expiry after deployment review",
+    "Bind deployment to repository Pages configuration",
+    "Reject a Pages base path outside this repository",
+    "Deploy reviewed static demo artifact",
+  ]
+  step_keys = ->(step) { step.keys.sort }
+  abort "Pages build step controls drifted" unless build.fetch("steps").map(&step_keys) == [
+    %w[name uses with],
+    %w[name uses with],
+    %w[name run],
+    %w[name run],
+    %w[env name run],
+  ]
+  abort "Pages approval step controls drifted" unless approval.fetch("steps").map(&step_keys) == [
+    %w[name uses with],
+    %w[name uses with],
+    %w[name run],
+    %w[env name run],
+    %w[env id name run shell],
+    %w[name uses with],
+  ]
+  abort "Pages deploy step controls drifted" unless deploy.fetch("steps").map(&step_keys) == [
+    %w[env name run shell],
+    %w[id name uses],
+    %w[env name run shell],
+    %w[id name uses],
+  ]
+  abort "Pages build commands re-enabled npm lifecycle scripts" unless
+    build.fetch("steps").fetch(2)["run"] == "npm ci --ignore-scripts" &&
+    build.fetch("steps").fetch(4)["run"] == "npm --ignore-scripts run build:demo"
+  abort "Pages approval rebuild commands re-enabled npm lifecycle scripts" unless
+    approval.fetch("steps").fetch(2)["run"] == "npm ci --ignore-scripts" &&
+    approval.fetch("steps").fetch(3)["run"] == "npm --ignore-scripts run build:demo"
+  asset_approval_step = approval.fetch("steps").fetch(4)
+  abort "Pages asset approval step identity or secret binding drifted" unless
+    asset_approval_step["id"] == "asset-approval" &&
+    asset_approval_step["shell"] == "bash" &&
+    asset_approval_step["env"] == {
+      "STATIC_DEMO_ASSET_APPROVAL_B64" => "${{ secrets.STATIC_DEMO_ASSET_APPROVAL_B64 }}",
+    }
+  expected_approval_run = [
+    %q!set -euo pipefail!,
+    %q!test -n "$STATIC_DEMO_ASSET_APPROVAL_B64"!,
+    %q!umask 077!,
+    %q!approval_file="$RUNNER_TEMP/static-demo-asset-approval.json"!,
+    %q!trap '\''rm -f "$approval_file"'\'' EXIT!,
+    %q!node scripts/verify-static-demo-build.mjs!,
+    %q!printf '\''%s'\'' "$STATIC_DEMO_ASSET_APPROVAL_B64" | base64 --decode > "$approval_file"!,
+    %q!approval_expires_at="$(STATIC_DEMO_ASSET_APPROVAL_FILE="$approval_file" node scripts/verify-static-demo-asset-approval.mjs --print-expires-at)"!,
+    %q!printf '\''expires_at=%s\n'\'' "$approval_expires_at" >> "$GITHUB_OUTPUT"!,
+    %q!approval_sha256="$(sha256sum "$approval_file" | cut -d'\'' '\'' -f1)"!,
+    %q!printf '\''static demo approval sha256: %s\n'\'' "$approval_sha256"!,
+  ].join("\n") + "\n"
+  abort "Pages approval script drifted or can mutate the artifact after approval" unless
+    approval.fetch("steps").fetch(4)["run"] == expected_approval_run
+  abort "Pages approved artifact upload must be the final approval job step" unless
+    approval.fetch("steps").last["uses"] ==
+      "actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9"
+  abort "Pages build permissions drifted" unless build["permissions"] == { "contents" => "read" }
+  abort "Pages build timeout drifted" unless build["timeout-minutes"] == 20
+  abort "Pages approval permissions drifted" unless approval["permissions"] == { "contents" => "read" }
+  abort "Pages approval expiry output drifted" unless approval["outputs"] == {
+    "asset-approval-expires-at" => "${{ steps.asset-approval.outputs.expires_at }}",
+  }
+  abort "Pages approval dependency drifted" unless approval["needs"] == ["verify-static-demo"]
+  abort "Pages asset approval Environment drifted" unless
+    approval["environment"] == { "name" => "pages-demo-asset-approval" }
+  abort "Pages deploy permissions drifted" unless
+    deploy["permissions"] == { "pages" => "write", "id-token" => "write" }
+  abort "Pages deploy dependency drifted" unless
+    deploy["needs"] == ["approve-and-upload-static-demo"]
+  abort "Pages deploy timeout drifted" unless deploy["timeout-minutes"] == 10
+  abort "Pages Environment drifted" unless
+    deploy["environment"] == {
+      "name" => "github-pages",
+      "url" => "${{ steps.deployment.outputs.page_url }}",
+    }
+  expiry_step = deploy.fetch("steps").first
+  expected_expiry_run = [
+    %q!set -euo pipefail!,
+    %q!test -n "$ASSET_APPROVAL_EXPIRES_AT"!,
+    %q!expires_epoch="$(date -u -d "$ASSET_APPROVAL_EXPIRES_AT" +%s)"!,
+    %q!now_epoch="$(date -u +%s)"!,
+    %q!test "$expires_epoch" -gt "$now_epoch"!,
+  ].join("\n") + "\n"
+  abort "Pages approval expiry must be revalidated after the deploy Environment wait" unless
+    expiry_step["env"] == {
+      "ASSET_APPROVAL_EXPIRES_AT" => "${{ needs.approve-and-upload-static-demo.outputs.asset-approval-expires-at }}",
+    } && expiry_step["run"] == expected_expiry_run
+  abort "Pages concurrency must never cancel an in-flight deployment" unless
+    workflow["concurrency"] == {
+      "group" => "static-demo-pages",
+      "cancel-in-progress" => false,
+    }
+' "$pages_demo_workflow" || fail 'GitHub Pages demo workflow semantic contract failed'
 
 # release 只允许人工 dispatch，并把执行仓库代码、Web 素材审批和最终发布拆成三个权限域。
 release_trigger=$(awk '/^on:$/ { inside = 1; next } /^permissions:$/ { inside = 0 } inside { print }' "$release_workflow")
@@ -779,7 +1005,7 @@ ruby -ryaml -rjson -rdigest -e '
   end
   semantic_digest = Digest::SHA256.hexdigest(JSON.generate(canonicalize.call(steps)))
   abort "release conformance step graph drifted" unless
-    semantic_digest == "4b4e416c25803864b7bb1469544e9531fcbbc60204ddb0886c041cd252270d99"
+    semantic_digest == "e7ad1d384362f3706f2cf85fb350b1742989e109cc7c364de11007c98bb80eac"
   matches = steps.select { |step| step.is_a?(Hash) && step["name"] == "Validate rendered observability release with fixed images" }
   abort "rendered observability release step must exist exactly once" unless matches.length == 1
   step = matches.first
@@ -840,7 +1066,10 @@ for required_control in \
   '--build-arg "OCI_IMAGE_CREATED=$image_created"' \
   '--build-arg "OCI_IMAGE_REVISION=$GITHUB_SHA"' \
   '--build-arg "OCI_IMAGE_SOURCE=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"' \
-  '--build-arg "OCI_IMAGE_VERSION=$SUPPLY_CHAIN_IMAGE_TAG"' \
+  'release_version="${SUPPLY_CHAIN_IMAGE_TAG#v}"' \
+  'test "v$release_version" = "$SUPPLY_CHAIN_IMAGE_TAG"' \
+  'test "$release_version" = "$(tr -d '\''\n'\'' < VERSION)"' \
+  '--build-arg "OCI_IMAGE_VERSION=$release_version"' \
   'scan.sh oci-archive' \
   '--output "type=oci,dest=$SUPPLY_CHAIN_REPORT_DIR/bundle/release-image.oci.tar"' \
   'release-bundle.sh finalize "$SUPPLY_CHAIN_REPORT_DIR/bundle" rgs-unprivileged'
@@ -871,7 +1100,10 @@ for required_control in \
   'source_tree_sha=$(git rev-parse "$GITHUB_SHA^{tree}")' \
   'SOURCE_TREE_SHA=%s' \
   'com.slots.release.source-tree=$SOURCE_TREE_SHA' \
-  '--build-arg WEB_RELEASE_VERSION="$SUPPLY_CHAIN_IMAGE_TAG"' \
+  'release_version="${SUPPLY_CHAIN_IMAGE_TAG#v}"' \
+  'test "v$release_version" = "$SUPPLY_CHAIN_IMAGE_TAG"' \
+  'test "$release_version" = "$(tr -d '\''\n'\'' < VERSION)"' \
+  '--build-arg WEB_RELEASE_VERSION="$release_version"' \
   '--build-arg WEB_RELEASE_REVISION="$GITHUB_SHA"' \
   '--secret "id=release_asset_approval,src=$approval_file"' \
   'approval_sha256=$(sha256sum "$approval_file"' \
@@ -1076,7 +1308,118 @@ test "$download_line" -lt "$offline_verify_line" && test "$offline_verify_line" 
 attest_count=$(grep -F -c -- "uses: actions/attest@$attest_sha # v4.2.2" "$release_workflow" || true)
 test "$attest_count" -eq 2 || fail 'release workflow must generate provenance and SBOM attestations'
 
-# 两个外部 Environment 的真实审批/Secret 归属无法由仓库创建，运维文档必须明确列为上线阻断。
+# 仓库治理自动化同样属于供应链边界：依赖更新、PR 差异审查和源码分析必须使用固定
+# Action、最小权限和明确目录，不能依赖 GitHub UI 中不可审计的临时设置。
+ruby -ryaml -e '
+  config = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  abort "Dependabot schema version drifted" unless config["version"] == 2
+  updates = config.fetch("updates")
+  expected = [
+    ["github-actions", ["/"]],
+    ["gomod", ["/slots-game/server"]],
+    ["npm", ["/slots-game/web"]],
+    ["terraform", [
+      "/slots-game/infra/terraform/environments/dev",
+      "/slots-game/infra/terraform/environments/staging",
+      "/slots-game/infra/terraform/environments/prod-primary",
+      "/slots-game/infra/terraform/environments/prod-dr",
+      "/slots-game/infra/terraform/stacks/environment",
+      "/slots-game/infra/terraform/stacks/application-platform",
+    ]],
+  ]
+  actual = updates.map do |entry|
+    locations = entry.key?("directory") ? [entry["directory"]] : entry["directories"]
+    [entry["package-ecosystem"], locations]
+  end
+  abort "Dependabot ecosystems or directories drifted" unless actual == expected
+  abort "Dependabot schedules must remain weekly in Asia/Shanghai" unless updates.all? do |entry|
+    entry.dig("schedule", "interval") == "weekly" &&
+      entry.dig("schedule", "timezone") == "Asia/Shanghai"
+  end
+' "$dependabot_config" || fail 'Dependabot configuration semantic contract failed'
+
+codeql_sha='db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28'
+dependency_review_sha='a1d282b36b6f3519aa1f3fc636f609c47dddb294'
+require_line "        uses: actions/checkout@$checkout_sha # v7.0.1" "$codeql_workflow"
+require_line "        uses: actions/setup-go@$setup_go_sha # v5.5.0" "$codeql_workflow"
+test "$(grep -F -c -- "uses: github/codeql-action/init@$codeql_sha # v4.37.8" "$codeql_workflow" || true)" -eq 1 ||
+  fail 'CodeQL init must use the reviewed immutable action exactly once'
+test "$(grep -F -c -- "uses: github/codeql-action/analyze@$codeql_sha # v4.37.8" "$codeql_workflow" || true)" -eq 1 ||
+  fail 'CodeQL analyze must use the reviewed immutable action exactly once'
+require_line "        uses: actions/dependency-review-action@$dependency_review_sha # v5.0.0" "$dependency_review_workflow"
+require_line '          fail-on-severity: high' "$dependency_review_workflow"
+require_line '          vulnerability-check: true' "$dependency_review_workflow"
+require_line '          license-check: true' "$dependency_review_workflow"
+require_line '          comment-summary-in-pr: never' "$dependency_review_workflow"
+reject_fixed 'pull_request_target:' "$codeql_workflow"
+reject_fixed 'pull_request_target:' "$dependency_review_workflow"
+ruby -ryaml -e '
+  workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  abort "CodeQL top-level permissions drifted" unless workflow["permissions"] == { "contents" => "read" }
+  job = workflow.dig("jobs", "analyze")
+  abort "CodeQL analyze job missing" unless job.is_a?(Hash)
+  abort "CodeQL permissions drifted" unless
+    job["permissions"] == { "contents" => "read", "security-events" => "write" }
+  include_rows = job.dig("strategy", "matrix", "include")
+  expected = [
+    { "language" => "go", "build-mode" => "manual" },
+    { "language" => "javascript-typescript", "build-mode" => "none" },
+  ]
+  abort "CodeQL language/build matrix drifted" unless include_rows == expected
+' "$codeql_workflow" || fail 'CodeQL workflow semantic contract failed'
+ruby -ryaml -e '
+  workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  expected = { "contents" => "read" }
+  abort "dependency review top-level permissions drifted" unless workflow["permissions"] == expected
+  job = workflow.dig("jobs", "dependency-review")
+  abort "dependency review job missing" unless job.is_a?(Hash)
+  abort "dependency review job permissions drifted" unless job["permissions"] == expected
+' "$dependency_review_workflow" || fail 'dependency review workflow semantic contract failed'
+
+require_line 'blank_issues_enabled: false' "$issue_config"
+require_fixed 'https://github.com/qqq723000-hash/slots-game/security/advisories/new' "$issue_config"
+require_fixed 'https://github.com/qqq723000-hash/slots-game/blob/main/SUPPORT.md' "$issue_config"
+require_fixed '不要提交密码、令牌、私钥、DSN、玩家/账户数据、生产日志、发布审批、原始抓包或漏洞细节。' "$bug_report_template"
+require_fixed '我没有对未经书面授权的生产或第三方端点执行压力、穿透或 DDoS 测试。' "$bug_report_template"
+require_fixed '安全问题、真实凭据和生产事故信息不得使用公开 Issue' "$change_proposal_template"
+require_fixed '不承诺响应时间、修复时间、7×24 值守、' "$support_doc"
+require_fixed '生产事故处置、SLA、SLO 或赔偿责任' "$support_doc"
+require_fixed 'security/advisories/new' "$support_doc"
+
+# CI 失败证据只能上传审查过的文件名，拒绝目录通配符把日志、抓包或临时秘密一起带走。
+for approved_backend_artifact in \
+  'slots-game/.artifacts/postgres-conformance/postgres-conformance.jsonl' \
+  'slots-game/.artifacts/postgres-conformance/postgres-migration.jsonl' \
+  'slots-game/.artifacts/runtime-smoke/migrator-up.json' \
+  'slots-game/.artifacts/runtime-smoke/migrator-verify.json' \
+  'slots-game/.artifacts/runtime-smoke/readyz.json' \
+  'slots-game/.artifacts/runtime-smoke/metrics.prom' \
+  'slots-game/.artifacts/runtime-smoke/result.json' \
+  'slots-game/.artifacts/runtime-smoke/migrator-production-up.json' \
+  'slots-game/.artifacts/runtime-smoke/migrator-production-verify.json' \
+  'slots-game/.artifacts/runtime-smoke/readyz-production-ci-only.json' \
+  'slots-game/.artifacts/runtime-smoke/metrics-production-ci-only.prom' \
+  'slots-game/.artifacts/runtime-smoke/result-production-ci-only.json'
+do
+  require_line "            $approved_backend_artifact" "$backend_workflow"
+  test "$(grep -F -x -c -- "            $approved_backend_artifact" "$backend_workflow" || true)" -eq 1 ||
+    fail "backend evidence allowlist must contain $approved_backend_artifact exactly once"
+done
+reject_fixed 'slots-game/.artifacts/postgres-conformance/*' "$backend_workflow"
+reject_fixed 'slots-game/.artifacts/runtime-smoke/*' "$backend_workflow"
+primal_web_title_line=$(printf '%s\134' 'LABEL org.opencontainers.image.title="primal-rampage-web" ')
+require_line "$primal_web_title_line" "$web_dockerfile"
+
+# 四个外部 Environment 的真实审批/Secret 归属无法由仓库创建，运维文档必须明确列为上线阻断。
+require_fixed '## 版本与仓库治理门禁' "$readme"
+require_fixed '`verify-release-version.mjs --formal`' "$readme"
+require_fixed '六个带锁文件的' "$readme"
+require_fixed '### GitHub 托管侧必需设置' "$readme"
+require_fixed 'Private vulnerability reporting' "$readme"
+require_fixed '启用不可变 Releases' "$readme"
+require_fixed '`all_external_contributors`' "$readme"
+require_fixed '防自审' "$readme"
+require_fixed '通过 API 回读留证' "$readme"
 require_fixed '`supply-chain-web-approval`' "$readme"
 require_fixed '`supply-chain-release`' "$readme"
 require_fixed '启用 required reviewers' "$readme"
@@ -1102,6 +1445,8 @@ reject_fixed 'pull_request_target:' "$release_workflow"
 
 make_tab=$(printf '\t')
 require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' "$makefile"
+require_line "${make_tab}node --test deploy/supply-chain/verify-release-version.test.mjs" "$makefile"
+require_line "${make_tab}node deploy/supply-chain/verify-release-version.mjs" "$makefile"
 require_line 'verify-hardening-checklist:' "$makefile"
 require_line "${make_tab}node --test scripts/verify-hardening-checklist.test.mjs" "$makefile"
 require_line "${make_tab}node scripts/verify-hardening-checklist.mjs" "$makefile"
@@ -1118,6 +1463,20 @@ require_line "${make_tab}cd server && go build ./..." "$makefile"
 require_line 'BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid' "$makefile"
 require_line "${make_tab}cd web && \$(BROWSER_SMOKE_ENV) npm run build" "$makefile"
 require_line '    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && node scripts/verify-production-javascript-bundles.mjs",' "$web_package_json"
+require_line '    "build:demo": "npm run licenses:check && npm run assets:provenance-check && tsc --noEmit && vite build --config vite.demo.config.ts --mode demo && node scripts/finalize-static-demo.mjs && node scripts/verify-static-demo-build.mjs",' "$web_package_json"
+require_line '    "demo:approval-check": "node scripts/verify-static-demo-asset-approval.mjs",' "$web_package_json"
+ruby -rjson -e '
+  scripts = JSON.parse(File.read(ARGV.fetch(0))).fetch("scripts")
+  forbidden = %w[
+    postbuild
+    prebuild:demo
+    postbuild:demo
+    predemo:approval-check
+    postdemo:approval-check
+  ]
+  present = forbidden.select { |name| scripts.key?(name) }
+  abort "Web release npm lifecycle hooks are forbidden: #{present.join(", ")}" unless present.empty?
+' "$web_package_json" || fail 'Web release npm lifecycle hook contract failed'
 
 test_target=$(awk '/^test:$/ { inside = 1; next } inside && /^[A-Za-z0-9_.-]+:/ { exit } inside { print }' "$makefile")
 race_target=$(awk '/^test-race:$/ { inside = 1; next } inside && /^[A-Za-z0-9_.-]+:/ { exit } inside { print }' "$makefile")

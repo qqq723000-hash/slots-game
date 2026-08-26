@@ -4,6 +4,11 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      static_only:
+        description: 仅执行无云凭据的静态合同，不绑定制品也不部署
+        required: true
+        default: true
+        type: boolean
       target_environment:
         description: 受保护的应用部署目标环境
         required: true
@@ -53,7 +58,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && !inputs.static_only && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: false
 
 jobs:
@@ -98,7 +103,7 @@ jobs:
           ruby -c deploy/aws-production/workflow/verify-hmac-finalize-attestation.rb
 
       - name: 封装受保护部署所需的最小源码
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.static_only
         run: |
           set -euo pipefail
           bundle="$RUNNER_TEMP/aws-deployment-source"
@@ -143,7 +148,7 @@ jobs:
           mv "$checksum_file" "$bundle/source-checksums.sha256"
 
       - name: 上传按完整 ID 消费的部署源码
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.static_only
         id: source
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -154,7 +159,7 @@ jobs:
           retention-days: 1
 
   bind-deployment-source:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.static_only
     needs: static-contract
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -191,7 +196,7 @@ jobs:
           rm -f "$metadata"
 
   verify-release:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.static_only
     needs:
       - static-contract
       - bind-deployment-source
@@ -349,7 +354,7 @@ jobs:
           rm -rf "$DEPLOYMENT_SOURCE" "$RELEASE_EVIDENCE"
 
   bind-deployment-artifacts:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.static_only
     needs:
       - static-contract
       - verify-release
@@ -399,7 +404,7 @@ jobs:
             "verified-aws-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
   deploy:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.static_only
     needs:
       - static-contract
       - verify-release

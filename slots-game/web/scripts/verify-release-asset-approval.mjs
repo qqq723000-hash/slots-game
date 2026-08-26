@@ -172,6 +172,7 @@ export function verifyReleaseAssetApproval({
   manifestPath = resolve(webRoot, "dist", "release-manifest.json"),
   approvalPath = process.env.RELEASE_ASSET_APPROVAL_FILE ?? "",
   now = new Date(),
+  requiredJurisdiction = null,
 } = {}) {
   if (typeof approvalPath !== "string" || approvalPath.trim() === "") {
     fail("RELEASE_ASSET_APPROVAL_FILE is required for a release build");
@@ -199,6 +200,12 @@ export function verifyReleaseAssetApproval({
   if (approval.status !== "APPROVED") fail("approval.status must be APPROVED");
   nonEmptyString(approval.approvalReference, "approval.approvalReference");
   validateJurisdictions(approval.jurisdictions);
+  if (requiredJurisdiction !== null) {
+    const jurisdiction = nonEmptyString(requiredJurisdiction, "requiredJurisdiction").trim();
+    if (!approval.jurisdictions.includes(jurisdiction)) {
+      fail(`approval.jurisdictions must explicitly include ${jurisdiction}`);
+    }
+  }
   expiration(approval.expiresAt, now);
   if (!Array.isArray(approval.assets)) fail("approval.assets must be an array");
   const approvalAssets = indexUniqueAssets(approval.assets, "approval.assets");
@@ -218,7 +225,7 @@ export function verifyReleaseAssetApproval({
     fail("approval contains an asset outside the protected release manifest");
   }
 
-  return { approvedAssets: manifestAssets.size };
+  return { approvedAssets: manifestAssets.size, expiresAt: approval.expiresAt };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {

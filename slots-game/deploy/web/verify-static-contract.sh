@@ -108,6 +108,12 @@ require_fixed '"licenses:test": "node scripts/test-third-party-notices.mjs"' "$r
 require_fixed 'vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs' "$repo_root/web/package.json"
 require_fixed '"prebuild": "npm run licenses:check && npm run assets:provenance-check"' "$repo_root/web/package.json"
 require_fixed '"pretest": "npm run licenses:test && npm run licenses:check && npm run assets:provenance-check"' "$repo_root/web/package.json"
+if node -e '
+  const metadata = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  process.exit(Object.hasOwn(metadata.scripts ?? {}, "postbuild") ? 0 : 1);
+' "$repo_root/web/package.json"; then
+  fail 'postbuild lifecycle hooks are forbidden for approval-gated Web builds'
+fi
 require_fixed 'run: npm run build:determinism-check' "$frontend_workflow"
 require_fixed 'new Set(["index.html", "favicon.ico", "THIRD_PARTY_NOTICES.txt"])' "$repo_root/web/scripts/finalize-production-assets.mjs"
 require_fixed 'npm run licenses:generate' "$operations_readme"
@@ -188,8 +194,9 @@ fi
 # Docker ARG 在这里按 Dockerfile 字面量校验，不能让当前 shell 展开。
 # shellcheck disable=SC2016
 require_line 'FROM ${NODE_IMAGE} AS dependencies' "$dockerfile"
+test "$(grep -F -x -c -- '    npm ci --ignore-scripts' "$dockerfile")" -eq 1 \
+  || fail 'Web dependencies must install exactly once with lifecycle scripts disabled'
 require_line 'FROM dependencies AS static-conformance-build' "$dockerfile"
-require_line 'RUN --network=none npm run build' "$dockerfile"
 require_fixed 'test -s /src/web/dist/THIRD_PARTY_NOTICES.txt && \' "$dockerfile"
 require_fixed 'cmp /src/web/public/THIRD_PARTY_NOTICES.txt /src/web/dist/THIRD_PARTY_NOTICES.txt' "$dockerfile"
 require_line 'FROM dependencies AS release-config-build' "$dockerfile"
@@ -222,7 +229,16 @@ require_fixed '--host-origin "$VITE_RGS_HOST_ORIGIN" && \' "$dockerfile"
 require_fixed 'WEB_RELEASE_REQUIRE_IDENTITY=1 \' "$dockerfile"
 require_fixed 'WEB_RELEASE_VERSION="$WEB_RELEASE_VERSION" \' "$dockerfile"
 require_fixed 'WEB_RELEASE_REVISION="$WEB_RELEASE_REVISION" \' "$dockerfile"
-require_fixed 'npm run build' "$dockerfile"
+test "$(grep -F -c -- 'npm --ignore-scripts run build' "$dockerfile")" -eq 2 \
+  || fail 'both Web builds must disable npm pre/post lifecycle scripts'
+test "$(grep -F -c -- 'node ./scripts/generate-third-party-notices.mjs --check' "$dockerfile")" -eq 2 \
+  || fail 'both Web builds must explicitly retain the license declaration check'
+test "$(grep -F -c -- 'node ./scripts/verify-asset-provenance.mjs' "$dockerfile")" -eq 2 \
+  || fail 'both Web builds must explicitly retain the asset provenance check'
+test "$(grep -F -c -- 'node ./scripts/finalize-production-assets.mjs --check' "$dockerfile")" -eq 3 \
+  || fail 'both builds and the approval boundary must independently verify the complete dist tree'
+test "$(grep -F -c -- 'node ./scripts/verify-production-javascript-bundles.mjs' "$dockerfile")" -eq 2 \
+  || fail 'both Web builds must re-verify JavaScript bundles after npm returns'
 require_fixed 'RELEASE_ASSET_APPROVAL_FILE=/run/secrets/release_asset_approval \' "$dockerfile"
 require_fixed 'node ./scripts/verify-release-asset-approval.mjs' "$dockerfile"
 
@@ -241,6 +257,28 @@ release_config_build_stage=$(awk '
   capture && /^FROM[[:space:]]+/ && $NF != "release-config-build" { capture = 0 }
   capture { print }
 ' "$dockerfile")
+for build_stage_spec in static-conformance-build release-config-build
+do
+  case "$build_stage_spec" in
+    static-conformance-build) checked_build_stage=$static_build_stage ;;
+    release-config-build) checked_build_stage=$release_config_build_stage ;;
+  esac
+  previous_line=0
+  for required_build_command in \
+    'node ./scripts/generate-third-party-notices.mjs --check' \
+    'node ./scripts/verify-asset-provenance.mjs' \
+    'npm --ignore-scripts run build' \
+    'node ./scripts/finalize-production-assets.mjs --check' \
+    'node ./scripts/verify-production-javascript-bundles.mjs'
+  do
+    test "$(printf '%s\n' "$checked_build_stage" | grep -F -c -- "$required_build_command")" -eq 1 \
+      || fail "$build_stage_spec must contain $required_build_command exactly once"
+    current_line=$(printf '%s\n' "$checked_build_stage" | grep -n -F -- "$required_build_command" | cut -d: -f1)
+    test "$previous_line" -lt "$current_line" \
+      || fail "$build_stage_spec build verification order drifted"
+    previous_line=$current_line
+  done
+done
 for build_arg in \
   VITE_RGS_BASE_URL \
   VITE_RGS_BET_OPTIONS_MINOR \
@@ -266,6 +304,19 @@ if printf '%s\n' "$release_config_build_stage" | grep -F 'release_asset_approval
 fi
 printf '%s\n' "$release_build_stage" | grep -F 'verify-release-asset-approval.mjs' >/dev/null \
   || fail 'release-build must retain the external asset approval gate'
+release_build_instructions=$(printf '%s\n' "$release_build_stage" | sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d')
+expected_release_build_instructions=$(printf '%s\n' \
+  'FROM release-config-build AS release-build' \
+  'RUN --network=none \' \
+  '    --mount=type=bind,from=release-config-build,source=/src/web,target=/src/web,readonly \' \
+  '    node ./scripts/finalize-production-assets.mjs --check' \
+  'RUN --network=none \' \
+  '    --mount=type=bind,from=release-config-build,source=/src/web,target=/src/web,readonly \' \
+  '    --mount=type=secret,id=release_asset_approval,required=true,target=/run/secrets/release_asset_approval \' \
+  '    RELEASE_ASSET_APPROVAL_FILE=/run/secrets/release_asset_approval \' \
+  '      node ./scripts/verify-release-asset-approval.mjs')
+test "$release_build_instructions" = "$expected_release_build_instructions" \
+  || fail 'release-build must verify the complete dist tree immediately before read-only approval and perform no later mutation'
 
 config_nginx_stage=$(awk '
   /^FROM[[:space:]].*[[:space:]]AS[[:space:]]config-conformance-nginx$/ { capture = 1 }
@@ -316,6 +367,7 @@ printf '%s\n' "$runtime_stage" | grep -F 'COPY --from=release-build --chown=0:0 
 printf '%s\n' "$runtime_stage" | grep -F 'cmp /THIRD_PARTY_NOTICES.txt /usr/share/nginx/html/THIRD_PARTY_NOTICES.txt' >/dev/null || fail "runtime must prove the image-root and served third-party notices are identical"
 printf '%s\n' "$runtime_stage" | grep -F 'COPY --from=release-build --chown=0:0 /src/web/release-nginx.conf /etc/nginx/conf.d/default.conf' >/dev/null || fail "runtime must copy only the root-owned release-generated nginx policy"
 printf '%s\n' "$runtime_stage" | grep -F 'RUN --network=none nginx -t' >/dev/null || fail "runtime must parse-check the generated nginx policy without network access"
+printf '%s\n' "$runtime_stage" | grep -F 'org.opencontainers.image.title="primal-rampage-web"' >/dev/null || fail "runtime must expose the Primal Rampage product title"
 printf '%s\n' "$runtime_stage" | grep -F 'org.opencontainers.image.version="${WEB_RELEASE_VERSION}"' >/dev/null || fail "runtime must expose the validated public release version label"
 printf '%s\n' "$runtime_stage" | grep -F 'org.opencontainers.image.revision="${WEB_RELEASE_REVISION}"' >/dev/null || fail "runtime must expose the validated full revision label"
 if printf '%s\n' "$runtime_stage" | grep -F 'COPY --chown=0:0 deploy/web/nginx.conf /etc/nginx/conf.d/default.conf' >/dev/null; then

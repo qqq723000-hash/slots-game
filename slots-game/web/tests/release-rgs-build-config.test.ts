@@ -95,10 +95,16 @@ describe("release RGS build configuration", () => {
       expect(makefile).toContain(`${name} is required`);
       expect(makefile).toContain(`--build-arg ${name}=\"$\${${name}}\"`);
     }
+    const buildCommand = "npm --ignore-scripts run build";
     expect(releaseStage).toContain("node ./src/validateReleaseRgsBuildConfig.mjs");
+    expect(releaseStage).toContain(buildCommand);
     expect(releaseStage.indexOf("node ./src/validateReleaseRgsBuildConfig.mjs"))
-      .toBeLessThan(releaseStage.indexOf("npm run build"));
+      .toBeLessThan(releaseStage.indexOf(buildCommand));
+    expect(releaseStage.indexOf(buildCommand))
+      .toBeLessThan(releaseStage.indexOf("finalize-production-assets.mjs --check"));
+    expect(releaseApprovalStage.indexOf("finalize-production-assets.mjs --check"))
+      .toBeLessThan(releaseApprovalStage.indexOf("verify-release-asset-approval.mjs"));
     expect(releaseApprovalStage).toContain("verify-release-asset-approval.mjs");
-    expect(releaseApprovalStage).not.toContain("npm run build");
+    expect(releaseApprovalStage).not.toMatch(/\bnpm\b/u);
   });
 });

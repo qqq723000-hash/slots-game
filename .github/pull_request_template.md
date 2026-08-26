@@ -14,6 +14,9 @@
 - [ ] OpenAPI、迁移清单、资源清单、运行手册和告警规则已按需同步
 - [ ] 新增/替换素材已更新权属分类和逐文件审批边界，未把哈希一致误写成授权证明
 - [ ] 公共入口/WAF/限流/容量改动已附受控滥用测试，并区分本机证据、真实云验收和外部门禁
+- [ ] 正式版本改动已同步 `VERSION`、CHANGELOG、Web package/lock、Helm Chart 与 README 示例
+- [ ] GitHub Action 使用完整提交 SHA，新增权限遵循 job 级最小授权并已补失败关闭契约
+- [ ] Dependabot、CodeQL、依赖审查、SBOM、签名与制品上传范围已按本次改动复核
 
 ## 发布与回滚
 

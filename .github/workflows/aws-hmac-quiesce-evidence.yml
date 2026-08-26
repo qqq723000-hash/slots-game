@@ -11,6 +11,11 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      static_only:
+        description: 仅执行无云凭据的静态合同，不停机也不恢复 API
+        required: true
+        default: true
+        type: boolean
       target_environment:
         description: 受保护的 HMAC 停机目标环境
         required: true
@@ -40,7 +45,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}
+  group: ${{ github.event_name == 'workflow_dispatch' && !inputs.static_only && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: false
 
 jobs:
@@ -68,7 +73,7 @@ jobs:
           ruby -c slots-game/deploy/aws-production/workflow/verify-hmac-quiesce-evidence.rb
 
   manage-evidence:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.static_only
     needs: static-contract
     runs-on:
       - self-hosted

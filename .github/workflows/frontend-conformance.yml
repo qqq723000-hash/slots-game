@@ -36,7 +36,7 @@ jobs:
           cache-dependency-path: slots-game/server/go.sum
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.22.0
           cache: npm
@@ -60,6 +60,9 @@ jobs:
       - name: Run frontend tests
         # CI 低资源 runner 禁用 Vitest 文件级并行，避免并行 fixture 的 5s 抖动；本地默认不变。
         run: npm test -- --run --fileParallelism=false
+
+      - name: Build isolated static demo
+        run: npm run build:demo
 
       - name: Build production frontend
         env:

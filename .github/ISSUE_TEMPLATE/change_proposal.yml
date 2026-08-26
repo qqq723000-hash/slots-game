@@ -1,0 +1,35 @@
+name: 改进建议
+description: 提议非安全功能、工程或文档改进，并明确商业交付与外部门禁影响。
+title: "[Proposal] "
+body:
+  - type: markdown
+    attributes:
+      value: 安全问题、真实凭据和生产事故信息不得使用公开 Issue；请先阅读 SUPPORT.md。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题与目标
+      description: 说明当前约束、希望改善的结果，以及为什么不能由现有能力满足。
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: 不变量与兼容边界
+      description: 说明对经济结果、协议、数据库、素材权利、部署、回滚或供应链的影响。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 验证与外部门禁
+      description: 区分仓库内可验证事项和 AWS、运营商、钱包、素材授权、监管或生产容量等外部事项。
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 信息安全确认
+      options:
+        - label: 我确认提案不包含秘密、真实业务身份、生产日志、原始抓包、发布审批或未公开漏洞细节。
+          required: true

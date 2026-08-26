@@ -1,7 +1,9 @@
 {
-  "name": "iron-colossus-web",
-  "version": "1.0.0",
+  "name": "primal-rampage-web",
+  "version": "1.2.0",
+  "description": "Primal Rampage production browser client.",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
@@ -17,6 +19,10 @@
     "build:assets-check": "node scripts/finalize-production-assets.mjs --check",
     "build:bundle-check": "node scripts/verify-production-javascript-bundles.mjs",
     "build:browser-smoke": "node scripts/verify-production-browser-bootstrap.mjs",
+    "build:demo": "npm run licenses:check && npm run assets:provenance-check && tsc --noEmit && vite build --config vite.demo.config.ts --mode demo && node scripts/finalize-static-demo.mjs && node scripts/verify-static-demo-build.mjs",
+    "demo:approval-check": "node scripts/verify-static-demo-asset-approval.mjs",
+    "demo:verify": "node scripts/verify-static-demo-build.mjs",
+    "demo:preview": "vite preview --config vite.demo.config.ts --mode demo",
     "licenses:generate": "node scripts/generate-third-party-notices.mjs --write",
     "licenses:check": "node scripts/generate-third-party-notices.mjs --check",
     "licenses:check-artifacts": "node scripts/generate-third-party-notices.mjs --check-artifacts",

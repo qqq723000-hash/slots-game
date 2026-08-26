@@ -1,0 +1,148 @@
+name: Static demo Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-demo-pages
+  cancel-in-progress: false
+
+jobs:
+  verify-static-demo:
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: slots-game/web
+    steps:
+      - name: Check out protected main without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Set up fixed Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: slots-game/web/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Reject high-risk dependency findings
+        run: npm audit --audit-level=high
+
+      - name: Build and verify isolated non-economic demo
+        env:
+          WEB_RELEASE_REQUIRE_IDENTITY: "1"
+          WEB_RELEASE_REVISION: ${{ github.sha }}
+        run: npm --ignore-scripts run build:demo
+
+  approve-and-upload-static-demo:
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
+    needs:
+      - verify-static-demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      asset-approval-expires-at: ${{ steps.asset-approval.outputs.expires_at }}
+    environment:
+      name: pages-demo-asset-approval
+    defaults:
+      run:
+        working-directory: slots-game/web
+    steps:
+      - name: Check out the same protected main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          lfs: true
+          persist-credentials: false
+
+      - name: Set up fixed Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: slots-game/web/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Rebuild the exact reviewed demo revision
+        env:
+          WEB_RELEASE_REQUIRE_IDENTITY: "1"
+          WEB_RELEASE_REVISION: ${{ github.sha }}
+        run: npm --ignore-scripts run build:demo
+
+      - name: Verify external exact-hash asset approval
+        id: asset-approval
+        shell: bash
+        env:
+          STATIC_DEMO_ASSET_APPROVAL_B64: ${{ secrets.STATIC_DEMO_ASSET_APPROVAL_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "$STATIC_DEMO_ASSET_APPROVAL_B64"
+          umask 077
+          approval_file="$RUNNER_TEMP/static-demo-asset-approval.json"
+          trap 'rm -f "$approval_file"' EXIT
+          node scripts/verify-static-demo-build.mjs
+          printf '%s' "$STATIC_DEMO_ASSET_APPROVAL_B64" | base64 --decode > "$approval_file"
+          approval_expires_at="$(STATIC_DEMO_ASSET_APPROVAL_FILE="$approval_file" node scripts/verify-static-demo-asset-approval.mjs --print-expires-at)"
+          printf 'expires_at=%s\n' "$approval_expires_at" >> "$GITHUB_OUTPUT"
+          approval_sha256="$(sha256sum "$approval_file" | cut -d' ' -f1)"
+          printf 'static demo approval sha256: %s\n' "$approval_sha256"
+
+      - name: Upload the exact approved GitHub Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: slots-game/web/dist-demo
+          include-hidden-files: true
+
+  deploy-static-demo:
+    if: github.ref == 'refs/heads/main' && github.ref_protected == true
+    needs:
+      - approve-and-upload-static-demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Revalidate asset approval expiry after deployment review
+        shell: bash
+        env:
+          ASSET_APPROVAL_EXPIRES_AT: ${{ needs.approve-and-upload-static-demo.outputs.asset-approval-expires-at }}
+        run: |
+          set -euo pipefail
+          test -n "$ASSET_APPROVAL_EXPIRES_AT"
+          expires_epoch="$(date -u -d "$ASSET_APPROVAL_EXPIRES_AT" +%s)"
+          now_epoch="$(date -u +%s)"
+          test "$expires_epoch" -gt "$now_epoch"
+
+      - name: Bind deployment to repository Pages configuration
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Reject a Pages base path outside this repository
+        shell: bash
+        env:
+          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: test "$PAGES_BASE_PATH" = /slots-game
+
+      - name: Deploy reviewed static demo artifact
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

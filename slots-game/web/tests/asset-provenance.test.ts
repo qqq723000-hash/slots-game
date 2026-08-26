@@ -27,7 +27,11 @@ function inventory(groups = [
   };
 }
 
-function fixture(options: { extraPath?: string; groups?: string[][] } = {}) {
+function fixture(options: {
+  extraPath?: string;
+  extraContents?: string;
+  groups?: string[][];
+} = {}) {
   const directory = mkdtempSync(resolve(tmpdir(), "slots-asset-provenance-"));
   temporaryDirectories.push(directory);
   const publicDirectory = resolve(directory, "public");
@@ -38,7 +42,7 @@ function fixture(options: { extraPath?: string; groups?: string[][] } = {}) {
   if (options.extraPath) {
     const path = resolve(publicDirectory, options.extraPath);
     mkdirSync(resolve(path, ".."), { recursive: true });
-    writeFileSync(path, "extra");
+    writeFileSync(path, options.extraContents ?? "extra");
   }
   const inventoryPath = resolve(directory, "asset-provenance.json");
   writeFileSync(inventoryPath, `${JSON.stringify(inventory(options.groups))}\n`);
@@ -61,12 +65,34 @@ describe("asset provenance gate", () => {
 
   it("rejects documentation copied into the public tree", async () => {
     await expect(verifyAssetProvenance(fixture({ extraPath: "assets/README.md" })))
-      .rejects.toThrow("public tree contains documentation or evidence files");
+      .rejects.toThrow("public tree contains forbidden evidence or credential files");
+  });
+
+  it.each([
+    "assets/primal-runtime/private-credentials.json",
+    "assets/primal-runtime/.env.production",
+    "assets/primal-reference/signing.key",
+    "assets/brand/capture.har",
+  ])("rejects credential, key and capture-shaped files inside protected prefixes: %s", async (extraPath) => {
+    await expect(verifyAssetProvenance(fixture({ extraPath })))
+      .rejects.toThrow("public tree contains forbidden evidence or credential files");
   });
 
   it("rejects a public file outside the protected selectors and explicit notice allow-list", async () => {
     await expect(verifyAssetProvenance(fixture({ extraPath: "debug.json" })))
       .rejects.toThrow("public files are outside the release policy");
+  });
+
+  it.each([
+    '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.invalid/a.png"/></svg>',
+    '<!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><svg/>',
+  ])("rejects active or external SVG content", async (extraContents) => {
+    await expect(verifyAssetProvenance(fixture({
+      extraPath: "assets/primal-reference/unsafe.svg",
+      extraContents,
+    }))).rejects.toThrow("public SVG contains active or external content");
   });
 
   it("rejects an inventory that omits a protected selector", async () => {

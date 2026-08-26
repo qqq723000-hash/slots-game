@@ -208,13 +208,13 @@ replace_once '      - main' "      - '*'" \
 expect_rejected '基础设施 push 静态门禁扩展到非 main 分支'
 
 reset_fixture
-replace_once "    if: github.event_name == 'workflow_dispatch'" \
+replace_once "    if: github.event_name == 'workflow_dispatch' && !inputs.static_only" \
   "    if: github.event_name == 'push'" \
   "$fixture_root/.github/workflows/aws-infrastructure.yml"
 expect_rejected 'Terraform plan 在 push 时申请 AWS 凭据'
 
 reset_fixture
-replace_once "    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'apply'" \
+replace_once "    if: github.event_name == 'workflow_dispatch' && !inputs.static_only && inputs.operation == 'apply'" \
   "    if: github.event_name == 'pull_request'" \
   "$fixture_root/.github/workflows/aws-infrastructure.yml"
 expect_rejected 'Terraform apply 在 PR 时申请 AWS 凭据'
@@ -855,7 +855,7 @@ replace_once '      contents: read' '      contents: read\n      id-token: write
 expect_rejected 'PR 静态 job 获得 OIDC'
 
 reset_fixture
-replace_once "    if: github.event_name == 'workflow_dispatch'" \
+replace_once "    if: github.event_name == 'workflow_dispatch' && !inputs.static_only" \
   "    if: github.event_name == 'push'" \
   "$fixture_root/.github/workflows/aws-hmac-quiesce-evidence.yml"
 expect_rejected 'HMAC 停机证据 job 在 push 时申请 AWS 凭据'
@@ -867,7 +867,7 @@ replace_once "      - \${{ 'slots-aws-private-hmac-quiescer' }}" \
 expect_rejected 'HMAC 停机证据 runner 标签可被 Environment 动态替换'
 
 reset_fixture
-replace_once "group: \${{ github.event_name == 'workflow_dispatch' && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}" \
+replace_once "group: \${{ github.event_name == 'workflow_dispatch' && !inputs.static_only && format('slots-aws-environment-mutation-{0}', inputs.target_environment) || format('slots-aws-static-{0}-{1}', github.workflow, github.ref) }}" \
   'group: slots-aws-environment-mutation-${{ inputs.target_environment || github.ref }}' \
   "$fixture_root/.github/workflows/aws-hmac-quiesce-evidence.yml"
 expect_rejected 'PR 静态工作流错误进入跨工作流环境级互斥锁'
