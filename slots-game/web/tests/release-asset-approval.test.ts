@@ -65,7 +65,10 @@ describe("release asset approval gate", () => {
   it("accepts an unexpired, exact approval for every protected release asset", () => {
     const fixture = makeFixture();
 
-    expect(verifyReleaseAssetApproval(fixture)).toEqual({ approvedAssets: 4 });
+    expect(verifyReleaseAssetApproval(fixture)).toEqual({
+      approvedAssets: 4,
+      expiresAt: "2035-01-01T00:00:00.000Z",
+    });
   });
 
   it("rejects unsupported approval and asset fields", () => {

@@ -21,6 +21,10 @@
 7. 不提交生成目录、运行状态、真实证书/密钥、`.env` 或发布资源审批文件。
 8. 新增或替换 Web 素材时同步更新权属分类、运行清单和仓库外逐文件审批；SHA-256 一致不等于
    已取得商标、著作权或商业分发授权。
+9. 正式版本必须同步 `VERSION`、`CHANGELOG.md`、`web/package.json`、`web/package-lock.json`、
+   Helm `Chart.yaml` 与 README 发布示例；先通过版本门禁，再创建不可变受保护 Tag。
+10. GitHub Action 只允许完整 40 位提交 SHA；新增写权限、Dependabot、CodeQL、依赖审查或制品
+    上传范围时，必须同步供应链静态契约和失败关闭负测。
 
 注释细则见 [docs/code-comment-standard.md](docs/code-comment-standard.md)。Go 导出标识符遵循
 GoDoc 命名要求；协议字段、错误码、指标名和标准术语保留英文。

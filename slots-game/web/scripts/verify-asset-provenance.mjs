@@ -14,6 +14,7 @@ const publicRoot = resolve(webRoot, "public");
 const provenancePath = resolve(webRoot, "asset-provenance.json");
 const ALLOWED_UNPROTECTED_PUBLIC_FILES = new Set(["THIRD_PARTY_NOTICES.txt"]);
 const ALLOWED_EVIDENCE = new Set(["OWNER_ASSERTED_FIRST_PARTY", "UNVERIFIED_IN_REPOSITORY"]);
+const ACTIVE_SVG_PATTERN = /<\s*(?:script|foreignObject)\b|<!\s*(?:DOCTYPE|ENTITY)\b|\son[a-z][a-z0-9:_-]*\s*=|(?:href|xlink:href)\s*=\s*["']\s*(?:https?:|\/\/|data:|javascript:)|url\(\s*["']?\s*(?:https?:|\/\/|data:|javascript:)|@import\b/i;
 
 function fail(message) {
   throw new Error(`asset provenance: ${message}`);
@@ -86,10 +87,20 @@ export async function verifyAssetProvenance({
   const publicFiles = await filesUnder(publicDirectory);
   const forbidden = publicFiles.filter((path) => (
     /(?:^|\/)(?:README(?:\.[^/]*)?|screenshots?|captures?|tests?|tmp)(?:\/|$)/i.test(path)
-    || /\.(?:md|map)$/i.test(path)
+    || /(?:^|\/)(?:\.env(?:\.[^/]*)?|(?:[^/]*[-_.])?(?:credentials?|secrets?|tokens?|private[-_]?keys?|id_rsa)(?:[._-][^/]*)?)$/i.test(path)
+    || /\.(?:md|map|pem|key|p12|pfx|crt|cer|log|har|pcap|pcapng|sqlite|sqlite3|db|bak|swp)$/i.test(path)
     || /(?:^|\/)\.DS_Store$/.test(path)
   ));
-  if (forbidden.length > 0) fail(`public tree contains documentation or evidence files:\n${forbidden.join("\n")}`);
+  if (forbidden.length > 0) {
+    fail(`public tree contains forbidden evidence or credential files:\n${forbidden.join("\n")}`);
+  }
+
+  for (const path of publicFiles.filter((entry) => entry.toLowerCase().endsWith(".svg"))) {
+    const source = await readFile(resolve(publicDirectory, path), "utf8");
+    if (ACTIVE_SVG_PATTERN.test(source)) {
+      fail(`public SVG contains active or external content: ${path}`);
+    }
+  }
 
   const unclassified = publicFiles.filter((path) => (
     !isProtectedReleaseAsset(path) && !ALLOWED_UNPROTECTED_PUBLIC_FILES.has(path)

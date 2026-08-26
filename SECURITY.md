@@ -1,6 +1,7 @@
 # 安全漏洞报告
 
-仅 `main` 分支当前版本接受安全修复。请通过本仓库 **Security → Report a vulnerability**
+仅 `main` 分支当前版本接受安全修复。请通过本仓库
+[**Security → Report a vulnerability**](https://github.com/qqq723000-hash/slots-game/security/advisories/new)
 私密提交报告，不要在公开 Issue、讨论或提交信息中披露漏洞细节、访问令牌、私钥、
 数据库连接串、玩家信息或生产日志。
 
@@ -16,3 +17,5 @@
 流量放大或 DDoS 模拟。仓库内的滥用 profile 只用于隔离环境中的应用层容量回归；真实 AWS DDoS
 模拟还必须满足云服务商政策、测试范围、流量上限、来源和应急联系人要求。测试发现的问题仍通过
 上述私密渠道报告，公开 Issue 只用于不包含漏洞细节的修复跟踪。
+
+普通支持范围、生产 SLA 与第三方系统边界见 [SUPPORT.md](SUPPORT.md)。

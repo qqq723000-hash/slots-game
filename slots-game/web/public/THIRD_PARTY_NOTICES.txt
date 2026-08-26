@@ -1,4 +1,4 @@
-IRON COLOSSUS WEB 第三方许可声明
+PRIMAL RAMPAGE WEB 第三方许可声明
 
 本文件由锁定依赖和随包许可原文确定性生成，禁止手工修改。
 范围包含 package-lock.json 中非 dev 的浏览器运行依赖，以及确有代码写入生产分块的显式构建器贡献者。

@@ -1,8 +1,18 @@
-# Iron Colossus 生产级工程交付候选
+# Primal Rampage 生产级工程交付候选
 
 本仓库交付 Go RGS 后端、PostgreSQL 迁移器、TypeScript/PixiJS Web、生产容器、Helm Chart、
 可观测性规则与供应链门禁。浏览器只是表现层；会话、余额、RNG、轮次、派彩、特性状态、幂等与
 恢复均由服务端负责。
+
+[GitHub Pages 静态试玩固定地址](https://qqq723000-hash.github.io/slots-game/)只在外部素材授权与
+部署审批完成后启用。该页面循环 23 轮冻结公开结果，覆盖普通赢额与特殊玩法，常驻显示
+Demo/`XTS`/无真钱/非概率或 RTP 说明，不读取启动码、钱包、RGS token 或恢复账本，也不是
+生产经济链路的证据。未取得 `PUBLIC-INTERNET` 逐文件精确哈希授权时，工作流失败关闭且不能把
+该地址描述为已上线。
+
+当前源码交付元数据版本为 [`1.2.0`](VERSION)。该版本号必须与变更记录、Web package/lock、
+Helm Chart 和发布示例一致；正式发布还需要创建同版本受保护 Tag、GitHub Release 说明，并保存
+三个 OCI 制品各自的 SBOM、来源证明、签名和不可变摘要，不能只凭版本文件宣称已经发布。
 
 ## 正式生产主线
 
@@ -52,6 +62,8 @@ AWS 是本仓库唯一正式生产目标。macOS Docker Compose 只保留为开�
 仓库当前没有根级源码 `LICENSE`，不能把代码可见误解为已经授予复制、再分发或商业使用许可。
 游戏素材的详细边界见 [Web 素材权属与发布门禁](web/ASSETS.md)；缺少仓库内权属证据的素材必须
 在取得可审计授权或完成自主替换后才能对外宣称可商业分发或全部原创。
+由于当前仓库公开，授权范围还必须覆盖现有源码/LFS 下载分发；Pages 门禁只能阻止新增试玩部署，
+不能撤回已经公开的仓库素材。取得授权前应由所有者选择转私有或移除/替换素材。
 
 ## 源码目录
 
@@ -141,7 +153,7 @@ VITE_RGS_BASE_URL=https://rgs.example.com \
 VITE_RGS_BET_OPTIONS_MINOR=10,20,50,100,200 \
 VITE_RGS_DEFAULT_BET_MINOR=100 \
 VITE_RGS_HOST_ORIGIN=https://slots.example.com \
-WEB_RELEASE_VERSION=1.1.0 \
+WEB_RELEASE_VERSION=1.2.0 \
 WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
   make build-web-release-image
 ```

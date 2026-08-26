@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self'; connect-src 'self'; worker-src 'self' blob:; child-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#000e20" />
+    <meta name="robots" content="noindex,nofollow" />
+    <meta
+      name="description"
+      content="Primal Rampage deterministic browser demo. Simulated credits only; no real-money play or economic outcome."
+    />
+    <title>Primal Rampage — Static Demo</title>
+  </head>
+  <body data-static-demo="true">
+    <aside
+      class="static-demo-banner"
+      data-role="static-demo-disclaimer"
+      role="note"
+      aria-label="Static demo notice"
+    >
+      <strong>DEMO</strong>
+      <span>Predetermined simulated credits (XTS) · No real money · No wallet · No economic value · Not odds or RTP</span>
+      <span>Independent educational recreation · No project analytics or personal-data submission · Not affiliated with or endorsed by Play'n GO</span>
+    </aside>
+    <div id="app" data-startup-shell="paint-pending" data-static-demo="true">
+      <div
+        class="launch-loading"
+        data-role="launch-loading"
+        data-visible="true"
+        role="status"
+        aria-live="polite"
+      >
+        <div class="launch-loading__mark" aria-hidden="true">
+          <img src="./assets/brand/powered-by-gm-go.png" alt="" />
+        </div>
+        <span class="launch-loading__brand">Powered by G'm GO</span>
+        <span class="launch-loading__status">Loading static demo resources</span>
+        <div
+          class="launch-loading__track"
+          role="progressbar"
+          aria-label="Static demo loading progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        ><b aria-hidden="true"></b></div>
+        <span class="launch-loading__value">0%</span>
+      </div>
+    </div>
+    <script type="module" src="../src/demo/staticDemoMain.ts"></script>
+  </body>
+</html>

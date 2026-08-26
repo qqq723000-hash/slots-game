@@ -90,6 +90,8 @@ verify-observability-release:
 	./deploy/observability/verify-static-contract.sh --rendered-dir "$${OBSERVABILITY_RENDERED_DIR}"
 
 verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract
+	node --test deploy/supply-chain/verify-release-version.test.mjs
+	node deploy/supply-chain/verify-release-version.mjs
 	./deploy/supply-chain/verify-contract.sh
 	./deploy/supply-chain/test-contract.sh
 	sh ./deploy/verify-supply-chain-contract.sh

@@ -1,0 +1,52 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:20"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: gomod
+    directory: /slots-game/server
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:40"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: npm
+    directory: /slots-game/web
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 10
+    versioning-strategy: increase-if-necessary
+
+  - package-ecosystem: terraform
+    directories:
+      - /slots-game/infra/terraform/environments/dev
+      - /slots-game/infra/terraform/environments/staging
+      - /slots-game/infra/terraform/environments/prod-primary
+      - /slots-game/infra/terraform/environments/prod-dr
+      - /slots-game/infra/terraform/stacks/environment
+      - /slots-game/infra/terraform/stacks/application-platform
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:20"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 6
+    groups:
+      terraform-providers:
+        patterns:
+          - "*"

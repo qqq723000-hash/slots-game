@@ -57,7 +57,7 @@ jobs:
         run: make verify-supply-chain-contract
 
       - name: Set up Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: 1.26.6
           cache-dependency-path: slots-game/server/go.sum
@@ -119,18 +119,30 @@ jobs:
 
       - name: Upload PostgreSQL conformance evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: postgres-conformance-${{ github.run_id }}-${{ github.run_attempt }}
-          path: slots-game/.artifacts/postgres-conformance/*.jsonl
+          path: |
+            slots-game/.artifacts/postgres-conformance/postgres-conformance.jsonl
+            slots-game/.artifacts/postgres-conformance/postgres-migration.jsonl
           if-no-files-found: error
           retention-days: 30
 
       - name: Upload runtime operations smoke evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-operations-smoke-${{ github.run_id }}-${{ github.run_attempt }}
-          path: slots-game/.artifacts/runtime-smoke/*
+          path: |
+            slots-game/.artifacts/runtime-smoke/migrator-up.json
+            slots-game/.artifacts/runtime-smoke/migrator-verify.json
+            slots-game/.artifacts/runtime-smoke/readyz.json
+            slots-game/.artifacts/runtime-smoke/metrics.prom
+            slots-game/.artifacts/runtime-smoke/result.json
+            slots-game/.artifacts/runtime-smoke/migrator-production-up.json
+            slots-game/.artifacts/runtime-smoke/migrator-production-verify.json
+            slots-game/.artifacts/runtime-smoke/readyz-production-ci-only.json
+            slots-game/.artifacts/runtime-smoke/metrics-production-ci-only.prom
+            slots-game/.artifacts/runtime-smoke/result-production-ci-only.json
           if-no-files-found: error
           retention-days: 30

@@ -1,8 +1,8 @@
 #!/bin/sh
-# shellcheck disable=SC2016
+# shellcheck disable=SC1003,SC2016
 
 # 在临时仓库副本中主动削弱每个关键控制，证明静态门禁会失败；不需要 Docker daemon。
-# SC2016 仅因测试必须替换夹具中的字面量 `$` 而关闭。
+# SC1003/SC2016 仅因测试必须替换夹具中的字面量 `$` 与 Dockerfile 行尾反斜杠而关闭。
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -20,6 +20,8 @@ if [ -d "$repository_root/.github/workflows" ]; then
 else
   workflows_root="$workspace_root/.github/workflows"
 fi
+github_root=${workflows_root%/workflows}
+delivery_root=${github_root%/.github}
 
 fail() {
   printf '%s\n' "supply-chain contract tests: $*" >&2
@@ -33,7 +35,8 @@ fixture="$test_root/repository"
 reset_fixture() {
   rm -rf "$fixture"
   mkdir -p "$fixture/deploy/cluster-production" "$fixture/deploy/observability" \
-    "$fixture/deploy/web" "$fixture/deploy/local-production" "$fixture/.github" "$fixture/web" "$fixture/docs"
+    "$fixture/deploy/web" "$fixture/deploy/local-production" "$fixture/.github/ISSUE_TEMPLATE" \
+    "$fixture/web" "$fixture/docs"
   cp "$repository_root/Makefile" "$fixture/Makefile"
   cp "$repository_root/web/package.json" "$fixture/web/package.json"
   cp "$repository_root/docs/aws-production-deployment.md" "$fixture/docs/aws-production-deployment.md"
@@ -51,6 +54,11 @@ reset_fixture() {
   cp "$repository_root/deploy/local-production/Dockerfile.web" "$fixture/deploy/local-production/Dockerfile.web"
   cp "$repository_root/deploy/local-production/Dockerfile.nginx-proxy" "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
   cp -R "$workflows_root" "$fixture/.github/workflows"
+  cp "$github_root/dependabot.yml" "$fixture/.github/dependabot.yml"
+  cp "$github_root/ISSUE_TEMPLATE/config.yml" "$fixture/.github/ISSUE_TEMPLATE/config.yml"
+  cp "$github_root/ISSUE_TEMPLATE/bug_report.yml" "$fixture/.github/ISSUE_TEMPLATE/bug_report.yml"
+  cp "$github_root/ISSUE_TEMPLATE/change_proposal.yml" "$fixture/.github/ISSUE_TEMPLATE/change_proposal.yml"
+  cp "$delivery_root/SUPPORT.md" "$fixture/SUPPORT.md"
 }
 
 replace_once() {
@@ -66,6 +74,19 @@ replace_once() {
       done = 1
       next
     }
+    { print }
+  ' "$file" > "$file.tmp"
+  mv "$file.tmp" "$file"
+}
+
+insert_after_once() {
+  needle=$1
+  insertion=$2
+  file=$3
+  match_count=$(grep -F -x -c -- "$needle" "$file" || true)
+  test "$match_count" -eq 1 || fail "test fixture must contain one exact line '$needle'"
+  awk -v needle="$needle" -v insertion="$insertion" '
+    $0 == needle { print; print insertion; next }
     { print }
   ' "$file" > "$file.tmp"
   mv "$file.tmp" "$file"
@@ -139,6 +160,146 @@ expect_rejected() {
 
 reset_fixture
 "$verifier" --root "$fixture" >/dev/null || fail 'baseline fixture failed'
+
+reset_fixture
+replace_once '    directory: /slots-game/web' '    directory: /web' "$fixture/.github/dependabot.yml"
+expect_rejected 'Dependabot npm directory escaped the reviewed project root'
+
+reset_fixture
+replace_once '      - /slots-game/infra/terraform/stacks/application-platform' \
+  '      - /slots-game/infra/terraform/stacks/missing' "$fixture/.github/dependabot.yml"
+expect_rejected 'Dependabot omitted a Terraform lockfile root'
+
+reset_fixture
+replace_once '      security-events: write' '      security-events: read' "$fixture/.github/workflows/codeql.yml"
+expect_rejected 'CodeQL lost SARIF upload permission'
+
+reset_fixture
+replace_once '          fail-on-severity: high' '          fail-on-severity: critical' \
+  "$fixture/.github/workflows/dependency-review.yml"
+expect_rejected 'dependency review accepted newly introduced high vulnerabilities'
+
+reset_fixture
+replace_once '      pages: write' '      contents: write' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages deployment received repository write permission'
+
+reset_fixture
+replace_once '        run: npm ci --ignore-scripts' '        run: npm ci' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages dependency installation re-enabled package lifecycle scripts'
+
+reset_fixture
+replace_once '        run: npm --ignore-scripts run build:demo' '        run: npm run build:demo' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages demo build re-enabled package lifecycle hooks'
+
+reset_fixture
+replace_once '        run: npm --ignore-scripts run build:demo' '        run: npm --ignore-scripts run build' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages workflow replaced the isolated demo with the production RGS build'
+
+reset_fixture
+replace_once '  workflow_dispatch:' '  push:' "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages deployment became automatic'
+
+reset_fixture
+replace_once "    if: github.ref == 'refs/heads/main' && github.ref_protected == true" \
+  "    if: github.ref == 'refs/heads/main'" "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages deployment accepted an unprotected main ref'
+
+reset_fixture
+replace_once '      name: pages-demo-asset-approval' '      name: github-pages' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages upload bypassed the independent asset approval Environment'
+
+reset_fixture
+replace_once '          include-hidden-files: true' '          include-hidden-files: false' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages upload omitted the reviewed .nojekyll artifact'
+
+reset_fixture
+replace_once '          path: slots-game/web/dist-demo' '          path: slots-game/web' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages upload expanded beyond the exact demo output'
+
+reset_fixture
+replace_once '          STATIC_DEMO_ASSET_APPROVAL_B64: ${{ secrets.STATIC_DEMO_ASSET_APPROVAL_B64 }}' \
+  '          STATIC_DEMO_ASSET_APPROVAL_B64: missing' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages approval stopped consuming its Environment-scoped exact-hash input'
+
+reset_fixture
+replace_once '          node scripts/verify-static-demo-build.mjs' \
+  '          true # deployable output verification removed' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages approval stopped re-verifying the deployable output tree'
+
+reset_fixture
+replace_once '          approval_expires_at="$(STATIC_DEMO_ASSET_APPROVAL_FILE="$approval_file" node scripts/verify-static-demo-asset-approval.mjs --print-expires-at)"' \
+  '          approval_expires_at="$(STATIC_DEMO_ASSET_APPROVAL_FILE="$approval_file" npm run demo:approval-check -- --print-expires-at)"' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages approval returned to an npm lifecycle-enabled wrapper'
+
+reset_fixture
+replace_literal_once "          printf 'static demo approval sha256: %s\\n' \"\$approval_sha256\"" \
+  "          printf 'static demo approval sha256: %s\\n' \"\$approval_sha256\"; printf injected > dist-demo/unapproved.html" \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages artifact changed after exact-hash approval'
+
+reset_fixture
+replace_once '          test "$expires_epoch" -gt "$now_epoch"' '          true' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages deployment skipped post-review approval expiry validation'
+
+reset_fixture
+insert_after_once '        id: asset-approval' '        continue-on-error: true' \
+  "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'GitHub Pages asset approval failure was allowed to continue'
+
+reset_fixture
+replace_once ' && node scripts/verify-static-demo-build.mjs",' '",' \
+  "$fixture/web/package.json"
+expect_rejected 'GitHub Pages demo package script omitted its final deployable-output verifier'
+
+reset_fixture
+insert_after_once '    "demo:approval-check": "node scripts/verify-static-demo-asset-approval.mjs",' \
+  '    "postbuild:demo": "printf injected > dist-demo/unapproved.html",' \
+  "$fixture/web/package.json"
+expect_rejected 'GitHub Pages package added a post-build lifecycle artifact mutation hook'
+
+reset_fixture
+replace_once 'https://github.com/qqq723000-hash/slots-game/security/advisories/new' \
+  'https://github.com/qqq723000-hash/slots-game/issues/new' "$fixture/.github/ISSUE_TEMPLATE/config.yml"
+expect_rejected 'public issue routing replaced the private vulnerability channel'
+
+reset_fixture
+replace_once '不承诺响应时间、修复时间、7×24 值守、' '承诺响应时间、修复时间、7×24 值守、' \
+  "$fixture/SUPPORT.md"
+expect_rejected 'public repository support claimed an unapproved production SLA'
+
+reset_fixture
+replace_once '            slots-game/.artifacts/postgres-conformance/postgres-conformance.jsonl' \
+  '            slots-game/.artifacts/postgres-conformance/*.jsonl' \
+  "$fixture/.github/workflows/backend-conformance.yml"
+expect_rejected 'backend evidence upload accepted a directory wildcard'
+
+reset_fixture
+replace_once 'node --test deploy/supply-chain/verify-release-version.test.mjs' \
+  'true # formal version tests removed' "$fixture/Makefile"
+expect_rejected 'ordinary source conformance omitted release version tests'
+
+reset_fixture
+replace_once '        run: node deploy/supply-chain/verify-release-version.mjs --formal' \
+  '        run: node deploy/supply-chain/verify-release-version.mjs' \
+  "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'protected release accepted pending Unreleased notes'
+
+reset_fixture
+primal_web_title_line=$(printf '%s\134' 'LABEL org.opencontainers.image.title="primal-rampage-web" ')
+historical_web_title_line=$(printf '%s\134' 'LABEL org.opencontainers.image.title="iron-colossus-web" ')
+replace_once "$primal_web_title_line" "$historical_web_title_line" "$fixture/deploy/web/Dockerfile"
+expect_rejected 'release OCI title regressed to the historical internal name'
 
 # 用最小本地资产夹具证明 checks bundle 缺失时会失败关闭；无需 Docker 或网络。
 trivy_asset_root="$test_root/trivy-assets"
@@ -451,11 +612,15 @@ if node "$web_static_verifier" "$web_static_root" >/dev/null 2>&1; then
 fi
 rm "$web_static_root/alias.html"
 
+current_release_version=$(sed -n '1p' "$repository_root/VERSION")
+current_release_tag="v$current_release_version"
+
 run_release_validation() {
   protected_ref=$1
   expected_identity=$2
   image_tag=$3
   registry=$4
+  release_validation_script=${5:-"$repository_root/deploy/supply-chain/release-sign.sh"}
   env \
     SUPPLY_CHAIN_REGISTRY="$registry" \
     SUPPLY_CHAIN_IMAGE_REPOSITORY=registry.example.com/acme/slots-rgs \
@@ -464,29 +629,42 @@ run_release_validation() {
     SUPPLY_CHAIN_EXPECTED_CERTIFICATE_IDENTITY="$expected_identity" \
     SUPPLY_CHAIN_EXPECTED_OIDC_ISSUER=https://token.actions.githubusercontent.com \
     GITHUB_EVENT_NAME=workflow_dispatch \
-    GITHUB_REF=refs/tags/v1.2.3 \
-    GITHUB_REF_NAME=v1.2.3 \
+    GITHUB_REF="refs/tags/$current_release_tag" \
+    GITHUB_REF_NAME="$current_release_tag" \
     GITHUB_REF_PROTECTED="$protected_ref" \
     GITHUB_REPOSITORY=acme/slots \
     GITHUB_SERVER_URL=https://github.com \
     GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 \
-    GITHUB_WORKFLOW_REF=acme/slots/.github/workflows/supply-chain-release.yml@refs/tags/v1.2.3 \
-    "$repository_root/deploy/supply-chain/release-sign.sh" validate-build
+    GITHUB_WORKFLOW_REF="acme/slots/.github/workflows/supply-chain-release.yml@refs/tags/$current_release_tag" \
+    "$release_validation_script" validate-build
 }
 
-valid_identity=https://github.com/acme/slots/.github/workflows/supply-chain-release.yml@refs/tags/v1.2.3
-run_release_validation true "$valid_identity" v1.2.3 registry.example.com >/dev/null || fail 'valid release identity was rejected'
-if run_release_validation false "$valid_identity" v1.2.3 registry.example.com >/dev/null 2>&1; then
+valid_identity="https://github.com/acme/slots/.github/workflows/supply-chain-release.yml@refs/tags/$current_release_tag"
+run_release_validation true "$valid_identity" "$current_release_tag" registry.example.com >/dev/null || fail 'valid release identity was rejected'
+if run_release_validation false "$valid_identity" "$current_release_tag" registry.example.com >/dev/null 2>&1; then
   fail 'unprotected release ref was accepted'
 fi
-if run_release_validation true https://github.com/attacker/repo/.github/workflows/release.yml@refs/tags/v1.2.3 v1.2.3 registry.example.com >/dev/null 2>&1; then
+if run_release_validation true "https://github.com/attacker/repo/.github/workflows/release.yml@refs/tags/$current_release_tag" "$current_release_tag" registry.example.com >/dev/null 2>&1; then
   fail 'forged certificate identity was accepted'
 fi
 if run_release_validation true "$valid_identity" latest registry.example.com >/dev/null 2>&1; then
   fail 'mutable latest tag was accepted'
 fi
-if run_release_validation true "$valid_identity" v1.2.3 https://registry.example.com >/dev/null 2>&1; then
+if run_release_validation true "$valid_identity" v0.0.0 registry.example.com >/dev/null 2>&1; then
+  fail 'protected tag that does not match VERSION was accepted'
+fi
+if run_release_validation true "$valid_identity" "$current_release_tag" https://registry.example.com >/dev/null 2>&1; then
   fail 'registry URL with a scheme was accepted'
+fi
+
+release_sign_extra_root="$test_root/release-sign-extra"
+mkdir -p "$release_sign_extra_root/deploy/supply-chain"
+cp "$repository_root/deploy/supply-chain/release-sign.sh" \
+  "$release_sign_extra_root/deploy/supply-chain/release-sign.sh"
+printf '%s\ntrailing-content' "$current_release_version" > "$release_sign_extra_root/VERSION"
+if run_release_validation true "$valid_identity" "$current_release_tag" registry.example.com \
+  "$release_sign_extra_root/deploy/supply-chain/release-sign.sh" >/dev/null 2>&1; then
+  fail 'VERSION content after the canonical line was accepted'
 fi
 
 reset_fixture
@@ -520,6 +698,50 @@ expect_rejected 'local Nginx final effective user regressed to root'
 reset_fixture
 replace_once 'USER 101:101' 'USER 0:0' "$fixture/deploy/web/Dockerfile"
 expect_rejected 'web Nginx runtime stage did not restore effective user 101:101'
+
+reset_fixture
+replace_once '    npm ci --ignore-scripts' '    npm ci' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'approval-gated Web dependency installation re-enabled lifecycle scripts'
+
+reset_fixture
+replace_once '    npm --ignore-scripts run build' '    npm run build' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'approval-gated Web build re-enabled npm pre/post lifecycle scripts'
+
+reset_fixture
+replace_once '    node ./scripts/generate-third-party-notices.mjs --check && \' \
+  '    true # license declaration check removed && \' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'approval-gated Web build removed its explicit license declaration check'
+
+reset_fixture
+replace_once '    node ./scripts/finalize-production-assets.mjs --check && \' \
+  '    true # post-build dist verification removed && \' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'approval-gated Web build removed its post-build complete-tree verification'
+
+reset_fixture
+replace_once '    node ./scripts/verify-production-javascript-bundles.mjs && \' \
+  '    true # post-build JavaScript verification removed && \' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'approval-gated Web build removed its post-build JavaScript verification'
+
+reset_fixture
+replace_last_exact_line '    node ./scripts/finalize-production-assets.mjs --check' \
+  '    true # pre-approval complete-tree verification removed' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'Web asset approval stopped re-verifying the complete dist tree'
+
+reset_fixture
+replace_once '    --mount=type=bind,from=release-config-build,source=/src/web,target=/src/web,readonly \' \
+  '    --mount=type=bind,from=release-config-build,source=/src/web,target=/src/web \' \
+  "$fixture/deploy/web/Dockerfile"
+expect_rejected 'Web approval boundary made the verified Web root writable'
+
+reset_fixture
+insert_after_once '      node ./scripts/verify-release-asset-approval.mjs' \
+  'RUN printf injected > /src/web/dist/unapproved.html' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'Web approval stage accepted a post-approval artifact mutation'
+
+reset_fixture
+insert_after_once '    "prebuild": "npm run licenses:check && npm run assets:provenance-check",' \
+  '    "postbuild": "printf injected > dist/unapproved.html",' "$fixture/web/package.json"
+expect_rejected 'Web package added a postbuild artifact mutation hook'
 
 reset_fixture
 replace_once '--env GOPATH=/tmp/go' '--env GOPATH=/go' "$fixture/deploy/supply-chain/scan.sh"
@@ -972,6 +1194,18 @@ replace_once 'rgs-migrator) target=rgs-migrator' 'rgs-migrator) target=migrator'
 expect_rejected 'RGS release selected the generic migrator target'
 
 reset_fixture
+replace_once '--build-arg "OCI_IMAGE_VERSION=$release_version"' \
+  '--build-arg "OCI_IMAGE_VERSION=$SUPPLY_CHAIN_IMAGE_TAG"' \
+  "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'RGS OCI version retained the protected tag v prefix'
+
+reset_fixture
+replace_once '--build-arg WEB_RELEASE_VERSION="$release_version"' \
+  '--build-arg WEB_RELEASE_VERSION="$SUPPLY_CHAIN_IMAGE_TAG"' \
+  "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'Web release manifest version retained the protected tag v prefix'
+
+reset_fixture
 replace_once '    environment: supply-chain-web-approval' '    environment: supply-chain-release' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'Web approval reused the Registry and OIDC release Environment'
 
@@ -1082,6 +1316,12 @@ expect_rejected 'AWS guide no longer rejected an existing immutable release pref
 reset_fixture
 replace_once '--distribution-root "$static_root"' '--distribution-root web/dist' "$fixture/.github/workflows/supply-chain-release.yml"
 expect_rejected 'approved Web browser smoke regressed to mutable workspace bytes'
+
+reset_fixture
+replace_once '          node deploy/supply-chain/verify-web-static-root.mjs "$static_root"' \
+  '          true # final OCI static-root verification removed' \
+  "$fixture/.github/workflows/supply-chain-release.yml"
+expect_rejected 'approved Web OCI stopped verifying its complete static root against release-manifest'
 
 reset_fixture
 replace_once '不得保存长期 AWS access key' '允许保存长期 AWS access key' "$fixture/deploy/supply-chain/README.md"

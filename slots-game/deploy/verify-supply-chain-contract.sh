@@ -142,8 +142,9 @@ require_line '# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813
 # Docker ARG 在这里按 Dockerfile 字面量校验，不能让当前 shell 展开。
 # shellcheck disable=SC2016
 require_line 'FROM ${NODE_IMAGE} AS dependencies' "$web_dockerfile"
+test "$(grep -F -x -c -- '    npm ci --ignore-scripts' "$web_dockerfile" || true)" -eq 1 ||
+  fail 'Web dependency installation must disable npm lifecycle scripts exactly once'
 require_line 'FROM dependencies AS static-conformance-build' "$web_dockerfile"
-require_line 'RUN --network=none npm run build' "$web_dockerfile"
 require_line 'FROM dependencies AS release-config-build' "$web_dockerfile"
 require_line 'FROM release-config-build AS release-build' "$web_dockerfile"
 require_line 'ARG VITE_RGS_BASE_URL' "$web_dockerfile"
@@ -160,7 +161,16 @@ require_line 'COPY deploy/web/nginx.conf deploy/web/content-security-policy.mjs 
 require_fixed 'node /src/release-web/render-release-nginx.mjs \' "$web_dockerfile"
 require_fixed '--rgs-base-url "$VITE_RGS_BASE_URL" \' "$web_dockerfile"
 require_fixed '--host-origin "$VITE_RGS_HOST_ORIGIN" && \' "$web_dockerfile"
-require_fixed 'npm run build && \' "$web_dockerfile"
+test "$(grep -F -c -- 'npm --ignore-scripts run build' "$web_dockerfile" || true)" -eq 2 ||
+  fail 'both Web build stages must disable npm pre/post lifecycle scripts'
+test "$(grep -F -c -- 'node ./scripts/generate-third-party-notices.mjs --check' "$web_dockerfile" || true)" -eq 2 ||
+  fail 'both Web build stages must retain the explicit license check'
+test "$(grep -F -c -- 'node ./scripts/verify-asset-provenance.mjs' "$web_dockerfile" || true)" -eq 2 ||
+  fail 'both Web build stages must retain the explicit asset provenance check'
+test "$(grep -F -c -- 'node ./scripts/finalize-production-assets.mjs --check' "$web_dockerfile" || true)" -eq 3 ||
+  fail 'Web builds and approval must each verify the complete dist tree'
+test "$(grep -F -c -- 'node ./scripts/verify-production-javascript-bundles.mjs' "$web_dockerfile" || true)" -eq 2 ||
+  fail 'both Web builds must re-verify JavaScript after npm returns'
 require_fixed 'RELEASE_ASSET_APPROVAL_FILE=/run/secrets/release_asset_approval \' "$web_dockerfile"
 require_fixed 'node ./scripts/verify-release-asset-approval.mjs' "$web_dockerfile"
 # 配置正向门禁只能继承未接触审批 secret 的 release-config-build，且最终产物不得包含 dist。
@@ -190,6 +200,8 @@ if printf '%s\n' "$release_config_stage" | grep -F 'release_asset_approval' >/de
 fi
 printf '%s\n' "$release_approval_stage" | grep -F 'verify-release-asset-approval.mjs' >/dev/null \
   || fail 'release-build must retain the real external approval gate'
+printf '%s\n' "$release_approval_stage" | grep -F 'finalize-production-assets.mjs --check' >/dev/null \
+  || fail 'release-build must re-verify the complete dist tree before approval'
 if printf '%s\n' "$config_conformance_stage" | grep -Ei '/usr/share/nginx/html|release_asset_approval|COPY.*dist' >/dev/null; then
   fail 'config-conformance must contain neither release content nor approval material'
 fi
@@ -201,10 +213,13 @@ require_line 'FROM ${NGINX_IMAGE} AS runtime' "$web_dockerfile"
 require_line 'COPY --from=release-build --chown=0:0 /src/web/release-nginx.conf /etc/nginx/conf.d/default.conf' "$web_dockerfile"
 require_line 'COPY --from=release-build --chown=0:0 /src/web/dist/ /usr/share/nginx/html/' "$web_dockerfile"
 require_line 'RUN --network=none nginx -t' "$web_dockerfile"
+require_line 'LABEL org.opencontainers.image.title="primal-rampage-web" \' "$web_dockerfile"
 last_web_stage=$(awk '/^FROM[[:space:]]+/ { stage = $NF } END { print stage }' "$web_dockerfile")
 test "$last_web_stage" = runtime || fail 'web runtime must remain the default final Docker target'
 require_line '    "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",' "$web_package_json"
 require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' "$makefile"
+require_regex '^[[:space:]]+node --test deploy/supply-chain/verify-release-version\.test\.mjs$' "$makefile"
+require_regex '^[[:space:]]+node deploy/supply-chain/verify-release-version\.mjs$' "$makefile"
 require_line 'verify-hardening-checklist:' "$makefile"
 require_regex '^[[:space:]]+node --test scripts/verify-hardening-checklist\.test\.mjs$' "$makefile"
 require_regex '^[[:space:]]+node scripts/verify-hardening-checklist\.mjs$' "$makefile"
@@ -297,16 +312,17 @@ fi
 checkout_sha='3d3c42e5aac5ba805825da76410c181273ba90b1'
 setup_go_sha='d35c59abb061a4a6fb18e82ac0862c26744d6ab5'
 setup_node_sha='49933ea5288caeca8642d1e84afbd3f7d6820020'
-upload_artifact_sha='ea165f8d65b6e75b540449e92b4886f43607fa02'
+upload_artifact_sha='043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
 
 require_line "        uses: actions/checkout@$checkout_sha # v7.0.1" "$backend_workflow"
 test "$(grep -F -c -- '          lfs: true' "$backend_workflow" || true)" -eq 1 ||
   fail 'backend workflow must materialize the reviewed LFS source exactly once'
 test "$(grep -F -c -- '          persist-credentials: false' "$backend_workflow" || true)" -eq 1 ||
   fail 'backend workflow must remove checkout credentials before repository code runs'
-require_line "        uses: actions/setup-go@$setup_go_sha" "$backend_workflow"
-require_line "        uses: actions/upload-artifact@$upload_artifact_sha" "$backend_workflow"
-require_line "        uses: actions/setup-node@$setup_node_sha" "$frontend_workflow"
+require_line "        uses: actions/setup-go@$setup_go_sha # v5.5.0" "$backend_workflow"
+test "$(grep -F -x -c -- "        uses: actions/upload-artifact@$upload_artifact_sha # v7.0.1" "$backend_workflow" || true)" -eq 2 ||
+  fail 'backend workflow must use the reviewed artifact uploader exactly twice'
+require_line "        uses: actions/setup-node@$setup_node_sha # v4.4.0" "$frontend_workflow"
 require_line '        run: make verify-supply-chain-contract' "$backend_workflow"
 require_line '        run: make verify-backend' "$backend_workflow"
 test "$(grep -F -c 'docker cp "$runtime_container:/THIRD_PARTY_NOTICES.txt"' "$backend_workflow" || true)" -eq 1 ||

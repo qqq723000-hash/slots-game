@@ -24,7 +24,7 @@ describe("生产资产边界", () => {
     expect(pkg.scripts["assets:provenance-check"]).toContain("verify-asset-provenance.mjs");
     expect(inventory.policy).toBe("DENY_COMMERCIAL_RELEASE_WITHOUT_EXTERNAL_EXACT_HASH_APPROVAL");
     expect(source).toContain("isProtectedReleaseAsset");
-    expect(source).toContain("public tree contains documentation or evidence files");
+    expect(source).toContain("public tree contains forbidden evidence or credential files");
   });
 
   it("发布脚本必须排除源码映射、说明文件与证据目录", () => {

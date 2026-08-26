@@ -119,6 +119,9 @@ jobs:
       - name: Validate protected release identity inputs
         run: ./deploy/supply-chain/release-sign.sh validate-build
 
+      - name: Require empty Unreleased notes for the formal version
+        run: node deploy/supply-chain/verify-release-version.mjs --formal
+
       - name: Require clean protected source tree
         run: test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
@@ -353,6 +356,9 @@ jobs:
             rgs-migrator) target=rgs-migrator ;;
             *) echo 'RGS build job received a non-RGS artifact' >&2; exit 2 ;;
           esac
+          release_version="${SUPPLY_CHAIN_IMAGE_TAG#v}"
+          test "v$release_version" = "$SUPPLY_CHAIN_IMAGE_TAG"
+          test "$release_version" = "$(tr -d '\n' < VERSION)"
           image_created=$(git show --no-patch --format=%cI "$GITHUB_SHA")
           docker buildx version > "$SUPPLY_CHAIN_REPORT_DIR/docker-buildx-version.txt"
           docker buildx build --builder "${{ steps.buildx.outputs.name }}" \
@@ -361,7 +367,7 @@ jobs:
             --build-arg "OCI_IMAGE_CREATED=$image_created" \
             --build-arg "OCI_IMAGE_REVISION=$GITHUB_SHA" \
             --build-arg "OCI_IMAGE_SOURCE=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            --build-arg "OCI_IMAGE_VERSION=$SUPPLY_CHAIN_IMAGE_TAG" \
+            --build-arg "OCI_IMAGE_VERSION=$release_version" \
             --tag "$local_ref" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
@@ -487,7 +493,7 @@ jobs:
           install: true
 
       - name: Set up the reviewed Node.js runtime for exact Web byte verification
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.22.0
 
@@ -505,6 +511,9 @@ jobs:
           chmod 0600 "$approval_file"
           printf '%s' "$WEB_RELEASE_ASSET_APPROVAL" > "$approval_file"
           approval_sha256=$(sha256sum "$approval_file" | awk '{ print $1 }')
+          release_version="${SUPPLY_CHAIN_IMAGE_TAG#v}"
+          test "v$release_version" = "$SUPPLY_CHAIN_IMAGE_TAG"
+          test "$release_version" = "$(tr -d '\n' < VERSION)"
           local_ref="slots-release-bundle:${SUPPLY_CHAIN_ARTIFACT}-${GITHUB_SHA}"
           docker buildx version > "$SUPPLY_CHAIN_REPORT_DIR/docker-buildx-version.txt"
           docker buildx build --builder "${{ steps.buildx.outputs.name }}" \
@@ -513,7 +522,7 @@ jobs:
             --build-arg VITE_RGS_BET_OPTIONS_MINOR="$RGS_BET_OPTIONS_MINOR" \
             --build-arg VITE_RGS_DEFAULT_BET_MINOR="$RGS_DEFAULT_BET_MINOR" \
             --build-arg VITE_RGS_HOST_ORIGIN="$RGS_HOST_ORIGIN" \
-            --build-arg WEB_RELEASE_VERSION="$SUPPLY_CHAIN_IMAGE_TAG" \
+            --build-arg WEB_RELEASE_VERSION="$release_version" \
             --build-arg WEB_RELEASE_REVISION="$GITHUB_SHA" \
             --secret "id=release_asset_approval,src=$approval_file" \
             --tag "$local_ref" \
@@ -577,6 +586,7 @@ jobs:
           docker cp "$container_id:/usr/share/nginx/html/." "$static_root"
           docker rm "$container_id" >/dev/null
           container_id=
+          node deploy/supply-chain/verify-web-static-root.mjs "$static_root"
           VITE_RGS_BASE_URL="$RGS_BASE_URL" \
           VITE_RGS_BET_OPTIONS_MINOR="$RGS_BET_OPTIONS_MINOR" \
           VITE_RGS_DEFAULT_BET_MINOR="$RGS_DEFAULT_BET_MINOR" \

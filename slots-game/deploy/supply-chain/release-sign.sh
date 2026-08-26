@@ -5,7 +5,9 @@
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repository_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
 tool_file="$script_dir/tool-images.env"
+version_file="$repository_root/VERSION"
 
 fail() {
   printf '%s\n' "supply-chain release: $*" >&2
@@ -51,6 +53,12 @@ validate_release_inputs() {
     *) fail 'release signing requires a protected tag ref' ;;
   esac
   printf '%s\n' "$GITHUB_SHA" | grep -Eq '^[0-9a-f]{40}$' || fail 'GITHUB_SHA must be a full commit SHA'
+  test -f "$version_file" && test ! -L "$version_file" || fail 'VERSION must be a regular file'
+  release_version=$(sed -n '1p' "$version_file")
+  printf '%s\n' "$release_version" | cmp -s - "$version_file" || \
+    fail 'VERSION must contain exactly one LF-terminated line'
+  printf '%s\n' "$release_version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || \
+    fail 'VERSION must be canonical MAJOR.MINOR.PATCH SemVer'
   case "$SUPPLY_CHAIN_ARTIFACT" in
     rgs-runtime|rgs-migrator)
       test -z "${RGS_BASE_URL-}${RGS_BET_OPTIONS_MINOR-}${RGS_DEFAULT_BET_MINOR-}${RGS_HOST_ORIGIN-}" || \
@@ -73,6 +81,7 @@ validate_release_inputs() {
     grep -Eq '^[a-z0-9][a-z0-9._-]{0,127}$' || fail 'SUPPLY_CHAIN_IMAGE_TAG is not a canonical OCI tag'
   test "$SUPPLY_CHAIN_IMAGE_TAG" != latest || fail 'the mutable latest tag is forbidden'
   test "$SUPPLY_CHAIN_IMAGE_TAG" = "$GITHUB_REF_NAME" || fail 'image tag must exactly match the protected Git tag name'
+  test "$GITHUB_REF_NAME" = "v$release_version" || fail 'protected Git tag must exactly match VERSION'
 
   printf '%s\n' "$SUPPLY_CHAIN_REGISTRY" | \
     grep -Eq '^[a-z0-9][a-z0-9.-]*([:][0-9]{1,5})?$' || \

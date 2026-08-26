@@ -21,8 +21,12 @@ RUN --mount=type=cache,target=/root/.npm \
 
 FROM dependencies AS static-conformance-build
 COPY web/ ./
-RUN --network=none npm run build
 RUN --network=none \
+    node ./scripts/generate-third-party-notices.mjs --check && \
+    node ./scripts/verify-asset-provenance.mjs && \
+    npm --ignore-scripts run build && \
+    node ./scripts/finalize-production-assets.mjs --check && \
+    node ./scripts/verify-production-javascript-bundles.mjs && \
     test -s /src/web/dist/THIRD_PARTY_NOTICES.txt && \
     cmp /src/web/public/THIRD_PARTY_NOTICES.txt /src/web/dist/THIRD_PARTY_NOTICES.txt
 
@@ -43,10 +47,14 @@ RUN --network=none \
       --output /src/web/release-nginx.conf \
       --rgs-base-url "$VITE_RGS_BASE_URL" \
       --host-origin "$VITE_RGS_HOST_ORIGIN" && \
+    node ./scripts/generate-third-party-notices.mjs --check && \
+    node ./scripts/verify-asset-provenance.mjs && \
     WEB_RELEASE_REQUIRE_IDENTITY=1 \
     WEB_RELEASE_VERSION="$WEB_RELEASE_VERSION" \
     WEB_RELEASE_REVISION="$WEB_RELEASE_REVISION" \
-      npm run build && \
+      npm --ignore-scripts run build && \
+    node ./scripts/finalize-production-assets.mjs --check && \
+    node ./scripts/verify-production-javascript-bundles.mjs && \
     test -s /src/web/dist/index.html && \
     test -s /src/web/dist/release-manifest.json && \
     test -s /src/web/dist/THIRD_PARTY_NOTICES.txt && \
@@ -55,6 +63,10 @@ RUN --network=none \
 FROM release-config-build AS release-build
 # 真实 runtime 只能在同一构建产物通过外部精确素材授权后继续；CI 配置门禁不得进入本层。
 RUN --network=none \
+    --mount=type=bind,from=release-config-build,source=/src/web,target=/src/web,readonly \
+    node ./scripts/finalize-production-assets.mjs --check
+RUN --network=none \
+    --mount=type=bind,from=release-config-build,source=/src/web,target=/src/web,readonly \
     --mount=type=secret,id=release_asset_approval,required=true,target=/run/secrets/release_asset_approval \
     RELEASE_ASSET_APPROVAL_FILE=/run/secrets/release_asset_approval \
       node ./scripts/verify-release-asset-approval.mjs
@@ -137,7 +149,7 @@ USER 101:101
 RUN --network=none nginx -t
 
 # 标签只暴露已通过发布清单严格校验的公开版本与完整提交摘要，不写入构建时间或宿主信息。
-LABEL org.opencontainers.image.title="iron-colossus-web" \
+LABEL org.opencontainers.image.title="primal-rampage-web" \
       org.opencontainers.image.version="${WEB_RELEASE_VERSION}" \
       org.opencontainers.image.revision="${WEB_RELEASE_REVISION}"
 

@@ -41,6 +41,19 @@ HIGH/CRITICAL 漏洞都会使作业失败。需要豁免时，必须先扩展成
 所有工具镜像引用集中在 [`tool-images.env`](tool-images.env)，同时固定可读版本标签和
 64 位 SHA-256 多架构清单 digest。更新工具必须作为独立安全变更复核，不能只改标签。
 
+## 版本与仓库治理门禁
+
+`VERSION` 是正式交付版本的机器事实源；`web/package.json`、根 package-lock 条目、Helm Chart、
+变更记录和发布示例必须与其一致。普通 `make verify-supply-chain-contract` 允许在“未发布”段记录
+待发变更，但受保护 Tag 发布会额外执行 `verify-release-version.mjs --formal`，要求该段为空且
+`GITHUB_REF_NAME` 精确等于 `v<VERSION>`。历史 Tag 不得移动；被撤回的版本保留审计身份，通过
+Release 撤回标记和下游允许列表禁止上线。
+
+仓库级 Dependabot 每周覆盖固定 SHA 的 GitHub Actions、Go module、npm，以及六个带锁文件的
+Terraform 根；PR dependency review 拒绝新增 HIGH/CRITICAL 漏洞，CodeQL 以最小
+`security-events: write` 权限分析 Go 与 JavaScript/TypeScript。结构化 Issue 表单和 `SUPPORT.md`
+只提供普通支持与私密安全入口，不承诺生产 SLA，也禁止公开上传秘密、真实业务数据、原始抓包或日志。
+
 仓库级 CI 位于 `.github/workflows/supply-chain.yml`：
 
 1. daemon-independent 静态门禁、签名输入校验、scanner 资产负向测试与多项策略篡改测试；
@@ -85,6 +98,39 @@ Terraform 分别写入 `trivy-terraform-dev.json`、`trivy-terraform-staging.jso
 任一报告解析类型变化、阻断级发现、额外/缺失目标、清单目录逃逸、未跟踪残留或链接替换都会失败关闭。
 
 ## Provenance、SBOM attestation 与镜像签名
+
+### GitHub 托管侧必需设置
+
+以下控制必须由仓库管理员在 GitHub 托管侧配置并通过 API 回读留证；工作流 YAML 只能声明调用方，
+不能证明设置已经启用：
+
+- 保护 `main`，要求评审、禁止直接/强制推送，并把全部 conformance、dependency review 和 CodeQL
+  结果设为 required checks；检查名称变化时必须同步保护规则；
+- 保护 `v*` Tag，禁止创建后删除、移动或覆盖；启用不可变 Releases，撤回版本只增加显著撤回标记，
+  不改写历史 Tag；
+- Actions 只允许组织批准的 Action/可复用工作流，保持完整 SHA 固定，并要求所有外部 fork 的
+  每次工作流运行均先由维护者审批（`all_external_contributors`）；
+- 启用 Private vulnerability reporting、Dependabot alerts/security updates、secret scanning 与
+  push protection，并确认 CodeQL SARIF 和依赖图在仓库 Security 页可回读；
+- 为 `supply-chain-web-approval` 与 `supply-chain-release` 配置互相独立的 required reviewers，
+  启用防自审和受保护 Tag deployment policy；逐项核对真实 Environment variables/Secrets，禁止
+  用 repository/organization secret 绕过独立素材审批，也禁止长期 AWS access key；
+- GitHub Pages 的 build source 必须为 GitHub Actions；`github-pages` Environment 要求仓库
+  所有者复核精确试玩产物，并只允许 `main` 部署。该审批是部署审计记录，
+  不替代素材授权链、商标证明或商业许可。
+
+管理员验收记录至少应包含保护规则、required checks、Tag/Release 不可变状态、安全功能、Actions
+策略、四个 Environment 的 reviewer/防自审/部署分支/变量归属的 API 回读结果。当前仓库无法自行创建或证明
+这些外部输入；任一项未回读通过都属于发布阻断。
+
+Pages 发布另外使用两个互相独立的 Environment：
+
+1. `pages-demo-asset-approval` 只允许受保护 `main`，由素材/法务责任人复核，并仅保存
+   规范审批 JSON 的 Base64 编码 `STATIC_DEMO_ASSET_APPROVAL_B64`；该审批必须精确覆盖
+   `dist-demo/release-manifest.json` 中全部受保护文件，`jurisdictions` 必须显式包含
+   `PUBLIC-INTERNET`，不得使用仓库内占位文件或局部辖区授权。
+2. `github-pages` 只允许受保护 `main`，不保存 Secret；它只审批已通过上述精确哈希
+   校验的 Pages artifact 是否部署。审批本身不构成素材权利链证明。
 
 `.github/workflows/supply-chain-release.yml` 只接受 `workflow_dispatch`。上线前管理员必须在
 GitHub 仓库设置中**预先**创建以下两个 Environment；仅在 YAML 中引用名称不能证明审批规则
