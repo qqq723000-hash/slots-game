@@ -23,10 +23,12 @@ import {
   betTickerWindow,
   bigWinCongratulationsPresentation,
   freeSpinConclusionPresentation,
+  gameMenuTabNavigationIndex,
   jackpotValuesForBet,
   isAutoplayFeatureOwnedSpinMode,
   ordinaryWinInformationPresentation,
   nextWheelHyperspinFrame,
+  paytableAwardMinorForBet,
   primarySpinControlPresentation,
   parseAutoPlayStopSettings,
   persistAutoPlayStopSettings,
@@ -59,6 +61,76 @@ describe("browser form-field diagnostics", () => {
     for (const field of fields) {
       expect(field).toMatch(/\b(?:id|name)\s*=/);
     }
+  });
+});
+
+describe("game menu responsive navigation", () => {
+  it("uses Left/Right on top tabs and Up/Down on the landscape rail", () => {
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowLeft", "horizontal")).toBe(0);
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowRight", "horizontal")).toBe(2);
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowUp", "horizontal")).toBeNull();
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowUp", "vertical")).toBe(0);
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowDown", "vertical")).toBe(2);
+    expect(gameMenuTabNavigationIndex(1, 3, "ArrowRight", "vertical")).toBeNull();
+  });
+
+  it("isolates tab scroll memory and always enters PAYTABLE at author position zero", () => {
+    const tab = (name: "settings" | "paytable" | "rules") => ({
+      dataset: { menuTab: name },
+      classList: { toggle: vi.fn() },
+      setAttribute: vi.fn(),
+      focus: vi.fn(),
+      tabIndex: -1,
+    });
+    const panel = (name: "settings" | "paytable" | "rules") => ({
+      dataset: { menuPanel: name },
+      hidden: false,
+      inert: false,
+    });
+    const content = { scrollTop: 920 };
+    const positions = { settings: 25, paytable: 0, rules: 140 };
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    Object.assign(overlay as unknown as Record<string, unknown>, {
+      activeMenuTab: "paytable",
+      gameMenu: { dataset: { open: "true" } },
+      gameMenuContent: content,
+      gameMenuScrollPositions: positions,
+      gameMenuTabs: [tab("settings"), tab("paytable"), tab("rules")],
+      gameMenuPanels: [panel("settings"), panel("paytable"), panel("rules")],
+      panelLifecycle: new UiPanelLifecycle(),
+      scheduleObservedLayoutSync: vi.fn(),
+    });
+    const select = (overlay as unknown as {
+      selectGameMenuTab(value: "settings" | "paytable" | "rules"): void;
+    }).selectGameMenuTab.bind(overlay);
+
+    select("rules");
+    expect(positions.paytable).toBe(920);
+    expect(content.scrollTop).toBe(140);
+    content.scrollTop = 510;
+    select("paytable");
+    expect(positions.rules).toBe(510);
+    expect(content.scrollTop).toBe(0);
+
+    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
+    expect(source).toMatch(/!open && wasOpen[\s\S]*gameMenuScrollPositions\[closingTab\][\s\S]*scrollTop/);
+    expect(source).toMatch(/if \(open\)[\s\S]*tab === "paytable"[\s\S]*\? 0[\s\S]*gameMenuScrollPositions\[tab\]/);
+  });
+
+  it("keeps Home/End and wrapping on both axes", () => {
+    for (const axis of ["horizontal", "vertical"] as const) {
+      expect(gameMenuTabNavigationIndex(0, 3, "Home", axis)).toBe(0);
+      expect(gameMenuTabNavigationIndex(0, 3, "End", axis)).toBe(2);
+    }
+    expect(gameMenuTabNavigationIndex(0, 3, "ArrowLeft", "horizontal")).toBe(2);
+    expect(gameMenuTabNavigationIndex(2, 3, "ArrowDown", "vertical")).toBe(0);
+  });
+
+  it("renders mobile hand mode separately from the desktop Spacebar setting", () => {
+    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
+    expect(source).toContain('data-setting="hand-mode"');
+    expect(source).toContain("<strong>Left hand mode</strong>");
+    expect(source).toContain('data-setting="spacebar"');
   });
 });
 
@@ -1052,17 +1124,56 @@ describe("game control configuration", () => {
     expect(new Set(PAYTABLE_WILD_ENTRIES.map(({ asset }) => asset)).size).toBe(8);
   });
 
-  it("publishes the captured Base Ways paytable in ascending award order", () => {
-    expect(BASE_PAYTABLE_ENTRIES.map(({ symbol, label, multiplier }) => ({
-      symbol, label, multiplier,
+  it("publishes PAYING SYMBOLS in captured row order without engine identifiers", () => {
+    expect(BASE_PAYTABLE_ENTRIES.map(({ label, awardTenths, widthPx, heightPx }) => ({
+      label, awardTenths, widthPx, heightPx,
     }))).toEqual([
-      { symbol: "PRISM", label: "Q", multiplier: 0.1 },
-      { symbol: "ORBIT", label: "K", multiplier: 0.3 },
-      { symbol: "PULSE", label: "Helmet", multiplier: 0.8 },
-      { symbol: "NOVA", label: "Radio", multiplier: 1 },
-      { symbol: "TANK", label: "Tank", multiplier: 1.5 },
-      { symbol: "CIRCUIT", label: "Jet", multiplier: 2 },
+      { label: "Jet", awardTenths: 20, widthPx: 150.8, heightPx: 110.2 },
+      { label: "Tank", awardTenths: 15, widthPx: 150.8, heightPx: 110.2 },
+      { label: "Radio", awardTenths: 10, widthPx: 124, heightPx: 111.6 },
+      { label: "Helmet", awardTenths: 8, widthPx: 146.25, heightPx: 112.5 },
+      { label: "K", awardTenths: 3, widthPx: 113.1, heightPx: 128.7 },
+      { label: "Q", awardTenths: 1, widthPx: 106.5, heightPx: 127.8 },
     ]);
+    const source = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
+    const payingSymbols = source.slice(
+      source.indexOf("function appendOfficialPayingSymbols"),
+      source.indexOf("function appendOfficialWayWins"),
+    );
+    expect(payingSymbols).not.toMatch(/PRISM|ORBIT|PULSE|NOVA|CIRCUIT|total bet/i);
+    expect(payingSymbols).not.toContain("entry.label);\n    caption");
+  });
+
+  it("derives every x3 amount from the current bet with integer minor-unit arithmetic", () => {
+    expect(BASE_PAYTABLE_ENTRIES.map(({ awardTenths }) => (
+      paytableAwardMinorForBet("100", awardTenths)
+    ))).toEqual(["200", "150", "100", "80", "30", "10"]);
+    expect(paytableAwardMinorForBet("1", 15)).toBe("2");
+    expect(paytableAwardMinorForBet("900719925474099300", 20))
+      .toBe("1801439850948198600");
+    expect(() => paytableAwardMinorForBet("01", 20)).toThrow(/canonical/);
+  });
+
+  it("updates the visible and accessible PAYING SYMBOLS values when total bet changes", () => {
+    const amounts = BASE_PAYTABLE_ENTRIES.map(() => ({ textContent: "—" }));
+    const labels = BASE_PAYTABLE_ENTRIES.map(() => vi.fn());
+    const figures = BASE_PAYTABLE_ENTRIES.map((_, index) => ({
+      dataset: { paytableEntry: String(index) },
+      querySelector: () => amounts[index],
+      setAttribute: labels[index],
+    }));
+    const overlay = Object.create(DomOverlay.prototype) as DomOverlay;
+    Object.assign(overlay as unknown as Record<string, unknown>, {
+      bet: { value: "100" },
+      host: { querySelectorAll: () => figures },
+      moneyFormatter: createMinorUnitFormatter({ currency: "EUR", currencyExponent: 2 }),
+    });
+    (overlay as unknown as { syncPaytableAwards(): void }).syncPaytableAwards();
+
+    expect(amounts.map(({ textContent }) => textContent))
+      .toEqual(["2.00", "1.50", "1.00", "0.80", "0.30", "0.10"]);
+    expect(labels[0]).toHaveBeenCalledWith("aria-label", "Jet, x3, 2.00");
+    expect(labels[5]).toHaveBeenCalledWith("aria-label", "Q, x3, 0.10");
   });
 
   it("uses the exact official Way Wins description instead of a derived payline claim", () => {
@@ -1073,12 +1184,12 @@ describe("game control configuration", () => {
 });
 
 describe("captured desktop HUD geometry", () => {
-  it("describes the final 24px footer and authored info-line projection", () => {
+  it("describes the live 16px footer and authored info-line projection", () => {
     const { stageScale, statusbar, infoLine } = PRIMAL_DESKTOP_UI_GEOMETRY;
 
     expect(stageScale).toBe(0.8);
-    expect(statusbar.height).toBe(24);
-    expect(statusbar.fontSize).toBe(14.4);
+    expect(statusbar.height).toBe(16);
+    expect(statusbar.fontSize).toBe(12.8);
     expect(statusbar.gameNameFontSize).toBe(8);
     expect(statusbar.atlasWidth).toBe(1_865);
     expect(statusbar.atlasHeight).toBe(60);
@@ -1159,8 +1270,8 @@ describe("captured desktop HUD geometry", () => {
     expect(720 - dockBottom - dockHeight / 2).toBe(673.5);
 
     expect(finalCascade).toContain("width: var(--utility-hit-size, 35px);");
-    expect(finalCascade).toContain(
-      "var(--mobile-utility-control-size, 44px) + var(--mobile-control-gap, 0px)",
+    expect(finalCascade).toMatch(
+      /var\(--mobile-utility-control-size, 44px\) \+\s*var\(--mobile-utility-gap, var\(--mobile-control-gap, 0px\)\)/,
     );
     expect(finalCascade).toContain("var(--utility-hit-size, 35px) - var(--utility-hit-step)");
     expect(finalCascade).toContain(

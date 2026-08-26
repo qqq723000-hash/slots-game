@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertSessionStatusCadence,
+  BROWSER_FIXTURE_ENGINE_RULES_VERSION,
   createControlledRgsTransactionFixture,
   economicTransactionStateEqual,
   MIN_SESSION_STATUS_INTERVAL_MS,
@@ -15,7 +16,7 @@ const baseOptions = Object.freeze({
   sessionId: "browser-smoke",
   initialBalanceMinor: "1000",
   betMinor: "200",
-  finalBalanceMinor: "800",
+  finalBalanceMinor: "850",
 });
 
 const binding = Object.freeze({
@@ -107,7 +108,12 @@ describe("production browser transaction fixture", () => {
         sessionId: baseOptions.sessionId,
       },
     ));
-    const token = (decodedBody(exchange).data as { accessToken: string }).accessToken;
+    const exchangeData = decodedBody(exchange).data as {
+      accessToken: string;
+      session: { engineRulesVersion: string };
+    };
+    const token = exchangeData.accessToken;
+    expect(exchangeData.session.engineRulesVersion).toBe(BROWSER_FIXTURE_ENGINE_RULES_VERSION);
     const sessionStatus = fixture.responseForPausedRequest(paused(
       `${root}/sessions/status`,
       "POST",
@@ -138,6 +144,12 @@ describe("production browser transaction fixture", () => {
       sequence: string;
       resultHash: string;
       balanceMinor: string;
+      totalWinMinor: string;
+      wins: Array<{
+        nominalAmountMinor: string;
+        amountMinor: string;
+        pathAwards: Array<{ nominalAmountMinor: string; amountMinor: string }>;
+      }>;
     };
     fixture.responseForPausedRequest(paused(
       `${root}/results/acknowledgements`,
@@ -151,7 +163,18 @@ describe("production browser transaction fixture", () => {
       `Bearer ${token}`,
     ));
 
-    expect(result.balanceMinor).toBe("800");
+    expect(result.balanceMinor).toBe("850");
+    expect(result.totalWinMinor).toBe("50");
+    expect(result.wins).toEqual([
+      expect.objectContaining({
+        nominalAmountMinor: "50",
+        amountMinor: "50",
+        pathAwards: [expect.objectContaining({
+          nominalAmountMinor: "50",
+          amountMinor: "50",
+        })],
+      }),
+    ]);
     expect(fixture.snapshot()).toMatchObject({
       exchangeCount: 1,
       sessionStatusCount: 1,

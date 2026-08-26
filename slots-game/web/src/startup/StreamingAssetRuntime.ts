@@ -8,6 +8,7 @@ import {
 import {
   AssetPackageAbortedError,
   StreamingAssetPackageManager,
+  defaultStreamingAssetFetch,
   validateAssetPackageManifest,
   type AssetPackageManifest,
   type AssetPackageSnapshot,
@@ -271,7 +272,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
   constructor(options: StreamingAssetRuntimeOptions) {
     this.channel = options.channel;
     this.mode = assetStreamingMode(options.mode);
-    this.fetcher = options.fetch ?? fetch;
+    this.fetcher = options.fetch ?? defaultStreamingAssetFetch();
     this.manifestUrl =
       options.manifestUrl ?? streamingPackageManifestUrl(options.channel);
     this.maxOperationPayloadBytes = positiveInteger(
@@ -505,6 +506,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
   ): AcquiredAssetPackage {
     let underlying: AcquiredAssetPackage | null = underlyingLease;
     const registry = this.activeConsumerLeases;
+    const publish = (): void => this.publish();
     const id = underlyingLease.id;
     const packageIds = Object.freeze([...underlyingLease.packageIds]);
     let wrapper!: AcquiredAssetPackage;
@@ -524,10 +526,13 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
         if (!lease) return false;
         underlying = null;
         registry.delete(wrapper);
-        return lease.release();
+        const released = lease.release();
+        publish();
+        return released;
       },
     });
     registry.add(wrapper);
+    publish();
     return wrapper;
   }
 
@@ -536,6 +541,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
   ): AcquiredAssetPackageStage {
     let underlying: AcquiredAssetPackageStage | null = underlyingLease;
     const registry = this.activeConsumerLeases;
+    const publish = (): void => this.publish();
     const stage = underlyingLease.stage;
     const packageIds = Object.freeze([...underlyingLease.packageIds]);
     let wrapper!: AcquiredAssetPackageStage;
@@ -555,10 +561,13 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
         if (!lease) return false;
         underlying = null;
         registry.delete(wrapper);
-        return lease.release();
+        const released = lease.release();
+        publish();
+        return released;
       },
     });
     registry.add(wrapper);
+    publish();
     return wrapper;
   }
 

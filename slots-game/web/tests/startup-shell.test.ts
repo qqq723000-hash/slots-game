@@ -99,6 +99,9 @@ describe("startup shell contract", () => {
       "this.layout = new ResponsiveLayout(shell.safeArea ?? shell.viewport, frame",
     );
     expect(controllerSource).toContain("this.ui.setResponsiveLayout(snapshot)");
+    expect(controllerSource).toContain(
+      "this.ui.onHandModeChange((handMode) => this.layout.setHandMode(handMode))",
+    );
     expect(controllerSource).not.toContain("}, { channel: assetChannel });");
   });
 

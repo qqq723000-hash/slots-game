@@ -142,6 +142,43 @@ describe("validateSpinResultAgainstOrigin", () => {
     })).toThrow(/without settled Rage|matching Primal Wheel/);
   });
 
+  it.each(["EXPANSION", "OVERDRIVE"] as const)(
+    "carries a paid triggering Base win into the %s feature state",
+    (mode) => {
+      const payingTriggerGrid: GridCell[][] = [
+        [{ symbol: "ORBIT" }, { symbol: "PULSE" }, { symbol: "SURGE" }],
+        [{ symbol: "ORBIT" }, { symbol: "NOVA" }, { symbol: "SURGE" }],
+        [{ symbol: "ORBIT" }, { symbol: "TANK" }, { symbol: "SURGE" }],
+      ];
+      const events: SpinResult["events"] = [
+        GUARANTEED_RAGE_COLLECTION,
+        { type: "wheel.started" },
+        { type: "wheel.awarded", outcome: mode },
+        { type: "free_spins.started", mode, awarded: 8 },
+      ];
+      const valid = spinResult({
+        chargedBetMinor: "100",
+        totalWinMinor: "240",
+        grid: payingTriggerGrid,
+        wins: [{
+          id: "triggering-base-win",
+          symbol: "ORBIT",
+          nominalAmountMinor: "240",
+          amountMinor: "240",
+          cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
+        }],
+        events,
+        featureState: featureState(mode, 8, 0, "240"),
+      });
+
+      expect(() => validateSpinResultAgainstOrigin(BASE_FEATURE, valid)).not.toThrow();
+      expect(() => validateSpinResultAgainstOrigin(BASE_FEATURE, {
+        ...valid,
+        featureState: featureState(mode, 8, 0, "0"),
+      })).toThrow(/carry this round's paid win/);
+    },
+  );
+
   it("validates canonical INSTANT awards against the submitted bet and BASE projection", () => {
     const valid = spinResult({
       chargedBetMinor: "100",
@@ -463,6 +500,83 @@ describe("validateSpinResultAgainstOrigin", () => {
         valid.events[6]!,
       ],
     })).toThrow(/Duplicate Vault in one King Spin upgrade step/);
+  });
+
+  it("accepts a King Spin cap only after its final Vault award and before optional completion", () => {
+    const cells = [{ reel: 1, row: 1 }] as const;
+    const grid = THREE_ROWS.map((reel, reelIndex) => reel.map((cell, rowIndex) => (
+      reelIndex === 1 && rowIndex === 1
+        ? { symbol: "VAULT" as const, prize: "MINI_2X", multiplier: 20 }
+        : cell
+    )));
+    const awardEvents: SpinResult["events"] = [
+      { type: "vaults.landed", count: 1, cells },
+      { type: "vaults.unlock.started", count: 1, cells },
+      { type: "vault.unlocked", reel: 1, row: 1, prize: "MINI", multiplier: 10 },
+      { type: "vaults.unlock.completed", count: 1, cells },
+      { type: "vaults.upgrade.started", count: 1, step: 1 },
+      {
+        type: "vault.upgraded", reel: 1, row: 1, step: 1,
+        fromMultiplier: 10, toMultiplier: 20, prize: "MINI_2X",
+      },
+      {
+        type: "vault.awarded", reel: 1, row: 1,
+        prize: "MINI_2X", multiplier: 20, amountMinor: "1000",
+      },
+    ];
+    const capEvent = {
+      type: "win_cap.reached" as const,
+      multiplier: 2_500 as const,
+      cumulativeWinMinor: "250000",
+    };
+    const activeOrigin = featureState("OVERDRIVE", 2, 6, "249000");
+    const active = spinResult({
+      grid,
+      totalWinMinor: "1000",
+      events: [...awardEvents, capEvent],
+      featureState: featureState("OVERDRIVE", 1, 7, "250000"),
+    });
+
+    expect(() => validateSpinResultAgainstOrigin(activeOrigin, active)).not.toThrow();
+
+    const terminalOrigin = featureState("OVERDRIVE", 1, 7, "249000");
+    const completed = {
+      type: "free_spins.completed" as const,
+      mode: "OVERDRIVE" as const,
+      awarded: 8,
+      cumulativeWinMinor: "250000",
+    };
+    expect(() => validateSpinResultAgainstOrigin(terminalOrigin, spinResult({
+      grid,
+      totalWinMinor: "1000",
+      events: [...awardEvents, capEvent, completed],
+      featureState: BASE_FEATURE,
+    }))).not.toThrow();
+
+    expect(() => validateSpinResultAgainstOrigin(activeOrigin, {
+      ...active,
+      events: [...awardEvents.slice(0, -1), capEvent, awardEvents.at(-1)!],
+    })).toThrow(/immediately follow the final Vault award/);
+    expect(() => validateSpinResultAgainstOrigin(terminalOrigin, spinResult({
+      grid,
+      totalWinMinor: "1000",
+      events: [...awardEvents, capEvent, { type: "wheel.started" }, completed],
+      featureState: BASE_FEATURE,
+    }))).toThrow(/terminate the result before completion/);
+  });
+
+  it("rejects a cap boundary with no mathematical award after the game is already capped", () => {
+    const origin = featureState("OVERDRIVE", 2, 6, "250000");
+    expect(() => validateSpinResultAgainstOrigin(origin, spinResult({
+      totalWinMinor: "0",
+      wins: [],
+      events: [{
+        type: "win_cap.reached",
+        multiplier: 2_500,
+        cumulativeWinMinor: "250000",
+      }],
+      featureState: featureState("OVERDRIVE", 1, 7, "250000"),
+    }))).toThrow(/positive mathematical award/);
   });
 
   it("conserves an empty or non-triggering Base Rage meter", () => {

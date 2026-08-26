@@ -1638,7 +1638,7 @@ export class RgsGateway implements GameGateway {
       );
       if (!this.isCurrent(generation)) return;
       const current = this.requireSession();
-      if (!sameCompleteBinding(current.binding, sessionBefore.binding)) {
+      if (!sameCompleteSessionIdentity(current, sessionBefore)) {
         throw new RgsProtocolError("RGS session binding changed during status probe");
       }
       if (Date.parse(status.idleDisconnectAt) > Date.parse(current.expiresAt)) {
@@ -2312,7 +2312,7 @@ export class RgsGateway implements GameGateway {
           sessionBefore.binding.sessionId,
         );
         if (exchange.session.status !== "ACTIVE"
-          || !sameCompleteBinding(exchange.session.binding, sessionBefore.binding)) {
+          || !sameCompleteSessionIdentity(exchange.session, sessionBefore)) {
           throw new RgsProtocolError("RGS refresh changed the immutable session binding or status");
         }
         exchange = Object.freeze({
@@ -2365,7 +2365,7 @@ export class RgsGateway implements GameGateway {
     requestBaseline: DecodedRgsSession,
   ): DecodedRgsSession {
     const current = this.requireSession();
-    if (!sameCompleteBinding(current.binding, requestBaseline.binding)) {
+    if (!sameCompleteSessionIdentity(current, requestBaseline)) {
       throw new RgsProtocolError("RGS session binding changed during refresh");
     }
     if (refreshed.revision === current.revision
@@ -2814,6 +2814,14 @@ function sameCompleteBinding(left: Readonly<RgsBinding>, right: Readonly<RgsBind
     && left.currency === right.currency
     && left.currencyExponent === right.currencyExponent
     && left.jurisdiction === right.jurisdiction;
+}
+
+function sameCompleteSessionIdentity(
+  left: Readonly<DecodedRgsSession>,
+  right: Readonly<DecodedRgsSession>,
+): boolean {
+  return left.engineRulesVersion === right.engineRulesVersion
+    && sameCompleteBinding(left.binding, right.binding);
 }
 
 /** 同一 gateway generation 内服务端空闲截止时间只能单调向后移动。 */

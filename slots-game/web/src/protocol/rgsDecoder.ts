@@ -34,6 +34,7 @@ export interface RgsBinding {
 
 export interface DecodedRgsSession {
   readonly binding: RgsBinding;
+  readonly engineRulesVersion: typeof ENGINE_RULES_VERSION;
   readonly status: "ACTIVE" | "BLOCKED" | "CLOSED" | "EXPIRED";
   readonly expiresAt: string;
   readonly idleDisconnectAt: string;
@@ -363,6 +364,7 @@ export function decodeRgsExchange(
     "gameId",
     "definitionVersion",
     "definitionHash",
+    "engineRulesVersion",
     "currency",
     "currencyExponent",
     "jurisdiction",
@@ -376,6 +378,17 @@ export function decodeRgsExchange(
   ] as const;
   exactKeys(rawSession, sessionKeys, sessionKeys, "response.data.session");
   const decodedBinding = binding(rawSession, "response.data.session");
+  const engineRulesVersion = text(
+    rawSession.engineRulesVersion,
+    "response.data.session.engineRulesVersion",
+    1,
+    128,
+  );
+  if (engineRulesVersion !== ENGINE_RULES_VERSION) {
+    throw new RgsProtocolError(
+      `response.data.session.engineRulesVersion must equal ${ENGINE_RULES_VERSION}`,
+    );
+  }
   if (decodedBinding.operatorId !== expectedOperatorId || decodedBinding.sessionId !== expectedSessionId) {
     throw new RgsProtocolError("exchange returned a foreign operator/session binding");
   }
@@ -410,6 +423,7 @@ export function decodeRgsExchange(
     serverTime,
     session: Object.freeze({
       binding: decodedBinding,
+      engineRulesVersion: ENGINE_RULES_VERSION,
       status,
       expiresAt,
       idleDisconnectAt,
@@ -429,9 +443,9 @@ export function rgsSessionOpened(
   const decoded = decodeServerMessage({
     type: "session.opened",
     protocolVersion: 1,
-    // RGS 另行绑定不可变数学定义；共享客户端状态机仍必须证明当前浏览器构建与其他
-    // gateway 使用同一套表现/校验规则版本。
-    engineRulesVersion: ENGINE_RULES_VERSION,
+    // 必须使用 RGS 返回的服务端权威版本；共享解码器会严格拒绝
+    // 与当前浏览器构建 ENGINE_RULES_VERSION 不匹配的会话。
+    engineRulesVersion: exchange.session.engineRulesVersion,
     requestId: exchange.requestId,
     sessionId: exchange.session.binding.sessionId,
     currency: exchange.session.binding.currency,
@@ -575,29 +589,81 @@ function translatedWins(value: unknown): unknown[] {
   return value.map((rawWin, winIndex) => {
     const path = `response.data.wins[${winIndex}]`;
     const decoded = record(rawWin, path);
-    const required = ["id", "symbol", "ways", "amountMinor", "cells", "pathAwards"] as const;
+    const required = [
+      "id",
+      "symbol",
+      "ways",
+      "nominalAmountMinor",
+      "amountMinor",
+      "cells",
+      "pathAwards",
+    ] as const;
     exactKeys(decoded, [...required, "multiplier"], required, path);
     if (!Array.isArray(decoded.pathAwards) || decoded.pathAwards.length < 1 || decoded.pathAwards.length > 512) {
       throw new RgsProtocolError(`${path}.pathAwards must contain 1-512 entries`);
+    }
+    const nominalAmountMinor = decimal(
+      decoded.nominalAmountMinor,
+      `${path}.nominalAmountMinor`,
+      true,
+    );
+    const amountMinor = decimal(decoded.amountMinor, `${path}.amountMinor`);
+    if (BigInt(amountMinor) > BigInt(nominalAmountMinor)) {
+      throw new RgsProtocolError(`${path}.amountMinor must not exceed ${path}.nominalAmountMinor`);
+    }
+    const pathAwards = decoded.pathAwards.map((rawAward, awardIndex) => {
+      const awardPath = `${path}.pathAwards[${awardIndex}]`;
+      const award = record(rawAward, awardPath);
+      const keys = [
+        "cells",
+        "multiplier",
+        "baseAmountMinor",
+        "nominalAmountMinor",
+        "amountMinor",
+      ] as const;
+      exactKeys(award, keys, keys, awardPath);
+      const pathNominalAmountMinor = decimal(
+        award.nominalAmountMinor,
+        `${awardPath}.nominalAmountMinor`,
+      );
+      const pathAmountMinor = decimal(award.amountMinor, `${awardPath}.amountMinor`);
+      if (BigInt(pathAmountMinor) > BigInt(pathNominalAmountMinor)) {
+        throw new RgsProtocolError(
+          `${awardPath}.amountMinor must not exceed ${awardPath}.nominalAmountMinor`,
+        );
+      }
+      return {
+        cells: positions(award.cells, `${awardPath}.cells`, 3, 3),
+        multiplier: positivePresentationInteger(award.multiplier, `${awardPath}.multiplier`),
+        baseAmountMinor: decimal(award.baseAmountMinor, `${awardPath}.baseAmountMinor`),
+        nominalAmountMinor: pathNominalAmountMinor,
+        amountMinor: pathAmountMinor,
+      };
+    });
+    const paidPathTotal = pathAwards.reduce(
+      (total, award) => total + BigInt(award.amountMinor),
+      0n,
+    );
+    if (paidPathTotal !== BigInt(amountMinor)) {
+      throw new RgsProtocolError(`${path}.pathAwards amounts must sum to ${path}.amountMinor`);
+    }
+    const nominalPathTotal = pathAwards.reduce(
+      (total, award) => total + BigInt(award.nominalAmountMinor),
+      0n,
+    );
+    if (nominalPathTotal !== BigInt(nominalAmountMinor)) {
+      throw new RgsProtocolError(
+        `${path}.pathAwards nominal amounts must sum to ${path}.nominalAmountMinor`,
+      );
     }
     const translated: Record<string, unknown> = {
       id: identifier(decoded.id, `${path}.id`),
       symbol: identifier(decoded.symbol, `${path}.symbol`),
       ways: integer(decoded.ways, `${path}.ways`, 1, 512),
-      amountMinor: decimal(decoded.amountMinor, `${path}.amountMinor`, true),
+      nominalAmountMinor,
+      amountMinor,
       cells: positions(decoded.cells, `${path}.cells`, 1, 24),
-      pathAwards: decoded.pathAwards.map((rawAward, awardIndex) => {
-        const awardPath = `${path}.pathAwards[${awardIndex}]`;
-        const award = record(rawAward, awardPath);
-        const keys = ["cells", "multiplier", "baseAmountMinor", "amountMinor"] as const;
-        exactKeys(award, keys, keys, awardPath);
-        return {
-          cells: positions(award.cells, `${awardPath}.cells`, 3, 3),
-          multiplier: positivePresentationInteger(award.multiplier, `${awardPath}.multiplier`),
-          baseAmountMinor: decimal(award.baseAmountMinor, `${awardPath}.baseAmountMinor`),
-          amountMinor: decimal(award.amountMinor, `${awardPath}.amountMinor`),
-        };
-      }),
+      pathAwards,
     };
     if (decoded.multiplier !== undefined) {
       translated.multiplier = positivePresentationInteger(decoded.multiplier, `${path}.multiplier`);
@@ -717,6 +783,12 @@ function translatedEvents(value: unknown): unknown[] {
         return { type, count, reel, row };
       case "free_spin.cap_reached":
         return { type, reel, row };
+      case "win_cap.reached":
+        return {
+          type,
+          multiplier: positivePresentationInteger(multiplier, `${path}.multiplier`),
+          cumulativeWinMinor,
+        };
       case "vaults.upgrade.started":
         return { type, count, step };
       case "vault.upgraded":

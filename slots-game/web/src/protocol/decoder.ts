@@ -18,6 +18,7 @@ import {
 import { ENGINE_RULES_VERSION } from "./messages";
 import {
   LOCKED_VAULT_FACES,
+  PRIMAL_MAX_WIN_MULTIPLIER,
   SYMBOL_IDS,
   WHEEL_INSTANT_MULTIPLIER_BY_TIER,
   type SymbolId,
@@ -329,7 +330,16 @@ function vaultEventCellAddress(
 
 function win(value: unknown, path: string, decodedGrid: GridCell[][]): Win {
   const decoded = record(value, path);
-  exactKeys(decoded, ["id", "symbol", "ways", "amountMinor", "multiplier", "cells", "pathAwards"], path);
+  exactKeys(decoded, [
+    "id",
+    "symbol",
+    "ways",
+    "nominalAmountMinor",
+    "amountMinor",
+    "multiplier",
+    "cells",
+    "pathAwards",
+  ], path);
   if (!Array.isArray(decoded.cells) || decoded.cells.length === 0 || decoded.cells.length > 256) {
     throw new ProtocolDecodeError(`${path}.cells must contain 1-256 entries`);
   }
@@ -347,6 +357,14 @@ function win(value: unknown, path: string, decodedGrid: GridCell[][]): Win {
   }
   const targetSymbol = symbol(decoded.symbol, `${path}.symbol`);
   const amountMinor = money(decoded.amountMinor, `${path}.amountMinor`);
+  // 兼容范围只存在于共享夹具/重放输入：v5 及更早记录没有显式 nominal，
+  // 归一化后下游始终得到完整的 paid facts。实时 RGS 边界会在进入此处前强制要求该字段。
+  const nominalAmountMinor = decoded.nominalAmountMinor === undefined
+    ? amountMinor
+    : money(decoded.nominalAmountMinor, `${path}.nominalAmountMinor`);
+  if (BigInt(amountMinor) > BigInt(nominalAmountMinor)) {
+    throw new ProtocolDecodeError(`${path}.amountMinor must not exceed ${path}.nominalAmountMinor`);
+  }
   const hasWays = decoded.ways !== undefined;
   const hasPathAwards = decoded.pathAwards !== undefined;
   if (hasWays !== hasPathAwards) {
@@ -355,6 +373,7 @@ function win(value: unknown, path: string, decodedGrid: GridCell[][]): Win {
   const result: Win = {
     id: identifier(decoded.id, `${path}.id`),
     symbol: targetSymbol,
+    nominalAmountMinor,
     amountMinor,
     cells,
   };
@@ -379,10 +398,17 @@ function win(value: unknown, path: string, decodedGrid: GridCell[][]): Win {
   const pathCellKeys = new Set<string>();
   const seenPaths = new Set<string>();
   let pathAmountTotal = 0n;
+  let pathNominalAmountTotal = 0n;
   const pathAwards = decoded.pathAwards.map((item, pathIndex): PathAward => {
     const awardPath = `${path}.pathAwards[${pathIndex}]`;
     const award = record(item, awardPath);
-    exactKeys(award, ["cells", "multiplier", "baseAmountMinor", "amountMinor"], awardPath);
+    exactKeys(award, [
+      "cells",
+      "multiplier",
+      "baseAmountMinor",
+      "nominalAmountMinor",
+      "amountMinor",
+    ], awardPath);
     if (!Array.isArray(award.cells) || award.cells.length !== 3) {
       throw new ProtocolDecodeError(`${awardPath}.cells must contain exactly three entries`);
     }
@@ -421,16 +447,32 @@ function win(value: unknown, path: string, decodedGrid: GridCell[][]): Win {
     }
     const baseAmountMinor = money(award.baseAmountMinor, `${awardPath}.baseAmountMinor`);
     const pathAmountMinor = money(award.amountMinor, `${awardPath}.amountMinor`);
+    const pathNominalAmountMinor = award.nominalAmountMinor === undefined
+      ? pathAmountMinor
+      : money(award.nominalAmountMinor, `${awardPath}.nominalAmountMinor`);
     const baseAmount = BigInt(baseAmountMinor);
     const pathAmount = BigInt(pathAmountMinor);
-    if (baseAmount > pathAmount
-      || (pathAmount === 0n && baseAmount !== 0n)
-      || (pathAmount > 0n && baseAmount === 0n)
-      || (multiplier === 1 && baseAmount !== pathAmount)) {
-      throw new ProtocolDecodeError(`${awardPath}.baseAmountMinor is inconsistent with the settled path award`);
+    const pathNominalAmount = BigInt(pathNominalAmountMinor);
+    if (pathAmount > pathNominalAmount) {
+      throw new ProtocolDecodeError(
+        `${awardPath}.amountMinor must not exceed ${awardPath}.nominalAmountMinor`,
+      );
     }
-    pathAmountTotal += BigInt(pathAmountMinor);
-    return { cells: pathCells, multiplier, baseAmountMinor, amountMinor: pathAmountMinor };
+    if (baseAmount > pathNominalAmount
+      || (pathNominalAmount === 0n && baseAmount !== 0n)
+      || (pathNominalAmount > 0n && baseAmount === 0n)
+      || (multiplier === 1 && baseAmount !== pathNominalAmount)) {
+      throw new ProtocolDecodeError(`${awardPath}.baseAmountMinor is inconsistent with the nominal path award`);
+    }
+    pathAmountTotal += pathAmount;
+    pathNominalAmountTotal += pathNominalAmount;
+    return {
+      cells: pathCells,
+      multiplier,
+      baseAmountMinor,
+      nominalAmountMinor: pathNominalAmountMinor,
+      amountMinor: pathAmountMinor,
+    };
   });
   if (result.multiplier !== undefined
     && pathAwards.some((award) => award.multiplier !== result.multiplier)) {
@@ -440,6 +482,11 @@ function win(value: unknown, path: string, decodedGrid: GridCell[][]): Win {
   }
   if (pathAmountTotal !== BigInt(amountMinor)) {
     throw new ProtocolDecodeError(`${path}.pathAwards amounts must sum to ${path}.amountMinor`);
+  }
+  if (pathNominalAmountTotal !== BigInt(nominalAmountMinor)) {
+    throw new ProtocolDecodeError(
+      `${path}.pathAwards nominal amounts must sum to ${path}.nominalAmountMinor`,
+    );
   }
   if (pathCellKeys.size !== aggregateCellKeys.size
     || [...aggregateCellKeys].some((key) => !pathCellKeys.has(key))) {
@@ -500,10 +547,93 @@ function validateVisibleAwardTotal(
   }
 }
 
+function monetaryEventPaidFacts(
+  event: Readonly<FeatureEvent>,
+  betMinor: MoneyMinor,
+): Readonly<{ nominal: bigint; paid: bigint }> | null {
+  if (event.type === "wheel.awarded" && event.outcome === "INSTANT") {
+    return {
+      nominal: BigInt(betMinor) * BigInt(event.multiplier),
+      paid: BigInt(event.amountMinor),
+    };
+  }
+  if (event.type === "vault.awarded") {
+    return {
+      nominal: BigInt(betMinor) * BigInt(event.multiplier),
+      paid: BigInt(event.amountMinor),
+    };
+  }
+  return null;
+}
+
+/** 精确复刻服务端的 Win -> PathAward -> monetary event 预算裁剪顺序。 */
+function validatePaidAwardProjection(
+  decodedWins: readonly Win[],
+  decodedEvents: readonly FeatureEvent[],
+  betMinor: MoneyMinor,
+  totalWinMinor: MoneyMinor,
+): void {
+  const capped = decodedEvents.some((event) => event.type === "win_cap.reached");
+  let remaining = capped ? BigInt(totalWinMinor) : 0n;
+  const settledAmount = (nominal: bigint): bigint => {
+    if (!capped) return nominal;
+    const paid = nominal < remaining ? nominal : remaining;
+    remaining -= paid;
+    return paid;
+  };
+
+  for (const [winIndex, decodedWin] of decodedWins.entries()) {
+    const expectedWinPaid = settledAmount(BigInt(decodedWin.nominalAmountMinor));
+    if (BigInt(decodedWin.amountMinor) !== expectedWinPaid) {
+      throw new ProtocolDecodeError(
+        `wins[${winIndex}].amountMinor does not match the authoritative win-cap projection`,
+      );
+    }
+    let pathRemaining = expectedWinPaid;
+    for (const [pathIndex, award] of (decodedWin.pathAwards ?? []).entries()) {
+      const nominal = BigInt(award.nominalAmountMinor);
+      const expectedPathPaid = capped
+        ? (nominal < pathRemaining ? nominal : pathRemaining)
+        : nominal;
+      if (capped) pathRemaining -= expectedPathPaid;
+      if (BigInt(award.amountMinor) !== expectedPathPaid) {
+        throw new ProtocolDecodeError(
+          `wins[${winIndex}].pathAwards[${pathIndex}].amountMinor does not match the authoritative win-cap projection`,
+        );
+      }
+    }
+    if (capped && decodedWin.pathAwards !== undefined && pathRemaining !== 0n) {
+      throw new ProtocolDecodeError(
+        `wins[${winIndex}].pathAwards do not consume the paid aggregate amount`,
+      );
+    }
+  }
+
+  for (const [eventIndex, event] of decodedEvents.entries()) {
+    const facts = monetaryEventPaidFacts(event, betMinor);
+    if (facts === null) continue;
+    if (facts.nominal > MAX_SIGNED_INT64) {
+      throw new ProtocolDecodeError(
+        `events[${eventIndex}] nominal award exceeds the signed-int64 money domain`,
+      );
+    }
+    const expectedPaid = settledAmount(facts.nominal);
+    if (facts.paid !== expectedPaid) {
+      throw new ProtocolDecodeError(
+        `events[${eventIndex}].amountMinor does not match the authoritative win-cap projection`,
+      );
+    }
+  }
+  if (capped && remaining !== 0n) {
+    throw new ProtocolDecodeError("win_cap.reached paid awards do not consume this round's cap budget");
+  }
+}
+
 function validateWheelAwardProjection(
   decodedEvents: readonly FeatureEvent[],
   decodedFeatureState: Readonly<FeatureState>,
   betMinor: MoneyMinor,
+  totalWinMinor: MoneyMinor,
 ): void {
   const wheelAwardedIndex = decodedEvents.findIndex((event) => event.type === "wheel.awarded");
   if (wheelAwardedIndex < 0) return;
@@ -520,9 +650,11 @@ function validateWheelAwardProjection(
         "wheel.awarded INSTANT amount exceeds the signed-int64 money domain",
       );
     }
-    if (BigInt(wheelAwarded.amountMinor) !== expectedAmount) {
+    const capped = decodedEvents.some((event) => event.type === "win_cap.reached");
+    if (BigInt(wheelAwarded.amountMinor) > expectedAmount
+      || (!capped && BigInt(wheelAwarded.amountMinor) !== expectedAmount)) {
       throw new ProtocolDecodeError(
-        "wheel.awarded INSTANT amountMinor must equal betMinor multiplied by multiplier",
+        "wheel.awarded INSTANT amountMinor must equal its nominal award unless win-capped",
       );
     }
     if (freeSpinsStarted?.type === "free_spins.started") {
@@ -548,9 +680,9 @@ function validateWheelAwardProjection(
     || decodedFeatureState.freeSpinsRemaining !== freeSpinsStarted.awarded
     || decodedFeatureState.freeSpinsPlayed !== 0
     || decodedFeatureState.baseBetMinor !== betMinor
-    || decodedFeatureState.freeSpinsWinMinor !== "0") {
+    || decodedFeatureState.freeSpinsWinMinor !== totalWinMinor) {
     throw new ProtocolDecodeError(
-      "feature wheel outcomes must project eight unplayed Free Spins at the locked bet",
+      "feature wheel outcomes must project eight unplayed Free Spins carrying this round's paid win at the locked bet",
     );
   }
 }
@@ -803,6 +935,28 @@ function featureEvent(value: unknown, path: string, decodedGrid: GridCell[][]): 
       exactKeys(decoded, ["type", "reel", "row"], path);
       return Object.freeze({ type, ...vaultEventCellAddress(decoded, path, decodedGrid) });
     }
+    case "win_cap.reached": {
+      exactKeys(decoded, ["type", "multiplier", "cumulativeWinMinor"], path);
+      const multiplier = boundedInteger(
+        decoded.multiplier,
+        `${path}.multiplier`,
+        1,
+        1_000_000,
+      );
+      if (multiplier !== PRIMAL_MAX_WIN_MULTIPLIER) {
+        throw new ProtocolDecodeError(
+          `${path}.multiplier must equal ${PRIMAL_MAX_WIN_MULTIPLIER}`,
+        );
+      }
+      return Object.freeze({
+        type,
+        multiplier: PRIMAL_MAX_WIN_MULTIPLIER,
+        cumulativeWinMinor: money(
+          decoded.cumulativeWinMinor,
+          `${path}.cumulativeWinMinor`,
+        ),
+      });
+    }
     case "vaults.upgrade.started":
       exactKeys(decoded, ["type", "count", "step"], path);
       return Object.freeze({
@@ -857,6 +1011,7 @@ function events(value: unknown, path: string, decodedGrid: GridCell[][]): readon
     "wheel.started",
     "wheel.awarded",
     "free_spins.started",
+    "win_cap.reached",
     "free_spins.completed",
     "vaults.landed",
     "vaults.locked",
@@ -947,6 +1102,13 @@ function events(value: unknown, path: string, decodedGrid: GridCell[][]): readon
   if (completedIndex >= 0 && completedIndex !== decoded.length - 1) {
     throw new ProtocolDecodeError(`${path} free_spins.completed must be the final event`);
   }
+  const winCapIndex = decoded.findIndex((event) => event.type === "win_cap.reached");
+  if (winCapIndex >= 0 && winCapIndex !== decoded.length - 1
+    && !(completedIndex === decoded.length - 1 && winCapIndex === completedIndex - 1)) {
+    throw new ProtocolDecodeError(
+      `${path} win_cap.reached must be final or immediately precede free_spins.completed`,
+    );
+  }
 
   const vaultLandedIndex = decoded.findIndex((event) => event.type === "vaults.landed");
   const vaultLockedIndex = decoded.findIndex((event) => event.type === "vaults.locked");
@@ -1000,6 +1162,45 @@ function events(value: unknown, path: string, decodedGrid: GridCell[][]): readon
     throw new ProtocolDecodeError(`${path} vaults.locked must follow vaults.landed`);
   }
   return Object.freeze(decoded);
+}
+
+function validateWinCapProjection(
+  decodedEvents: readonly FeatureEvent[],
+  decodedFeatureState: Readonly<FeatureState>,
+  betMinor: MoneyMinor,
+  totalWinMinor: MoneyMinor,
+): void {
+  const event = decodedEvents.find((candidate) => candidate.type === "win_cap.reached");
+  if (!event || event.type !== "win_cap.reached") return;
+  const expectedCap = BigInt(betMinor) * BigInt(PRIMAL_MAX_WIN_MULTIPLIER);
+  if (expectedCap > MAX_SIGNED_INT64
+    || BigInt(event.cumulativeWinMinor) !== expectedCap) {
+    throw new ProtocolDecodeError(
+      `win_cap.reached cumulativeWinMinor must equal betMinor multiplied by ${PRIMAL_MAX_WIN_MULTIPLIER}`,
+    );
+  }
+  const completion = decodedEvents.find((candidate) => candidate.type === "free_spins.completed");
+  if (completion?.type === "free_spins.completed") {
+    if (completion.cumulativeWinMinor !== event.cumulativeWinMinor) {
+      throw new ProtocolDecodeError(
+        "win_cap.reached must equal the terminal Free Spins cumulative win",
+      );
+    }
+    return;
+  }
+  if (decodedFeatureState.mode !== "BASE") {
+    if (decodedFeatureState.freeSpinsWinMinor !== event.cumulativeWinMinor) {
+      throw new ProtocolDecodeError(
+        "win_cap.reached must equal the active Free Spins cumulative win",
+      );
+    }
+    return;
+  }
+  if (totalWinMinor !== event.cumulativeWinMinor) {
+    throw new ProtocolDecodeError(
+      "a Base win_cap.reached result total must equal its cumulative cap amount",
+    );
+  }
 }
 
 function validateResultReelProjection(
@@ -1081,9 +1282,11 @@ function decodeSpinResult(
 
   onStage?.("projection-invariant-award-total");
   validateVisibleAwardTotal(decodedWins, decodedEvents, totalWinMinor);
+  validatePaidAwardProjection(decodedWins, decodedEvents, betMinor, totalWinMinor);
+  validateWinCapProjection(decodedEvents, decodedFeatureState, betMinor, totalWinMinor);
 
   onStage?.("projection-invariant-wheel");
-  validateWheelAwardProjection(decodedEvents, decodedFeatureState, betMinor);
+  validateWheelAwardProjection(decodedEvents, decodedFeatureState, betMinor, totalWinMinor);
 
   onStage?.("projection-invariant-vault");
   validateVaultAwardProjection(decodedGrid, decodedEvents, decodedFeatureState, betMinor);

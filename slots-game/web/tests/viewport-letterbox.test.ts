@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   RESPONSIVE_DESIGN_SURFACES,
+  computeDesktopFrameGeometry,
   computeResponsiveFrameGeometry,
   computeResponsiveLayoutSnapshot,
   responsiveDesignPoint,
@@ -8,14 +9,16 @@ import {
   responsiveSurfaceProfile,
 } from "../src/renderer/ResponsiveLayout";
 
-describe("canonical viewport letterboxing", () => {
-  it.each(Object.entries(RESPONSIVE_DESIGN_SURFACES).flatMap(([profile, surface]) => [
+describe("canonical viewport projection", () => {
+  it.each(Object.entries(RESPONSIVE_DESIGN_SURFACES)
+    .filter(([profile]) => profile !== "desktop")
+    .flatMap(([profile, surface]) => [
     { profile, kind: "exact", viewport: [surface.width, surface.height] as const, bars: false },
     { profile, kind: "wider", viewport: [surface.width + 67, surface.height] as const, bars: true },
     { profile, kind: "taller", viewport: [surface.width, surface.height + 67] as const, bars: true },
     { profile, kind: "narrower", viewport: [surface.width - 47, surface.height] as const, bars: true },
     { profile, kind: "shorter", viewport: [surface.width, surface.height - 47] as const, bars: true },
-  ]))("preserves the $profile ratio in a $kind outer viewport", ({ profile, viewport, bars }) => {
+    ]))("preserves the $profile ratio in a $kind outer viewport", ({ profile, viewport, bars }) => {
     const surface = RESPONSIVE_DESIGN_SURFACES[
       profile as keyof typeof RESPONSIVE_DESIGN_SURFACES
     ];
@@ -40,24 +43,6 @@ describe("canonical viewport letterboxing", () => {
   });
 
   it.each([
-    {
-      name: "desktop exact",
-      viewport: [1_280, 720] as const,
-      design: [1_280, 720] as const,
-      expected: { x: 0, y: 0, scale: 1 },
-    },
-    {
-      name: "desktop taller",
-      viewport: [1_440, 900] as const,
-      design: [1_280, 720] as const,
-      expected: { x: 0, y: 45, scale: 1.125 },
-    },
-    {
-      name: "desktop narrow",
-      viewport: [768, 900] as const,
-      design: [1_280, 720] as const,
-      expected: { x: 0, y: 234, scale: 0.6 },
-    },
     {
       name: "phone portrait wider",
       viewport: [430, 844] as const,
@@ -87,6 +72,46 @@ describe("canonical viewport letterboxing", () => {
     expect(geometry.x * 2 + geometry.width).toBeCloseTo(viewport[0], 12);
     expect(geometry.y * 2 + geometry.height).toBeCloseTo(viewport[1], 12);
     expect(geometry.visibleInsetX).toBe(0);
+  });
+
+  it.each([
+    {
+      name: "exact 16:9",
+      viewport: [1_280, 720] as const,
+      expected: { x: 0, y: 0, width: 1_280, height: 720, scale: 1, visibleInsetX: 0 },
+    },
+    {
+      name: "16:10",
+      viewport: [1_440, 900] as const,
+      expected: { x: -80, y: 0, width: 1_600, height: 900, scale: 1.25, visibleInsetX: 64 },
+    },
+    {
+      name: "narrow portrait",
+      viewport: [768, 900] as const,
+      expected: { x: -128, y: 162, width: 1_024, height: 576, scale: 0.8, visibleInsetX: 160 },
+    },
+    {
+      name: "wide landscape",
+      viewport: [844, 390] as const,
+      expected: {
+        x: 75.33333333333331,
+        y: 0,
+        width: 693.3333333333334,
+        height: 390,
+        scale: 0.5416666666666666,
+        visibleInsetX: 0,
+      },
+    },
+  ])("projects the captured desktop authored surface for $name", ({ viewport, expected }) => {
+    const geometry = computeDesktopFrameGeometry(viewport[0], viewport[1]);
+
+    expect(geometry.designWidth).toBe(1_280);
+    expect(geometry.designHeight).toBe(720);
+    for (const key of ["x", "y", "width", "height", "scale", "visibleInsetX"] as const) {
+      expect(geometry[key]).toBeCloseTo(expected[key], 12);
+    }
+    expect(geometry.y * 2 + geometry.height).toBeCloseTo(viewport[1], 12);
+    expect(geometry.x * 2 + geometry.width).toBeCloseTo(viewport[0], 12);
   });
 
   it.each([
@@ -162,12 +187,12 @@ describe("canonical viewport letterboxing", () => {
   });
 
   it("maps only the rendered surface back to canonical coordinates", () => {
-    const frame = computeResponsiveFrameGeometry(1_440, 900, 1_280, 720);
+    const frame = computeDesktopFrameGeometry(1_440, 900);
 
     expect(responsiveDesignPoint(frame, 720, 450)).toEqual({ x: 640, y: 360 });
-    expect(responsiveDesignPoint(frame, 0, 45)).toEqual({ x: 0, y: 0 });
-    expect(responsiveDesignPoint(frame, 1_440, 855)).toEqual({ x: 1_280, y: 720 });
-    expect(responsiveDesignPoint(frame, 720, 44.99)).toBeNull();
-    expect(responsiveDesignPoint(frame, 720, 855.01)).toBeNull();
+    expect(responsiveDesignPoint(frame, 0, 0)).toEqual({ x: 64, y: 0 });
+    expect(responsiveDesignPoint(frame, 1_440, 900)).toEqual({ x: 1_216, y: 720 });
+    expect(responsiveDesignPoint(frame, 720, -0.01)).toBeNull();
+    expect(responsiveDesignPoint(frame, 720, 900.01)).toBeNull();
   });
 });

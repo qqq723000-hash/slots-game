@@ -17,6 +17,8 @@ import type {
   GatewayStatus,
 } from "../src/protocol/GameGateway";
 import { NETWORK_RESPONSE_LIMITS } from "../src/network/boundedResponse";
+import { ENGINE_RULES_VERSION } from "../src/protocol/messages";
+import { decodeRgsSpin } from "../src/protocol/rgsDecoder";
 
 const HASH = "a".repeat(64);
 const LAUNCH_CODE = `lc_${"b".repeat(43)}`;
@@ -114,6 +116,7 @@ function session(overrides: Record<string, unknown> = {}): Record<string, unknow
     gameId: "primal-rampage",
     definitionVersion: "definition-1",
     definitionHash: HASH,
+    engineRulesVersion: ENGINE_RULES_VERSION,
     currency: "EUR",
     currencyExponent: 2,
     jurisdiction: "GB",
@@ -150,6 +153,12 @@ const BASE_GRID = [
   [{ symbol: "PRISM" }, { symbol: "PULSE" }, { symbol: "NOVA" }],
 ];
 
+const PAID_FACTS_GRID = [
+  [{ symbol: "ORBIT" }, { symbol: "PRISM" }, { symbol: "PULSE" }],
+  [{ symbol: "ORBIT" }, { symbol: "CIRCUIT" }, { symbol: "TANK" }],
+  [{ symbol: "ORBIT" }, { symbol: "PULSE" }, { symbol: "NOVA" }],
+];
+
 const ONE_RAGE_GRID = [
   [{ symbol: "SURGE" }, { symbol: "PRISM" }, { symbol: "PULSE" }],
   [{ symbol: "NOVA" }, { symbol: "CIRCUIT" }, { symbol: "TANK" }],
@@ -163,6 +172,10 @@ const THREE_RAGE_CELLS = [
 ];
 
 const THREE_RAGE_GRID = BASE_GRID.map((reel) => (
+  reel.map((cell, row) => row === 2 ? { symbol: "SURGE" } : cell)
+));
+
+const PAID_FEATURE_START_GRID = PAID_FACTS_GRID.map((reel) => (
   reel.map((cell, row) => row === 2 ? { symbol: "SURGE" } : cell)
 ));
 
@@ -201,7 +214,9 @@ interface ResultOptions {
   readonly sequence?: string;
   readonly chargedBetMinor?: string;
   readonly balanceMinor?: string;
+  readonly totalWinMinor?: string;
   readonly grid?: unknown[];
+  readonly wins?: unknown[];
   readonly events?: unknown[];
   readonly nextFeature?: Record<string, unknown>;
   readonly idleDisconnectAt?: string;
@@ -229,12 +244,86 @@ function committedResult(options: ResultOptions = {}): Record<string, unknown> {
     betMinor: "100",
     chargedBetMinor: options.chargedBetMinor ?? "100",
     balanceMinor: options.balanceMinor ?? "900",
-    totalWinMinor: "0",
+    totalWinMinor: options.totalWinMinor ?? "0",
     grid: options.grid ?? BASE_GRID,
-    wins: [],
+    wins: options.wins ?? [],
     events: options.events ?? [],
     feature: options.nextFeature ?? feature(),
   };
+}
+
+function cappedPaidFactsResult(): Record<string, unknown> {
+  const cells = [
+    { reel: 0, row: 0 },
+    { reel: 1, row: 0 },
+    { reel: 2, row: 0 },
+  ];
+  return committedResult({
+    balanceMinor: "250900",
+    totalWinMinor: "250000",
+    grid: PAID_FACTS_GRID,
+    wins: [{
+      id: "win-paid-facts-1",
+      symbol: "ORBIT",
+      ways: 1,
+      nominalAmountMinor: "300000",
+      amountMinor: "250000",
+      cells,
+      pathAwards: [{
+        cells,
+        multiplier: "1",
+        baseAmountMinor: "300000",
+        nominalAmountMinor: "300000",
+        amountMinor: "250000",
+      }],
+    }],
+    events: [fullEvent("win_cap.reached", {
+      multiplier: "2500",
+      cumulativeWinMinor: "250000",
+    })],
+  });
+}
+
+function paidFeatureStartResult(): Record<string, unknown> {
+  const cells = [
+    { reel: 0, row: 0 },
+    { reel: 1, row: 0 },
+    { reel: 2, row: 0 },
+  ];
+  return committedResult({
+    balanceMinor: "1140",
+    totalWinMinor: "240",
+    grid: PAID_FEATURE_START_GRID,
+    wins: [{
+      id: "paid-feature-start-win",
+      symbol: "ORBIT",
+      ways: 1,
+      nominalAmountMinor: "240",
+      amountMinor: "240",
+      cells,
+      pathAwards: [{
+        cells,
+        multiplier: "1",
+        baseAmountMinor: "240",
+        nominalAmountMinor: "240",
+        amountMinor: "240",
+      }],
+    }],
+    events: [
+      fullEvent("surge.collected", {
+        count: 3,
+        cells: THREE_RAGE_CELLS,
+        triggered: true,
+        guaranteed: true,
+        level: 1,
+        total: 0,
+      }),
+      fullEvent("wheel.started"),
+      fullEvent("wheel.awarded", { outcome: "EXPANSION" }),
+      fullEvent("free_spins.started", { mode: "EXPANSION", awarded: 8 }),
+    ],
+    nextFeature: feature("EXPANSION", 8, 8, "100", "240", 1, 0),
+  });
 }
 
 function acknowledgementEnvelope(
@@ -518,7 +607,7 @@ describe("RgsGateway", () => {
     expect(observed.log.statuses).toEqual(["connecting", "online"]);
     expect(observed.log.sessions[0]).toMatchObject({
       sessionId: "session-a",
-      engineRulesVersion: "slots-game-ways3-features-v4",
+      engineRulesVersion: ENGINE_RULES_VERSION,
       currency: "EUR",
       currencyExponent: 2,
       balanceMinor: "1000",
@@ -662,18 +751,140 @@ describe("RgsGateway", () => {
     await vi.waitFor(() => expect(gateway.hasPendingSpin).toBe(false));
   });
 
+  it("delivers the authoritative nominal and paid facts for a capped live result", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), cappedPaidFactsResult()))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(observed.log.errors).toEqual([]);
+    expect(observed.log.results[0]?.result).toMatchObject({
+      totalWinMinor: "250000",
+      wins: [{
+        nominalAmountMinor: "300000",
+        amountMinor: "250000",
+        pathAwards: [{
+          nominalAmountMinor: "300000",
+          amountMinor: "250000",
+        }],
+      }],
+      events: [{
+        type: "win_cap.reached",
+        multiplier: 2500,
+        cumulativeWinMinor: "250000",
+      }],
+    });
+  });
+
+  it("carries a paid Base win into a newly triggered live feature", async () => {
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (
+      String(url).endsWith("/sessions/exchange")
+        ? response(exchangeEnvelope(requestId(init)))
+        : response(successEnvelope(requestId(init), paidFeatureStartResult()))
+    ));
+    const gateway = new RgsGateway(config(fetchImplementation));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(observed.log.results).toHaveLength(1));
+
+    expect(observed.log.errors).toEqual([]);
+    expect(observed.log.results[0]?.result).toMatchObject({
+      totalWinMinor: "240",
+      wins: [{ nominalAmountMinor: "240", amountMinor: "240" }],
+      featureState: {
+        mode: "EXPANSION",
+        freeSpinsRemaining: 8,
+        freeSpinsPlayed: 0,
+        freeSpinsWinMinor: "240",
+      },
+    });
+  });
+
+  it.each([
+    {
+      name: "missing Win nominalAmountMinor",
+      mutate: (wire: Record<string, unknown>) => {
+        const win = (wire.wins as Array<Record<string, unknown>>)[0]!;
+        delete win.nominalAmountMinor;
+      },
+      message: /response\.data\.wins\[0\]\.nominalAmountMinor is required/,
+    },
+    {
+      name: "missing PathAward nominalAmountMinor",
+      mutate: (wire: Record<string, unknown>) => {
+        const win = (wire.wins as Array<Record<string, unknown>>)[0]!;
+        const award = (win.pathAwards as Array<Record<string, unknown>>)[0]!;
+        delete award.nominalAmountMinor;
+      },
+      message: /response\.data\.wins\[0\]\.pathAwards\[0\]\.nominalAmountMinor is required/,
+    },
+    {
+      name: "Win paid greater than nominal",
+      mutate: (wire: Record<string, unknown>) => {
+        const win = (wire.wins as Array<Record<string, unknown>>)[0]!;
+        win.amountMinor = "300001";
+      },
+      message: /amountMinor must not exceed .*nominalAmountMinor/,
+    },
+    {
+      name: "PathAward paid greater than nominal",
+      mutate: (wire: Record<string, unknown>) => {
+        const win = (wire.wins as Array<Record<string, unknown>>)[0]!;
+        const award = (win.pathAwards as Array<Record<string, unknown>>)[0]!;
+        award.amountMinor = "300001";
+      },
+      message: /pathAwards\[0\]\.amountMinor must not exceed .*nominalAmountMinor/,
+    },
+    {
+      name: "paid path sum mismatch",
+      mutate: (wire: Record<string, unknown>) => {
+        const win = (wire.wins as Array<Record<string, unknown>>)[0]!;
+        const award = (win.pathAwards as Array<Record<string, unknown>>)[0]!;
+        award.amountMinor = "249999";
+      },
+      message: /pathAwards amounts must sum/,
+    },
+    {
+      name: "nominal path sum mismatch",
+      mutate: (wire: Record<string, unknown>) => {
+        const win = (wire.wins as Array<Record<string, unknown>>)[0]!;
+        const award = (win.pathAwards as Array<Record<string, unknown>>)[0]!;
+        award.nominalAmountMinor = "299999";
+      },
+      message: /pathAwards nominal amounts must sum/,
+    },
+  ])("rejects $name before a live result can reach the gateway", ({ mutate, message }) => {
+    const wire = structuredClone(cappedPaidFactsResult());
+    mutate(wire);
+    expect(() => decodeRgsSpin(successEnvelope("request-paid-facts", wire), "request-paid-facts"))
+      .toThrow(message);
+  });
+
   it("accepts the exact no-win BASE response shape emitted by local production", async () => {
     const operatorId = "local-production-operator";
     const sessionId = "session_local_contract";
     const roundId = "round-local-contract";
-    const definitionHash = "96caac1ea4f82292ba96e0e0397459687638d6ff904471a8363e69f6e824d35d";
+    const definitionHash = "9e9b9b5f23f0f2cfed0a4a5ff5961dbc76a91ba9e614f3cfadb47824a46d2205";
     const localFeature = feature("NONE", 0, 0, "0", "0", 1, 0);
     const localResult: Record<string, unknown> = {
       operatorId,
       sessionId,
       roundId,
       gameId: "iron-colossus",
-      definitionVersion: "local-production-2026-08-16.1",
+      definitionVersion: "local-production-2026-08-26.3",
       definitionHash,
       currency: "CNY",
       roundKind: "BASE",
@@ -703,7 +914,7 @@ describe("RgsGateway", () => {
             operatorId,
             sessionId,
             gameId: "iron-colossus",
-            definitionVersion: "local-production-2026-08-16.1",
+            definitionVersion: "local-production-2026-08-26.3",
             definitionHash,
             currency: "CNY",
             currencyExponent: 2,
@@ -3120,6 +3331,50 @@ describe("RgsGateway", () => {
     expect(requests.filter(({ url }) => url.endsWith("/sessions/exchange"))).toHaveLength(1);
   });
 
+  it("rejects an engine-rules drift during refresh without landing its token or losing pending", async () => {
+    const storage = { load: vi.fn(() => null), save: vi.fn(), clear: vi.fn() };
+    const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => {
+      if (String(url).endsWith("/sessions/exchange")) {
+        return response(exchangeEnvelope(requestId(init)));
+      }
+      if (String(url).endsWith("/sessions/refresh")) {
+        return response(exchangeEnvelope(
+          requestId(init),
+          { engineRulesVersion: "slots-game-ways3-features-win-cap-v5" },
+          TOKEN_TWO,
+        ));
+      }
+      return response(errorEnvelope(requestId(init), "UNAUTHORIZED"), 401);
+    });
+    const gateway = new RgsGateway(config(fetchImplementation, { ledgerStorage: storage }));
+    const observed = callbacks();
+    const operatorRecovery = vi.fn();
+    gateway.setCallbacks({ ...observed.callbacks, onOperatorSessionRequired: operatorRecovery });
+    gateway.connect();
+    await waitForSession(observed.log);
+
+    expect(gateway.requestSpin("round-a", "100")).toBe(true);
+    await vi.waitFor(() => expect(operatorRecovery).toHaveBeenCalledOnce());
+
+    expect(observed.log.sessions).toHaveLength(1);
+    expect(observed.log.results).toEqual([]);
+    expect(observed.log.errors[0]).toMatchObject({
+      name: "RgsProtocolError",
+      message: `response.data.session.engineRulesVersion must equal ${ENGINE_RULES_VERSION}`,
+    });
+    expect(storage.save).toHaveBeenCalledOnce();
+    expect(storage.clear).not.toHaveBeenCalled();
+    expect(gateway.hasPendingSpin).toBe(true);
+    const internal = gateway as unknown as {
+      accessToken: string | null;
+      session: unknown | null;
+      pending: unknown | null;
+    };
+    expect(internal.accessToken).toBeNull();
+    expect(internal.session).toBeNull();
+    expect(internal.pending).not.toBeNull();
+  });
+
   it.each([
     {
       name: "balance",
@@ -3820,6 +4075,56 @@ describe("RgsGateway", () => {
     malformed.connect();
     await vi.waitFor(() => expect(malformedObserved.log.errors).toHaveLength(1));
     expect(malformedObserved.log.sessions).toEqual([]);
+  });
+
+  it("rejects a server session whose authoritative engine rules version differs", async () => {
+    const persistedLedger = {
+      version: 2 as const,
+      bindingFingerprint: FINGERPRINT,
+      roundId: "round-persisted",
+      betMinor: "100",
+      startRevision: "0",
+      originFeatureState: {
+        mode: "BASE" as const,
+        freeSpinsRemaining: 0,
+        freeSpinsPlayed: 0,
+        rageLevel: 1,
+        rageCollected: 0,
+      },
+    };
+    const storage = {
+      load: vi.fn(() => persistedLedger),
+      save: vi.fn(),
+      clear: vi.fn(),
+    };
+    const fetchImplementation = vi.fn<typeof fetch>(async (_url, init) => response(exchangeEnvelope(
+      requestId(init),
+      { engineRulesVersion: "slots-game-ways3-features-v4" },
+    )));
+    const gateway = new RgsGateway(config(fetchImplementation, { ledgerStorage: storage }));
+    const observed = callbacks();
+    gateway.setCallbacks(observed.callbacks);
+
+    gateway.connect();
+    await vi.waitFor(() => expect(observed.log.errors).toHaveLength(1));
+
+    expect(observed.log.sessions).toEqual([]);
+    expect(observed.log.statuses.at(-1)).toBe("offline");
+    expect(observed.log.errors[0]).toMatchObject({
+      name: "RgsProtocolError",
+      message: `response.data.session.engineRulesVersion must equal ${ENGINE_RULES_VERSION}`,
+    });
+    expect(storage.load).not.toHaveBeenCalled();
+    expect(storage.save).not.toHaveBeenCalled();
+    expect(storage.clear).not.toHaveBeenCalled();
+    const internal = gateway as unknown as {
+      accessToken: string | null;
+      session: unknown | null;
+      pending: unknown | null;
+    };
+    expect(internal.accessToken).toBeNull();
+    expect(internal.session).toBeNull();
+    expect(internal.pending).toBeNull();
   });
 
   it("never presents a committed result with a foreign immutable binding", async () => {

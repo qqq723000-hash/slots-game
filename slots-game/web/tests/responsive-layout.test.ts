@@ -4,6 +4,7 @@ import {
   DESKTOP_UTILITY_VISIBLE_SIZE,
   MOBILE_BASE_LAYOUTS,
   MOBILE_FPS_LAYOUTS,
+  computeDesktopFrameGeometry,
   computeResponsiveLayoutSnapshot,
   computeResponsiveFrameGeometry,
   mobileFpsLayoutProfile,
@@ -127,6 +128,43 @@ describe("responsive game viewport", () => {
       layout.stop();
       layout.stop();
       expect(observers[0]?.disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("publishes one shared hand-mode snapshot and preserves it through resize", () => {
+    const observers = installRecordedResizeObservers();
+    const fixture = responsiveLayoutLifecycleFixture();
+    const frames = createManualFrameScheduler();
+    Object.assign(fixture.viewport, { clientWidth: 390, clientHeight: 844 });
+    try {
+      const layout = new ResponsiveLayout(
+        fixture.viewport,
+        fixture.frame,
+        fixture.onLayout,
+        { ...frames, channel: "mobile" },
+      );
+
+      layout.start();
+      expect(fixture.onLayout.mock.calls.at(-1)?.[0].handMode).toBe("right");
+
+      layout.setHandMode("left");
+      expect(fixture.onLayout).toHaveBeenCalledTimes(2);
+      expect(fixture.onLayout.mock.calls.at(-1)?.[0].handMode).toBe("left");
+      expect(fixture.frame.dataset.handMode).toBe("left");
+
+      layout.setHandMode("left");
+      expect(fixture.onLayout).toHaveBeenCalledTimes(2);
+
+      Object.assign(fixture.viewport, { clientWidth: 844, clientHeight: 390 });
+      observers[0]?.callback([], observers[0] as unknown as ResizeObserver);
+      frames.flush();
+      expect(fixture.onLayout.mock.calls.at(-1)?.[0]).toMatchObject({
+        handMode: "left",
+        mobileProfile: "ls",
+      });
+      layout.stop();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -440,7 +478,7 @@ describe("responsive game viewport", () => {
     }
   });
 
-  it("keeps a fine-pointer phone without launcher routing on the desktop letterbox baseline", () => {
+  it("keeps a fine-pointer phone without launcher routing on the desktop authored baseline", () => {
     const fixture = responsiveLayoutLifecycleFixture();
     Object.assign(fixture.viewport, { clientWidth: 390, clientHeight: 844 });
     const frames = createManualFrameScheduler();
@@ -486,10 +524,12 @@ describe("responsive game viewport", () => {
         channel: "desktop",
         designWidth: "1280",
         designHeight: "720",
-        frameScale: "0.3046875",
+        frameScale: "0.40625",
       });
-      expect(fixture.frame.style.top).toBe("312.3125px");
-      expect(fixture.frame.style.transform).toBe("scale(0.3046875)");
+      expect(fixture.frame.style.left).toBe("-65px");
+      expect(fixture.frame.style.top).toBe("275.75px");
+      expect(fixture.frame.style.transform).toBe("scale(0.40625)");
+      expect(fixture.styleSetProperty).toHaveBeenCalledWith("--visible-inset-x", "160px");
       expect(matchMedia).toHaveBeenCalledWith("(pointer: coarse)");
       expect(matchMedia).toHaveBeenCalledWith("(pointer: fine)");
       layout.stop();
@@ -600,16 +640,16 @@ describe("responsive game viewport", () => {
     }
   });
 
-  it("contains a 1440×900 desktop surface with horizontal letterbox bars", () => {
-    expect(computeResponsiveFrameGeometry(1_440, 900)).toEqual({
-      x: 0,
-      y: 45,
-      width: 1_440,
-      height: 810,
-      scale: 1.125,
+  it("fills a 1440×900 desktop surface and crops renderer wings symmetrically", () => {
+    expect(computeDesktopFrameGeometry(1_440, 900)).toEqual({
+      x: -80,
+      y: 0,
+      width: 1_600,
+      height: 900,
+      scale: 1.25,
       designWidth: 1_280,
       designHeight: 720,
-      visibleInsetX: 0,
+      visibleInsetX: 64,
     });
   });
 
@@ -667,11 +707,11 @@ describe("responsive game viewport", () => {
 
   it("adapts the central composition to the visible logical width", () => {
     expect(responsiveCompositionScale(
-      computeResponsiveFrameGeometry(1_440, 900),
-    )).toBe(1.05);
+      computeDesktopFrameGeometry(1_440, 900),
+    )).toBeCloseTo(1_152 / 1_100, 10);
     expect(responsiveCompositionScale(
-      computeResponsiveFrameGeometry(768, 900),
-    )).toBe(1.05);
+      computeDesktopFrameGeometry(768, 900),
+    )).toBeCloseTo(960 / 1_100, 10);
   });
 
   it("collapses safely when dimensions are invalid", () => {
@@ -721,8 +761,8 @@ describe("responsive game viewport", () => {
     expect(portrait.utilityHitPhysicalSize).toBeCloseTo(50.64, 10);
     expect(portrait.utilityHitLogicalSize).toBeCloseTo(124.6523076923, 10);
     expect(portrait.spinVisiblePhysicalSize).toBeCloseTo(39.40625, 10);
-    expect(portrait.spinHitPhysicalSize).toBeCloseTo(39.78, 10);
-    expect(portrait.spinHitLogicalSize).toBeCloseTo(97.92, 10);
+    expect(portrait.spinHitPhysicalSize).toBe(44);
+    expect(portrait.spinHitLogicalSize).toBeCloseTo(108.3076923077, 10);
 
     const landscape = responsiveControlGeometry(844, 390, 390 / 720);
     expect(landscape.utilityVisiblePhysicalSize).toBeCloseTo(18.9583333333, 10);
@@ -746,14 +786,18 @@ describe("responsive game viewport", () => {
     expect(tabletPortrait.utilityHitLogicalSize).toBeCloseTo(50.64, 10);
     expect(tabletPortrait.spinHitPhysicalSize).toBeCloseTo(117.6872037915, 10);
     expect(tabletPortrait.spinHitLogicalSize).toBe(DESKTOP_SPIN_VISIBLE_SIZE);
+
+    const compact = responsiveControlGeometry(320, 568, 568 / 844, true);
+    expect(compact.utilityHitPhysicalSize).toBe(44);
+    expect(compact.spinHitPhysicalSize).toBeGreaterThanOrEqual(44);
   });
 
-  it("keeps desktop gameplay in canonical coordinates while letterboxing the physical viewport", () => {
+  it("keeps desktop gameplay in canonical coordinates while projecting the authored viewport", () => {
     const snapshot = computeResponsiveLayoutSnapshot(390, 844);
 
     expect(snapshot.channel).toBe("desktop");
     expect(snapshot.handMode).toBe("right");
-    expect(snapshot.desktopFrame).toEqual(computeResponsiveFrameGeometry(390, 844));
+    expect(snapshot.desktopFrame).toEqual(computeDesktopFrameGeometry(390, 844));
     expect(snapshot.physicalViewportRegion).toEqual({ left: 0, top: 0, width: 390, height: 844 });
     expect(snapshot.viewportRegion).toEqual({ left: 0, top: 0, width: 1_280, height: 720 });
     expect(snapshot.gameplayRegion).toEqual({ left: 0, top: 0, width: 1_280, height: 720 });

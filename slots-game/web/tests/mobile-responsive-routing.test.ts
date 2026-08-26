@@ -84,6 +84,10 @@ describe("mobile channel routing", () => {
       search: "?channel=mobile",
       finePointer: true,
     })).toBe("desktop");
+    expect(responsiveLayoutChannel(1_024, 768, {
+      search: "?pid=2&channel=desktop&practice=1",
+      coarsePointer: true,
+    })).toBe("desktop");
     expect(responsiveLayoutChannel(1_024, 768, { coarsePointer: true })).toBe("mobile");
     expect(responsiveLayoutChannel(1_024, 768, { touchPoints: 5 })).toBe("mobile");
     expect(responsiveLayoutChannel(1_920, 1_080, {

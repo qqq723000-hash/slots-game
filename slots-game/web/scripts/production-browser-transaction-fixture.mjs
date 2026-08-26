@@ -3,13 +3,38 @@ import { performance } from "node:perf_hooks";
 const DEFINITION_HASH = "a".repeat(64);
 const RESULT_HASH = "c".repeat(64);
 const ACCESS_TOKEN = "browser-gate-token".padEnd(80, "x");
+export const BROWSER_FIXTURE_ENGINE_RULES_VERSION = "slots-game-ways3-features-win-cap-paid-facts-v6";
 export const MIN_SESSION_STATUS_INTERVAL_MS = 25_000;
 
 const BASE_GRID = Object.freeze([
   Object.freeze([{ symbol: "ORBIT" }, { symbol: "PRISM" }, { symbol: "PULSE" }]),
-  Object.freeze([{ symbol: "NOVA" }, { symbol: "CIRCUIT" }, { symbol: "TANK" }]),
-  Object.freeze([{ symbol: "PRISM" }, { symbol: "PULSE" }, { symbol: "NOVA" }]),
+  Object.freeze([{ symbol: "ORBIT" }, { symbol: "CIRCUIT" }, { symbol: "TANK" }]),
+  Object.freeze([{ symbol: "ORBIT" }, { symbol: "PULSE" }, { symbol: "NOVA" }]),
 ]);
+
+const PAID_FACTS_WIN = Object.freeze({
+  id: "browser-gate-win-1",
+  symbol: "ORBIT",
+  ways: 1,
+  nominalAmountMinor: "50",
+  amountMinor: "50",
+  cells: Object.freeze([
+    Object.freeze({ reel: 0, row: 0 }),
+    Object.freeze({ reel: 1, row: 0 }),
+    Object.freeze({ reel: 2, row: 0 }),
+  ]),
+  pathAwards: Object.freeze([Object.freeze({
+    cells: Object.freeze([
+      Object.freeze({ reel: 0, row: 0 }),
+      Object.freeze({ reel: 1, row: 0 }),
+      Object.freeze({ reel: 2, row: 0 }),
+    ]),
+    multiplier: "1",
+    baseAmountMinor: "50",
+    nominalAmountMinor: "50",
+    amountMinor: "50",
+  })]),
+});
 
 function economicTransactionProjection(snapshot) {
   return Object.freeze({
@@ -217,6 +242,7 @@ export function createControlledRgsTransactionFixture(options) {
         serverTime: "2026-08-21T08:00:00Z",
         session: {
           ...expectedBinding,
+          engineRulesVersion: BROWSER_FIXTURE_ENGINE_RULES_VERSION,
           status: "ACTIVE",
           expiresAt: "2099-01-01T00:00:00Z",
           idleDisconnectAt: "2098-12-31T23:30:00Z",
@@ -289,9 +315,9 @@ export function createControlledRgsTransactionFixture(options) {
         betMinor: options.betMinor,
         chargedBetMinor: options.betMinor,
         balanceMinor: options.finalBalanceMinor,
-        totalWinMinor: "0",
+        totalWinMinor: "50",
         grid: BASE_GRID,
-        wins: [],
+        wins: [PAID_FACTS_WIN],
         events: [],
         feature: feature(),
       },

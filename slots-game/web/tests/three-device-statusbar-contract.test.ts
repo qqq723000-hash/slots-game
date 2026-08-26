@@ -38,12 +38,24 @@ describe("PC/phone/tablet status typography contract", () => {
     );
   });
 
-  it("locks the 1280x720 PC status metrics to the official desktop projection", () => {
+  it("locks the complete 1280x720 PC footer to one coherent 16px projection", () => {
     expect(finalContract).toMatch(
-      /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-panel\s*\{[^}]*height:\s*24px;[^}]*min-height:\s*24px;[^}]*font-family:\s*"ROBOTO_CONDENSED_REGULAR"[^;]*;[^}]*font-size:\s*14\.4px;[^}]*font-weight:\s*400;[^}]*line-height:\s*24px;/s,
+      /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-panel\s*\{[^}]*height:\s*16px;[^}]*min-height:\s*16px;[^}]*box-shadow:\s*0 -1px 0 #130a03;[^}]*font-family:\s*"ROBOTO_CONDENSED_REGULAR"[^;]*;[^}]*font-size:\s*12\.8px;[^}]*font-weight:\s*400;[^}]*line-height:\s*16px;/s,
     );
     expect(finalContract).toMatch(
-      /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-metric\s*\{[^}]*height:\s*24px;[^}]*gap:\s*0;[^}]*line-height:\s*24px;/s,
+      /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-metric\s*\{[^}]*height:\s*16px;[^}]*gap:\s*3px;[^}]*line-height:\s*16px;/s,
+    );
+    expect(finalContract).toMatch(
+      /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-panel__provider\s*\{[^}]*left:\s*4px;[^}]*width:\s*45\.3333px;[^}]*height:\s*13\.3333px;/s,
+    );
+    expect(finalContract).toContain(
+      '.game-frame:not([data-channel="mobile"]) .status-metric--balance { left: 56px; }',
+    );
+    expect(finalContract).toContain(
+      '.game-frame:not([data-channel="mobile"]) .status-metric--bet { left: 165px; }',
+    );
+    expect(finalContract).toMatch(
+      /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-panel__game\s*\{[^}]*right:\s*6px;[^}]*height:\s*16px;[^}]*font:\s*400 8px\/16px/s,
     );
     expect(finalContract).toContain("color: #cccccc;");
   });

@@ -202,6 +202,11 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).toContain("value.scrollWidth > value.clientWidth + 1");
     expect(smoke).toContain("最大 int64 Balance/Bet/Win 在移动状态栏中互相覆盖");
     expect(smoke).toContain("verifyOfficialHelpLayout");
+    expect(smoke).toContain("verifyOfficialHelpBottomLayout");
+    expect(smoke).toContain("verifyBoundGameRulesLayout");
+    expect(smoke).toContain("step.paytableBottomVisible !== true");
+    expect(smoke).toContain("step.gameRulesBound !== true");
+    expect(smoke).toContain("step.gameRulesBottomVisible !== true");
     expect(smoke).toContain("horizontalOverflowDataset");
     expect(smoke).toContain("createPresentationApprovedFixture");
     expect(smoke).toContain("verifyOpeningOverlayLayout");
@@ -231,13 +236,15 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).toContain("createControlledRgsTransactionFixture");
     expect(transactionFixture).toContain("sessions/exchange");
     expect(transactionFixture).toContain("sessions/status");
+    expect(transactionFixture).toContain("slots-game-ways3-features-win-cap-paid-facts-v6");
     expect(transactionFixture).toContain("client/v1/spins");
     expect(transactionFixture).toContain("results/acknowledgements");
     expect(smoke).toContain("decode-complete");
     expect(smoke).toContain("controller-dispatch");
     expect(smoke).toContain("OPERATOR_SESSION_REQUIRED");
     expect(smoke).toContain("operatorSessionRequests.length > 0");
-    expect(smoke).toContain('finalState.balance !== "8.00"');
+    expect(smoke).toContain('finalState.balance !== "8.50"');
+    expect(smoke).toContain('finalState.lastWin !== "0.50"');
     expect(smoke).toContain('finalState.reelState !== "Idle"');
     expect(smoke).toContain('finalState.spinMode !== "ready"');
     expect(smoke).toContain("transactionEvidence.acknowledgementCount !== 1");

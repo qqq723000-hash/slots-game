@@ -2887,6 +2887,7 @@ describe("AppController feature orchestration seams", () => {
       wins: [{
         id: "terminal-big-win",
         symbol: "TANK",
+        nominalAmountMinor: "2000",
         amountMinor: "2000",
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
       }],
@@ -4186,6 +4187,7 @@ function roundResult(overrides: Partial<SpinResult> = {}): SpinResult {
     wins: [{
       id: "win-1",
       symbol: "TANK",
+      nominalAmountMinor: "100",
       amountMinor: "100",
       cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
     }],
@@ -4865,12 +4867,14 @@ describe("AppController round ordering", () => {
       {
         id: "first-plain",
         symbol: "TANK" as const,
+        nominalAmountMinor: "50",
         amountMinor: "50",
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
       },
       {
         id: "second-plain",
         symbol: "CIRCUIT" as const,
+        nominalAmountMinor: "50",
         amountMinor: "50",
         cells: [{ reel: 0, row: 1 }, { reel: 1, row: 1 }, { reel: 2, row: 1 }],
       },
@@ -4908,6 +4912,7 @@ describe("AppController round ordering", () => {
             id: `first-x${multiplier}`,
             symbol: "TANK" as const,
             multiplier,
+            nominalAmountMinor: "125",
             amountMinor: "125",
             cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
           },
@@ -4915,6 +4920,7 @@ describe("AppController round ordering", () => {
             id: "second-plain",
             symbol: "CIRCUIT" as const,
             multiplier: 1,
+            nominalAmountMinor: "125",
             amountMinor: "125",
             cells: [{ reel: 0, row: 1 }, { reel: 1, row: 1 }, { reel: 2, row: 1 }],
           },
@@ -4955,6 +4961,7 @@ describe("AppController round ordering", () => {
           id: `fast-first-x${multiplier}`,
           symbol: "TANK" as const,
           multiplier,
+          nominalAmountMinor: "125",
           amountMinor: "125",
           cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
         },
@@ -4962,6 +4969,7 @@ describe("AppController round ordering", () => {
           id: "fast-second-plain",
           symbol: "CIRCUIT" as const,
           multiplier: 1,
+          nominalAmountMinor: "125",
           amountMinor: "125",
           cells: [{ reel: 0, row: 1 }, { reel: 1, row: 1 }, { reel: 2, row: 1 }],
         },
@@ -5012,6 +5020,7 @@ describe("AppController round ordering", () => {
             id: "handoff-first-x2",
             symbol: "TANK" as const,
             multiplier: 2,
+            nominalAmountMinor: "100",
             amountMinor: "100",
             cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
           },
@@ -5019,6 +5028,7 @@ describe("AppController round ordering", () => {
             id: "handoff-second-x2",
             symbol: "CIRCUIT" as const,
             multiplier: 2,
+            nominalAmountMinor: "100",
             amountMinor: "100",
             cells: [{ reel: 0, row: 1 }, { reel: 1, row: 1 }, { reel: 2, row: 1 }],
           },
@@ -5187,6 +5197,7 @@ describe("AppController round ordering", () => {
           id: "big-first",
           symbol: "TANK" as const,
           multiplier: 1,
+          nominalAmountMinor: "1000",
           amountMinor: "1000",
           cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
         },
@@ -5194,6 +5205,7 @@ describe("AppController round ordering", () => {
           id: "big-second",
           symbol: "CIRCUIT" as const,
           multiplier: 1,
+          nominalAmountMinor: "1000",
           amountMinor: "1000",
           cells: [{ reel: 0, row: 1 }, { reel: 1, row: 1 }, { reel: 2, row: 1 }],
         },
@@ -5294,6 +5306,7 @@ describe("AppController round ordering", () => {
     controller.handleSpinResult(roundResult({ totalWinMinor: "2000", wins: [{
       id: "big-win",
       symbol: "TANK",
+      nominalAmountMinor: "2000",
       amountMinor: "2000",
       cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
     }] }));
@@ -5474,6 +5487,7 @@ describe("AppController round ordering", () => {
     controller.handleSpinResult(roundResult({ totalWinMinor: "2000", wins: [{
       id: "big-win",
       symbol: "TANK",
+      nominalAmountMinor: "2000",
       amountMinor: "2000",
       cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
     }] }));
@@ -5526,12 +5540,14 @@ describe("AppController round ordering", () => {
         {
           id: "continued-first",
           symbol: "TANK" as const,
+          nominalAmountMinor: "125",
           amountMinor: "125",
           cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
         },
         {
           id: "must-not-show",
           symbol: "CIRCUIT" as const,
+          nominalAmountMinor: "125",
           amountMinor: "125",
           cells: [{ reel: 0, row: 1 }, { reel: 1, row: 1 }, { reel: 2, row: 1 }],
         },
@@ -5586,6 +5602,66 @@ describe("AppController round ordering", () => {
     expect((controller as unknown as {
       ui: { beginResultPresentation: ReturnType<typeof vi.fn> };
     }).ui.beginResultPresentation).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps zero-paid capped Wins as audit facts without presenting a win", async () => {
+    const origin: FeatureState = {
+      mode: "OVERDRIVE",
+      freeSpinsRemaining: 2,
+      freeSpinsPlayed: 6,
+      baseBetMinor: "100",
+      freeSpinsWinMinor: "250000",
+      rageLevel: 1,
+      rageCollected: 0,
+    };
+    const controller = createRoundHarness(origin);
+    const traces: AppPresentationTrace[] = [];
+    Object.assign(controller, {
+      presentationObserver: {
+        onPresentationTrace: (trace: AppPresentationTrace) => traces.push(trace),
+      },
+    });
+
+    controller.handleSpinResult(roundResult({
+      chargedBetMinor: "0",
+      totalWinMinor: "0",
+      wins: [{
+        id: "zero-paid-cap-win",
+        symbol: "ORBIT",
+        nominalAmountMinor: "100",
+        amountMinor: "0",
+        cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
+      }],
+      events: [{
+        type: "win_cap.reached",
+        multiplier: 2_500,
+        cumulativeWinMinor: "250000",
+      }],
+      featureState: {
+        ...origin,
+        freeSpinsRemaining: 1,
+        freeSpinsPlayed: 7,
+      },
+    }));
+    await controller.presentation;
+
+    const renderer = controller.renderer as {
+      reactToWin: ReturnType<typeof vi.fn>;
+      winCelebration: { present: ReturnType<typeof vi.fn> };
+    };
+    const ui = (controller as unknown as {
+      ui: { beginResultPresentation: ReturnType<typeof vi.fn> };
+    }).ui;
+    expect(renderer.reactToWin).not.toHaveBeenCalled();
+    expect(renderer.winCelebration.present).not.toHaveBeenCalled();
+    expect(controller.audio.playPayoutWin).not.toHaveBeenCalled();
+    expect(controller.audio.playSymbolWin).not.toHaveBeenCalled();
+    expect(ui.beginResultPresentation).toHaveBeenCalledWith(false);
+    expect(traces[0]).toMatchObject({
+      type: "result.accepted",
+      totalWinMinor: "0",
+      winCount: 0,
+    });
   });
 
   it("acknowledges a pending RGS result before the final ready UI projection", async () => {
@@ -5973,6 +6049,7 @@ describe("AppController round ordering", () => {
       wins: [{
         id: "ways-only",
         symbol: "TANK",
+        nominalAmountMinor: "100",
         amountMinor: "100",
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
       }],
@@ -6275,12 +6352,14 @@ describe("AppController round ordering", () => {
       {
         id: "line-a",
         symbol: "TANK" as const,
+        nominalAmountMinor: "125",
         amountMinor: "125",
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
       },
       {
         id: "line-b",
         symbol: "CIRCUIT" as const,
+        nominalAmountMinor: "125",
         amountMinor: "125",
         cells: [{ reel: 0, row: 1 }, { reel: 1, row: 1 }, { reel: 2, row: 1 }],
       },
@@ -6316,6 +6395,7 @@ describe("AppController round ordering", () => {
       wins: [{
         id: "fs-win",
         symbol: "TANK",
+        nominalAmountMinor: "150",
         amountMinor: "150",
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
       }],
@@ -6357,6 +6437,7 @@ describe("AppController round ordering", () => {
       wins: [{
         id: "below-bet",
         symbol: "TANK",
+        nominalAmountMinor: "99",
         amountMinor: "99",
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
       }],
@@ -6380,6 +6461,7 @@ describe("AppController round ordering", () => {
       wins: [{
         id: "scatter",
         symbol: "SURGE",
+        nominalAmountMinor: "100",
         amountMinor: "100",
         cells: [{ reel: 1, row: 0 }],
       }],
@@ -6403,6 +6485,7 @@ describe("AppController round ordering", () => {
       wins: [{
         id: "celebratory-counter",
         symbol: "TANK",
+        nominalAmountMinor: "101",
         amountMinor: "101",
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
       }],
@@ -6422,6 +6505,7 @@ describe("AppController round ordering", () => {
       wins: [{
         id: "big-win-line",
         symbol: "TANK",
+        nominalAmountMinor: "2000",
         amountMinor: "2000",
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
       }],
@@ -6475,6 +6559,7 @@ describe("AppController round ordering", () => {
       wins: [{
         id: "ordinary-win-line",
         symbol: "TANK",
+        nominalAmountMinor: "1999",
         amountMinor: "1999",
         cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
       }],

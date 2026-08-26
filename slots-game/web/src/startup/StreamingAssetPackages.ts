@@ -283,6 +283,17 @@ export function validateAssetPackageManifest(
   return Object.freeze({ manifest, dependencyOrder: Object.freeze(order) });
 }
 
+/**
+ * Window.fetch 是 Web-IDL 方法；存储在类上时，不得继承包或运行时实例作为 receiver。
+ * 注入的 fetch 实现保留调用方绑定；这里只规范化浏览器默认实现。
+ */
+export function defaultStreamingAssetFetch(): typeof fetch {
+  if (typeof globalThis.fetch !== "function") {
+    throw new Error("Streaming asset fetch is unavailable");
+  }
+  return globalThis.fetch.bind(globalThis);
+}
+
 export class StreamingAssetPackageManager {
   readonly validated: ValidatedAssetPackageManifest;
   private readonly packages = new Map<string, AssetPackageSpec>();
@@ -302,7 +313,7 @@ export class StreamingAssetPackageManager {
     options: StreamingAssetPackageManagerOptions = {},
   ) {
     this.validated = validateAssetPackageManifest(manifest);
-    this.fetcher = options.fetch ?? fetch;
+    this.fetcher = options.fetch ?? defaultStreamingAssetFetch();
     this.decoders = Object.freeze({
       binary: ({ bytes }) => bytes,
       text: ({ bytes }) => new TextDecoder().decode(bytes),

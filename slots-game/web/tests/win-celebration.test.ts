@@ -33,6 +33,7 @@ const wins: readonly Win[] = [
   {
     id: "server-win-a",
     symbol: "ORBIT",
+    nominalAmountMinor: "1000",
     amountMinor: "1000",
     ways: 2,
     multiplier: 5,
@@ -44,12 +45,14 @@ const wins: readonly Win[] = [
       {
         multiplier: 5,
         baseAmountMinor: "100",
+        nominalAmountMinor: "500",
         amountMinor: "500",
         cells: [{ reel: 0, row: 1 }, { reel: 1, row: 1 }, { reel: 2, row: 1 }],
       },
       {
         multiplier: 5,
         baseAmountMinor: "100",
+        nominalAmountMinor: "500",
         amountMinor: "500",
         cells: [{ reel: 0, row: 1 }, { reel: 1, row: 1 }, { reel: 2, row: 2 }],
       },
@@ -60,6 +63,7 @@ const wins: readonly Win[] = [
 const plainWins: readonly Win[] = [{
   id: "plain-server-win",
   symbol: "TANK",
+  nominalAmountMinor: "100",
   amountMinor: "100",
   ways: 1,
   cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
@@ -69,6 +73,7 @@ const multipliedHandoffWins: readonly Win[] = [
   {
     id: "prism-x2",
     symbol: "PRISM",
+    nominalAmountMinor: "40",
     amountMinor: "40",
     ways: 2,
     multiplier: 2,
@@ -82,6 +87,7 @@ const multipliedHandoffWins: readonly Win[] = [
   {
     id: "orbit-x2",
     symbol: "ORBIT",
+    nominalAmountMinor: "60",
     amountMinor: "60",
     ways: 1,
     multiplier: 2,
@@ -306,8 +312,9 @@ describe("Primal aggregate win presentation contract", () => {
       ...wins[0]!,
       pathAwards: [{
         multiplier: 100,
-        baseAmountMinor: "1",
-        amountMinor: "100",
+        baseAmountMinor: "200",
+        nominalAmountMinor: "1000",
+        amountMinor: "1000",
         cells: [{ reel: 2, row: 2 }],
       }],
     };
@@ -316,12 +323,37 @@ describe("Primal aggregate win presentation contract", () => {
       .toEqual(createWinCelebrationPlan([withDifferentAuditPaths]).records);
   });
 
+  it("uses nominal path facts for the label base when the paid amount is cap-clipped", () => {
+    const cappedWin: Win = {
+      id: "capped-win",
+      symbol: "ORBIT",
+      ways: 1,
+      multiplier: 5,
+      nominalAmountMinor: "1000",
+      amountMinor: "250",
+      cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
+      pathAwards: [{
+        multiplier: 5,
+        baseAmountMinor: "200",
+        nominalAmountMinor: "1000",
+        amountMinor: "250",
+        cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
+      }],
+    };
+
+    expect(createWinCelebrationPlan([cappedWin])).toMatchObject({
+      totalAmountMinor: "250",
+      records: [{ baseAmountMinor: "200", amountMinor: "250" }],
+    });
+  });
+
   it("does not merge separately returned records", () => {
     const second: Win = {
       id: "server-win-b",
       symbol: "ORBIT",
       ways: 1,
       multiplier: 1,
+      nominalAmountMinor: "300",
       amountMinor: "300",
       cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
     };
@@ -373,6 +405,7 @@ describe("Primal aggregate win presentation contract", () => {
     const legacy: Win = {
       id: "legacy-win",
       symbol: "ORBIT",
+      nominalAmountMinor: "500",
       amountMinor: "500",
       cells: [{ reel: 0, row: 2 }, { reel: 1, row: 1 }, { reel: 2, row: 2 }],
     };

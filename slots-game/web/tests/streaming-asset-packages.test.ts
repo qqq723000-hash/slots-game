@@ -141,6 +141,28 @@ describe("asset package manifest validation", () => {
 });
 
 describe("StreamingAssetPackageManager", () => {
+  it("binds the default browser fetch receiver before loading a package", async () => {
+    const fetcher = vi.fn(function (this: typeof globalThis): Promise<Response> {
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      return Promise.resolve(response("wheel"));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const manager = new StreamingAssetPackageManager(manifest([{
+        id: "wheel",
+        version: "1",
+        stage: "feature-on-demand",
+        resources: [resource("wheel", "wheel")],
+      }]), { maxAttempts: 1 });
+
+      await expect(manager.load("wheel")).resolves.toMatchObject({ id: "wheel" });
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(fetcher.mock.instances).toEqual([globalThis]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("cancels a forged-length chunked resource on the first byte beyond its manifest size", async () => {
     const cancelled = vi.fn();
     const fetcher = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({

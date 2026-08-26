@@ -56,6 +56,7 @@ import {
 } from "../renderer/ResponsiveLayout";
 import { setPrimalRuntimeAssetChannel } from "../assets/primalRuntimeAssets";
 import { DomOverlay } from "../ui/DomOverlay";
+import type { OperatorApprovedGameRulesBundleInput } from "../ui/operatorApprovedGameRules";
 import { createRequestId } from "../protocol/messages";
 import { validateSpinResultAgainstOrigin } from "../protocol/spinResultOriginGuard";
 import { featureLockedBet, selectSessionBet } from "./state/betSelection";
@@ -431,6 +432,11 @@ export interface AppControllerDependencies {
    * 也不参与结果、金额、ACK 或重连决策；嵌入式宿主可注入等价实现。
    */
   readonly streamingAssetRuntime?: StreamingAssetRuntimePort;
+  /**
+   * 运营商/监管方已经审核的纯玩家规则文案。客户端只做封闭校验和文本投影；
+   * 缺失或无效时 Game Rules 保持中性不可用，不以内部协议说明代替。
+   */
+  readonly operatorApprovedGameRules?: Readonly<OperatorApprovedGameRulesBundleInput>;
   /**
    * 生产 RGS launch code 只能使用一次；宿主收到请求后必须换取新签名会话，
    * 禁止从浏览器历史重放已清除的 code。
@@ -886,6 +892,8 @@ export class AppController {
       this.ui.setResponsiveLayout(snapshot);
       this.renderer.setResponsiveLayout(snapshot);
     });
+    this.ui.onHandModeChange((handMode) => this.layout.setHandMode(handMode));
+    this.ui.setOperatorApprovedGameRules(dependencies.operatorApprovedGameRules);
     this.stops = new StopSequencer(this.renderer.reels, {}, {
       onReelStopStart: ({ reel }) => {
         this.reelRound.transition({ type: "REEL_STOP_STARTED", reel });
@@ -1576,7 +1584,6 @@ export class AppController {
       this.rejectSpinResult(error);
       return;
     }
-
     let needsVisualSpinStart = false;
     this.markRgsResultDeliveryStage("buffer-reel-guard");
     const reelSnapshot = this.reelRound.snapshot;
@@ -1673,6 +1680,9 @@ export class AppController {
       this.rejectSpinResult(error);
       return;
     }
+    // v6 保留 nominal 审计 Win，即使整场 cap 已把其实际支付裁为 0；这些记录必须留在
+    // 权威 result 中，但不得触发玩家可见的 Win 动画、音频或空闲重复。
+    const presentedWins = result.wins.filter((win) => BigInt(win.amountMinor) > 0n);
     // 校验通过后的第一条副作用就是启动事件资源租约；此时尚未进入 reel/feature/game
     // 状态转换。租约不参与结果选择，只与后续制作表现并行获取、校验和解码。
     this.primeAuthoritativeFeatureAssetLeases(result, previousFeatureState);
@@ -1691,7 +1701,7 @@ export class AppController {
       roundId: result.roundId,
       totalWinMinor: result.totalWinMinor,
       balanceMinor: result.balanceMinor,
-      winCount: result.wins.length,
+      winCount: presentedWins.length,
     });
     this.markRgsResultDeliveryStage("reel-transition");
     this.reelRound.transition({
@@ -1731,7 +1741,7 @@ export class AppController {
       const featureAudioState: RoundFeatureAudioState = {
         rageLevel: previousFeatureState.rageLevel,
         wasFreeSpins: previousFeatureState.mode !== "BASE",
-        vaultTeaseExtraHold: result.wins.length === 0 && result.events.some((event) => (
+        vaultTeaseExtraHold: presentedWins.length === 0 && result.events.some((event) => (
           event.type === "vaults.locked"
         )),
         vaultCells: vaultLandedEvent?.type === "vaults.landed" ? vaultLandedEvent.cells : [],
@@ -1783,10 +1793,10 @@ export class AppController {
         // 普通 GameWinLogic START 拥有一个从语义上的末轴停止起计时的 300ms 栅栏。
         // Result_Show 的首个 16ms 渲染帧在这段前置时间内运行，而不是再额外等待 300ms。
         // Big Win 刻意没有前置栅栏：完整 Big Win 程序离开后，其普通视图才开始新的前置等待。
-        const settledWaysWinMinor = result.wins.length > 0
-          ? authoritativeWaysWinTotal(result.wins)
+        const settledWaysWinMinor = presentedWins.length > 0
+          ? authoritativeWaysWinTotal(presentedWins)
           : "0";
-        ordinaryWinStartBarrier = result.wins.length > 0
+        ordinaryWinStartBarrier = presentedWins.length > 0
           && this.createBigWinPlan(settledWaysWinMinor, result.betMinor) === null
           ? this.presentationDelay(300)
           : null;
@@ -1819,15 +1829,15 @@ export class AppController {
       // 官方 STOP_ANY 在 WIN 流程开始时求值，早于普通计数器、Big Win 或特性 Continue
       // 排入另一输入。
       this.ui?.reachAutoplayStopBoundary?.(result.sequence, "any-win");
-      this.ui.beginResultPresentation(result.wins.length > 0);
-      const roundWaysWinMinor = result.wins.length > 0
-        ? authoritativeWaysWinTotal(result.wins)
+      this.ui.beginResultPresentation(presentedWins.length > 0);
+      const roundWaysWinMinor = presentedWins.length > 0
+        ? authoritativeWaysWinTotal(presentedWins)
         : "0";
       this.audio.recordBaseMusicRoundOutcome?.(roundWaysWinMinor);
       if (previousFeatureState.mode !== "BASE" && result.featureState.mode !== "BASE") {
         this.renderer.updateFreeSpinHud(featureAudioState.hudState ?? result.featureState);
       }
-      if (result.wins.length > 0) {
+      if (presentedWins.length > 0) {
         const waysWinMinor = roundWaysWinMinor;
         const freeSpinCompletion = result.events.find(
           (event) => event.type === "free_spins.completed",
@@ -1902,7 +1912,7 @@ export class AppController {
         }
         this.presentRoundWinCharacterAudio(winPresentation);
         const roundWinReaction = this.presentEffect(() => this.renderer.reactToWin(
-          result.wins,
+          presentedWins,
           winPresentation,
         ));
         if (!bigWinMode) {
@@ -1932,9 +1942,9 @@ export class AppController {
           // 随后该里程碑拥有符号表现和首次显示音频。只有在这段精确 START 调用栈之后，
           // 才启动聚合计数器。
           const normalRecordsPresentation = (async () => {
-            for (const [index, win] of result.wins.entries()) {
+            for (const [index, win] of presentedWins.entries()) {
               const recordHoldDurationMs = primalWinRecordHoldDurationMs(win, {
-                recordCount: result.wins.length,
+                recordCount: presentedWins.length,
                 counterDurationMs,
                 postBigWin: bigWinMode,
                 fastPlay: roundFastPlay,
@@ -1943,7 +1953,7 @@ export class AppController {
               // 第六个参数告诉渲染器，此次隐藏是否为零延迟交接到下一条权威记录。
               const restoreSymbolsAtHoldBoundary = !bigWinMode
                 && winPresentation === "base"
-                && result.wins.length === 1
+                && presentedWins.length === 1
                 && !(Number.isSafeInteger(win.multiplier) && (win.multiplier ?? 0) > 1);
               await this.presentEffect(() => this.renderer.winCelebration.present(
                 [win],
@@ -1974,7 +1984,7 @@ export class AppController {
                     type: `win-record.${milestone}`,
                     sequence: result.sequence,
                     index,
-                    count: result.wins.length,
+                    count: presentedWins.length,
                     id: record.id,
                     symbol: record.symbol,
                     amountMinor: record.amountMinor,
@@ -1988,7 +1998,7 @@ export class AppController {
                   });
                 },
                 restoreSymbolsAtHoldBoundary,
-                index < result.wins.length - 1,
+                index < presentedWins.length - 1,
               ));
               if (this.normalWinFinishRequested) break;
             }
@@ -2031,7 +2041,7 @@ export class AppController {
       }
       // 停轴后的 Rage/Wheel/Vault/Free Spins 表现归宏观游戏状态所有，而非转轴运动生命周期。
       this.reelRound.transition({ type: "ROUND_COMPLETE" });
-      if (result.wins.length > 0 && presentationPhases.postWinEvents.length > 0) {
+      if (presentedWins.length > 0 && presentationPhases.postWinEvents.length > 0) {
         await this.presentationDelay(reducedMotion ? 40 : 350);
       }
       await this.presentPostReelFeatureEvents(
@@ -3189,6 +3199,9 @@ export class AppController {
         return;
       case "free_spin.cap_reached":
         return;
+      case "win_cap.reached":
+        // 纯经济边界事实，不拥有声音。
+        return;
       case "free_spins.completed":
         // 终局事件启动 Free Spins 尾段。FREESPIN_END/Base 恢复在总结隐藏时开始；
         // 若权威总结栅栏为 false，则与 skipOutro 一起立即开始。
@@ -3838,9 +3851,10 @@ export class AppController {
     fastPlay: boolean,
   ): void {
     this.clearPostWinIdleRepeatTimer();
+    const paidWins = result.wins.filter((win) => BigInt(win.amountMinor) > 0n);
     const returnedBaseWin = previousFeatureState.mode === "BASE"
       && result.featureState.mode === "BASE"
-      && result.wins.length > 0;
+      && paidWins.length > 0;
     const wheelOwnsReturnedRecord = result.events.some((event) => (
       event.type === "wheel.started" || event.type === "wheel.awarded"
     ));
@@ -3851,7 +3865,7 @@ export class AppController {
       : 0;
     const generation = previousGeneration + 1;
     this.postWinIdleRepeatGeneration = generation;
-    const wins = result.wins.map((win) => immutableClone(win));
+    const wins = paidWins.map((win) => immutableClone(win));
     this.postWinIdleRepeatTimer = setTimeout(() => {
       this.postWinIdleRepeatTimer = null;
       if (this.destroyed || generation !== this.postWinIdleRepeatGeneration) return;

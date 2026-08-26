@@ -22,7 +22,21 @@ landscape: designWidth = 844;          designHeight = 844 / aspect
 
 ## Scale and centering contract
 
-For viewport `(viewportWidth, viewportHeight)` and selected canonical surface `(designWidth, designHeight)`:
+PC preserves the captured 1200×900 authored composition inside the 1280×720 renderer:
+
+```text
+authoredHeight = min(viewportHeight, viewportWidth * 900 / 1200)
+scale = authoredHeight / 720
+left = (viewportWidth - 1280 * scale) / 2
+top = (viewportHeight - authoredHeight) / 2
+visibleInsetX = max(0, -left / scale)
+```
+
+This makes common 16:9 and 16:10 PC surfaces touch the physical bottom edge. Narrower desktop
+surfaces crop only the renderer wings symmetrically; HUD, menus and feature controls consume
+`visibleInsetX` and stay inside the visible region.
+
+For mobile viewport `(viewportWidth, viewportHeight)` and its resolved continuous design surface:
 
 ```text
 scale = min(viewportWidth / designWidth, viewportHeight / designHeight)
@@ -30,9 +44,9 @@ left = (viewportWidth - designWidth * scale) / 2
 top = (viewportHeight - designHeight * scale) / 2
 ```
 
-- The frame keeps the resolved design CSS width/height and receives one isotropic `scale(...)` from `top left`.
-- `scaleX`, `scaleY`, flexible frame dimensions, cover/crop and independent renderer stretching are forbidden.
-- Pillarbox/letterbox regions are black, clipped, non-interactive and never become part of Pixi coordinates.
+- Every frame keeps the resolved design CSS width/height and receives one isotropic `scale(...)` from `top left`.
+- `scaleX`, `scaleY`, flexible renderer dimensions and independent renderer stretching are forbidden.
+- PC uses only the captured symmetric authored crop. Mobile uses contain; any pillarbox/letterbox regions are black, clipped and non-interactive.
 - Canvas, DOM overlay, hit areas and help overlay remain in the same resolved coordinate system.
 
 ## Resize lifecycle
@@ -54,12 +68,12 @@ top = (viewportHeight - designHeight * scale) / 2
 
 - `surfaceProfile` labels still distinguish phone/tablet reference coverage, but never choose the design dimensions.
 - Official content layouts remain `pt`, `iPad_pt` and `ls`; they select authored minBounds within the continuous gameplay region.
-- Explicit `?layout=desktop|mobile` wins. Otherwise coarse/compact touch input selects mobile, fine-pointer desktop devices remain desktop, and small phone geometry is the final fallback.
+- Explicit `?layout=desktop|mobile` wins. Explicit `?channel=desktop` also keeps desktop layout on touch-capable PCs. Otherwise coarse/compact touch input selects mobile, fine-pointer desktop devices remain desktop, and small phone geometry is the final fallback.
 
 ## Failure-closed tests
 
 - Test continuous phone/tablet portrait and landscape sizes, foldable-like ratios, extreme clamped ratios, and PC→mobile→tablet→PC changes in one document.
 - Assert `renderedWidth / renderedHeight == designWidth / designHeight` within floating-point tolerance.
-- Assert both scale axes are identical and offsets center the surface. Normal mobile ratios should fit; PC aspect mismatches and clamped extreme ratios must show non-interactive black bars.
+- Assert both scale axes are identical. Normal mobile ratios should fit; clamped extreme ratios must show non-interactive black bars. PC 1440×900 must resolve to `(-80, 0, 1600, 900)` with `visibleInsetX=64` and no bottom bar.
 - Run repeated device switches and orientation changes; the final geometry must depend only on the final viewport.
-- Verify frame hit testing excludes black bars and maps center/corners back to canonical coordinates.
+- Verify frame hit testing excludes black bars and maps the physically visible PC edges through `visibleInsetX` back to canonical coordinates.
