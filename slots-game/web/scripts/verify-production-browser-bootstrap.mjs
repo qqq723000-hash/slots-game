@@ -1741,7 +1741,11 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
 
 function officialHelpProjectionSettled(help) {
   if (!help?.viewportRect || !help?.projectionRect || !help?.authoredRect) return false;
+  const expectedScale = help.viewportClientWidth / 750;
   return help.projectionScrollWidth <= help.projectionClientWidth + 1
+    && Math.abs(help.scaleX - expectedScale) <= 0.000_000_1
+    && Math.abs(help.scaleY - expectedScale) <= 0.000_000_1
+    && Math.abs(help.projectionRect.width - help.viewportClientWidth) <= 0.75
     && Math.abs(help.authoredRect.width - help.projectionRect.width) <= 0.75
     && help.projectionRect.left >= help.viewportRect.left - 0.75
     && help.projectionRect.right <= help.viewportRect.right + 0.75
@@ -1805,16 +1809,31 @@ async function readOfficialHelpLayout(send) {
 
 async function setGameMenuScrollPosition(send, position) {
   const requested = position === "bottom" ? "bottom" : "top";
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + 5_000;
   let metrics = null;
+  let previousGeometry = null;
+  let stableSamples = 0;
   while (Date.now() < deadline) {
-    metrics = await evaluateValue(send, {
+    await evaluateValue(send, {
       returnByValue: true,
       expression: `
         (() => {
           const content = document.querySelector('.game-menu__content');
           if (!(content instanceof HTMLElement)) return null;
           content.scrollTop = ${requested === "bottom" ? "content.scrollHeight" : "0"};
+          return true;
+        })()
+      `,
+    });
+    // 冷缓存下帮助页素材与投影可能在首次滚动后继续改变 scrollHeight。
+    // 等一帧布局窗口再取样，并要求最大滚动位置连续稳定，避免把旧最大值误判为底边。
+    await delay(50);
+    metrics = await evaluateValue(send, {
+      returnByValue: true,
+      expression: `
+        (() => {
+          const content = document.querySelector('.game-menu__content');
+          if (!(content instanceof HTMLElement)) return null;
           return {
             clientHeight: content.clientHeight,
             scrollHeight: content.scrollHeight,
@@ -1829,11 +1848,17 @@ async function setGameMenuScrollPosition(send, position) {
         ? Math.abs(metrics.scrollTop - maximum) <= 1
         : metrics.scrollTop <= 1;
       if (settled) {
-        await delay(50);
-        return metrics;
+        const geometry = `${metrics.clientHeight}:${metrics.scrollHeight}:${maximum}`;
+        stableSamples = previousGeometry === geometry
+          ? stableSamples + 1
+          : 1;
+        previousGeometry = geometry;
+        if (stableSamples >= 3) return metrics;
+      } else {
+        stableSamples = 0;
+        previousGeometry = null;
       }
     }
-    await delay(25);
   }
   throw new Error(`正式浏览器游戏菜单无法滚动到${requested === "bottom" ? "底部" : "顶部"}：${JSON.stringify(metrics)}`);
 }
