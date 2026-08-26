@@ -13,11 +13,11 @@ func TestValidateOutcomeStructureRejectsHiddenOrMalformedAwards(t *testing.T) {
 			{{Symbol: SymbolOrbit}, {Symbol: SymbolPrism}, {Symbol: SymbolNova}},
 		},
 		Wins: []Win{{
-			ID: "orbit-3", Symbol: SymbolOrbit, Ways: 1, AmountMinor: 50,
+			ID: "orbit-3", Symbol: SymbolOrbit, Ways: 1, AmountMinor: 50, PaidAmountMinor: 50,
 			Cells: []Position{{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0}},
 			PathAwards: []PathAward{{
 				Cells:      []Position{{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0}},
-				Multiplier: 1, BaseAmountMinor: 50, AmountMinor: 50,
+				Multiplier: 1, BaseAmountMinor: 50, AmountMinor: 50, PaidAmountMinor: 50,
 			}},
 		}},
 		TotalWinMinor: 50,
@@ -438,7 +438,9 @@ func TestValidateOutcomeAgainstConfigRecomputesWildWaysAwards(t *testing.T) {
 		tampered.Wins = append([]Win(nil), outcome.Wins...)
 		tampered.Wins[0].PathAwards = append([]PathAward(nil), outcome.Wins[0].PathAwards...)
 		tampered.Wins[0].AmountMinor++
+		tampered.Wins[0].PaidAmountMinor++
 		tampered.Wins[0].PathAwards[0].AmountMinor++
+		tampered.Wins[0].PathAwards[0].PaidAmountMinor++
 		tampered.TotalWinMinor++
 		if err := ValidateOutcomeStructure(SpinInput{BetMinor: 100}, tampered); err != nil {
 			t.Fatalf("balanced but false aggregate should reach definition check: %v", err)

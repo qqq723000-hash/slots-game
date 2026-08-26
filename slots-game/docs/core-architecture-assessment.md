@@ -21,7 +21,7 @@
 | 能力 | 当前状态 | 结论 |
 | --- | --- | --- |
 | 浏览器与资金权威分离 | 已实现 | 前端不能生成网格、派彩、余额或修改服务端顺序 |
-| PC/手机/平板连续适配 | 已实现核心框架 | 单次 contain 根缩放、居中黑边、连续移动设计域；仍需真实设备矩阵验收 |
+| PC/手机/平板连续适配 | 已实现核心框架 | PC authored crop、移动单次 contain 根缩放、连续移动设计域；仍需真实设备矩阵验收 |
 | 客户端断线与结果恢复 | 已实现 | 同一 round ledger、状态查询、序号去重、展示 ACK |
 | 原子轮次钱包 v2 | 已实现应用契约 | `atomic-http-v2`、完整命令摘要、显式结果、签名收据 |
 | 慢钱包故障隔离 | 已实现应用机制 | 一秒快路径、非阻塞舱壁、独立熔断、202 持久恢复 |
@@ -136,10 +136,10 @@ flowchart LR
 ledger 重提。该循环仍受 `maxPollAttempts` 硬上限约束，耗尽后保留 pending 并阻止新投注，避免为了
 “自动恢复”无限发送经济请求。
 
-**多端布局使用单一根投影。** 桌面保持固定 `1280×720` 设计域；移动端按当前物理长宽比连续生成
-逻辑设计域，并把极端范围钳制在 `9:22..22:9`。根几何使用
-`min(viewportWidth/designWidth, viewportHeight/designHeight)`，一次等比缩放后居中，外层黑色填
-充。`ResizeObserver`、window resize 和 `visualViewport.resize` 合并到 animation frame；DevTools
+**多端布局使用单一根投影。** 桌面保持固定 `1280×720` 设计域，并按原版 `1200×900` authored
+composition 一次等比投影：常见 PC 高度贴满，窄视口对称裁切左右翼并发布 `visibleInsetX`。移动端按
+当前物理长宽比连续生成逻辑设计域，把极端范围钳制在 `9:22..22:9`，再使用
+`min(viewportWidth/designWidth, viewportHeight/designHeight)` 等比居中。`ResizeObserver`、window resize 和 `visualViewport.resize` 合并到 animation frame；DevTools
 切换产生的瞬时 `0×N` 不会把布局压成 `1×1`。Pixi、DOM 和点击坐标消费同一个 snapshot。
 
 **表现生命周期已经分层。** 游戏连接/经济状态、转轴轮次、启动流程和渲染器内部特效分别有状态

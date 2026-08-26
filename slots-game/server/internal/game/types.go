@@ -45,22 +45,28 @@ type Position struct {
 // PathAward 是服务器解析出的一条从左到右的具体连线路径。Cells 始终按列排序，
 // 并分别包含第 0、1、2 列的一个地址。Multiplier 是该路径经过的 WILD 修正值乘积，
 // 路径不含 WILD 时为 1。BaseAmountMinor 是合并 WILD 倍数前展示的权威金额；
-// AmountMinor 是最终结算路径金额。两者是独立事实，因为最小货币单位取整会导致客户端
-// 无法通过除法安全地相互推导。
+// AmountMinor 是整场最高赢取预算应用前的数学路径金额，PaidAmountMinor 是最终结算贡献。
+// 这些值是独立事实，因为最小货币单位取整会导致客户端无法通过除法安全地相互推导。
 type PathAward struct {
 	Cells           []Position
 	Multiplier      int64
 	BaseAmountMinor int64
+	// AmountMinor 是应用整场最高赢取预算前的名义数学路径奖励；
+	// PaidAmountMinor 是最终结算贡献。除非已签名上限裁剪此结果，否则两者相等。
 	AmountMinor     int64
+	PaidAmountMinor int64
 }
 
 type Win struct {
-	ID          string
-	Symbol      Symbol
-	Ways        int
-	AmountMinor int64
-	Cells       []Position
-	PathAwards  []PathAward
+	ID     string
+	Symbol Symbol
+	Ways   int
+	// AmountMinor 保留名义 Ways 奖励；PaidAmountMinor 是应用游戏上限后
+	// 计入 TotalWinMinor 和钱包结算的金额。
+	AmountMinor     int64
+	PaidAmountMinor int64
+	Cells           []Position
+	PathAwards      []PathAward
 }
 
 // UniformPathMultiplier 返回所有具体连线奖励共同使用的唯一倍数。分解缺失或倍数混合时，
@@ -114,10 +120,12 @@ const (
 )
 
 type FeatureState struct {
-	Mode          FeatureMode
-	Remaining     int
-	Awarded       int
-	BetMinor      int64
+	Mode      FeatureMode
+	Remaining int
+	Awarded   int
+	BetMinor  int64
+	// WinMinor 是已支付的整场累计值：触发时的基础结果加上之后的每次免费旋转。
+	// 持久化该值后，最高赢取预算可作为权威状态，并能在进程或钱包重试后精确恢复。
 	WinMinor      int64
 	RageLevel     int
 	RageCollected int

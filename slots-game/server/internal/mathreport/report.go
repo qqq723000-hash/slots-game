@@ -15,7 +15,7 @@ import (
 const (
 	ReportSchemaVersion             = "rgs-math-report-v2"
 	EngineRulesSchemaVersion        = game.EngineRulesVersion
-	TheoreticalMaximumMethodVersion = "conservative-liability-upper-bound-v1"
+	TheoreticalMaximumMethodVersion = "authoritative-win-cap-upper-bound-v2"
 )
 
 var metadataNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
@@ -107,6 +107,9 @@ func Run(ctx context.Context, config game.Config, spinner game.Spinner, options 
 	if !metadataNamePattern.MatchString(options.RulesSchemaVersion) {
 		return Report{}, errors.New("engine rules schema version is required and must be a stable identifier")
 	}
+	if options.RulesSchemaVersion != config.EngineRulesVersion {
+		return Report{}, errors.New("engine rules schema version must match the signed game definition")
+	}
 	minimumRTP, maximumRTP, acceptance, err := parseAcceptance(options.RTPMinimum, options.RTPMaximum)
 	if err != nil {
 		return Report{}, err
@@ -121,7 +124,7 @@ func Run(ctx context.Context, config game.Config, spinner game.Spinner, options 
 	}
 	report := Report{
 		SchemaVersion:            ReportSchemaVersion,
-		EngineRulesSchemaVersion: options.RulesSchemaVersion,
+		EngineRulesSchemaVersion: config.EngineRulesVersion,
 		GameID:                   config.GameID, DefinitionVersion: config.DefinitionVersion,
 		ConfigurationSHA256: digest,
 		RNG:                 RNGIdentity{Algorithm: options.RNGAlgorithm, Seed: options.RNGSeed},
@@ -129,7 +132,7 @@ func Run(ctx context.Context, config game.Config, spinner game.Spinner, options 
 		TheoreticalMaximumUpperBound: theoreticalMaximum,
 		TheoreticalMaximumMethod:     TheoreticalMaximumMethodVersion,
 		Events:                       make(map[string]int64), Rows: make(map[int]int64),
-		Disclaimer: "Deterministic Monte Carlo engineering evidence; not a certification report. The theoretical maximum is a conservative liability upper bound.",
+		Disclaimer: "Deterministic Monte Carlo engineering evidence; not a certification report. The theoretical maximum is a conservative liability upper bound constrained by the authoritative whole-game win cap.",
 	}
 	var cycleMean, cycleM2 float64
 	state := game.EmptyFeatureState()
@@ -222,6 +225,10 @@ func parseAcceptance(minimum, maximum string) (*big.Rat, *big.Rat, RTPAcceptance
 }
 
 func theoreticalMaximumUpperBound(config game.Config, betMinor int64) (MaximumEvidence, error) {
+	capMinor, err := checkedMultiply(betMinor, config.MaxWinMultiplier)
+	if err != nil {
+		return MaximumEvidence{}, err
+	}
 	baseMaximum, err := fixedSpinMaximum(config, betMinor, 3, false)
 	if err != nil {
 		return MaximumEvidence{}, err
@@ -231,7 +238,7 @@ func theoreticalMaximumUpperBound(config game.Config, betMinor int64) (MaximumEv
 	if !reelContains(config.Reels[0], game.SymbolSurge) &&
 		!reelContains(config.Reels[1], game.SymbolSurge) &&
 		!reelContains(config.Reels[2], game.SymbolSurge) {
-		return maximumEvidence(spinMaximum, cycleMaximum, betMinor), nil
+		return maximumEvidence(minInt64(spinMaximum, capMinor), minInt64(cycleMaximum, capMinor), betMinor), nil
 	}
 
 	for _, wheel := range config.Feature.Wheel {
@@ -283,7 +290,7 @@ func theoreticalMaximumUpperBound(config game.Config, betMinor int64) (MaximumEv
 			cycleMaximum = maxInt64(cycleMaximum, featureCycle)
 		}
 	}
-	return maximumEvidence(spinMaximum, cycleMaximum, betMinor), nil
+	return maximumEvidence(minInt64(spinMaximum, capMinor), minInt64(cycleMaximum, capMinor), betMinor), nil
 }
 
 func fixedSpinMaximum(config game.Config, betMinor int64, rows int, overdrive bool) (int64, error) {
@@ -428,6 +435,13 @@ func checkedScaleAwardCeil(payUnitMinor int64, factors ...int64) (int64, error) 
 
 func maxInt64(left, right int64) int64 {
 	if left > right {
+		return left
+	}
+	return right
+}
+
+func minInt64(left, right int64) int64 {
+	if left < right {
 		return left
 	}
 	return right

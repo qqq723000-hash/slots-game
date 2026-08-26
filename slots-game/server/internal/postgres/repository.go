@@ -1978,6 +1978,9 @@ func scanRound(row rowScanner) (rgs.RoundRecord, error) {
 	if err := decodeStrictRoundResult(resultJSON, &record.Result); err != nil {
 		return rgs.RoundRecord{}, rgs.ErrManualReview
 	}
+	if err := rgs.NormalizePersistedSpinResult(&record.Result); err != nil {
+		return rgs.RoundRecord{}, rgs.ErrManualReview
+	}
 	if record.Result.OperatorID != record.Key.OperatorID ||
 		record.Result.SessionID != record.Key.SessionID ||
 		record.Result.RoundID != record.Key.RoundID ||
@@ -2213,7 +2216,8 @@ func validateBinding(session rgs.Session, request rgs.SpinRequest, databaseNow t
 }
 
 func validatePrepared(session rgs.Session, request rgs.SpinRequest, result rgs.SpinResult) error {
-	if result.OperatorID != request.OperatorID || result.SessionID != request.SessionID ||
+	if result.ResultSchemaVersion != rgs.ResultSchemaPaidFactsV1 ||
+		result.OperatorID != request.OperatorID || result.SessionID != request.SessionID ||
 		result.RoundID != request.RoundID || result.GameID != request.GameID ||
 		result.DefinitionVersion != request.DefinitionVersion ||
 		result.DefinitionHash != request.DefinitionHash ||

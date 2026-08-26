@@ -1043,8 +1043,10 @@ func TestFreeSpinStateSurvivesAmbiguousWalletAndCoordinatorRestart(t *testing.T)
 		outcome := payableOutcome(nextFeature)
 		outcome.TotalWinMinor = 1_000
 		outcome.Wins[0].AmountMinor = 1_000
+		outcome.Wins[0].PaidAmountMinor = 1_000
 		outcome.Wins[0].PathAwards[0].BaseAmountMinor = 1_000
 		outcome.Wins[0].PathAwards[0].AmountMinor = 1_000
+		outcome.Wins[0].PathAwards[0].PaidAmountMinor = 1_000
 		return outcome, nil
 	}}
 	wallet := newTestWallet(5_000)
@@ -1103,6 +1105,87 @@ func TestFreeSpinStateSurvivesAmbiguousWalletAndCoordinatorRestart(t *testing.T)
 	}
 	if spinner.calls.Load() != 1 || wallet.applyCalls.Load() != 1 || wallet.economicApplyCount() != 1 {
 		t.Fatalf("free recovery repeated effects: engine=%d wallet=%d economic=%d", spinner.calls.Load(), wallet.applyCalls.Load(), wallet.economicApplyCount())
+	}
+}
+
+func TestMaxWinCapSurvivesWalletAmbiguityRestartAndIdempotentReplay(t *testing.T) {
+	repository := NewMemoryRepository()
+	session := baseSession()
+	session.Revision = 7
+	session.Sequence = 12
+	session.BalanceMinor = 500_000
+	session.Feature = game.FeatureState{
+		Mode: game.FeatureExpansion, Remaining: 2, Awarded: 8, BetMinor: 100,
+		WinMinor: 240_000, RageLevel: game.DefaultRageLevel,
+	}
+	createTestSession(t, repository, session)
+
+	config := game.DemoConfig()
+	config.Reels[0] = []game.WeightedSymbol{{Value: game.SymbolOrbit, Weight: 1}}
+	config.Reels[1] = []game.WeightedSymbol{{Value: game.SymbolVault, Weight: 1}}
+	config.Reels[2] = []game.WeightedSymbol{{Value: game.SymbolOrbit, Weight: 1}}
+	config.VaultMultipliers = []game.WeightedInt{{Value: 1000, Weight: 1}}
+	config.Feature.VaultUnlockChanceBP = 10_000
+	config.Feature.VaultFreeSpinWeight = 0
+	engine, err := game.NewEngine(config, rng.NewSequenceSource(make([]uint64, 96)...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spinner := &countingSpinner{spin: func(input game.SpinInput) (game.SpinOutcome, error) {
+		return engine.Spin(context.Background(), input)
+	}}
+	wallet := newTestWallet(session.BalanceMinor)
+	wallet.ambiguousAfterApply = true
+	wallet.lookupAllowed.Store(false)
+	firstCoordinator := newTestCoordinator(t, repository, wallet, spinner, 12*time.Millisecond)
+	request := baseRequest("round-capped-free-recovery", 100, session.Revision)
+	request.RoundKind = RoundKindFreeSpin
+
+	if _, err := firstCoordinator.Spin(context.Background(), request); !errors.Is(err, ErrWalletPending) {
+		t.Fatalf("first capped Free Spin error = %v, want ErrWalletPending", err)
+	}
+	record, err := repository.GetRound(context.Background(), request.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Result.ChargedBetMinor != 0 || record.Result.TotalWinMinor != 10_000 ||
+		record.Result.FeatureState.WinMinor != 250_000 || record.Result.FeatureState.Remaining != 1 {
+		t.Fatalf("prepared capped result = %+v", record.Result)
+	}
+	capEvents := 0
+	for _, event := range record.Result.Events {
+		if event.Type == "win_cap.reached" {
+			capEvents++
+		}
+	}
+	if capEvents != 1 {
+		t.Fatalf("prepared capped events = %+v", record.Result.Events)
+	}
+	if wallet.balanceValue() != 510_000 {
+		t.Fatalf("capped wallet balance = %d, want 510000", wallet.balanceValue())
+	}
+
+	wallet.lookupAllowed.Store(true)
+	secondCoordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
+	recovered, err := secondCoordinator.Reconcile(context.Background(), request.Key())
+	if err != nil {
+		t.Fatalf("recover capped Free Spin: %v", err)
+	}
+	replayed, err := secondCoordinator.Spin(context.Background(), request)
+	if err != nil || !reflect.DeepEqual(replayed, recovered) {
+		t.Fatalf("capped replay = %+v, recovered=%+v, error=%v", replayed, recovered, err)
+	}
+	resumed, err := repository.GetSession(context.Background(), session.OperatorID, session.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.BalanceMinor != 510_000 || resumed.Feature.WinMinor != 250_000 ||
+		resumed.Feature.Remaining != 1 || resumed.PendingRoundID != "" {
+		t.Fatalf("resumed capped session = %+v", resumed)
+	}
+	if spinner.calls.Load() != 1 || wallet.applyCalls.Load() != 1 || wallet.economicApplyCount() != 1 {
+		t.Fatalf("capped recovery repeated effects: engine=%d wallet=%d economic=%d",
+			spinner.calls.Load(), wallet.applyCalls.Load(), wallet.economicApplyCount())
 	}
 }
 
@@ -1598,11 +1681,11 @@ func payableOutcome(next game.FeatureState) game.SpinOutcome {
 			{{Symbol: game.SymbolOrbit}, {Symbol: game.SymbolPrism}, {Symbol: game.SymbolNova}},
 		},
 		Wins: []game.Win{{
-			ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 1, AmountMinor: 50,
+			ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 1, AmountMinor: 50, PaidAmountMinor: 50,
 			Cells: []game.Position{{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0}},
 			PathAwards: []game.PathAward{{
 				Cells:      []game.Position{{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0}},
-				Multiplier: 1, BaseAmountMinor: 50, AmountMinor: 50,
+				Multiplier: 1, BaseAmountMinor: 50, AmountMinor: 50, PaidAmountMinor: 50,
 			}},
 		}},
 		Events: []game.Event{{

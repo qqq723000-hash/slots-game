@@ -1,5 +1,10 @@
 package game
 
-// EngineRulesVersion 标识未纳入数学 Config JSON 的随机数到结果转换语义。
-// 生产定义审批、数学报告与 RGS 运行时必须绑定同一版本，禁止跨版本静默重放。
-const EngineRulesVersion = "slots-game-ways3-features-v4"
+// EngineRulesVersion 标识随机数到结果的转换语义。它是已签名数学
+// Config 的必填字段，因此修改这些语义时必须升级定义版本并重新审批。
+const EngineRulesVersion = "slots-game-ways3-features-win-cap-paid-facts-v6"
+
+// PrimalMaxWinMultiplier 属于 Primal 客户端使用的 v6 引擎契约。
+// 若要采用不同上限，必须使用新的引擎规则版本（或未来将已签名上限绑定到
+// 会话身份的协议）。
+const PrimalMaxWinMultiplier int64 = 2_500

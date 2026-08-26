@@ -659,7 +659,8 @@ func TestPostgresHighValueRiskApprovalGatesWalletClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := rgs.SpinResult{
-		OperatorID: request.OperatorID, SessionID: request.SessionID, RoundID: request.RoundID,
+		ResultSchemaVersion: rgs.ResultSchemaPaidFactsV1,
+		OperatorID:          request.OperatorID, SessionID: request.SessionID, RoundID: request.RoundID,
 		GameID: request.GameID, DefinitionVersion: request.DefinitionVersion,
 		DefinitionHash: request.DefinitionHash, Currency: request.Currency,
 		RoundKind: request.RoundKind, ServerTransactionID: "rgs-op-v1:risk",
@@ -859,7 +860,8 @@ func recoverableFeatureResult(
 	events []game.Event,
 ) rgs.SpinResult {
 	return rgs.SpinResult{
-		OperatorID: request.OperatorID, SessionID: request.SessionID, RoundID: request.RoundID,
+		ResultSchemaVersion: rgs.ResultSchemaPaidFactsV1,
+		OperatorID:          request.OperatorID, SessionID: request.SessionID, RoundID: request.RoundID,
 		GameID: request.GameID, DefinitionVersion: request.DefinitionVersion,
 		DefinitionHash: request.DefinitionHash, Currency: request.Currency,
 		RoundKind: request.RoundKind, ServerTransactionID: "rgs-op-v1:" + request.RoundID,
@@ -887,11 +889,13 @@ func (s *integrationSpinner) Spin(context.Context, game.SpinInput) (game.SpinOut
 			{{Symbol: game.SymbolOrbit}, {Symbol: game.SymbolPrism}, {Symbol: game.SymbolPulse}},
 		},
 		Wins: []game.Win{{
-			ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 1, AmountMinor: 50,
+			ID: "orbit-3", Symbol: game.SymbolOrbit, Ways: 1,
+			AmountMinor: 50, PaidAmountMinor: 50,
 			Cells: []game.Position{{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0}},
 			PathAwards: []game.PathAward{{
 				Cells:      []game.Position{{Reel: 0, Row: 0}, {Reel: 1, Row: 0}, {Reel: 2, Row: 0}},
-				Multiplier: 1, BaseAmountMinor: 50, AmountMinor: 50,
+				Multiplier: 1, BaseAmountMinor: 50,
+				AmountMinor: 50, PaidAmountMinor: 50,
 			}},
 		}},
 		TotalWinMinor: 50, NextFeature: game.EmptyFeatureState(),
