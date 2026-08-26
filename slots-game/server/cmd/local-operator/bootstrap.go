@@ -222,7 +222,7 @@ func writeSecretAtomically(path string, contents []byte) error {
 		temporary.Close()
 		return err
 	}
-	if err := writeFileFull(temporary, contents); err != nil {
+	if err := writeFull(temporary, contents); err != nil {
 		temporary.Close()
 		return err
 	}

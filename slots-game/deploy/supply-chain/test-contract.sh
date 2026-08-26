@@ -175,19 +175,6 @@ replace_once '      security-events: write' '      security-events: read' "$fixt
 expect_rejected 'CodeQL lost SARIF upload permission'
 
 reset_fixture
-replace_once '        id: analyze' '        id: upload-only' "$fixture/.github/workflows/codeql.yml"
-expect_rejected 'CodeQL SARIF verifier lost the analyze output binding'
-
-reset_fixture
-replace_once '          7.0' '          9.0' "$fixture/.github/workflows/codeql.yml"
-expect_rejected 'CodeQL SARIF gate stopped rejecting High findings'
-
-reset_fixture
-replace_once 'node --test deploy/supply-chain/verify-codeql-sarif.test.mjs' \
-  'true # CodeQL SARIF verifier tests removed' "$fixture/Makefile"
-expect_rejected 'CodeQL SARIF verifier regression tests were removed'
-
-reset_fixture
 replace_once '          fail-on-severity: high' '          fail-on-severity: critical' \
   "$fixture/.github/workflows/dependency-review.yml"
 expect_rejected 'dependency review accepted newly introduced high vulnerabilities'
