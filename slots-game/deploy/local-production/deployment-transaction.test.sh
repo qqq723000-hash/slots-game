@@ -31,6 +31,14 @@ if [ "$mode" = binding ]; then
   exit 0
 fi
 
+if [ "$mode" = initial-state ]; then
+  export LOCAL_PRODUCTION_STATE_ROOT="$2"
+  # shellcheck source=deploy/local-production/common.sh
+  . "$script_dir/common.sh"
+  needs_initial_compose_state
+  exit 0
+fi
+
 test "$mode" = main || { printf '%s\n' 'unsupported deployment transaction test mode' >&2; exit 2; }
 temporary_root="$(mktemp -d -t slots-local-deployment-transaction.XXXXXX)"
 holder_pid=''
@@ -47,6 +55,16 @@ state_root="$temporary_root/state"
 secrets_root="$state_root/secrets"
 mkdir -p "$secrets_root"
 chmod 0700 "$state_root" "$secrets_root"
+# 首次 bootstrap 在密钥创建后中断时尚无选择器；重跑必须识别并恢复这一状态。
+sh "$0" initial-state "$state_root"
+: >"$secrets_root/compose.env"
+sh "$0" initial-state "$state_root"
+printf '%s\n' 'committed-selector' >"$secrets_root/compose.env"
+if sh "$0" initial-state "$state_root"; then
+  printf '%s\n' 'committed Compose selector unexpectedly entered initial-state recovery' >&2
+  exit 1
+fi
+rm -f "$secrets_root/compose.env"
 ready_file="$temporary_root/holder-ready"
 release_file="$temporary_root/holder-release"
 sh "$0" holder "$state_root" "$ready_file" "$release_file" &

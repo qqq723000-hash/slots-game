@@ -443,7 +443,8 @@ func (limiter *Limiter) Admit(parent context.Context, identity string, _ time.Ti
 	_, _ = mac.Write([]byte(identity))
 	key := keyPrefix + hex.EncodeToString(mac.Sum(nil)) + "}"
 	result, err := limiter.executor.Evaluate(ctx, key, limiter.arguments)
-	if err != nil || len(result) != 2 || (result[0] != 0 && result[0] != 1) || result[1] < 0 {
+	if err != nil || len(result) != 2 || (result[0] != 0 && result[0] != 1) || result[1] < 0 ||
+		result[1] > int64(maximumBucketTTL/time.Millisecond) {
 		// 调用方主动取消不代表共享后端故障；本次仍 fail-closed，但不能让单个取消请求
 		// 打开全局熔断并隔离其他运营商/会话。内部超时和真实协议错误仍开启熔断。
 		if parent.Err() != nil {

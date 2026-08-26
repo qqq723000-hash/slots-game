@@ -611,6 +611,15 @@ func TestOperatorAdmissionBackendFailureReturnsSignedServiceUnavailable(t *testi
 	}
 }
 
+func TestRetryAfterHeaderValueDoesNotOverflow(t *testing.T) {
+	if got := retryAfterHeaderValue(time.Duration(1<<63 - 1)); got != "9223372037" {
+		t.Fatalf("maximum Retry-After = %q", got)
+	}
+	if got := retryAfterHeaderValue(0); got != "1" {
+		t.Fatalf("default Retry-After = %q", got)
+	}
+}
+
 func TestSharedAdmissionFailureBlocksOnlyNewEconomicIntents(t *testing.T) {
 	security := newSecurityFixture(t)
 	sharedCalls := 0
