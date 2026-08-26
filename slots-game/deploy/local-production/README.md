@@ -60,6 +60,13 @@ macOS 本机部署使用 BSD `lockf`，Linux 合同门禁使用等价的 util-li
 `LOCAL_PRODUCTION_IMAGE_SOURCE` 与 `LOCAL_PRODUCTION_IMAGE_VERSION`，格式会在写入
 Compose 环境前校验。静态约束可单独执行：
 
+Web、HTTPS 入口与告警代理继续使用固定多架构摘要的官方 `nginxinc/nginx-unprivileged`
+基线和 UID `101`。由于该上游基线尚未包含 Alpine 的 OpenSSL 安全修复，构建按
+`amd64`/`arm64` 从 Alpine v3.24 官方稳定仓库取得内容摘要固定的 `libcrypto3`、
+`libssl3` `3.5.8-r0` APK，并通过只读挂载离线安装和核对精确版本；不会执行可变
+`apk upgrade`。入口与告警代理共用同一 `slots-nginx-proxy` 候选 tag，仍保留各自
+带固定 CA 的 `wget` TLS 健康探针。
+
 ```sh
 ./deploy/local-production/verify-static-contract.sh
 ```

@@ -73,8 +73,8 @@ make verify-supply-chain-contract
 
 源码报告目录和 `TRIVY_CACHE_DIR` 必须位于 Git 根之外，否则报告或 cache 会被本次完整根扫描
 再次读入，脚本会在启动 scanner 前拒绝执行。依赖结果写入 `trivy-filesystem.json`，显式生产
-Docker/Helm 配置结果写入 `trivy-config.json`，后置覆盖契约精确要求十六个正式目标，其中包括
-独立的 API 与 Worker Deployment；新增或删除目标都必须同步安全评审与机器契约。
+Docker/Helm 配置结果写入 `trivy-config.json`，后置覆盖契约精确要求十七个正式目标，其中包括
+本地 Nginx 代理以及独立的 API 与 Worker Deployment；新增或删除目标都必须同步安全评审与机器契约。
 Terraform 分别写入 `trivy-terraform-dev.json`、`trivy-terraform-staging.json`、
 `trivy-terraform-prod-primary.json` 和 `trivy-terraform-prod-dr.json`，每份报告都保留环境身份并
 精确校验 Trivy 当前解析出的 root、archive 与 web-edge 目标及其 `config/terraform` 类型。

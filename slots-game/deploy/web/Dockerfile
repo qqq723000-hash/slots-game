@@ -1,7 +1,16 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
 ARG NODE_IMAGE=node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94
-ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:e88d990b349df8cf4aa82f16642d7a23375016638c9ace4e5c6ca25028e62e65
+ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:bcf91d2c73ab64fa1c4ac7fbac5ac523057c8af7d553ab9251c7aef38c260979
+
+# 上游 Nginx 镜像尚未包含 Alpine 对 CVE-2026-14456 的 OpenSSL 修复。补丁 APK 来自
+# Alpine v3.24 官方稳定仓库，按架构分别绑定内容摘要；最终层仅通过只读 mount 安装，
+# 不把下载包留在运行镜像中，也不允许 apk 在构建时访问网络。
+FROM scratch AS openssl-patches
+ADD --checksum=sha256:161223a16f042b8e469e9441291e071464fd91d4f4bbe6f496ee8d0abd4e0701 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk /x86_64/libcrypto3.apk
+ADD --checksum=sha256:aca521e5ae4a321322a9d47ed64a1775f5ab1ffd215d1e9fc0433c58f7bfd037 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk /x86_64/libssl3.apk
+ADD --checksum=sha256:35b892813c23664a3592e4fc8c12a03538a22c579057655361c7043305272a9a https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libcrypto3-3.5.8-r0.apk /aarch64/libcrypto3.apk
+ADD --checksum=sha256:d6ec970cc10e01539e41626f720c4e0ac69016eaa2079a10ef776ffd3243db5b https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libssl3-3.5.8-r0.apk /aarch64/libssl3.apk
 
 FROM ${NODE_IMAGE} AS dependencies
 WORKDIR /src/web
@@ -51,6 +60,15 @@ RUN --network=none \
       node ./scripts/verify-release-asset-approval.mjs
 
 FROM ${NGINX_IMAGE} AS config-conformance-nginx
+USER 0:0
+RUN --network=none \
+    --mount=type=bind,from=openssl-patches,source=/,target=/patches,readonly \
+    openssl_patch_arch=$(apk --print-arch) && \
+    case "$openssl_patch_arch" in x86_64|aarch64) ;; *) exit 1 ;; esac && \
+    apk add --no-network --no-cache --repositories-file /dev/null "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk" && \
+    apk info -e 'libcrypto3=3.5.8-r0' >/dev/null && \
+    apk info -e 'libssl3=3.5.8-r0' >/dev/null
+USER 101:101
 # 只解析与 release 同源生成的 Nginx 配置；禁止复制 dist，避免该层成为可发布网页镜像。
 COPY --from=release-config-build --chown=101:101 /src/web/release-nginx.conf /etc/nginx/conf.d/default.conf
 RUN --network=none nginx -t
@@ -64,6 +82,15 @@ USER 65534:65534
 CMD ["/ci-only-not-release-evidence/release-nginx.conf"]
 
 FROM ${NGINX_IMAGE} AS static-conformance
+USER 0:0
+RUN --network=none \
+    --mount=type=bind,from=openssl-patches,source=/,target=/patches,readonly \
+    openssl_patch_arch=$(apk --print-arch) && \
+    case "$openssl_patch_arch" in x86_64|aarch64) ;; *) exit 1 ;; esac && \
+    apk add --no-network --no-cache --repositories-file /dev/null "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk" && \
+    apk info -e 'libcrypto3=3.5.8-r0' >/dev/null && \
+    apk info -e 'libssl3=3.5.8-r0' >/dev/null
+USER 101:101
 LABEL org.opencontainers.image.title="CI_ONLY_STATIC_CONFORMANCE" \
       org.opencontainers.image.description="CI-only unprivileged static image; not an approved release"
 COPY --chown=0:0 deploy/web/nginx.conf /etc/nginx/conf.d/default.conf
@@ -82,6 +109,15 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
   CMD ["wget", "-q", "-T", "2", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
 
 FROM ${NGINX_IMAGE} AS runtime
+USER 0:0
+RUN --network=none \
+    --mount=type=bind,from=openssl-patches,source=/,target=/patches,readonly \
+    openssl_patch_arch=$(apk --print-arch) && \
+    case "$openssl_patch_arch" in x86_64|aarch64) ;; *) exit 1 ;; esac && \
+    apk add --no-network --no-cache --repositories-file /dev/null "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk" && \
+    apk info -e 'libcrypto3=3.5.8-r0' >/dev/null && \
+    apk info -e 'libssl3=3.5.8-r0' >/dev/null
+USER 101:101
 ARG WEB_RELEASE_VERSION
 ARG WEB_RELEASE_REVISION
 # 生产目标只复制 release-build 生成的精确策略；CI 静态镜像不得作为发布替代品。

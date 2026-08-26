@@ -377,6 +377,7 @@ run_source_scan() {
       mkdir -p \
         /scan/dockerfiles/root \
         /scan/dockerfiles/cluster \
+        /scan/dockerfiles/local-nginx-proxy \
         /scan/dockerfiles/local-services \
         /scan/dockerfiles/local-web \
         /scan/dockerfiles/web \
@@ -384,6 +385,7 @@ run_source_scan() {
         /terraform
       cp "$PROJECT_ROOT/deploy/Dockerfile" /scan/dockerfiles/root/Dockerfile
       cp "$PROJECT_ROOT/deploy/cluster-production/Dockerfile.services" /scan/dockerfiles/cluster/Dockerfile.services
+      cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.nginx-proxy" /scan/dockerfiles/local-nginx-proxy/Dockerfile.nginx-proxy
       cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.services" /scan/dockerfiles/local-services/Dockerfile.services
       cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.web" /scan/dockerfiles/local-web/Dockerfile.web
       cp "$PROJECT_ROOT/deploy/web/Dockerfile" /scan/dockerfiles/web/Dockerfile

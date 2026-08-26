@@ -104,13 +104,26 @@ require_state
   export LOCAL_PRODUCTION_IMAGE_VERSION="$image_version"
   export LOCAL_PRODUCTION_IMAGE_TAG="$candidate_image_tag"
   compose config --quiet
-  compose build --provenance=mode=max rgs-migrator rgs-server local-operator web
+  # shellcheck disable=SC2016
+  compose config --format json | node -e '
+const {readFileSync}=require("node:fs");
+const document=JSON.parse(readFileSync(0,"utf8"));
+const expected=`slots-nginx-proxy:${process.argv[1]}`;
+for (const serviceName of ["ingress", "alert-proxy"]) {
+  if (document.services?.[serviceName]?.image !== expected) {
+    throw new Error(`${serviceName} 未绑定共用 Nginx 候选镜像`);
+  }
+}
+' "$candidate_image_tag"
+  # ingress 与 alert-proxy 绑定同一个 slots-nginx-proxy tag，只需构建一次。
+  compose build --provenance=mode=max rgs-migrator rgs-server local-operator web ingress
 )
 for candidate_image in \
   "slots-rgs-migrator:$candidate_image_tag" \
   "slots-rgs-runtime:$candidate_image_tag" \
   "slots-local-operator:$candidate_image_tag" \
-  "slots-web:$candidate_image_tag"
+  "slots-web:$candidate_image_tag" \
+  "slots-nginx-proxy:$candidate_image_tag"
 do
   docker image inspect "$candidate_image" >/dev/null
 done

@@ -22,6 +22,7 @@ image_created="$(metadata_value LOCAL_PRODUCTION_IMAGE_CREATED)"
 image_revision="$(metadata_value LOCAL_PRODUCTION_IMAGE_REVISION)"
 image_source="$(metadata_value LOCAL_PRODUCTION_IMAGE_SOURCE)"
 image_version="$(metadata_value LOCAL_PRODUCTION_IMAGE_VERSION)"
+image_tag="$(metadata_value LOCAL_PRODUCTION_IMAGE_TAG)"
 operator_id="$(metadata_value LOCAL_PRODUCTION_OPERATOR_ID)"
 
 printf '%s\n' '验收阶段：镜像来源元数据。'
@@ -50,10 +51,11 @@ process.stdin.on("data", chunk => { source += chunk; }).on("end", () => {
 ' "$expected_title" "$image_created" "$image_revision" "$image_source" "$image_version" "$image_name"
 }
 
-verify_image_metadata slots-rgs-runtime:local-production slots-rgs-runtime
-verify_image_metadata slots-rgs-migrator:local-production slots-rgs-migrator
-verify_image_metadata slots-local-operator:local-production slots-local-operator
-verify_image_metadata slots-web:local-production slots-web
+verify_image_metadata "slots-rgs-runtime:$image_tag" slots-rgs-runtime
+verify_image_metadata "slots-rgs-migrator:$image_tag" slots-rgs-migrator
+verify_image_metadata "slots-local-operator:$image_tag" slots-local-operator
+verify_image_metadata "slots-web:$image_tag" slots-web
+verify_image_metadata "slots-nginx-proxy:$image_tag" slots-nginx-proxy
 
 printf '%s\n' '验收阶段：容器健康与最小权限。'
 for service in postgres valkey local-operator rgs-server web ingress vector alertmanager alert-proxy prometheus grafana backup; do

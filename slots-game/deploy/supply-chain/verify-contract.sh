@@ -30,6 +30,7 @@ scan_script="$repository_root/deploy/supply-chain/scan.sh"
 trivy_asset_verifier="$repository_root/deploy/supply-chain/verify-trivy-assets.sh"
 trivy_source_report_verifier="$repository_root/deploy/supply-chain/verify-trivy-source-report.mjs"
 trivy_report_sanitizer="$repository_root/deploy/supply-chain/sanitize-trivy-report.mjs"
+nginx_openssl_patch_verifier="$repository_root/deploy/supply-chain/verify-nginx-openssl-patch.sh"
 release_script="$repository_root/deploy/supply-chain/release-sign.sh"
 release_bundle_script="$repository_root/deploy/supply-chain/release-bundle.sh"
 observability_release_workflow_script="$repository_root/deploy/observability/verify-release-workflow.sh"
@@ -49,6 +50,9 @@ cluster_dockerfile="$repository_root/deploy/cluster-production/Dockerfile.servic
 cluster_kubeconform_contract="$repository_root/deploy/cluster-production/verify-kubeconform.sh"
 cluster_image_contract="$repository_root/deploy/cluster-production/verify-image-runtime-contract.sh"
 cluster_prometheus_rule_contract="$repository_root/deploy/cluster-production/verify-prometheus-rule-contract.sh"
+web_dockerfile="$repository_root/deploy/web/Dockerfile"
+local_web_dockerfile="$repository_root/deploy/local-production/Dockerfile.web"
+local_nginx_proxy_dockerfile="$repository_root/deploy/local-production/Dockerfile.nginx-proxy"
 aws_deployment_guide="$repository_root/docs/aws-production-deployment.md"
 backend_release_gates="$repository_root/docs/backend-release-gates.md"
 
@@ -87,6 +91,7 @@ for required_file in \
   "$trivy_asset_verifier" \
   "$trivy_source_report_verifier" \
   "$trivy_report_sanitizer" \
+  "$nginx_openssl_patch_verifier" \
   "$release_script" \
   "$release_bundle_script" \
   "$observability_release_workflow_script" \
@@ -106,11 +111,22 @@ for required_file in \
   "$cluster_kubeconform_contract" \
   "$cluster_image_contract" \
   "$cluster_prometheus_rule_contract" \
+  "$web_dockerfile" \
+  "$local_web_dockerfile" \
+  "$local_nginx_proxy_dockerfile" \
   "$aws_deployment_guide" \
   "$backend_release_gates"
 do
   require_file "$required_file"
 done
+
+test -x "$nginx_openssl_patch_verifier" || fail 'Nginx OpenSSL patch verifier must be executable'
+"$nginx_openssl_patch_verifier" web "$web_dockerfile" >/dev/null \
+  || fail 'web Nginx OpenSSL patch contract failed'
+"$nginx_openssl_patch_verifier" local "$local_web_dockerfile" >/dev/null \
+  || fail 'local web Nginx OpenSSL patch contract failed'
+"$nginx_openssl_patch_verifier" local "$local_nginx_proxy_dockerfile" >/dev/null \
+  || fail 'local proxy Nginx OpenSSL patch contract failed'
 
 require_line 'ARG GO_IMAGE=golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36' "$cluster_dockerfile"
 require_line 'ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a' "$cluster_dockerfile"
@@ -345,6 +361,7 @@ require_line "      trivy config /scan \\" "$scan_script"
 require_fixed '--helm-values /scan/cluster/values.example.yaml' "$scan_script"
 require_fixed 'cp "$PROJECT_ROOT/deploy/Dockerfile" /scan/dockerfiles/root/Dockerfile' "$scan_script"
 require_fixed 'cp "$PROJECT_ROOT/deploy/cluster-production/Dockerfile.services" /scan/dockerfiles/cluster/Dockerfile.services' "$scan_script"
+require_fixed 'cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.nginx-proxy" /scan/dockerfiles/local-nginx-proxy/Dockerfile.nginx-proxy' "$scan_script"
 require_fixed 'cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.services" /scan/dockerfiles/local-services/Dockerfile.services' "$scan_script"
 require_fixed 'cp "$PROJECT_ROOT/deploy/local-production/Dockerfile.web" /scan/dockerfiles/local-web/Dockerfile.web' "$scan_script"
 require_fixed 'cp "$PROJECT_ROOT/deploy/web/Dockerfile" /scan/dockerfiles/web/Dockerfile' "$scan_script"

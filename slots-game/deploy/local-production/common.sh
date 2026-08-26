@@ -134,9 +134,9 @@ const assetApprovalHash = createHash("sha256")
 if (entries.get("LOCAL_PRODUCTION_ASSET_APPROVAL_HASH") !== assetApprovalHash) {
   throw new Error("compose state does not match the committed release asset approval; rerun bootstrap.sh");
 }
-if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/u.test(
-  entries.get("LOCAL_PRODUCTION_IMAGE_TAG") ?? "local-production",
-)) {
+const imageTag = entries.get("LOCAL_PRODUCTION_IMAGE_TAG");
+if (typeof imageTag !== "string"
+    || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/u.test(imageTag)) {
   throw new Error("compose state image tag is invalid");
 }
 NODE

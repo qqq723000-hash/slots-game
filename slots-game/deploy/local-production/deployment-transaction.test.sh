@@ -90,15 +90,35 @@ chmod 0600 "$secrets_root/release-asset-approval.json"
 asset_approval_hash="$(shasum -a 256 "$secrets_root/release-asset-approval.json" | awk '{print $1}')"
 write_compose_state() {
   configured_hash="$1"
+  configured_image_tag="${2:-candidate-test}"
   printf '%s\n' \
     'LOCAL_PRODUCTION_GAME_ID=iron-colossus' \
     'LOCAL_PRODUCTION_DEFINITION_VERSION=definition-current' \
     "LOCAL_PRODUCTION_DEFINITION_HASH=$configured_hash" \
-    'LOCAL_PRODUCTION_IMAGE_TAG=candidate-test' \
+    "LOCAL_PRODUCTION_IMAGE_TAG=$configured_image_tag" \
     "LOCAL_PRODUCTION_ASSET_APPROVAL_HASH=$asset_approval_hash" \
     >"$secrets_root/compose.env"
   chmod 0600 "$secrets_root/compose.env"
 }
+write_compose_state "$approval_hash"
+sh "$0" binding "$state_root"
+grep -v '^LOCAL_PRODUCTION_IMAGE_TAG=' "$secrets_root/compose.env" \
+  >"$secrets_root/compose.env.without-image-tag"
+mv "$secrets_root/compose.env.without-image-tag" "$secrets_root/compose.env"
+chmod 0600 "$secrets_root/compose.env"
+if sh "$0" binding "$state_root" 2>"$temporary_root/missing-image-tag-error"; then
+  printf '%s\n' 'Compose state without a candidate image tag unexpectedly passed' >&2
+  exit 1
+fi
+grep -F 'compose state image tag is invalid' \
+  "$temporary_root/missing-image-tag-error" >/dev/null
+write_compose_state "$approval_hash" 'candidate/invalid'
+if sh "$0" binding "$state_root" 2>"$temporary_root/invalid-image-tag-error"; then
+  printf '%s\n' 'Compose state with an invalid candidate image tag unexpectedly passed' >&2
+  exit 1
+fi
+grep -F 'compose state image tag is invalid' \
+  "$temporary_root/invalid-image-tag-error" >/dev/null
 write_compose_state "$approval_hash"
 sh "$0" binding "$state_root"
 printf '%s\n' '{"assets":["uncommitted"]}' >"$secrets_root/release-asset-approval.json"

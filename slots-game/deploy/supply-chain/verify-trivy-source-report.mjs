@@ -24,6 +24,7 @@ const expectedConfigurationTargets = new Map([
   ["cluster/chart/templates/web-deployment.yaml", ["config", "helm"]],
   ["cluster/chart/templates/worker-deployment.yaml", ["config", "helm"]],
   ["dockerfiles/cluster/Dockerfile.services", ["config", "dockerfile"]],
+  ["dockerfiles/local-nginx-proxy/Dockerfile.nginx-proxy", ["config", "dockerfile"]],
   ["dockerfiles/local-services/Dockerfile.services", ["config", "dockerfile"]],
   ["dockerfiles/local-web/Dockerfile.web", ["config", "dockerfile"]],
   ["dockerfiles/root/Dockerfile", ["config", "dockerfile"]],
