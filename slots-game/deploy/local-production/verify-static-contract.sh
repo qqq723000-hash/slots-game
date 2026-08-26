@@ -7,11 +7,19 @@ set -eu
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 compose_file="$script_dir/compose.yml"
 bootstrap_file="$script_dir/bootstrap.sh"
+common_file="$script_dir/common.sh"
 up_file="$script_dir/up.sh"
+down_file="$script_dir/down.sh"
+destroy_file="$script_dir/destroy.sh"
+prepare_state_file="$script_dir/prepare-state.mjs"
+prepare_state_test="$script_dir/prepare-state.test.mjs"
+deployment_transaction_test="$script_dir/deployment-transaction.test.sh"
 verify_file="$script_dir/verify.sh"
 operator_log_probe_verifier_file="$script_dir/verify-operator-log-probe.mjs"
 volume_initializer_file="$script_dir/initialize-volumes.sh"
 asset_approval_generator_file="$script_dir/create-asset-approval.mjs"
+asset_approval_rotator_file="$script_dir/rotate-asset-approval.mjs"
+asset_approval_rotator_test="$script_dir/rotate-asset-approval.test.mjs"
 browser_verifier_file="$script_dir/verify-browser-session.mjs"
 browser_probe_file="$script_dir/browser-session-probe.mjs"
 browser_probe_test="$script_dir/browser-session-probe.test.mjs"
@@ -42,11 +50,20 @@ test -f "$csp_verifier_file"
 test -f "$operator_log_probe_verifier_file"
 test -f "$volume_initializer_file"
 test -f "$asset_approval_generator_file"
+test -f "$asset_approval_rotator_file"
+test -f "$asset_approval_rotator_test"
+test -f "$deployment_transaction_test"
+test -f "$prepare_state_test"
 node --check "$browser_probe_file"
 node --check "$browser_verifier_file"
 node --check "$operator_log_probe_verifier_file"
 node --check "$asset_approval_generator_file"
+node --check "$asset_approval_rotator_file"
+node --check "$prepare_state_file"
 node --test "$browser_probe_test"
+node --test "$asset_approval_rotator_test"
+node --test "$prepare_state_test"
+sh "$deployment_transaction_test"
 
 temporary_root="$(mktemp -d -t slots-local-contract.XXXXXX)"
 trap 'rm -rf "$temporary_root"' EXIT HUP INT TERM
@@ -60,6 +77,8 @@ export LOCAL_PRODUCTION_IMAGE_CREATED="2026-01-01T00:00:00Z"
 export LOCAL_PRODUCTION_IMAGE_REVISION="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 export LOCAL_PRODUCTION_IMAGE_SOURCE="https://github.com/qqq723000-hash/slots-game"
 export LOCAL_PRODUCTION_IMAGE_VERSION="contract-version"
+export LOCAL_PRODUCTION_IMAGE_TAG="contract-candidate"
+export LOCAL_PRODUCTION_ASSET_APPROVAL_HASH="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
 cat >"$temporary_root/release-manifest.json" <<'JSON'
 {
@@ -129,6 +148,19 @@ for (const serviceName of ["rgs-migrator", "rgs-server", "local-operator", "web"
   for (const [name, value] of Object.entries(expectedArgs)) {
     if (build.args?.[name] !== value) throw new Error(`${serviceName} is missing ${name}`);
   }
+  if (document.services?.[serviceName]?.pull_policy !== "never") {
+    throw new Error(`${serviceName} must never pull a candidate image from a registry`);
+  }
+}
+for (const [serviceName, image] of Object.entries({
+  "rgs-migrator": "slots-rgs-migrator:contract-candidate",
+  "rgs-server": "slots-rgs-runtime:contract-candidate",
+  "local-operator": "slots-local-operator:contract-candidate",
+  "web": "slots-web:contract-candidate",
+})) {
+  if (document.services?.[serviceName]?.image !== image) {
+    throw new Error(`${serviceName} does not use the immutable candidate image tag`);
+  }
 }
 const grafana = document.services?.grafana?.environment ?? {};
 for (const [name, value] of Object.entries({
@@ -189,13 +221,98 @@ if grep -Eq '^[[:space:]]*provenance:' "$compose_file"; then
   exit 1
 fi
 require_exact_line \
-  'compose build --provenance=mode=max rgs-migrator rgs-server local-operator web' \
+  '  compose build --provenance=mode=max rgs-migrator rgs-server local-operator web' \
   "$bootstrap_file" \
   'bootstrap.sh 必须使用 BuildKit mode=max 来源证明构建全部自有镜像。'
+require_exact_line \
+  '  if ! /usr/bin/lockf -s -t 0 9; then' \
+  "$common_file" \
+  '本机部署必须使用进程退出后自动恢复的 BSD 排他锁。'
+for locked_entrypoint in "$bootstrap_file" "$up_file" "$down_file" "$destroy_file"; do
+  require_exact_line \
+    'acquire_deployment_lock' \
+    "$locked_entrypoint" \
+    "$(basename "$locked_entrypoint") 必须取得共享部署锁。"
+done
+require_exact_line \
+  'verify_state_definition_binding' \
+  "$up_file" \
+  'up.sh 必须在启动前核对签名定义与原子 Compose 状态。'
+grep -F 'LOCAL_PRODUCTION_ASSET_APPROVAL_HASH' "$common_file" >/dev/null || {
+  printf '%s\n' 'up.sh 的代际绑定必须覆盖已提交资源审批摘要。' >&2
+  exit 1
+}
+test "$(grep -Fxc '    image: slots-local-operator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}' "$compose_file")" -eq 3 || {
+  printf '%s\n' '全部本机 operator 服务必须选择同一不可变候选镜像 tag。' >&2
+  exit 1
+}
+for image_line in \
+  '    image: slots-rgs-migrator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}' \
+  '    image: slots-rgs-runtime:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}' \
+  '    image: slots-web:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}'
+do
+  require_exact_line "$image_line" "$compose_file" '自有镜像必须通过已提交的候选 tag 选择。'
+done
+test "$(grep -Fxc '    pull_policy: never' "$compose_file")" -eq 6 || {
+  printf '%s\n' '全部自有镜像必须禁用候选 tag 的远端拉取。' >&2
+  exit 1
+}
 grep -F 'go run ./cmd/local-production-bootstrap add-shared-admission "$secrets_root"' "$bootstrap_file" >/dev/null || {
   printf '%s\n' 'bootstrap.sh 必须幂等补齐旧本地状态的 Valkey 专用材料。' >&2
   exit 1
 }
+grep -F 'go run ./cmd/local-production-bootstrap definition-rotation-status "$secrets_root"' "$bootstrap_file" >/dev/null || {
+	printf '%s\n' 'bootstrap.sh 必须先验证当前与目标定义身份。' >&2
+	exit 1
+}
+grep -F '"$local_production_directory/verify-definition-drain.sh" \' "$bootstrap_file" >/dev/null || {
+		printf '%s\n' 'bootstrap.sh 必须在定义轮换前执行数据库排空门禁。' >&2
+		exit 1
+}
+grep -F 'go run ./cmd/local-production-bootstrap rotate-definition "$secrets_root" "$state_root/backups"' "$bootstrap_file" >/dev/null || {
+	printf '%s\n' 'bootstrap.sh 必须安全轮换已变更的本机签名游戏定义。' >&2
+	exit 1
+}
+test -x "$script_dir/verify-definition-drain.sh" || {
+	printf '%s\n' '本机定义排空门禁必须可执行。' >&2
+	exit 1
+}
+require_exact_line \
+  'node "$local_production_directory/rotate-asset-approval.mjs" \' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须显式提交先前验证的本机资源审批候选。'
+require_exact_line \
+  'asset_prepare_status="$(node "$local_production_directory/rotate-asset-approval.mjs" \' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须在定义提交前准备隔离的资源审批候选。'
+test "$(grep -Fxc '  "$repository_root/web/dist/release-manifest.json" \' "$bootstrap_file")" -eq 2 || {
+  printf '%s\n' '资源审批准备与提交必须绑定同一当前发布清单。' >&2
+  exit 1
+}
+test "$(grep -Fxc '  "$secrets_root/release-asset-approval.json" \' "$bootstrap_file")" -eq 2 || {
+  printf '%s\n' '资源审批准备与提交必须绑定同一已提交审批。' >&2
+  exit 1
+}
+require_exact_line \
+  '  "$state_root/backups" \' \
+  "$bootstrap_file" \
+  '本机资源审批轮换必须保留可恢复备份。'
+asset_prepare_line="$(grep -nF 'asset_prepare_status="$(node "$local_production_directory/rotate-asset-approval.mjs" \' "$bootstrap_file" | cut -d: -f1)"
+build_line="$(grep -nF 'compose build --provenance=mode=max rgs-migrator rgs-server local-operator web' "$bootstrap_file" | cut -d: -f1)"
+status_line="$(grep -nF 'go run ./cmd/local-production-bootstrap definition-rotation-status "$secrets_root"' "$bootstrap_file" | cut -d: -f1)"
+asset_commit_line="$(grep -nF '  commit \' "$bootstrap_file" | cut -d: -f1)"
+definition_commit_line="$(grep -nF 'go run ./cmd/local-production-bootstrap rotate-definition "$secrets_root" "$state_root/backups"' "$bootstrap_file" | cut -d: -f1)"
+final_state_line="$(grep -nF 'node "$local_production_directory/prepare-state.mjs" "$state_root"' "$bootstrap_file" | tail -n 1 | cut -d: -f1)"
+if [ -z "$asset_prepare_line" ] || [ -z "$build_line" ] || [ -z "$status_line" ] || \
+   [ -z "$asset_commit_line" ] || \
+   [ -z "$definition_commit_line" ] || [ -z "$final_state_line" ] || \
+   [ "$asset_prepare_line" -ge "$build_line" ] || [ "$build_line" -ge "$status_line" ] || \
+   [ "$status_line" -ge "$definition_commit_line" ] || \
+   [ "$definition_commit_line" -ge "$asset_commit_line" ] || \
+   [ "$asset_commit_line" -ge "$final_state_line" ]; then
+  printf '%s\n' 'bootstrap.sh 必须按审批候选、镜像构建、排空、定义、审批、原子状态顺序提交。' >&2
+  exit 1
+fi
 require_exact_line \
   'compose up -d --no-build --force-recreate' \
   "$up_file" \

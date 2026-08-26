@@ -199,7 +199,8 @@ services:
 
   rgs-migrator:
     <<: *hardened
-    image: slots-rgs-migrator:local-production
+    image: slots-rgs-migrator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: rgs-migrator}
     restart: "no"
     depends_on:
@@ -219,7 +220,8 @@ services:
 
   local-operator-bootstrap:
     <<: *hardened
-    image: slots-local-operator:local-production
+    image: slots-local-operator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: local-operator}
     restart: "no"
     depends_on:
@@ -245,7 +247,8 @@ services:
 
   local-operator-migrate:
     <<: *hardened
-    image: slots-local-operator:local-production
+    image: slots-local-operator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: local-operator}
     restart: "no"
     depends_on:
@@ -265,7 +268,8 @@ services:
 
   local-operator:
     <<: *hardened
-    image: slots-local-operator:local-production
+    image: slots-local-operator:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: local-operator}
     restart: unless-stopped
     depends_on:
@@ -347,7 +351,8 @@ services:
 
   rgs-server:
     <<: *hardened
-    image: slots-rgs-runtime:local-production
+    image: slots-rgs-runtime:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build: {<<: *go-build, target: rgs-runtime}
     restart: unless-stopped
     depends_on:
@@ -422,7 +427,8 @@ services:
 
   web:
     <<: *hardened
-    image: slots-web:local-production
+    image: slots-web:${LOCAL_PRODUCTION_IMAGE_TAG:-local-production}
+    pull_policy: never
     build:
       <<: *web-build-metadata
       context: ../..

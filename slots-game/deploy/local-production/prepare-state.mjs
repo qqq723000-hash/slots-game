@@ -1,11 +1,15 @@
 import { randomBytes } from "node:crypto";
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync,
+  chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync,
+  readFileSync, renameSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
 
 const configuredRoot = process.argv[2];
-if (!configuredRoot) throw new Error("usage: prepare-state.mjs STATE_ROOT");
+const validateOnly = process.argv[3] === "--validate-only";
+if (!configuredRoot || (process.argv[3] && !validateOnly) || process.argv.length > 4) {
+  throw new Error("usage: prepare-state.mjs STATE_ROOT [--validate-only]");
+}
 const stateRoot = resolve(configuredRoot);
 const secretsRoot = resolve(stateRoot, "secrets");
 const renderedRoot = resolve(stateRoot, "rendered");
@@ -34,14 +38,39 @@ function required(name) {
 function writeDerived(name, contents) {
   const path = secretPath(name);
   if (existsSync(path)) {
-    if (required(name) !== contents.trim()) {
-      // 派生 DSN/环境文件可在同一代初始材料上原子式重渲染；原始密钥从不经过此函数。
-      writeFileSync(path, contents, { encoding: "utf8", mode: 0o600 });
-      chmodSync(path, 0o600);
-    }
-    return;
+    if (required(name) === contents.trim()) return;
   }
-  writeFileSync(path, contents, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  // 派生 DSN/环境文件可在同一代初始材料上原子式重渲染；原始密钥从不经过此函数。
+  const temporary = resolve(
+    secretsRoot,
+    `.${name}.${process.pid}.${randomBytes(12).toString("hex")}.tmp`,
+  );
+  let descriptor;
+  let temporaryExists = false;
+  try {
+    descriptor = openSync(temporary, "wx", 0o600);
+    temporaryExists = true;
+    writeFileSync(descriptor, contents, "utf8");
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(temporary, path);
+    temporaryExists = false;
+    chmodSync(path, 0o600);
+    const directory = openSync(secretsRoot, "r");
+    try {
+      fsyncSync(directory);
+    } finally {
+      closeSync(directory);
+    }
+  } finally {
+    if (descriptor !== undefined) {
+      try { closeSync(descriptor); } catch { /* cleanup continues */ }
+    }
+    if (temporaryExists) {
+      try { unlinkSync(temporary); } catch { /* exclusive temporary may already be gone */ }
+    }
+  }
 }
 
 function readJSON(name) {
@@ -86,6 +115,14 @@ const imageVersion = requiredEnvironment(
   "LOCAL_PRODUCTION_IMAGE_VERSION",
   /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/,
 );
+const imageTag = requiredEnvironment(
+  "LOCAL_PRODUCTION_IMAGE_TAG",
+  /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/,
+);
+const assetApprovalHash = requiredEnvironment(
+  "LOCAL_PRODUCTION_ASSET_APPROVAL_HASH",
+  /^[a-f0-9]{64}$/,
+);
 const imageSource = requiredEnvironment(
   "LOCAL_PRODUCTION_IMAGE_SOURCE",
   /^https:\/\/[^\s]+$/,
@@ -93,6 +130,10 @@ const imageSource = requiredEnvironment(
 const imageSourceURL = new URL(imageSource);
 if (imageSourceURL.username || imageSourceURL.password || imageSourceURL.search || imageSourceURL.hash) {
   throw new Error("LOCAL_PRODUCTION_IMAGE_SOURCE must be a credential-free stable HTTPS URL");
+}
+if (validateOnly) {
+  process.stdout.write("local production image metadata: valid\n");
+  process.exit(0);
 }
 
 if (!existsSync(secretPath("postgres-backup.password"))) {
@@ -121,6 +162,8 @@ const environment = [
   `LOCAL_PRODUCTION_IMAGE_REVISION=${imageRevision}`,
   `LOCAL_PRODUCTION_IMAGE_SOURCE=${imageSourceURL.href.replace(/\/$/, "")}`,
   `LOCAL_PRODUCTION_IMAGE_VERSION=${imageVersion}`,
+  `LOCAL_PRODUCTION_IMAGE_TAG=${imageTag}`,
+  `LOCAL_PRODUCTION_ASSET_APPROVAL_HASH=${assetApprovalHash}`,
   "",
 ].join("\n");
 writeDerived("compose.env", environment);
