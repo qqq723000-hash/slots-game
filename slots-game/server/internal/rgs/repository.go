@@ -13,6 +13,10 @@ type PrepareOutcome func(Session) (SpinResult, error)
 type Repository interface {
 	CreateSession(context.Context, Session) error
 	GetSession(context.Context, string, string) (Session, error)
+	// AuthorizeSessionRelaunch 使用权威存储时钟确认持久会话仍处于可恢复的绝对
+	// 有效期。idle 超时只终止旧浏览器传输，不阻止 operator relaunch；该方法不得
+	// 推进传输代际、延长绝对有效期或修改任何经济状态。
+	AuthorizeSessionRelaunch(context.Context, string, string) (Session, error)
 	// ResetSessionTransport 是唯一 relaunch 原语：保留全部经济字段与绝对到期时间，
 	// 同时原子推进浏览器隔离代际并替换 idle 截止时间。返回的 ServerTime 必须来自
 	// 执行到期判定的同一权威存储时钟。

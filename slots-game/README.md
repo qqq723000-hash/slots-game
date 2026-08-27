@@ -4,7 +4,7 @@
 可观测性规则与供应链门禁。浏览器只是表现层；会话、余额、RNG、轮次、派彩、特性状态、幂等与
 恢复均由服务端负责。
 
-当前源码交付元数据版本为 [`1.2.2`](VERSION)。该版本号必须与变更记录、Web package/lock、
+当前源码交付元数据版本为 [`1.2.3`](VERSION)。该版本号必须与变更记录、Web package/lock、
 Helm Chart 和发布示例一致；正式发布还需要创建同版本受保护 Tag、GitHub Release 说明，并保存
 三个 OCI 制品各自的 SBOM、来源证明、签名和不可变摘要，不能只凭版本文件宣称已经发布。
 
@@ -147,7 +147,7 @@ VITE_RGS_BASE_URL=https://rgs.example.com \
 VITE_RGS_BET_OPTIONS_MINOR=10,20,50,100,200 \
 VITE_RGS_DEFAULT_BET_MINOR=100 \
 VITE_RGS_HOST_ORIGIN=https://slots.example.com \
-WEB_RELEASE_VERSION=1.2.2 \
+WEB_RELEASE_VERSION=1.2.3 \
 WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
   make build-web-release-image
 ```

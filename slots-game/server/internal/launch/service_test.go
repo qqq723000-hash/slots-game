@@ -18,7 +18,7 @@ import (
 func TestIssueStoresOnlyDigestAndConsumesExactlyOnce(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	store := newMemoryStore(func() time.Time { return now })
-	service := newTestService(t, store, now, bytes.NewReader(bytes.Repeat([]byte{0x42}, CodeEntropyBytes)))
+	service := newTestService(t, store, bytes.NewReader(bytes.Repeat([]byte{0x42}, CodeEntropyBytes)))
 
 	issued, err := service.Issue(context.Background(), validClaims())
 	if err != nil {
@@ -58,10 +58,57 @@ func TestIssueStoresOnlyDigestAndConsumesExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestIssueUsesStoreAuthorityForFastAndSlowPodClocks(t *testing.T) {
+	storeClock := time.Date(2026, 7, 26, 12, 0, 0, 123000, time.UTC)
+	tests := []struct {
+		name     string
+		podClock time.Time
+	}{
+		{name: "fast Pod", podClock: storeClock.Add(24 * time.Hour)},
+		{name: "slow Pod", podClock: storeClock.Add(-24 * time.Hour)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var clockCalls atomic.Int32
+			store := newMemoryStore(func() time.Time {
+				clockCalls.Add(1)
+				return storeClock
+			})
+			service := newTestService(
+				t,
+				store,
+				bytes.NewReader(bytes.Repeat([]byte{0x43}, CodeEntropyBytes)),
+			)
+
+			issued, err := service.Issue(context.Background(), validClaims())
+			if err != nil {
+				t.Fatalf("Issue() error = %v", err)
+			}
+			if got := clockCalls.Load(); got != 1 {
+				t.Fatalf("MemoryStore authority clock calls = %d, want 1", got)
+			}
+			if !issued.ValidatedAt.Equal(storeClock) ||
+				!issued.ExpiresAt.Equal(storeClock.Add(DefaultTTL)) {
+				t.Fatalf(
+					"Issue() authority window = [%s,%s], want [%s,%s] with Pod clock %s",
+					issued.ValidatedAt,
+					issued.ExpiresAt,
+					storeClock,
+					storeClock.Add(DefaultTTL),
+					test.podClock,
+				)
+			}
+			if issued.ValidatedAt.Equal(test.podClock) {
+				t.Fatal("Issue() unexpectedly used the Pod clock")
+			}
+		})
+	}
+}
+
 func TestIssueCodeReplaysExactClaimsAndRejectsChangedRequest(t *testing.T) {
 	now := time.Date(2026, 7, 26, 1, 2, 3, 0, time.UTC)
 	store := newMemoryStore(func() time.Time { return now })
-	service := newTestService(t, store, now, bytes.NewReader(bytes.Repeat([]byte{1}, 64)))
+	service := newTestService(t, store, bytes.NewReader(bytes.Repeat([]byte{1}, 64)))
 	code := CodePrefix + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, CodeEntropyBytes))
 	first, err := service.IssueCode(context.Background(), validClaims(), code)
 	if err != nil {
@@ -89,7 +136,6 @@ func TestIssueCodeRetainsExpiredResponseAsIdempotencyTombstone(t *testing.T) {
 		store,
 		Options{TTL: time.Second},
 		bytes.NewReader(bytes.Repeat([]byte{1}, 64)),
-		func() time.Time { return clock },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -98,6 +144,16 @@ func TestIssueCodeRetainsExpiredResponseAsIdempotencyTombstone(t *testing.T) {
 	first, err := service.IssueCode(context.Background(), validClaims(), code)
 	if err != nil {
 		t.Fatal(err)
+	}
+	queried, found, err := service.FindCodeReplay(context.Background(), validClaims(), code)
+	if err != nil || !found || queried != first {
+		t.Fatalf("query-only replay = %+v found=%t err=%v, want %+v", queried, found, err, first)
+	}
+	missingCode := CodePrefix + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, CodeEntropyBytes))
+	if missing, found, err := service.FindCodeReplay(
+		context.Background(), validClaims(), missingCode,
+	); err != nil || found || missing != (IssuedCode{}) {
+		t.Fatalf("missing query-only replay = %+v found=%t err=%v", missing, found, err)
 	}
 
 	clock = first.ExpiresAt
@@ -147,10 +203,67 @@ func TestIssueCodeRetainsExpiredResponseAsIdempotencyTombstone(t *testing.T) {
 	}
 }
 
+func TestReplayUsesStoreObservedTimeInsteadOfPodClock(t *testing.T) {
+	base := time.Date(2026, 7, 26, 1, 2, 3, 0, time.UTC)
+	storeClock := base
+	store := newMemoryStore(func() time.Time { return storeClock })
+	service, err := newService(
+		store,
+		Options{TTL: time.Second},
+		bytes.NewReader(bytes.Repeat([]byte{1}, 64)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := CodePrefix + base64.RawURLEncoding.EncodeToString(
+		bytes.Repeat([]byte{0x31}, CodeEntropyBytes),
+	)
+	original, err := service.IssueCode(context.Background(), validClaims(), code)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pod 快于存储保留边界时，存储仍在窗口内且已越过兑换到期时间；必须返回
+	// historical replay，不能被 Pod 时钟提前裁成冲突。
+	podClock := original.ExpiresAt.Add(IdempotencyRetention + time.Hour)
+	storeClock = original.ExpiresAt.Add(time.Minute)
+	if !podClock.After(storeClock) {
+		t.Fatal("test does not model a fast Pod clock")
+	}
+	replayed, found, err := service.FindCodeReplay(context.Background(), validClaims(), code)
+	if err != nil || !found || replayed.Code != original.Code ||
+		!replayed.ExpiresAt.Equal(original.ExpiresAt) || !replayed.HistoricalReplay {
+		t.Fatalf("fast-Pod replay = %+v found=%t err=%v, want historical %+v", replayed, found, err, original)
+	}
+	issuedReplay, err := service.IssueCode(context.Background(), validClaims(), code)
+	if err != nil || issuedReplay != replayed {
+		t.Fatalf("fast-Pod IssueCode replay = %+v err=%v, want %+v", issuedReplay, err, replayed)
+	}
+	changed := validClaims()
+	changed.RequestFingerprint = strings.Repeat("c", 64)
+	if _, _, err := service.FindCodeReplay(
+		context.Background(), changed, code,
+	); !errors.Is(err, ErrDigestExists) {
+		t.Fatalf("changed query-only replay error = %v, want ErrDigestExists", err)
+	}
+
+	// Pod 慢于存储时，不能借慢钟延长墓碑。MemoryStore 在同一次锁内观测到
+	// retention 边界并清理，因此 query-only replay 必须报告不存在。
+	podClock = base.Add(-time.Hour)
+	storeClock = original.ExpiresAt.Add(IdempotencyRetention)
+	if !podClock.Before(storeClock) {
+		t.Fatal("test does not model a slow Pod clock")
+	}
+	missing, found, err := service.FindCodeReplay(context.Background(), validClaims(), code)
+	if err != nil || found || missing != (IssuedCode{}) {
+		t.Fatalf("slow-Pod replay = %+v found=%t err=%v, want missing", missing, found, err)
+	}
+}
+
 func TestBindingMismatchDoesNotConsumeCode(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	store := newMemoryStore(func() time.Time { return now })
-	service := newTestService(t, store, now, bytes.NewReader(bytes.Repeat([]byte{0x21}, CodeEntropyBytes)))
+	service := newTestService(t, store, bytes.NewReader(bytes.Repeat([]byte{0x21}, CodeEntropyBytes)))
 	issued, err := service.Issue(context.Background(), validClaims())
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +288,7 @@ func TestExpiredCodeCannotBeConsumed(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	clock := now
 	store := newMemoryStore(func() time.Time { return clock })
-	service, err := newService(store, Options{TTL: time.Second}, bytes.NewReader(bytes.Repeat([]byte{0x33}, CodeEntropyBytes)), func() time.Time { return clock })
+	service, err := newService(store, Options{TTL: time.Second}, bytes.NewReader(bytes.Repeat([]byte{0x33}, CodeEntropyBytes)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,10 +302,46 @@ func TestExpiredCodeCannotBeConsumed(t *testing.T) {
 	}
 }
 
+func TestConsumeUsesStoreAuthorityInsteadOfPodClock(t *testing.T) {
+	base := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	storeClock := base
+	store := newMemoryStore(func() time.Time { return storeClock })
+	service, err := newService(
+		store,
+		Options{TTL: time.Second},
+		bytes.NewReader(bytes.Repeat([]byte{0x34}, CodeEntropyBytes)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := service.Issue(context.Background(), validClaims())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Store 权威时钟仍在兑换窗口内，快钟 Pod 不得在 Store 已原子
+	// 消费凭据后把成功改判为 ErrStoreInvariant。
+	storeClock = issued.ExpiresAt.Add(-time.Nanosecond)
+	podClock := issued.ExpiresAt.Add(time.Hour)
+	if !podClock.After(storeClock) {
+		t.Fatal("test does not model a fast Pod clock")
+	}
+	if _, err := service.Consume(
+		context.Background(), issued.Code, validBinding(),
+	); err != nil {
+		t.Fatalf("fast-Pod consume rejected store-authorized code: %v", err)
+	}
+	if _, err := service.Consume(
+		context.Background(), issued.Code, validBinding(),
+	); !errors.Is(err, ErrCodeUnavailable) {
+		t.Fatalf("consumed code replay error = %v, want ErrCodeUnavailable", err)
+	}
+}
+
 func TestConcurrentConsumeSucceedsOnce(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	store := newMemoryStore(func() time.Time { return now })
-	service := newTestService(t, store, now, bytes.NewReader(bytes.Repeat([]byte{0x5a}, CodeEntropyBytes)))
+	service := newTestService(t, store, bytes.NewReader(bytes.Repeat([]byte{0x5a}, CodeEntropyBytes)))
 	issued, err := service.Issue(context.Background(), validClaims())
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +399,7 @@ func TestStrictValidationRejectsMalformedClaimsWithoutPersistence(t *testing.T) 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := newMemoryStore(func() time.Time { return now })
-			service := newTestService(t, store, now, bytes.NewReader(bytes.Repeat([]byte{0x66}, CodeEntropyBytes)))
+			service := newTestService(t, store, bytes.NewReader(bytes.Repeat([]byte{0x66}, CodeEntropyBytes)))
 			claims := base
 			test.mutate(&claims)
 			if _, err := service.Issue(context.Background(), claims); !errors.Is(err, ErrInvalidInput) {
@@ -268,7 +417,7 @@ func TestStrictValidationRejectsMalformedClaimsWithoutPersistence(t *testing.T) 
 
 func TestConsumeRejectsMalformedCodeAndBinding(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
-	service := newTestService(t, newMemoryStore(func() time.Time { return now }), now, bytes.NewReader(bytes.Repeat([]byte{0x11}, CodeEntropyBytes)))
+	service := newTestService(t, newMemoryStore(func() time.Time { return now }), bytes.NewReader(bytes.Repeat([]byte{0x11}, CodeEntropyBytes)))
 	for _, code := range []string{"", "lc_bad", strings.Repeat("x", 10_000), "lc_" + strings.Repeat("=", 43)} {
 		if _, err := service.Consume(context.Background(), code, validBinding()); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("Consume(%q) error = %v, want ErrInvalidInput", code, err)
@@ -284,7 +433,12 @@ func TestConsumeRejectsMalformedCodeAndBinding(t *testing.T) {
 
 func TestServiceOptionsEntropyFailureAndCollision(t *testing.T) {
 	store := NewMemoryStore()
-	for _, ttl := range []time.Duration{-time.Second, time.Nanosecond, MaximumTTL + time.Nanosecond} {
+	for _, ttl := range []time.Duration{
+		-time.Second,
+		time.Nanosecond,
+		MinimumTTL + time.Nanosecond,
+		MaximumTTL + time.Nanosecond,
+	} {
 		if _, err := NewService(store, Options{TTL: ttl}); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("TTL %s error = %v, want ErrInvalidInput", ttl, err)
 		}
@@ -294,13 +448,13 @@ func TestServiceOptionsEntropyFailureAndCollision(t *testing.T) {
 	}
 
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
-	failing := newTestService(t, newMemoryStore(func() time.Time { return now }), now, errorReader{})
+	failing := newTestService(t, newMemoryStore(func() time.Time { return now }), errorReader{})
 	if _, err := failing.Issue(context.Background(), validClaims()); !errors.Is(err, ErrEntropy) {
 		t.Fatalf("entropy error = %v, want ErrEntropy", err)
 	}
 
 	collidingStore := digestCollisionStore{}
-	colliding := newTestService(t, collidingStore, now, bytes.NewReader(bytes.Repeat([]byte{0x77}, CodeEntropyBytes*codeGenerationTries)))
+	colliding := newTestService(t, collidingStore, bytes.NewReader(bytes.Repeat([]byte{0x77}, CodeEntropyBytes*codeGenerationTries)))
 	if _, err := colliding.Issue(context.Background(), validClaims()); !errors.Is(err, ErrEntropy) {
 		t.Fatalf("collision error = %v, want ErrEntropy", err)
 	}
@@ -309,7 +463,7 @@ func TestServiceOptionsEntropyFailureAndCollision(t *testing.T) {
 func TestCanceledContextDoesNotCreateOrConsume(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	store := newMemoryStore(func() time.Time { return now })
-	service := newTestService(t, store, now, bytes.NewReader(bytes.Repeat([]byte{0x12}, CodeEntropyBytes)))
+	service := newTestService(t, store, bytes.NewReader(bytes.Repeat([]byte{0x12}, CodeEntropyBytes)))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := service.Issue(ctx, validClaims()); !errors.Is(err, context.Canceled) {
@@ -326,17 +480,17 @@ func (errorReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
 type digestCollisionStore struct{}
 
-func (digestCollisionStore) Create(context.Context, Record) error {
-	return ErrDigestExists
+func (digestCollisionStore) Create(context.Context, CreateRequest) (Record, error) {
+	return Record{}, ErrDigestExists
 }
 
 func (digestCollisionStore) Consume(context.Context, ConsumeRequest) (Record, error) {
 	return Record{}, ErrCodeUnavailable
 }
 
-func newTestService(t *testing.T, store Store, now time.Time, random io.Reader) *Service {
+func newTestService(t *testing.T, store Store, random io.Reader) *Service {
 	t.Helper()
-	service, err := newService(store, Options{}, random, func() time.Time { return now })
+	service, err := newService(store, Options{}, random)
 	if err != nil {
 		t.Fatal(err)
 	}

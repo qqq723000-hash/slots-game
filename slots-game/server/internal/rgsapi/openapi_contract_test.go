@@ -114,8 +114,28 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 	}
 
 	launch := openAPIPathSection(t, document, "/operator/v1/launches")
-	if !strings.Contains(launch, "'410':\n          $ref: '#/components/responses/SignedError'") {
-		t.Error("operator launch does not declare expired durable-session replay")
+	normalizedLaunch := strings.Join(strings.Fields(launch), " ")
+	for status, stableCode := range map[string]string{
+		"409": "IDEMPOTENCY_CONFLICT",
+		"410": "EXPIRED",
+		"423": "MANUAL_REVIEW",
+	} {
+		if !strings.Contains(
+			launch,
+			"'"+status+"':\n          $ref: '#/components/responses/SignedError'",
+		) || !strings.Contains(launch, "stable signed body code is "+stableCode) {
+			t.Errorf("operator launch does not bind HTTP %s to stable code %s", status, stableCode)
+		}
+	}
+	for _, expectation := range []string{
+		"exact-response lookup runs before current definition/issuer configuration",
+		"session is now BLOCKED, CLOSED, EXPIRED, or missing",
+		"does not prove that its code or session can currently be exchanged",
+		"deployment has rotated its definition or issuer",
+	} {
+		if !strings.Contains(normalizedLaunch, expectation) {
+			t.Errorf("operator exact-launch replay contract is missing %q", expectation)
+		}
 	}
 	if !strings.Contains(exchange, "'423':\n          $ref: '#/components/responses/Error'") {
 		t.Error("session exchange does not declare quarantined-session manual review")

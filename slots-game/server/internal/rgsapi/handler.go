@@ -290,7 +290,7 @@ func (h *Handler) handleOperatorLaunch(writer http.ResponseWriter, request *http
 		h.writeMappedError(writer, requestID, err)
 		return
 	}
-	if err := validateLaunchResult(result, payload, h.now()); err != nil {
+	if err := validateLaunchResult(result, payload); err != nil {
 		h.writeMappedError(writer, requestID, fmt.Errorf("%w: invalid launch adapter result", ErrUnavailable))
 		return
 	}

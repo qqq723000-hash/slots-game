@@ -143,8 +143,10 @@ transforms:
       allowed_routes = [
         "operator.launch",
         "operator.round_status",
+        "operator.risk_decision",
         "client.session_exchange",
         "client.session_refresh",
+        "client.session_status",
         "client.spin",
         "client.round_status",
         "client.pending_result",

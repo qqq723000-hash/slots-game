@@ -113,41 +113,70 @@ func NewLaunchStore(db *sql.DB) (*LaunchStore, error) {
 	return &LaunchStore{db: db}, nil
 }
 
-func (s *LaunchStore) Create(ctx context.Context, record launch.Record) error {
+func (s *LaunchStore) Create(
+	ctx context.Context,
+	request launch.CreateRequest,
+) (launch.Record, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return launch.Record{}, err
 	}
-	if err := launch.ValidateRecord(record); err != nil {
-		return err
+	if err := launch.ValidateCreateRequest(request); err != nil {
+		return launch.Record{}, err
 	}
-	claimsJSON, err := json.Marshal(claimsDocumentFrom(record.Claims))
+	claimsJSON, err := json.Marshal(claimsDocumentFrom(request.Claims))
 	if err != nil {
-		return fmt.Errorf("postgres launch store: encode claims: %w", err)
+		return launch.Record{}, fmt.Errorf("postgres launch store: encode claims: %w", err)
 	}
 
-	result, err := s.db.ExecContext(
+	requestedDigest := hex.EncodeToString(request.Digest[:])
+	var (
+		storedDigest     string
+		storedOperatorID string
+		storedClaimsJSON []byte
+		createdAt        time.Time
+		expiresAt        time.Time
+	)
+	err = s.db.QueryRowContext(
 		ctx,
 		launchCreateSQL,
-		hex.EncodeToString(record.Digest[:]),
-		record.Claims.OperatorID,
+		requestedDigest,
+		request.Claims.OperatorID,
 		claimsJSON,
-		record.ExpiresAt.UTC(),
-		record.CreatedAt.UTC(),
+		request.TTL.Microseconds(),
+	).Scan(
+		&storedDigest,
+		&storedOperatorID,
+		&storedClaimsJSON,
+		&createdAt,
+		&expiresAt,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return launch.Record{}, launch.ErrDigestExists
+	}
 	if err != nil {
-		return fmt.Errorf("postgres launch store: create: %w", err)
+		return launch.Record{}, fmt.Errorf("postgres launch store: create: %w", err)
 	}
-	rows, err := result.RowsAffected()
+
+	document, err := decodeClaimsDocument(storedClaimsJSON)
 	if err != nil {
-		return fmt.Errorf("postgres launch store: create count: %w", err)
+		return launch.Record{}, fmt.Errorf("%w: persisted launch claims", launch.ErrStoreInvariant)
 	}
-	if rows == 0 {
-		return launch.ErrDigestExists
+	record := launch.Record{
+		Digest:    request.Digest,
+		Claims:    document.claims(),
+		CreatedAt: createdAt.UTC(),
+		ExpiresAt: expiresAt.UTC(),
 	}
-	if rows != 1 {
-		return launch.ErrStoreInvariant
+	if storedDigest != requestedDigest || storedOperatorID != request.Claims.OperatorID ||
+		record.Claims != request.Claims || record.ExpiresAt.Sub(record.CreatedAt) != request.TTL {
+		return launch.Record{}, launch.ErrStoreInvariant
 	}
-	return nil
+	if err := launch.ValidateRecord(record); err != nil {
+		return launch.Record{}, fmt.Errorf(
+			"%w: invalid persisted launch record", launch.ErrStoreInvariant,
+		)
+	}
+	return record, nil
 }
 
 func (s *LaunchStore) Consume(ctx context.Context, request launch.ConsumeRequest) (launch.Record, error) {
@@ -267,9 +296,12 @@ func (document launchClaimsDocument) claims() launch.Claims {
 	}
 }
 
-func (s *LaunchStore) Get(ctx context.Context, digest launch.CodeDigest) (launch.Record, error) {
+func (s *LaunchStore) Get(
+	ctx context.Context,
+	digest launch.CodeDigest,
+) (launch.ReplayObservation, error) {
 	if err := ctx.Err(); err != nil {
-		return launch.Record{}, err
+		return launch.ReplayObservation{}, err
 	}
 	var (
 		storedDigest     string
@@ -277,35 +309,39 @@ func (s *LaunchStore) Get(ctx context.Context, digest launch.CodeDigest) (launch
 		claimsJSON       []byte
 		createdAt        time.Time
 		expiresAt        time.Time
+		observedAt       time.Time
 	)
 	err := s.db.QueryRowContext(
 		ctx, launchGetSQL, hex.EncodeToString(digest[:]),
-	).Scan(&storedDigest, &storedOperatorID, &claimsJSON, &createdAt, &expiresAt)
+	).Scan(
+		&storedDigest, &storedOperatorID, &claimsJSON, &createdAt, &expiresAt, &observedAt,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return launch.Record{}, launch.ErrCodeUnavailable
+		return launch.ReplayObservation{}, launch.ErrCodeUnavailable
 	}
 	if err != nil {
-		return launch.Record{}, fmt.Errorf("postgres launch store: get: %w", err)
+		return launch.ReplayObservation{}, fmt.Errorf("postgres launch store: get: %w", err)
 	}
 	decodedDigest, err := hex.DecodeString(storedDigest)
 	if err != nil || len(decodedDigest) != sha256.Size {
-		return launch.Record{}, launch.ErrStoreInvariant
+		return launch.ReplayObservation{}, launch.ErrStoreInvariant
 	}
 	var persisted launch.CodeDigest
 	copy(persisted[:], decodedDigest)
 	document, err := decodeClaimsDocument(claimsJSON)
 	if err != nil {
-		return launch.Record{}, launch.ErrStoreInvariant
+		return launch.ReplayObservation{}, launch.ErrStoreInvariant
 	}
 	record := launch.Record{
 		Digest: persisted, Claims: document.claims(),
 		CreatedAt: createdAt.UTC(), ExpiresAt: expiresAt.UTC(),
 	}
-	if persisted != digest || record.Claims.OperatorID != storedOperatorID ||
+	observedAt = observedAt.UTC()
+	if observedAt.IsZero() || persisted != digest || record.Claims.OperatorID != storedOperatorID ||
 		launch.ValidateRecord(record) != nil {
-		return launch.Record{}, launch.ErrStoreInvariant
+		return launch.ReplayObservation{}, launch.ErrStoreInvariant
 	}
-	return record, nil
+	return launch.ReplayObservation{Record: record, ObservedAt: observedAt}, nil
 }
 
 func decodeClaimsDocument(encoded []byte) (launchClaimsDocument, error) {
@@ -407,10 +443,23 @@ const noncePurgeSQL = `
 		AND stored.nonce_hash = expired.nonce_hash`
 
 const launchCreateSQL = `
+	WITH digest_lock AS MATERIALIZED (
+		SELECT pg_advisory_xact_lock(hashtextextended($1, 0))
+	),
+	authority_time AS MATERIALIZED (
+		SELECT clock_timestamp() AS created_at
+		FROM digest_lock
+	)
 	INSERT INTO rgs_launch_codes (
 		code_hash, operator_id, claims_json, expires_at, created_at
-	) VALUES ($1, $2, $3, $4, $5)
-	ON CONFLICT (code_hash) DO NOTHING`
+	)
+	SELECT
+		$1, $2, $3,
+		authority_time.created_at + ($4::bigint * INTERVAL '1 microsecond'),
+		authority_time.created_at
+	FROM authority_time
+	ON CONFLICT (code_hash) DO NOTHING
+	RETURNING code_hash, operator_id, claims_json, created_at, expires_at`
 
 const launchConsumeSQL = `
 	UPDATE rgs_launch_codes
@@ -424,7 +473,7 @@ const launchConsumeSQL = `
 	RETURNING operator_id, claims_json, created_at, expires_at`
 
 const launchGetSQL = `
-	SELECT code_hash, operator_id, claims_json, created_at, expires_at
+	SELECT code_hash, operator_id, claims_json, created_at, expires_at, CURRENT_TIMESTAMP
 	FROM rgs_launch_codes
 	WHERE code_hash = $1`
 

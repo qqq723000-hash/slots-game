@@ -564,8 +564,12 @@ func (c Config) Validate() error {
 	if c.WalletFastPathTimeout >= c.WalletTimeout {
 		return errors.New("RGS_WALLET_FAST_PATH_TIMEOUT must be shorter than RGS_WALLET_TIMEOUT")
 	}
-	if c.LaunchTTL > 5*time.Minute || c.AccessTokenTTL > time.Hour {
-		return errors.New("launch/access credentials exceed maximum TTL")
+	if c.LaunchTTL < time.Second || c.LaunchTTL > 5*time.Minute ||
+		c.LaunchTTL%time.Microsecond != 0 {
+		return errors.New("RGS_LAUNCH_TTL must use whole microseconds within [1s,5m]")
+	}
+	if c.AccessTokenTTL > time.Hour {
+		return errors.New("access credentials exceed maximum TTL")
 	}
 	if c.SessionIdleDisconnectMin < time.Second || c.SessionIdleDisconnectMax > 24*time.Hour ||
 		c.SessionIdleDisconnectMin > c.SessionIdleDisconnectMax ||

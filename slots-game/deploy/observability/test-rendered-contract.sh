@@ -956,12 +956,26 @@ cp -R "$source_contract" "$route_enum_drift_contract"
 ruby -e '
   path = ARGV.fetch(0)
   value = File.read(path)
-  changed = value.sub(%Q{        "client.spin",\n}, %Q{        "client.spin.drift",\n})
+  changed = value.sub(%Q{        "client.session_status",\n}, %Q{        "client.session_status.drift",\n})
   abort "RGS route enum mutation did not apply" if changed == value
   File.write(path, changed)
 ' "$route_enum_drift_contract/deploy/observability/vector.yaml"
 if "$route_enum_drift_contract/deploy/observability/verify-static-contract.sh" >/dev/null 2>&1; then
   printf '%s\n' 'rendered contract test: RGS route enum drift was accepted' >&2
+  exit 1
+fi
+
+local_route_enum_drift_contract="$test_root/local-route-enum-drift-contract"
+cp -R "$source_contract" "$local_route_enum_drift_contract"
+ruby -e '
+  path = ARGV.fetch(0)
+  value = File.read(path)
+  changed = value.sub(%Q{        "operator.risk_decision",\n}, %Q{        "operator.risk_decision.drift",\n})
+  abort "local RGS route enum mutation did not apply" if changed == value
+  File.write(path, changed)
+' "$local_route_enum_drift_contract/deploy/local-production/vector.yaml"
+if "$local_route_enum_drift_contract/deploy/observability/verify-static-contract.sh" >/dev/null 2>&1; then
+  printf '%s\n' 'rendered contract test: local RGS route enum drift was accepted' >&2
   exit 1
 fi
 

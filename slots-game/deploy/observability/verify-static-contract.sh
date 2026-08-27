@@ -114,8 +114,8 @@ ruby -e '
   "$provider_file" "$vector_file" "$local_vector_file" "$retention_file" || fail 'YAML parsing failed'
 ruby -rdigest -e '
   expected = {
-    ARGV.fetch(0) => "076d0814f49ff25373d5437d67735004addf19dc3c2b12446ee698e267687b0e",
-    ARGV.fetch(1) => "a06a34a245806b742a614b45aaecc1dedd06d5f7aeafb0da544334eec9002cdd"
+    ARGV.fetch(0) => "15d52a08e40e6562206f5b6de35bf2020e42dc616eb1b30f758b4a9396524fb3",
+    ARGV.fetch(1) => "dc3f3f51f26dfc1b12a3cad54c998b29cb35114d6c8bb972331e7b3415442fed"
   }
   expected.each do |path, digest|
     abort "reviewed Vector configuration digest drifted: #{path}" unless
@@ -384,8 +384,10 @@ for checked_vector_file in "$vector_file" "$local_vector_file"; do
   for route in \
     operator.launch \
     operator.round_status \
+    operator.risk_decision \
     client.session_exchange \
     client.session_refresh \
+    client.session_status \
     client.spin \
     client.round_status \
     client.pending_result \

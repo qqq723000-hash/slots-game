@@ -145,16 +145,32 @@ func TestLaunchStoreCreatePersistsDigestAndCanonicalClaims(t *testing.T) {
 	if bytes.Contains(claimsJSON, []byte(launch.CodePrefix)) {
 		t.Fatal("claims JSON unexpectedly contains plaintext launch credential")
 	}
-	mock.ExpectExec(regexp.QuoteMeta(launchCreateSQL)).WithArgs(
+	request := launch.CreateRequest{
+		Digest: record.Digest,
+		Claims: record.Claims,
+		TTL:    record.ExpiresAt.Sub(record.CreatedAt),
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(launchCreateSQL)).WithArgs(
 		hex.EncodeToString(record.Digest[:]),
 		record.Claims.OperatorID,
 		claimsJSON,
-		record.ExpiresAt.UTC(),
-		record.CreatedAt.UTC(),
-	).WillReturnResult(sqlmock.NewResult(0, 1))
+		request.TTL.Microseconds(),
+	).WillReturnRows(sqlmock.NewRows([]string{
+		"code_hash", "operator_id", "claims_json", "created_at", "expires_at",
+	}).AddRow(
+		hex.EncodeToString(record.Digest[:]),
+		record.Claims.OperatorID,
+		claimsJSON,
+		record.CreatedAt,
+		record.ExpiresAt,
+	))
 
-	if err := store.Create(context.Background(), record); err != nil {
+	created, err := store.Create(context.Background(), request)
+	if err != nil {
 		t.Fatalf("Create() error = %v", err)
+	}
+	if created != record {
+		t.Fatalf("Create() = %#v, want %#v", created, record)
 	}
 	assertSecurityExpectations(t, mock)
 }
@@ -166,20 +182,45 @@ func TestLaunchStoreCreateMapsDigestCollision(t *testing.T) {
 		t.Fatalf("NewLaunchStore() error = %v", err)
 	}
 	record := validLaunchRecord()
-	mock.ExpectExec(regexp.QuoteMeta(launchCreateSQL)).
+	request := launch.CreateRequest{
+		Digest: record.Digest,
+		Claims: record.Claims,
+		TTL:    record.ExpiresAt.Sub(record.CreatedAt),
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(launchCreateSQL)).
 		WithArgs(
 			hex.EncodeToString(record.Digest[:]),
 			record.Claims.OperatorID,
 			sqlmock.AnyArg(),
-			record.ExpiresAt.UTC(),
-			record.CreatedAt.UTC(),
+			request.TTL.Microseconds(),
 		).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnRows(sqlmock.NewRows([]string{
+			"code_hash", "operator_id", "claims_json", "created_at", "expires_at",
+		}))
 
-	if err := store.Create(context.Background(), record); !errors.Is(err, launch.ErrDigestExists) {
+	created, err := store.Create(context.Background(), request)
+	if created != (launch.Record{}) || !errors.Is(err, launch.ErrDigestExists) {
 		t.Fatalf("Create() error = %v, want ErrDigestExists", err)
 	}
 	assertSecurityExpectations(t, mock)
+}
+
+func TestLaunchCreateUsesOneDatabaseAuthorityTimestamp(t *testing.T) {
+	t.Parallel()
+	normalized := strings.Join(strings.Fields(launchCreateSQL), " ")
+	if strings.Count(launchCreateSQL, "clock_timestamp()") != 1 {
+		t.Fatalf("launch create must observe the database clock exactly once: %s", launchCreateSQL)
+	}
+	for _, required := range []string{
+		"WITH digest_lock AS MATERIALIZED ( SELECT pg_advisory_xact_lock(hashtextextended($1, 0)) ), authority_time AS MATERIALIZED",
+		"SELECT clock_timestamp() AS created_at FROM digest_lock",
+		"authority_time.created_at + ($4::bigint * INTERVAL '1 microsecond')",
+		"RETURNING code_hash, operator_id, claims_json, created_at, expires_at",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Fatalf("launch create does not atomically return authority timestamps; missing %q in %s", required, normalized)
+		}
+	}
 }
 
 func TestLaunchStoreConsumeAtomicallyBindsTenantSessionAndExpiry(t *testing.T) {
@@ -230,20 +271,36 @@ func TestLaunchStoreGetSupportsExpiredOrConsumedIdempotencyReplay(t *testing.T) 
 		t.Fatal(err)
 	}
 	digest := hex.EncodeToString(record.Digest[:])
+	observedAt := record.ExpiresAt.Add(time.Minute)
 	mock.ExpectQuery(regexp.QuoteMeta(launchGetSQL)).
 		WithArgs(digest).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"code_hash", "operator_id", "claims_json", "created_at", "expires_at",
-		}).AddRow(digest, record.Claims.OperatorID, claimsJSON, record.CreatedAt, record.ExpiresAt))
+			"code_hash", "operator_id", "claims_json", "created_at", "expires_at", "observed_at",
+		}).AddRow(
+			digest, record.Claims.OperatorID, claimsJSON, record.CreatedAt, record.ExpiresAt, observedAt,
+		))
 
 	got, err := store.Get(context.Background(), record.Digest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != record {
-		t.Fatalf("Get = %#v, want %#v", got, record)
+	if got.Record != record || !got.ObservedAt.Equal(observedAt) {
+		t.Fatalf("Get = %#v, want record %#v observed at %s", got, record, observedAt)
 	}
 	assertSecurityExpectations(t, mock)
+}
+
+func TestLaunchReplayReadUsesOneDatabaseTimestamp(t *testing.T) {
+	t.Parallel()
+	if strings.Count(launchGetSQL, "CURRENT_TIMESTAMP") != 1 {
+		t.Fatalf("launch replay query must return one database observation: %s", launchGetSQL)
+	}
+	if !strings.Contains(
+		strings.Join(strings.Fields(launchGetSQL), " "),
+		"created_at, expires_at, CURRENT_TIMESTAMP FROM rgs_launch_codes",
+	) {
+		t.Fatalf("launch replay query does not bind record and observed time in one SELECT: %s", launchGetSQL)
+	}
 }
 
 func TestLaunchStoreConsumeUnifiesEveryNonConsumableCode(t *testing.T) {

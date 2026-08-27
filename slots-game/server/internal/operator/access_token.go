@@ -103,6 +103,16 @@ func NewAccessTokenIssuer(key SigningKey, options AccessTokenIssuerOptions) (*Ac
 }
 
 func (i *AccessTokenIssuer) Issue(subject AccessTokenSubject, lifetime time.Duration) (string, AccessTokenClaims, error) {
+	return i.IssueAt(subject, lifetime, i.now())
+}
+
+// IssueAt 使用调用方已从权威持久化操作取得的时间签发令牌。session exchange、
+// relaunch 与 refresh 不得再次用 Pod 墙钟推导 iat/exp。
+func (i *AccessTokenIssuer) IssueAt(
+	subject AccessTokenSubject,
+	lifetime time.Duration,
+	authoritativeNow time.Time,
+) (string, AccessTokenClaims, error) {
 	if err := validateAccessSubject(subject); err != nil {
 		return "", AccessTokenClaims{}, err
 	}
@@ -112,7 +122,10 @@ func (i *AccessTokenIssuer) Issue(subject AccessTokenSubject, lifetime time.Dura
 	if lifetime < time.Second || lifetime > i.maxLifetime {
 		return "", AccessTokenClaims{}, fmt.Errorf("%w: invalid token lifetime", ErrMalformed)
 	}
-	issuedAt := i.now().Truncate(time.Second)
+	if authoritativeNow.IsZero() {
+		return "", AccessTokenClaims{}, fmt.Errorf("%w: authoritative issue time is required", ErrMalformed)
+	}
+	issuedAt := authoritativeNow.UTC().Truncate(time.Second)
 	expiresAt := issuedAt.Add(lifetime).Truncate(time.Second)
 	if issuedAt.Before(i.key.NotBefore) {
 		return "", AccessTokenClaims{}, ErrNotYetValid

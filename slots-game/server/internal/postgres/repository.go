@@ -270,6 +270,28 @@ func (r *Repository) GetSession(ctx context.Context, operatorID, sessionID strin
 	return rgs.Session{}, r.quarantineSession(ctx, operatorID, sessionID)
 }
 
+func (r *Repository) AuthorizeSessionRelaunch(
+	ctx context.Context,
+	operatorID, sessionID string,
+) (rgs.Session, error) {
+	var databaseNow time.Time
+	session, err := scanSessionWithTrailing(r.db.QueryRowContext(
+		ctx, sessionTransportSelect+` WHERE operator_id=$1 AND session_id=$2`, operatorID, sessionID,
+	), &databaseNow)
+	if err != nil {
+		return rgs.Session{}, err
+	}
+	databaseNow = databaseNow.UTC()
+	if session.Status == rgs.SessionBlocked {
+		return rgs.Session{}, rgs.ErrManualReview
+	}
+	if session.Status != rgs.SessionActive || !session.ExpiresAt.After(databaseNow) {
+		return rgs.Session{}, rgs.ErrSessionExpired
+	}
+	session.ServerTime = databaseNow
+	return session, nil
+}
+
 func (r *Repository) ResetSessionTransport(
 	ctx context.Context,
 	operatorID, sessionID string,

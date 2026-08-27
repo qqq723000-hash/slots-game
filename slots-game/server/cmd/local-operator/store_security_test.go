@@ -54,6 +54,40 @@ func TestPostgresStoreNonceConsumeRejectsDatabaseExpiredDeadline(t *testing.T) {
 	}
 }
 
+func TestReusableWalletSessionDoesNotReturnDatabaseExpiredBinding(t *testing.T) {
+	t.Parallel()
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	store, err := newPostgresStore(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(regexp.QuoteMeta(localOperatorReusableWalletSessionSQL)).
+		WithArgs(
+			"local-operator", "player-1", "wallet-1", "iron-colossus", "math-v1",
+			strings.Repeat("a", 64), "CNY",
+		).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"operator_id", "wallet_session_ref", "player_id", "wallet_account_id",
+			"rgs_session_id", "game_id", "definition_version", "definition_hash",
+			"currency", "expires_at",
+		}))
+
+	seed, found, err := store.FindReusableWalletSession(
+		context.Background(), "local-operator", "player-1", "wallet-1", "iron-colossus",
+		"math-v1", strings.Repeat("a", 64), "CNY",
+	)
+	if err != nil || found || seed != (walletSessionSeed{}) {
+		t.Fatalf("expired reusable session = %+v found=%t err=%v", seed, found, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReusableWalletSessionUsesDatabaseClockAndTrustedBinding(t *testing.T) {
 	t.Parallel()
 	contract := strings.Join(strings.Fields(localOperatorReusableWalletSessionSQL), " ")

@@ -421,7 +421,7 @@ func normalizeHTTPMethod(method string) string {
 func normalizePublicRoute(route string) string {
 	switch route {
 	case "operator.launch", "operator.round_status", "operator.risk_decision", "client.session_exchange",
-		"client.session_refresh", "client.spin", "client.round_status",
+		"client.session_refresh", "client.session_status", "client.spin", "client.round_status",
 		"client.pending_result", "client.result_ack":
 		return route
 	default:

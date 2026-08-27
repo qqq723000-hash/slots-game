@@ -582,6 +582,13 @@ func TestObserveRequestsLogsOnlyNormalizedSafeFields(t *testing.T) {
 	}
 }
 
+func TestNormalizedPublicRouteRecognizesClientSessionStatus(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, rgsapi.ClientSessionStatusPath, nil)
+	if route := normalizedPublicRoute(request); route != "client.session_status" {
+		t.Fatalf("session status route = %q, want client.session_status", route)
+	}
+}
+
 func TestObserveRequestsPreservesResponseControllerFlush(t *testing.T) {
 	t.Parallel()
 	var logs bytes.Buffer

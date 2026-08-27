@@ -59,6 +59,14 @@ type Record struct {
 	ExpiresAt time.Time
 }
 
+// CreateRequest 只携带调用方可决定的启动事实。绝对创建及到期时间必须由 Store 在
+// 同一次原子写入中使用其权威时钟生成并返回，不能由 Service 或 Pod 墙钟提供。
+type CreateRequest struct {
+	Digest CodeDigest
+	Claims Claims
+	TTL    time.Duration
+}
+
 // ConsumeRequest 标识启动码及其必要的租户和会话绑定。Store 实现必须在同一次原子写入中
 // 检查全部三个字段。
 type ConsumeRequest struct {
@@ -69,8 +77,12 @@ type ConsumeRequest struct {
 // IssuedCode 只返回给受信启动调用方。Code 必须通过受保护的一次性启动重定向发送给浏览器，
 // 并且绝不能写入日志。
 type IssuedCode struct {
-	Code             string
-	ExpiresAt        time.Time
+	Code      string
+	ExpiresAt time.Time
+	// ValidatedAt 是签发或重放裁决使用的同一权威时间。首次签发来自 Store
+	// 原子创建返回的 CreatedAt；持久化重放必须来自 Store 的 ReplayObservation。
+	// HTTP 适配器只能用它做结果不变式校验，不能再用 Pod 墙钟替代。
+	ValidatedAt      time.Time
 	HistoricalReplay bool
 }
 
@@ -129,6 +141,24 @@ func validateRecord(record Record) error {
 	return nil
 }
 
+func validateCreateRequest(request CreateRequest) error {
+	if err := validateClaims(request.Claims); err != nil {
+		return err
+	}
+	if request.TTL < MinimumTTL || request.TTL > MaximumTTL {
+		return fmt.Errorf(
+			"%w: launch TTL must be between %s and %s",
+			ErrInvalidInput, MinimumTTL, MaximumTTL,
+		)
+	}
+	// PostgreSQL timestamptz/interval 持久化精度为微秒；在 Store 边界统一精度，
+	// 避免内存与生产适配器返回不同的有效期。
+	if request.TTL%time.Microsecond != 0 {
+		return fmt.Errorf("%w: launch TTL must use microsecond precision", ErrInvalidInput)
+	}
+	return nil
+}
+
 func idempotencyRetained(record Record, now time.Time) bool {
 	return record.ExpiresAt.Add(IdempotencyRetention).After(now)
 }
@@ -141,4 +171,9 @@ func ValidateClaims(claims Claims) error {
 // ValidateRecord 应用 Store 适配器共同使用的持久化不变式。
 func ValidateRecord(record Record) error {
 	return validateRecord(record)
+}
+
+// ValidateCreateRequest 应用 Store 适配器共同使用的创建请求不变式。
+func ValidateCreateRequest(request CreateRequest) error {
+	return validateCreateRequest(request)
 }
