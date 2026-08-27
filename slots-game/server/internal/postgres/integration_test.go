@@ -82,11 +82,14 @@ func TestPostgresProductionRoundAndCredentialConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinatorA, err := rgs.NewCoordinator(rgs.CoordinatorConfig{}, repositoryA, wallet, registry)
+	// -race 和共享 CI 负载可能让获胜请求的事务提交超过生产默认的一秒观察窗。
+	// 本测试验证同一轮次最终收敛，而不是客户端快路径延迟，因此使用独立的有界等待。
+	convergenceConfig := rgs.CoordinatorConfig{PendingWait: 10 * time.Second}
+	coordinatorA, err := rgs.NewCoordinator(convergenceConfig, repositoryA, wallet, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinatorB, err := rgs.NewCoordinator(rgs.CoordinatorConfig{}, repositoryB, wallet, registry)
+	coordinatorB, err := rgs.NewCoordinator(convergenceConfig, repositoryB, wallet, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +112,7 @@ func TestPostgresProductionRoundAndCredentialConcurrency(t *testing.T) {
 			if index%2 == 1 {
 				coordinator = coordinatorB
 			}
-			results[index], failures[index] = coordinator.Spin(context.Background(), request)
+			results[index], failures[index] = coordinator.Spin(ctx, request)
 		}()
 	}
 	group.Wait()
