@@ -6,6 +6,8 @@ set -eu
 require_docker
 require_node22
 
+image_version="$(node "$local_production_directory/resolve-image-version.mjs" "$repository_root")"
+
 mkdir -p "$state_root" "$state_root/backups" "$state_root/artifacts" "$state_root/rendered"
 chmod 0700 "$state_root" "$state_root/backups" "$state_root/artifacts" "$state_root/rendered"
 acquire_deployment_lock
@@ -73,7 +75,6 @@ if [ -z "$image_revision" ]; then
 fi
 image_created="${LOCAL_PRODUCTION_IMAGE_CREATED:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
 image_source="${LOCAL_PRODUCTION_IMAGE_SOURCE:-https://github.com/qqq723000-hash/slots-game}"
-image_version="${LOCAL_PRODUCTION_IMAGE_VERSION:-local-production}"
 candidate_image_tag="candidate-${image_revision}-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
 
 LOCAL_PRODUCTION_IMAGE_CREATED="$image_created" \

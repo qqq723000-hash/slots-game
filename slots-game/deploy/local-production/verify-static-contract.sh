@@ -14,6 +14,8 @@ down_file="$script_dir/down.sh"
 destroy_file="$script_dir/destroy.sh"
 prepare_state_file="$script_dir/prepare-state.mjs"
 prepare_state_test="$script_dir/prepare-state.test.mjs"
+image_version_resolver_file="$script_dir/resolve-image-version.mjs"
+image_version_resolver_test="$script_dir/resolve-image-version.test.mjs"
 deployment_transaction_test="$script_dir/deployment-transaction.test.sh"
 verify_file="$script_dir/verify.sh"
 operator_log_probe_verifier_file="$script_dir/verify-operator-log-probe.mjs"
@@ -97,15 +99,19 @@ test -f "$asset_approval_rotator_file"
 test -f "$asset_approval_rotator_test"
 test -f "$deployment_transaction_test"
 test -f "$prepare_state_test"
+test -f "$image_version_resolver_file"
+test -f "$image_version_resolver_test"
 node --check "$browser_probe_file"
 node --check "$browser_verifier_file"
 node --check "$operator_log_probe_verifier_file"
 node --check "$asset_approval_generator_file"
 node --check "$asset_approval_rotator_file"
 node --check "$prepare_state_file"
+node --check "$image_version_resolver_file"
 node --test "$browser_probe_test"
 node --test "$asset_approval_rotator_test"
 node --test "$prepare_state_test"
+node --test "$image_version_resolver_test"
 sh "$deployment_transaction_test"
 
 temporary_root="$(mktemp -d -t slots-local-contract.XXXXXX)"
@@ -348,6 +354,32 @@ if grep -E '^verify_image_metadata slots-[^:]+:local-production' "$verify_file" 
   printf '%s\n' '动态验收不得退回与已提交候选选择器无关的固定镜像 tag。' >&2
   exit 1
 fi
+for repository_version_control in \
+  'import { verifyReleaseVersion } from "../supply-chain/verify-release-version.mjs";' \
+  '  const repositoryVersion = verifyReleaseVersion(projectRoot);'
+do
+  require_exact_line "$repository_version_control" "$image_version_resolver_file" \
+    '本机镜像版本解析器必须复用仓库 canonical 版本合同。'
+done
+if grep -F 'LOCAL_PRODUCTION_IMAGE_VERSION:-local-production' "$bootstrap_file" >/dev/null; then
+  printf '%s\n' 'bootstrap.sh 不得把部署 profile 误用作 OCI 发布版本。' >&2
+  exit 1
+fi
+require_exact_line \
+  'image_version="$(node "$local_production_directory/resolve-image-version.mjs" "$repository_root")"' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须通过已测试解析器取得唯一 canonical OCI version。'
+test "$(grep -Ec '(^|[[:space:]])image_version=' "$bootstrap_file")" -eq 1 || {
+  printf '%s\n' 'bootstrap.sh 必须且只能赋值一次 canonical image_version。' >&2
+  exit 1
+}
+version_contract_line="$(grep -nF 'image_version="$(node "$local_production_directory/resolve-image-version.mjs" "$repository_root")"' "$bootstrap_file" | cut -d: -f1)"
+state_creation_line="$(grep -nF 'mkdir -p "$state_root" "$state_root/backups" "$state_root/artifacts" "$state_root/rendered"' "$bootstrap_file" | cut -d: -f1)"
+test -n "$version_contract_line" && test -n "$state_creation_line" \
+  && test "$version_contract_line" -lt "$state_creation_line" || {
+  printf '%s\n' 'bootstrap.sh 必须在创建或修改仓库外状态前验证发布版本。' >&2
+  exit 1
+}
 if ! grep -F 'const expected=`slots-nginx-proxy:${process.argv[1]}`;' "$bootstrap_file" >/dev/null \
   || ! grep -F 'for (const serviceName of ["ingress", "alert-proxy"]) {' "$bootstrap_file" >/dev/null; then
   printf '%s\n' 'bootstrap.sh 必须在构建前证明入口与告警代理绑定同一候选 tag。' >&2

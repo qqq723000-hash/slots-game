@@ -78,7 +78,8 @@ function readJSON(name) {
 }
 
 function requiredEnvironment(name, expression) {
-  const value = process.env[name]?.trim() ?? "";
+  const value = process.env[name] ?? "";
+  if (value !== value.trim()) throw new Error(`${name} must not contain surrounding whitespace`);
   if (!expression.test(value)) throw new Error(`${name} is missing or invalid`);
   return value;
 }
