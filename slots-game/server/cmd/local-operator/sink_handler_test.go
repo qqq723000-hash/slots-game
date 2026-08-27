@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,13 +36,17 @@ func TestAuditSinkAuthenticatesAndPersistsIdempotently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := []byte(`{"schemaVersion":"rgs-outbox-http-v1","id":"7","operatorId":"local-operator","aggregateType":"round","aggregateId":"round-7","eventType":"ROUND_COMMITTED","occurredAt":"2027-01-15T08:00:00Z","payload":{"balanceMinor":"9950"}}`)
+	const hostileMarkup = `</script><script>alert(1)</script>`
+	body := []byte(`{"schemaVersion":"rgs-outbox-http-v1","id":"7","operatorId":"local-operator","aggregateType":"round","aggregateId":"round-7","eventType":"ROUND_COMMITTED","occurredAt":"2027-01-15T08:00:00Z","payload":{"balanceMinor":"9950","note":"` + hostileMarkup + `"}}`)
 	for range 2 {
 		request := signedAuditRequest(t, body, key, now, "7")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusNoContent {
 			t.Fatalf("audit status = %d body=%s", response.Code, response.Body.String())
+		}
+		if response.Body.Len() != 0 || strings.Contains(response.Body.String(), hostileMarkup) {
+			t.Fatalf("audit response reflected persisted input: %q", response.Body.String())
 		}
 	}
 	persisted, err := os.ReadFile(filepath.Join(directory, "audit.jsonl"))
@@ -66,8 +72,9 @@ func TestLogSinkAndAlertmanagerAuthUseBearer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const hostileMarkup = `</script><script>alert(1)</script>`
 	payload := []byte(
-		"{\"service\":\"rgs-server\",\"level\":\"INFO\",\"msg\":\"ready\"}\n" +
+		"{\"service\":\"rgs-server\",\"level\":\"INFO\",\"msg\":\"" + hostileMarkup + "\"}\n" +
 			"{\"service\":\"vector\",\"time\":\"2026-08-25T00:00:00Z\",\"level\":\"INFO\",\"msg\":\"archive flush heartbeat\"}\n",
 	)
 	unauthorized := httptest.NewRecorder()
@@ -79,9 +86,21 @@ func TestLogSinkAndAlertmanagerAuthUseBearer(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer "+string(token))
 	request.Header.Set("Content-Type", "application/x-ndjson")
 	accepted := httptest.NewRecorder()
-	logs.ServeHTTP(accepted, request)
+	wrappedLogs := requestMiddleware(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&serviceMetrics{},
+		time.Second,
+		logs,
+	)
+	wrappedLogs.ServeHTTP(accepted, request)
 	if accepted.Code != http.StatusNoContent {
 		t.Fatalf("logs status = %d", accepted.Code)
+	}
+	if accepted.Body.Len() != 0 || strings.Contains(accepted.Body.String(), hostileMarkup) {
+		t.Fatalf("logs response reflected persisted input: %q", accepted.Body.String())
+	}
+	if got := accepted.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("logs X-Content-Type-Options = %q", got)
 	}
 	persisted, err := os.ReadFile(filepath.Join(directory, "runtime.ndjson"))
 	if err != nil {

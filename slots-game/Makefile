@@ -90,6 +90,7 @@ verify-observability-release:
 	./deploy/observability/verify-static-contract.sh --rendered-dir "$${OBSERVABILITY_RENDERED_DIR}"
 
 verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract
+	node --test deploy/supply-chain/verify-codeql-sarif.test.mjs
 	node --test deploy/supply-chain/verify-release-version.test.mjs
 	node deploy/supply-chain/verify-release-version.mjs
 	./deploy/supply-chain/verify-contract.sh
@@ -102,6 +103,7 @@ verify-backend-licenses:
 	cd server && go test ./scripts/third-party-notices
 
 verify-chinese-comments:
+	node --test scripts/verify-chinese-comments.test.mjs
 	node scripts/verify-chinese-comments.mjs
 
 verify-hardening-checklist:
