@@ -83,6 +83,148 @@ run_scenario() {
   esac
 }
 
+invoke_upload_scenario() {
+  scenario_root=$1
+  scenario=$2
+  delivery_name=$3
+  static_root="$scenario_root/static"
+  extraction_evidence="$scenario_root/extraction"
+  delivery_evidence="$scenario_root/$delivery_name"
+  mock_bin="$scenario_root/bin"
+  state_directory="$scenario_root/state"
+
+  set +e
+  env \
+    PATH="$mock_bin:$PATH" \
+    MOCK_WEB_STATE_DIRECTORY="$state_directory" \
+    MOCK_WEB_SCENARIO="$scenario" \
+    MOCK_WEB_RELEASE_ID="$release_id" \
+    MOCK_WEB_IMAGE_DIGEST="$web_digest" \
+    MOCK_WEB_CONFIGURATION_SHA256="$configuration_sha256" \
+    MOCK_WEB_CSP="$csp" \
+    MOCK_WEB_CSP_SHA256="$(sha256sum "$extraction_evidence/cloudfront-content-security-policy.txt" | awk '{ print $1 }')" \
+    AWS_ACCOUNT_ID=123456789012 \
+    AWS_REGION=ap-southeast-1 \
+    AWS_WEB_BUCKET=slots-web-fixture \
+    AWS_WEB_KMS_KEY_ARN=arn:aws:kms:ap-southeast-1:123456789012:key/11111111-1111-1111-1111-111111111111 \
+    AWS_CLOUDFRONT_DISTRIBUTION_ID=distribution-fixture \
+    AWS_CLOUDFRONT_DOMAIN_NAME=fixture.cloudfront.net \
+    AWS_CLOUDFRONT_RESPONSE_HEADERS_POLICY_ID=policy-fixture \
+    AWS_CLOUDFRONT_KVS_ARN=arn:aws:cloudfront::123456789012:key-value-store/kvs-fixture \
+    AWS_CLOUDFRONT_ROUTER_FUNCTION_NAME=slots-fixture-release-request \
+    "$publisher" "$static_root" "$extraction_evidence" \
+      "123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/web@$web_digest" \
+      "$configuration_sha256" "$delivery_evidence" \
+      > "$scenario_root/$delivery_name.stdout.log" \
+      2> "$scenario_root/$delivery_name.stderr.log"
+  publisher_status=$?
+  set -e
+}
+
+upload_root="$fixture_root/upload-resume"
+mkdir -p "$upload_root/static" "$upload_root/extraction" "$upload_root/bin" "$upload_root/state"
+ln -s "$mock_command" "$upload_root/bin/aws"
+ln -s "$mock_command" "$upload_root/bin/curl"
+ln -s "$mock_command" "$upload_root/bin/sleep"
+printf '%s\n' 'console.log("fixture");' > "$upload_root/static/app.js"
+printf '{"releaseId":"%s"}\n' "$release_id" > "$upload_root/static/release-manifest.json"
+printf '%s\n' "$csp" > "$upload_root/extraction/cloudfront-content-security-policy.txt"
+{
+  printf 'WEB_IMAGE_DIGEST=%s\n' "$web_digest"
+  printf 'CONFIGURATION_SHA256=%s\n' "$configuration_sha256"
+  printf 'RELEASE_ID=%s\n' "$release_id"
+} > "$upload_root/extraction/aws-web-delivery.env"
+printf '%s\n' "$previous_release" > "$upload_root/state/active-release"
+printf '%s\n' 'etag-before-promotion' > "$upload_root/state/etag"
+: > "$upload_root/state/events.log"
+
+invoke_upload_scenario "$upload_root" upload-interrupt delivery-interrupted
+test "$publisher_status" -ne 0 || fail '模拟上传中断应失败却成功'
+test "$(find "$upload_root/state/s3" -type f -name '*.head.json' | wc -l | tr -d '[:space:]')" -eq 1 || \
+  fail '模拟上传中断未精确保留一个已验证对象'
+grep -F -x 's3-interrupted' "$upload_root/state/events.log" >/dev/null || \
+  fail '模拟上传中断没有命中第二个对象'
+if grep -E '^(promotion-put|public-target)$' "$upload_root/state/events.log" >/dev/null; then
+  fail '对象上传未完成时仍进入 KVS 或公网切换'
+fi
+
+invoke_upload_scenario "$upload_root" upload-resume delivery-resumed
+test "$publisher_status" -eq 0 || fail "断点续传应成功，实际退出 $publisher_status"
+test "$(find "$upload_root/state/s3" -type f -name '*.head.json' | wc -l | tr -d '[:space:]')" -eq 2 || \
+  fail '断点续传后的 S3 对象数量不精确'
+app_sha256=$(sha256sum "$upload_root/static/app.js" | awk '{ print $1 }')
+app_length=$(wc -c < "$upload_root/static/app.js" | tr -d '[:space:]')
+awk -F '\t' -v sha="$app_sha256" -v expected_length="$app_length" '
+  $1 == "reconciled" && $2 == "app.js" && $3 == sha && $4 == expected_length { found = 1 }
+  END { exit found ? 0 : 1 }
+' "$upload_root/delivery-resumed/upload-results.tsv" || \
+  fail '断点续传未把已存在且完全一致的对象标记为 reconciled'
+manifest_sha256=$(sha256sum "$upload_root/static/release-manifest.json" | awk '{ print $1 }')
+manifest_length=$(wc -c < "$upload_root/static/release-manifest.json" | tr -d '[:space:]')
+awk -F '\t' -v sha="$manifest_sha256" -v expected_length="$manifest_length" '
+  $1 == "created" && $2 == "release-manifest.json" && $3 == sha && $4 == expected_length { found = 1 }
+  END { exit found ? 0 : 1 }
+' "$upload_root/delivery-resumed/upload-results.tsv" || \
+  fail '断点续传未创建缺失对象'
+
+for drift_mode in checksum length release image configuration csp metadata-extra content-type cache encryption kms; do
+  drift_root="$fixture_root/upload-drift-$drift_mode"
+  mkdir -p "$drift_root"
+  cp -R "$upload_root/static" "$drift_root/static"
+  cp -R "$upload_root/extraction" "$drift_root/extraction"
+  cp -R "$upload_root/state" "$drift_root/state"
+  mkdir -p "$drift_root/bin"
+  ln -s "$mock_command" "$drift_root/bin/aws"
+  ln -s "$mock_command" "$drift_root/bin/curl"
+  ln -s "$mock_command" "$drift_root/bin/sleep"
+  : > "$drift_root/state/events.log"
+  drift_head="$drift_root/state/s3/releases/$release_id/app.js.head.json"
+  case "$drift_mode" in
+    checksum) drift_filter='.ChecksumSHA256 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="' ;;
+    length) drift_filter='.ContentLength += 1' ;;
+    release) drift_filter='.Metadata["release-id"] = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' ;;
+    image) drift_filter='.Metadata["web-image-digest"] = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"' ;;
+    configuration) drift_filter='.Metadata["configuration-sha256"] = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"' ;;
+    csp) drift_filter='.Metadata["csp-sha256"] = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"' ;;
+    metadata-extra) drift_filter='.Metadata["unapproved"] = "value"' ;;
+    content-type) drift_filter='.ContentType = "application/octet-stream"' ;;
+    cache) drift_filter='.CacheControl = "no-store"' ;;
+    encryption) drift_filter='.ServerSideEncryption = "AES256"' ;;
+    kms) drift_filter='.SSEKMSKeyId = "arn:aws:kms:ap-southeast-1:123456789012:key/22222222-2222-2222-2222-222222222222"' ;;
+    *) fail "未知对象漂移模式：$drift_mode" ;;
+  esac
+  jq "$drift_filter" "$drift_head" > "$drift_head.tmp"
+  mv "$drift_head.tmp" "$drift_head"
+
+  invoke_upload_scenario "$drift_root" "upload-drift-$drift_mode" delivery
+  test "$publisher_status" -ne 0 || fail "$drift_mode 对象漂移应失败却成功"
+  grep -F '对象身份回读不一致：app.js' "$drift_root/delivery.stderr.log" >/dev/null || \
+    fail "$drift_mode 对象漂移没有由完整 HEAD 门禁失败关闭"
+  if grep -E '^(promotion-put|public-target)$' "$drift_root/state/events.log" >/dev/null; then
+    fail "$drift_mode 对象漂移后仍进入 KVS 或公网切换"
+  fi
+done
+
+count_drift_root="$fixture_root/upload-drift-object-count"
+mkdir -p "$count_drift_root"
+cp -R "$upload_root/static" "$count_drift_root/static"
+cp -R "$upload_root/extraction" "$count_drift_root/extraction"
+cp -R "$upload_root/state" "$count_drift_root/state"
+mkdir -p "$count_drift_root/bin"
+ln -s "$mock_command" "$count_drift_root/bin/aws"
+ln -s "$mock_command" "$count_drift_root/bin/curl"
+ln -s "$mock_command" "$count_drift_root/bin/sleep"
+: > "$count_drift_root/state/events.log"
+cp "$count_drift_root/state/s3/releases/$release_id/app.js.head.json" \
+  "$count_drift_root/state/s3/releases/$release_id/unexpected.js.head.json"
+invoke_upload_scenario "$count_drift_root" upload-drift-object-count delivery
+test "$publisher_status" -ne 0 || fail 'release 前缀额外对象应失败却成功'
+grep -F 'S3 对象数量与已验证静态根不一致' "$count_drift_root/delivery.stderr.log" >/dev/null || \
+  fail 'release 前缀额外对象没有由精确数量门禁失败关闭'
+if grep -E '^(promotion-put|public-target)$' "$count_drift_root/state/events.log" >/dev/null; then
+  fail 'release 前缀额外对象后仍进入 KVS 或公网切换'
+fi
+
 run_scenario applied-then-error "$previous_release" success
 test "$(sed -n '1p' "$fixture_root/applied-then-error/state/active-release")" = "$release_id" || \
   fail 'applied-then-error 未保留已通过公网验证的新 release'

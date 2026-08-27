@@ -1,3 +1,4 @@
+import { publicAssetUrl } from "../assets/publicAssetUrl";
 import {
   cancelNetworkResponse,
   NETWORK_RESPONSE_LIMITS,
@@ -115,6 +116,8 @@ export interface AcquiredAssetPackageStage {
 
 export interface StreamingAssetPackageManagerOptions {
   readonly fetch?: typeof fetch;
+  /** 测试/宿主可显式绑定 Vite public base；正式构建默认使用 import.meta.env.BASE_URL。 */
+  readonly publicAssetBaseUrl?: string;
   readonly decoders?: Readonly<Record<string, AssetResourceDecoder>>;
   readonly concurrency?: number;
   readonly maxAttempts?: number;
@@ -299,6 +302,7 @@ export class StreamingAssetPackageManager {
   private readonly packages = new Map<string, AssetPackageSpec>();
   private readonly runtimes = new Map<string, MutablePackageRuntime>();
   private readonly fetcher: typeof fetch;
+  private readonly publicAssetBaseUrl: string | undefined;
   private readonly decoders: Readonly<Record<string, AssetResourceDecoder>>;
   private readonly semaphore: AsyncSemaphore;
   private readonly maxAttempts: number;
@@ -314,6 +318,7 @@ export class StreamingAssetPackageManager {
   ) {
     this.validated = validateAssetPackageManifest(manifest);
     this.fetcher = options.fetch ?? defaultStreamingAssetFetch();
+    this.publicAssetBaseUrl = options.publicAssetBaseUrl;
     this.decoders = Object.freeze({
       binary: ({ bytes }) => bytes,
       text: ({ bytes }) => new TextDecoder().decode(bytes),
@@ -771,14 +776,15 @@ export class StreamingAssetPackageManager {
     const timeout = setTimeout(() => {
       controller.abort(new AssetPackageTimeoutError(resource.id, this.attemptTimeoutMs));
     }, this.attemptTimeoutMs);
+    const resolvedUrl = publicAssetUrl(resource.url, this.publicAssetBaseUrl);
     try {
-      const response = await this.fetcher(resource.url, {
+      const response = await this.fetcher(resolvedUrl, {
         signal: controller.signal,
         credentials: "same-origin",
         cache: "default",
       });
       if (!response.ok) {
-        const error = new Error(`Failed to load ${resource.url}: HTTP ${response.status}`);
+        const error = new Error(`Failed to load ${resolvedUrl}: HTTP ${response.status}`);
         cancelNetworkResponse(response, error);
         throw error;
       }

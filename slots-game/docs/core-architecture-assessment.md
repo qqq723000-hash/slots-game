@@ -148,8 +148,8 @@ composition 一次等比投影：常见 PC 高度贴满，窄视口对称裁切�
 
 ### 4.2 缺点与深层原因
 
-当前快照中，`AppController.ts` 约 3696 行、`RgsGateway.ts` 约 2071 行、`PixiRenderer.ts` 约
-2790 行、`style.css` 约 5781 行。大文件不是运行错误，但它表明协议恢复、游戏编排、音频、feature
+当前快照中，`AppController.ts`、`RgsGateway.ts`、`PixiRenderer.ts` 与 `style.css` 都是职责密集的
+大型模块；精确行数会随正常维护持续变化，不作为架构门禁。这些文件表明协议恢复、游戏编排、音频、feature
 表现、DOM、Pixi 与多端样式的变更半径过大。
 
 | 缺点 | 深层原因 | 风险 | 建议边界 |

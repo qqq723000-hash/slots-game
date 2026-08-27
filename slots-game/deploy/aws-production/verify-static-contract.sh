@@ -69,7 +69,9 @@ grep -F 'cloudfront get-distribution' "$live_platform_gate" >/dev/null || fail '
 grep -F 's3api get-public-access-block' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有回读 CloudFront S3 源站 Public Access Block'
 grep -F 'BlockPublicAcls IgnorePublicAcls BlockPublicPolicy RestrictPublicBuckets' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有精确要求 S3 四项 Public Access Block'
 grep -F 's3api get-bucket-policy' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有回读 CloudFront S3 源站 bucket policy'
-grep -F 'AllowCloudFrontOacRead DenyInsecureTransport' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有精确限制 OAC Allow 与 TLS Deny 语句'
+grep -F 'AllowCloudFrontOacRead DenyInsecureTransport DenyUnconditionalReleaseWrites' \
+  "$live_platform_gate" >/dev/null || \
+  fail 'AWS 平台实时门禁没有精确限制 OAC Allow、release 条件写与 TLS Deny 语句'
 grep -F '/operator/v1/launches' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有固定 launch 低阈值 scope'
 grep -F '/client/v1/spins' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有固定 spin 低阈值 scope'
 grep -F 'header_size_rule_rollout' "$live_platform_gate" >/dev/null || fail 'AWS 平台实时门禁没有验证 aggregate header Count→Block 阶段'

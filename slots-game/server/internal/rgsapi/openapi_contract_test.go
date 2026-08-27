@@ -145,6 +145,52 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 	}
 }
 
+func TestOpenAPIFailureResponsesMatchImplementedHandlers(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile("../../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := string(contents)
+
+	// pending 读取会校验 token 与 X-Operator-Id 的绑定；不匹配时处理器返回 403。
+	pending := openAPIPathSection(t, document, "/client/v1/results/pending")
+	if !strings.Contains(pending, "'403':\n          $ref: '#/components/responses/Error'") {
+		t.Error("pending-result recovery does not declare token-binding rejection")
+	}
+
+	// 已进入 MANUAL_REVIEW 的轮次必须保留 423，包括运营商签名对账路由。
+	operatorStatus := openAPIPathSection(t, document, "/operator/v1/rounds/status")
+	if !strings.Contains(operatorStatus, "'423':\n          $ref: '#/components/responses/SignedError'") {
+		t.Error("operator round status does not declare signed manual-review rejection")
+	}
+
+	// ACK 是带 JSON 正文的 POST；requirePOST/readBody 可在业务副作用前返回 413/415。
+	acknowledgement := openAPIPathSection(t, document, "/client/v1/results/acknowledgements")
+	for _, status := range []string{"413", "415"} {
+		expectation := "'" + status + "':\n          $ref: '#/components/responses/Error'"
+		if !strings.Contains(acknowledgement, expectation) {
+			t.Errorf("result acknowledgement does not declare HTTP %s transport rejection", status)
+		}
+	}
+}
+
+func TestFailureRecoveryDeterministicRejectionMatchesHTTPContract(t *testing.T) {
+	t.Parallel()
+	contents, err := os.ReadFile("../../../docs/failure-recovery.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := string(contents)
+
+	if !strings.Contains(document, "HTTP 409 + `ROUND_REJECTED` 确定性拒绝") {
+		t.Error("失败恢复文档未与确定性轮次拒绝的 409/ROUND_REJECTED 契约对齐")
+	}
+	if strings.Contains(document, "HTTP 422 确定性拒绝") {
+		t.Error("失败恢复文档仍将确定性轮次拒绝记录为 HTTP 422")
+	}
+}
+
 func TestOpenAPISpinWinsSeparateNominalAndPaidAmounts(t *testing.T) {
 	t.Parallel()
 	contents, err := os.ReadFile("../../openapi.yaml")

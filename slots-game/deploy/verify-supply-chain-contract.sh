@@ -18,6 +18,8 @@ fi
 
 server_dockerfile="$repository_root/deploy/Dockerfile"
 web_dockerfile="$repository_root/deploy/web/Dockerfile"
+local_web_dockerfile="$repository_root/deploy/local-production/Dockerfile.web"
+local_nginx_proxy_dockerfile="$repository_root/deploy/local-production/Dockerfile.nginx-proxy"
 nginx_openssl_patch_verifier="$repository_root/deploy/supply-chain/verify-nginx-openssl-patch.sh"
 web_release_renderer="$repository_root/deploy/web/render-release-nginx.mjs"
 web_release_renderer_test="$repository_root/deploy/web/render-release-nginx.test.mjs"
@@ -71,6 +73,8 @@ require_regex() {
 for required_file in \
   "$server_dockerfile" \
   "$web_dockerfile" \
+  "$local_web_dockerfile" \
+  "$local_nginx_proxy_dockerfile" \
   "$nginx_openssl_patch_verifier" \
   "$web_release_renderer" \
   "$web_release_renderer_test" \
@@ -214,6 +218,10 @@ require_line 'COPY --from=release-build --chown=0:0 /src/web/release-nginx.conf 
 require_line 'COPY --from=release-build --chown=0:0 /src/web/dist/ /usr/share/nginx/html/' "$web_dockerfile"
 require_line 'RUN --network=none nginx -t' "$web_dockerfile"
 require_line 'LABEL org.opencontainers.image.title="primal-rampage-web" \' "$web_dockerfile"
+test "$(grep -F -c -- 'org.opencontainers.image.licenses="NOASSERTION"' "$web_dockerfile")" -eq 3 \
+  || fail 'web targets must override inherited upstream license metadata'
+require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_web_dockerfile"
+require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_nginx_proxy_dockerfile"
 last_web_stage=$(awk '/^FROM[[:space:]]+/ { stage = $NF } END { print stage }' "$web_dockerfile")
 test "$last_web_stage" = runtime || fail 'web runtime must remain the default final Docker target'
 require_line '    "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",' "$web_package_json"
@@ -261,6 +269,8 @@ require_fixed '--secret id=release_asset_approval,src="$${RELEASE_ASSET_APPROVAL
 
 vector_image='timberio/vector:0.57.0-debian@sha256:ed2134fa8f9844c1ca6405260903c2c2c52f94af9e16bc8fa9de9655134e0b39'
 require_line "      VECTOR_IMAGE: $vector_image" "$deployment_workflow"
+require_fixed 'shellcheck -S warning -x -P . -P "$(dirname "$script")" "$script"' "$deployment_workflow"
+require_fixed "done < <(git ls-files -- '*.sh')" "$deployment_workflow"
 require_line '        run: docker pull "$VECTOR_IMAGE" >/dev/null' "$deployment_workflow"
 require_line '        run: make test-vector-bounded-flush' "$deployment_workflow"
 require_line 'docker pull "$VECTOR_IMAGE"' "$observability_release_workflow"

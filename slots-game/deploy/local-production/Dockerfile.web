@@ -33,6 +33,7 @@ LABEL org.opencontainers.image.created="${OCI_IMAGE_CREATED}" \
       org.opencontainers.image.vendor="slots-game" \
       org.opencontainers.image.title="slots-web" \
       org.opencontainers.image.description="Slots Game 本机集成验收静态 Web" \
+      org.opencontainers.image.licenses="NOASSERTION" \
       com.slots-game.deployment.profile="local-production"
 
 COPY --chown=101:101 web/release-nginx.conf /etc/nginx/conf.d/default.conf

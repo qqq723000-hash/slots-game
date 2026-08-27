@@ -133,9 +133,15 @@ iframe 的 `contentWindow`，再校验 `type === "slots-game:operator-session-re
 approval-gated 构建中复用 `VITE_RGS_HOST_ORIGIN` 与 `VITE_RGS_BASE_URL`：移除会阻断跨源
 iframe 的 X-Frame-Options，并生成唯一的精确 `frame-ancestors` 宿主 origin 与
 `connect-src` RGS origin。渲染器拒绝 `*`、HTTP、credentials、重复 CSP 指令和第二套 origin
-配置，最终镜像还执行 `nginx -t`。不要在发布代理再次放宽或覆盖这些响应头；每个获批宿主
-origin 应生成并归档独立镜像 digest。同时按相同清单配置 RGS CORS，并在目标浏览器验证未列入
-的 origin 无法嵌入或调用接口。
+配置，最终镜像还执行 `nginx -t`。CloudFront Response Headers Policy 同样不得重新注入
+`X-Frame-Options`，必须逐字复用该 digest 提取出的唯一 CSP。不要在发布代理再次放宽或覆盖这些响应头；
+每个获批宿主 origin 应生成并归档独立镜像 digest。同时按相同清单配置 RGS CORS，并在目标浏览器验证
+未列入的 origin 无法嵌入或调用接口。
+
+CloudFront release router 设置 host-only 的 `Secure; HttpOnly; SameSite=None; Partitioned` cookie。
+`SameSite=None` 允许跨站 iframe 携带 release 固定状态，`Partitioned` 将其隔离到顶层站点；是否能在目标
+Safari/Chrome/Edge 版本、隐私模式和运营商嵌套方式中持续固定，必须用真实跨站浏览器验收，不能只靠静态
+字符串检查宣称完成。
 
 ## 安全诊断事件
 
@@ -151,6 +157,8 @@ origin 应生成并归档独立镜像 digest。同时按相同清单配置 RGS C
 - 确认旧 iframe/code 被销毁，迟到响应不能解锁投注；
 - 检查 `runtime` 实际响应只有一条 CSP、没有 X-Frame-Options，且
   `frame-ancestors`/`connect-src` 与该镜像构建参数完全一致；
+- 在获批运营商的跨站 iframe 中连续刷新和切换页面，确认 `slots-release` cookie 为
+  `Secure; HttpOnly; SameSite=None; Partitioned` 且始终固定到同一 release；
 - 确认玩家 DOM、控制台采集和宿主事件中没有原始服务端 `.message`；
 - 确认网络失败不会重放一次性 RGS code，而是只请求运营商签发新会话；
 - 将宿主恢复演练结果与运营商会话签发、钱包和审计证据一起归档。

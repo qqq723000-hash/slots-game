@@ -87,7 +87,8 @@ RUN --network=none nginx -t
 
 FROM scratch AS config-conformance
 LABEL org.opencontainers.image.title="CI_ONLY_NOT_RELEASE_EVIDENCE" \
-      org.opencontainers.image.description="CI-only RGS build and Nginx configuration conformance; contains no web release"
+      org.opencontainers.image.description="CI-only RGS build and Nginx configuration conformance; contains no web release" \
+      org.opencontainers.image.licenses="NOASSERTION"
 # 最终目标只有已通过 nginx -t 的配置文本，不含 Nginx、dist、素材或授权文件，不能部署运行。
 COPY --from=config-conformance-nginx /etc/nginx/conf.d/default.conf /ci-only-not-release-evidence/release-nginx.conf
 USER 65534:65534
@@ -104,7 +105,8 @@ RUN --network=none \
     apk info -e 'libssl3=3.5.8-r0' >/dev/null
 USER 101:101
 LABEL org.opencontainers.image.title="CI_ONLY_STATIC_CONFORMANCE" \
-      org.opencontainers.image.description="CI-only unprivileged static image; not an approved release"
+      org.opencontainers.image.description="CI-only unprivileged static image; not an approved release" \
+      org.opencontainers.image.licenses="NOASSERTION"
 COPY --chown=0:0 deploy/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=static-conformance-build --chown=0:0 /src/web/dist/ /usr/share/nginx/html/
 
@@ -148,8 +150,12 @@ RUN --network=none \
 USER 101:101
 RUN --network=none nginx -t
 
-# 标签只暴露已通过发布清单严格校验的公开版本与完整提交摘要，不写入构建时间或宿主信息。
+# 标签显式覆盖上游 Nginx 元数据；版本与完整提交摘要来自已校验发布清单，且不写入构建宿主信息。
 LABEL org.opencontainers.image.title="primal-rampage-web" \
+      org.opencontainers.image.description="Primal Rampage approval-gated production browser client" \
+      org.opencontainers.image.source="https://github.com/qqq723000-hash/slots-game" \
+      org.opencontainers.image.url="https://github.com/qqq723000-hash/slots-game" \
+      org.opencontainers.image.licenses="NOASSERTION" \
       org.opencontainers.image.version="${WEB_RELEASE_VERSION}" \
       org.opencontainers.image.revision="${WEB_RELEASE_REVISION}"
 

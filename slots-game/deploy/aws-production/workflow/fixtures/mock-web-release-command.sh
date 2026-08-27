@@ -16,6 +16,7 @@ etag_file="$MOCK_WEB_STATE_DIRECTORY/etag"
 events_file="$MOCK_WEB_STATE_DIRECTORY/events.log"
 promotion_attempted="$MOCK_WEB_STATE_DIRECTORY/promotion-attempted"
 delayed_promotion_pending="$MOCK_WEB_STATE_DIRECTORY/delayed-promotion-pending"
+s3_directory="$MOCK_WEB_STATE_DIRECTORY/s3"
 
 command_name=${0##*/}
 
@@ -40,6 +41,12 @@ has_argument() {
     test "$argument" = "$requested_name" && return 0
   done
   return 1
+}
+
+metadata_value() {
+  requested_name=$1
+  metadata=$2
+  printf '%s\n' "$metadata" | tr ',' '\n' | sed -n "s/^${requested_name}=//p"
 }
 
 read_active_release() {
@@ -106,21 +113,85 @@ case "$command_name" in
     shift 2
     case "$service/$operation" in
       s3api/list-objects-v2)
-        if has_argument --max-keys "$@"; then printf '%s\n' 0; else printf '%s\n' 1; fi
+        prefix=$(argument_value --prefix "$@") || fail 'list-objects-v2 缺少 --prefix'
+        prefix_directory="$s3_directory/$prefix"
+        if test -d "$prefix_directory"; then
+          object_count=$(find "$prefix_directory" -type f -name '*.head.json' | wc -l | tr -d '[:space:]')
+        else
+          object_count=0
+        fi
+        jq -n --argjson count "$object_count" '{Contents: [range(0; $count) | {Key: tostring}]}'
         ;;
       s3api/put-object)
+        key=$(argument_value --key "$@") || fail 'put-object 缺少 --key'
+        body=$(argument_value --body "$@") || fail 'put-object 缺少 --body'
+        content_type=$(argument_value --content-type "$@") || fail 'put-object 缺少 --content-type'
+        cache_control=$(argument_value --cache-control "$@") || fail 'put-object 缺少 --cache-control'
+        checksum_algorithm=$(argument_value --checksum-algorithm "$@") || \
+          fail 'put-object 缺少 --checksum-algorithm'
+        checksum_sha256=$(argument_value --checksum-sha256 "$@") || \
+          fail 'put-object 缺少 --checksum-sha256'
+        metadata=$(argument_value --metadata "$@") || fail 'put-object 缺少 --metadata'
+        encryption=$(argument_value --server-side-encryption "$@") || \
+          fail 'put-object 缺少 --server-side-encryption'
+        kms_key=$(argument_value --ssekms-key-id "$@") || fail 'put-object 缺少 --ssekms-key-id'
+        if_none_match=$(argument_value --if-none-match "$@") || fail 'put-object 缺少 --if-none-match'
+        test "$checksum_algorithm" = SHA256 || fail 'put-object checksum algorithm 不是 SHA256'
+        test "$if_none_match" = '*' || fail 'put-object 未使用 If-None-Match 通配条件'
+        test "$encryption" = aws:kms || fail 'put-object 未使用 aws:kms'
+
+        object_body="$s3_directory/$key.body"
+        object_head="$s3_directory/$key.head.json"
+        mkdir -p "$(dirname "$object_body")"
+        if test -f "$object_head"; then
+          printf '%s\n' 's3-existing' >> "$events_file"
+          printf '%s\n' 'PreconditionFailed: object already exists' >&2
+          exit 80
+        fi
+
+        put_attempt_file="$MOCK_WEB_STATE_DIRECTORY/s3-put-attempts"
+        put_attempt=0
+        test ! -f "$put_attempt_file" || put_attempt=$(sed -n '1p' "$put_attempt_file")
+        put_attempt=$((put_attempt + 1))
+        printf '%s\n' "$put_attempt" > "$put_attempt_file"
+        if test "$MOCK_WEB_SCENARIO" = upload-interrupt && test "$put_attempt" -eq 2; then
+          printf '%s\n' 's3-interrupted' >> "$events_file"
+          printf '%s\n' 'simulated upload interruption before server apply' >&2
+          exit 81
+        fi
+
+        release_metadata=$(metadata_value release-id "$metadata")
+        image_metadata=$(metadata_value web-image-digest "$metadata")
+        configuration_metadata=$(metadata_value configuration-sha256 "$metadata")
+        csp_metadata=$(metadata_value csp-sha256 "$metadata")
+        content_length=$(wc -c < "$body" | tr -d '[:space:]')
+        cp "$body" "$object_body"
+        jq -n \
+          --arg release "$release_metadata" \
+          --arg image "$image_metadata" \
+          --arg configuration "$configuration_metadata" \
+          --arg csp "$csp_metadata" \
+          --arg checksum "$checksum_sha256" \
+          --argjson content_length "$content_length" \
+          --arg content_type "$content_type" \
+          --arg cache "$cache_control" \
+          --arg encryption "$encryption" \
+          --arg kms "$kms_key" \
+          '{Metadata:{"release-id":$release,"web-image-digest":$image,"configuration-sha256":$configuration,"csp-sha256":$csp},ChecksumSHA256:$checksum,ContentLength:$content_length,ContentType:$content_type,CacheControl:$cache,ServerSideEncryption:$encryption,SSEKMSKeyId:$kms}' \
+          > "$object_head"
         printf '%s\n' 's3-put' >> "$events_file"
+        jq -n --arg checksum "$checksum_sha256" '{ChecksumSHA256:$checksum}'
         ;;
       s3api/head-object)
-        jq -n \
-          --arg release "$MOCK_WEB_RELEASE_ID" \
-          --arg image "$MOCK_WEB_IMAGE_DIGEST" \
-          --arg configuration "$MOCK_WEB_CONFIGURATION_SHA256" \
-          --arg csp "$MOCK_WEB_CSP_SHA256" \
-          --arg content_type 'application/json; charset=utf-8' \
-          --arg cache 'public,max-age=0,must-revalidate' \
-          --arg kms "$AWS_WEB_KMS_KEY_ARN" \
-          '{Metadata:{"release-id":$release,"web-image-digest":$image,"configuration-sha256":$configuration,"csp-sha256":$csp},ContentType:$content_type,CacheControl:$cache,ServerSideEncryption:"aws:kms",SSEKMSKeyId:$kms}'
+        key=$(argument_value --key "$@") || fail 'head-object 缺少 --key'
+        checksum_mode=$(argument_value --checksum-mode "$@") || fail 'head-object 缺少 --checksum-mode'
+        test "$checksum_mode" = ENABLED || fail 'head-object 未启用 checksum mode'
+        object_head="$s3_directory/$key.head.json"
+        test -f "$object_head" || {
+          printf '%s\n' 'NoSuchKey: object does not exist' >&2
+          exit 82
+        }
+        cat "$object_head"
         ;;
       cloudfront/get-response-headers-policy-config)
         jq -n --arg csp "$MOCK_WEB_CSP" \

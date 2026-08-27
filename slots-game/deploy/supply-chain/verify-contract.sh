@@ -50,7 +50,6 @@ release_workflow="$workflows_root/supply-chain-release.yml"
 deployment_workflow="$workflows_root/deployment-conformance.yml"
 backend_workflow="$workflows_root/backend-conformance.yml"
 frontend_workflow="$workflows_root/frontend-conformance.yml"
-pages_demo_workflow="$workflows_root/pages-demo.yml"
 codeql_workflow="$workflows_root/codeql.yml"
 dependency_review_workflow="$workflows_root/dependency-review.yml"
 dependabot_config="$github_root/dependabot.yml"
@@ -123,7 +122,6 @@ for required_file in \
   "$deployment_workflow" \
   "$backend_workflow" \
   "$frontend_workflow" \
-  "$pages_demo_workflow" \
   "$codeql_workflow" \
   "$dependency_review_workflow" \
   "$dependabot_config" \
@@ -586,22 +584,21 @@ reject_fixed 'docker pull' "$aws_web_extractor"
 reject_fixed 'web/dist/' "$aws_web_extractor"
 require_fixed 'extract-aws-web-static-root.sh' "$aws_deployment_guide"
 require_fixed 'set -euo pipefail' "$aws_deployment_guide"
-require_fixed "SLOTS_EXISTING_OBJECT_COUNT=\$(aws s3api list-objects-v2 \\" "$aws_deployment_guide"
-require_fixed 'if [ "$SLOTS_EXISTING_OBJECT_COUNT" != 0 ]; then' "$aws_deployment_guide"
-require_fixed "echo '目标 release 前缀已存在，拒绝覆盖或合并不可变 Web 发布目录' >&2" "$aws_deployment_guide"
-require_fixed '  exit 1' "$aws_deployment_guide"
-require_fixed 'aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/"' "$aws_deployment_guide"
+require_fixed '`deploy/aws-production/workflow/publish-web-release.sh`' "$aws_deployment_guide"
+require_fixed 'put-object --if-none-match' "$aws_deployment_guide"
+require_fixed 'bucket policy 是服务端' "$aws_deployment_guide"
+reject_fixed 'SLOTS_EXISTING_OBJECT_COUNT=' "$aws_deployment_guide"
+reject_fixed 'aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/"' "$aws_deployment_guide"
 require_fixed '`CONFIGURATION_SHA256`' "$aws_deployment_guide"
 require_fixed '`cloudfront-content-security-policy.txt`' "$aws_deployment_guide"
 require_fixed '逐文件通过 `release-manifest.json`' "$aws_deployment_guide"
 aws_workspace_publish=$(grep -E '^[[:space:]]*aws[[:space:]]+s3[[:space:]]+(sync|cp)[[:space:]].*(web/)?dist(/|[[:space:]])' "$aws_deployment_guide" || true)
 test -z "$aws_workspace_publish" || fail 'AWS guide must never upload a mutable workspace dist directory'
 aws_extract_line=$(grep -n -F 'sh deploy/supply-chain/extract-aws-web-static-root.sh' "$aws_deployment_guide" | head -n 1 | cut -d: -f1)
-aws_reject_line=$(grep -n -F "echo '目标 release 前缀已存在，拒绝覆盖或合并不可变 Web 发布目录' >&2" "$aws_deployment_guide" | head -n 1 | cut -d: -f1)
-aws_sync_line=$(grep -n -F 'aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/"' "$aws_deployment_guide" | head -n 1 | cut -d: -f1)
-test -n "$aws_extract_line" && test -n "$aws_reject_line" && test -n "$aws_sync_line" \
-  && test "$aws_extract_line" -lt "$aws_reject_line" && test "$aws_reject_line" -lt "$aws_sync_line" || \
-  fail 'AWS guide must extract, verify and reject an existing immutable prefix before S3 upload'
+aws_publisher_line=$(grep -n -F 'deploy/aws-production/workflow/publish-web-release.sh' "$aws_deployment_guide" | tail -n 1 | cut -d: -f1)
+test -n "$aws_extract_line" && test -n "$aws_publisher_line" \
+  && test "$aws_extract_line" -lt "$aws_publisher_line" || \
+  fail 'AWS guide must extract and verify immutable Web bytes before the conditional publisher'
 
 # 获批 Web OCI 在扫描和上传前必须把精确静态字节装入真实 Chrome；源码目录的普通构建不能替代。
 require_fixed 'Smoke the exact approval-gated Web bytes in a real browser' "$release_workflow"
@@ -658,9 +655,6 @@ setup_go_sha='d35c59abb061a4a6fb18e82ac0862c26744d6ab5'
 setup_node_sha='49933ea5288caeca8642d1e84afbd3f7d6820020'
 setup_buildx_sha='bb05f3f5519dd87d3ba754cc423b652a5edd6d2c'
 download_sha='3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'
-configure_pages_sha='45bfe0192ca1faeb007ade9deae92b16b8254a0d'
-upload_pages_sha='fc324d3547104276b827a68afc52ff2a11cc49c9'
-deploy_pages_sha='cd2ce8fcbc39b97be8ca5fce6e763baed58fa128'
 
 require_line '        run: node deploy/supply-chain/verify-release-version.mjs --formal' "$release_workflow"
 require_line "        uses: actions/checkout@$checkout_sha # v7.0.1" "$source_workflow"
@@ -690,166 +684,36 @@ test "$(grep -F -c -- '          lfs: true' "$frontend_workflow" || true)" -eq 2
   fail 'both frontend jobs must materialize LFS source'
 test "$(grep -F -c -- '          persist-credentials: false' "$frontend_workflow" || true)" -eq 2 ||
   fail 'both frontend jobs must remove checkout credentials'
-require_line '        run: npm run build:demo' "$frontend_workflow"
+require_fixed 'shellcheck -S warning -x -P . -P "$(dirname "$script")" "$script"' "$deployment_workflow"
+require_fixed "done < <(git ls-files -- '*.sh')" "$deployment_workflow"
+reject_fixed 'npm run build:demo' "$frontend_workflow"
 
-# 公开静态试玩只允许从受保护 main 手动发布：无密钥验证、外部素材精确哈希审批/
-# 上传、Pages 部署三个权限域不得合并。正式 RGS 入口与生产密钥都不得进入此工作流。
-test "$(grep -F -c -- "uses: actions/checkout@$checkout_sha # v7.0.1" "$pages_demo_workflow" || true)" -eq 2 ||
-  fail 'Pages verification and approval jobs must each use the reviewed checkout once'
-test "$(grep -F -c -- "uses: actions/setup-node@$setup_node_sha # v4.4.0" "$pages_demo_workflow" || true)" -eq 2 ||
-  fail 'Pages verification and approval jobs must each use the reviewed setup-node once'
-require_line "        uses: actions/upload-pages-artifact@$upload_pages_sha # v5.0.0" "$pages_demo_workflow"
-require_line "        uses: actions/configure-pages@$configure_pages_sha # v6.0.0" "$pages_demo_workflow"
-require_line "        uses: actions/deploy-pages@$deploy_pages_sha # v5.0.0" "$pages_demo_workflow"
-test "$(grep -F -x -c -- '        run: npm ci --ignore-scripts' "$pages_demo_workflow" || true)" -eq 2 ||
-  fail 'Pages dependency installation must disable package lifecycle scripts'
-test "$(grep -F -x -c -- '        run: npm --ignore-scripts run build:demo' "$pages_demo_workflow" || true)" -eq 2 ||
-  fail 'Pages source verification and approval jobs must rebuild the isolated demo without lifecycle hooks'
-require_line '          path: slots-game/web/dist-demo' "$pages_demo_workflow"
-require_line '          include-hidden-files: true' "$pages_demo_workflow"
-require_line '          ref: ${{ github.sha }}' "$pages_demo_workflow"
-require_line '          STATIC_DEMO_ASSET_APPROVAL_B64: ${{ secrets.STATIC_DEMO_ASSET_APPROVAL_B64 }}' "$pages_demo_workflow"
-require_line '          node scripts/verify-static-demo-build.mjs' "$pages_demo_workflow"
-require_line '          approval_expires_at="$(STATIC_DEMO_ASSET_APPROVAL_FILE="$approval_file" node scripts/verify-static-demo-asset-approval.mjs --print-expires-at)"' "$pages_demo_workflow"
-require_line '          ASSET_APPROVAL_EXPIRES_AT: ${{ needs.approve-and-upload-static-demo.outputs.asset-approval-expires-at }}' "$pages_demo_workflow"
-require_line '          test "$expires_epoch" -gt "$now_epoch"' "$pages_demo_workflow"
-require_line '          WEB_RELEASE_REQUIRE_IDENTITY: "1"' "$pages_demo_workflow"
-require_line '          WEB_RELEASE_REVISION: ${{ github.sha }}' "$pages_demo_workflow"
-require_line '          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}' "$pages_demo_workflow"
-require_line '        run: test "$PAGES_BASE_PATH" = /slots-game' "$pages_demo_workflow"
-test "$(grep -F -c -- '${{ secrets.' "$pages_demo_workflow" || true)" -eq 1 ||
-  fail 'Pages workflow must consume exactly one Environment-scoped approval secret'
-pages_trigger=$(awk '/^on:$/ { inside = 1; next } /^permissions:$/ { inside = 0 } inside { print }' "$pages_demo_workflow")
-test "$pages_trigger" = '  workflow_dispatch:' ||
-  fail 'Pages deployment workflow must remain manual-only'
-reject_fixed 'pull_request_target:' "$pages_demo_workflow"
-reject_fixed 'pull_request:' "$pages_demo_workflow"
-reject_fixed 'push:' "$pages_demo_workflow"
-reject_fixed 'schedule:' "$pages_demo_workflow"
-reject_fixed 'workflow_run:' "$pages_demo_workflow"
-ruby -ryaml -e '
-  workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
-  abort "Pages top-level permissions drifted" unless workflow["permissions"] == { "contents" => "read" }
-  jobs = workflow.fetch("jobs")
-  abort "Pages job topology drifted" unless
-    jobs.keys.sort == %w[approve-and-upload-static-demo deploy-static-demo verify-static-demo]
-  build = jobs.fetch("verify-static-demo")
-  approval = jobs.fetch("approve-and-upload-static-demo")
-  deploy = jobs.fetch("deploy-static-demo")
-  protected_main = "github.ref == '\''refs/heads/main'\'' && github.ref_protected == true"
-  abort "Pages jobs must require protected main" unless
-    [build, approval, deploy].all? { |job| job["if"] == protected_main }
-  abort "Pages build step topology drifted" unless build.fetch("steps").map { |step| step["name"] } == [
-    "Check out protected main without persisted credentials",
-    "Set up fixed Node.js",
-    "Install locked dependencies",
-    "Reject high-risk dependency findings",
-    "Build and verify isolated non-economic demo",
-  ]
-  abort "Pages approval step topology drifted" unless approval.fetch("steps").map { |step| step["name"] } == [
-    "Check out the same protected main revision",
-    "Set up fixed Node.js",
-    "Install locked dependencies",
-    "Rebuild the exact reviewed demo revision",
-    "Verify external exact-hash asset approval",
-    "Upload the exact approved GitHub Pages artifact",
-  ]
-  abort "Pages deploy step topology drifted" unless deploy.fetch("steps").map { |step| step["name"] } == [
-    "Revalidate asset approval expiry after deployment review",
-    "Bind deployment to repository Pages configuration",
-    "Reject a Pages base path outside this repository",
-    "Deploy reviewed static demo artifact",
-  ]
-  step_keys = ->(step) { step.keys.sort }
-  abort "Pages build step controls drifted" unless build.fetch("steps").map(&step_keys) == [
-    %w[name uses with],
-    %w[name uses with],
-    %w[name run],
-    %w[name run],
-    %w[env name run],
-  ]
-  abort "Pages approval step controls drifted" unless approval.fetch("steps").map(&step_keys) == [
-    %w[name uses with],
-    %w[name uses with],
-    %w[name run],
-    %w[env name run],
-    %w[env id name run shell],
-    %w[name uses with],
-  ]
-  abort "Pages deploy step controls drifted" unless deploy.fetch("steps").map(&step_keys) == [
-    %w[env name run shell],
-    %w[id name uses],
-    %w[env name run shell],
-    %w[id name uses],
-  ]
-  abort "Pages build commands re-enabled npm lifecycle scripts" unless
-    build.fetch("steps").fetch(2)["run"] == "npm ci --ignore-scripts" &&
-    build.fetch("steps").fetch(4)["run"] == "npm --ignore-scripts run build:demo"
-  abort "Pages approval rebuild commands re-enabled npm lifecycle scripts" unless
-    approval.fetch("steps").fetch(2)["run"] == "npm ci --ignore-scripts" &&
-    approval.fetch("steps").fetch(3)["run"] == "npm --ignore-scripts run build:demo"
-  asset_approval_step = approval.fetch("steps").fetch(4)
-  abort "Pages asset approval step identity or secret binding drifted" unless
-    asset_approval_step["id"] == "asset-approval" &&
-    asset_approval_step["shell"] == "bash" &&
-    asset_approval_step["env"] == {
-      "STATIC_DEMO_ASSET_APPROVAL_B64" => "${{ secrets.STATIC_DEMO_ASSET_APPROVAL_B64 }}",
-    }
-  expected_approval_run = [
-    %q!set -euo pipefail!,
-    %q!test -n "$STATIC_DEMO_ASSET_APPROVAL_B64"!,
-    %q!umask 077!,
-    %q!approval_file="$RUNNER_TEMP/static-demo-asset-approval.json"!,
-    %q!trap '\''rm -f "$approval_file"'\'' EXIT!,
-    %q!node scripts/verify-static-demo-build.mjs!,
-    %q!printf '\''%s'\'' "$STATIC_DEMO_ASSET_APPROVAL_B64" | base64 --decode > "$approval_file"!,
-    %q!approval_expires_at="$(STATIC_DEMO_ASSET_APPROVAL_FILE="$approval_file" node scripts/verify-static-demo-asset-approval.mjs --print-expires-at)"!,
-    %q!printf '\''expires_at=%s\n'\'' "$approval_expires_at" >> "$GITHUB_OUTPUT"!,
-    %q!approval_sha256="$(sha256sum "$approval_file" | cut -d'\'' '\'' -f1)"!,
-    %q!printf '\''static demo approval sha256: %s\n'\'' "$approval_sha256"!,
-  ].join("\n") + "\n"
-  abort "Pages approval script drifted or can mutate the artifact after approval" unless
-    approval.fetch("steps").fetch(4)["run"] == expected_approval_run
-  abort "Pages approved artifact upload must be the final approval job step" unless
-    approval.fetch("steps").last["uses"] ==
-      "actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9"
-  abort "Pages build permissions drifted" unless build["permissions"] == { "contents" => "read" }
-  abort "Pages build timeout drifted" unless build["timeout-minutes"] == 20
-  abort "Pages approval permissions drifted" unless approval["permissions"] == { "contents" => "read" }
-  abort "Pages approval expiry output drifted" unless approval["outputs"] == {
-    "asset-approval-expires-at" => "${{ steps.asset-approval.outputs.expires_at }}",
-  }
-  abort "Pages approval dependency drifted" unless approval["needs"] == ["verify-static-demo"]
-  abort "Pages asset approval Environment drifted" unless
-    approval["environment"] == { "name" => "pages-demo-asset-approval" }
-  abort "Pages deploy permissions drifted" unless
-    deploy["permissions"] == { "pages" => "write", "id-token" => "write" }
-  abort "Pages deploy dependency drifted" unless
-    deploy["needs"] == ["approve-and-upload-static-demo"]
-  abort "Pages deploy timeout drifted" unless deploy["timeout-minutes"] == 10
-  abort "Pages Environment drifted" unless
-    deploy["environment"] == {
-      "name" => "github-pages",
-      "url" => "${{ steps.deployment.outputs.page_url }}",
-    }
-  expiry_step = deploy.fetch("steps").first
-  expected_expiry_run = [
-    %q!set -euo pipefail!,
-    %q!test -n "$ASSET_APPROVAL_EXPIRES_AT"!,
-    %q!expires_epoch="$(date -u -d "$ASSET_APPROVAL_EXPIRES_AT" +%s)"!,
-    %q!now_epoch="$(date -u +%s)"!,
-    %q!test "$expires_epoch" -gt "$now_epoch"!,
-  ].join("\n") + "\n"
-  abort "Pages approval expiry must be revalidated after the deploy Environment wait" unless
-    expiry_step["env"] == {
-      "ASSET_APPROVAL_EXPIRES_AT" => "${{ needs.approve-and-upload-static-demo.outputs.asset-approval-expires-at }}",
-    } && expiry_step["run"] == expected_expiry_run
-  abort "Pages concurrency must never cancel an in-flight deployment" unless
-    workflow["concurrency"] == {
-      "group" => "static-demo-pages",
-      "cancel-in-progress" => false,
-    }
-' "$pages_demo_workflow" || fail 'GitHub Pages demo workflow semantic contract failed'
+# 公开试玩与 Pages 已按产品范围移除；门禁同时拒绝工作流、构建入口和源码重新出现。
+for removed_demo_path in \
+  "$workflows_root/pages-demo.yml" \
+  "$repository_root/web/demo" \
+  "$repository_root/web/src/demo" \
+  "$repository_root/web/vite.demo.config.ts" \
+  "$repository_root/web/scripts/finalize-static-demo.mjs" \
+  "$repository_root/web/scripts/verify-static-demo-asset-approval.mjs" \
+  "$repository_root/web/scripts/verify-static-demo-build.mjs" \
+  "$repository_root/web/tests/public-static-demo-gateway.test.ts" \
+  "$repository_root/web/tests/static-demo-asset-approval.test.ts" \
+  "$repository_root/web/tests/static-demo-contract.test.ts"
+do
+  test ! -e "$removed_demo_path" || fail "removed public demo surface reappeared: ${removed_demo_path#"$delivery_root/"}"
+done
+ruby -rjson -e '
+  scripts = JSON.parse(File.read(ARGV.fetch(0))).fetch("scripts")
+  demo = scripts.keys.grep(/demo/i)
+  abort "public demo npm scripts reappeared: #{demo.join(", ")}" unless demo.empty?
+' "$web_package_json" || fail 'removed public demo npm contract failed'
+for public_doc in "$delivery_root/README.md" "$repository_root/README.md" "$repository_root/web/README.md"; do
+  test -f "$public_doc" || continue
+  if grep -Ei 'GitHub Pages|一键在线试玩|静态试玩' "$public_doc" >/dev/null; then
+    fail "removed public demo statement reappeared in ${public_doc#"$delivery_root/"}"
+  fi
+done
 
 # release 只允许人工 dispatch，并把执行仓库代码、Web 素材审批和最终发布拆成三个权限域。
 release_trigger=$(awk '/^on:$/ { inside = 1; next } /^permissions:$/ { inside = 0 } inside { print }' "$release_workflow")
@@ -1433,8 +1297,12 @@ reject_fixed 'slots-game/.artifacts/postgres-conformance/*' "$backend_workflow"
 reject_fixed 'slots-game/.artifacts/runtime-smoke/*' "$backend_workflow"
 primal_web_title_line=$(printf '%s\134' 'LABEL org.opencontainers.image.title="primal-rampage-web" ')
 require_line "$primal_web_title_line" "$web_dockerfile"
+test "$(grep -F -c -- 'org.opencontainers.image.licenses="NOASSERTION"' "$web_dockerfile")" -eq 3 ||
+  fail 'all Web image targets must override inherited upstream license metadata'
+require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_web_dockerfile"
+require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_nginx_proxy_dockerfile"
 
-# 四个外部 Environment 的真实审批/Secret 归属无法由仓库创建，运维文档必须明确列为上线阻断。
+# 两个发布 Environment 的真实审批/Secret 归属无法由仓库创建，运维文档必须明确列为上线阻断。
 require_fixed '## 版本与仓库治理门禁' "$readme"
 require_fixed '`verify-release-version.mjs --formal`' "$readme"
 require_fixed '六个带锁文件的' "$readme"
@@ -1487,8 +1355,6 @@ require_line "${make_tab}cd server && go build ./..." "$makefile"
 require_line 'BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid' "$makefile"
 require_line "${make_tab}cd web && \$(BROWSER_SMOKE_ENV) npm run build" "$makefile"
 require_line '    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && node scripts/verify-production-javascript-bundles.mjs",' "$web_package_json"
-require_line '    "build:demo": "npm run licenses:check && npm run assets:provenance-check && tsc --noEmit && vite build --config vite.demo.config.ts --mode demo && node scripts/finalize-static-demo.mjs && node scripts/verify-static-demo-build.mjs",' "$web_package_json"
-require_line '    "demo:approval-check": "node scripts/verify-static-demo-asset-approval.mjs",' "$web_package_json"
 ruby -rjson -e '
   scripts = JSON.parse(File.read(ARGV.fetch(0))).fetch("scripts")
   forbidden = %w[

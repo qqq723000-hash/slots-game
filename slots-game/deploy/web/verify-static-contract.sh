@@ -368,6 +368,8 @@ printf '%s\n' "$runtime_stage" | grep -F 'cmp /THIRD_PARTY_NOTICES.txt /usr/shar
 printf '%s\n' "$runtime_stage" | grep -F 'COPY --from=release-build --chown=0:0 /src/web/release-nginx.conf /etc/nginx/conf.d/default.conf' >/dev/null || fail "runtime must copy only the root-owned release-generated nginx policy"
 printf '%s\n' "$runtime_stage" | grep -F 'RUN --network=none nginx -t' >/dev/null || fail "runtime must parse-check the generated nginx policy without network access"
 printf '%s\n' "$runtime_stage" | grep -F 'org.opencontainers.image.title="primal-rampage-web"' >/dev/null || fail "runtime must expose the Primal Rampage product title"
+test "$(grep -F -c -- 'org.opencontainers.image.licenses="NOASSERTION"' "$dockerfile")" -eq 3 \
+  || fail "all Web image targets must override inherited upstream license metadata"
 printf '%s\n' "$runtime_stage" | grep -F 'org.opencontainers.image.version="${WEB_RELEASE_VERSION}"' >/dev/null || fail "runtime must expose the validated public release version label"
 printf '%s\n' "$runtime_stage" | grep -F 'org.opencontainers.image.revision="${WEB_RELEASE_REVISION}"' >/dev/null || fail "runtime must expose the validated full revision label"
 if printf '%s\n' "$runtime_stage" | grep -F 'COPY --chown=0:0 deploy/web/nginx.conf /etc/nginx/conf.d/default.conf' >/dev/null; then

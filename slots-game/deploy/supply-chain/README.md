@@ -117,22 +117,9 @@ Terraform 分别写入 `trivy-terraform-dev.json`、`trivy-terraform-staging.jso
 - 为 `supply-chain-web-approval` 与 `supply-chain-release` 配置互相独立的 required reviewers，
   启用防自审和受保护 Tag deployment policy；逐项核对真实 Environment variables/Secrets，禁止
   用 repository/organization secret 绕过独立素材审批，也禁止长期 AWS access key；
-- GitHub Pages 的 build source 必须为 GitHub Actions；`github-pages` Environment 要求仓库
-  所有者复核精确试玩产物，并只允许 `main` 部署。该审批是部署审计记录，
-  不替代素材授权链、商标证明或商业许可。
-
 管理员验收记录至少应包含保护规则、required checks、Tag/Release 不可变状态、安全功能、Actions
-策略、四个 Environment 的 reviewer/防自审/部署分支/变量归属的 API 回读结果。当前仓库无法自行创建或证明
+策略、两个发布 Environment 的 reviewer/防自审/部署分支/变量归属的 API 回读结果。当前仓库无法自行创建或证明
 这些外部输入；任一项未回读通过都属于发布阻断。
-
-Pages 发布另外使用两个互相独立的 Environment：
-
-1. `pages-demo-asset-approval` 只允许受保护 `main`，由素材/法务责任人复核，并仅保存
-   规范审批 JSON 的 Base64 编码 `STATIC_DEMO_ASSET_APPROVAL_B64`；该审批必须精确覆盖
-   `dist-demo/release-manifest.json` 中全部受保护文件，`jurisdictions` 必须显式包含
-   `PUBLIC-INTERNET`，不得使用仓库内占位文件或局部辖区授权。
-2. `github-pages` 只允许受保护 `main`，不保存 Secret；它只审批已通过上述精确哈希
-   校验的 Pages artifact 是否部署。审批本身不构成素材权利链证明。
 
 `.github/workflows/supply-chain-release.yml` 只接受 `workflow_dispatch`。上线前管理员必须在
 GitHub 仓库设置中**预先**创建以下两个 Environment；仅在 YAML 中引用名称不能证明审批规则

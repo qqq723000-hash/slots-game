@@ -107,7 +107,7 @@ func DemoConfig() Config {
 		},
 		Paytable: map[Symbol]int64{
 			// 已采集资源中每条具体连线相对于 100 最小货币单位参考投注的赔付为：
-			// K 为 0.1 倍、Q 为 0.3 倍、头盔为 0.8 倍、无线电为 1 倍、
+			// Q 为 0.1 倍、K 为 0.3 倍、头盔为 0.8 倍、无线电为 1 倍、
 			// 坦克为 1.5 倍、喷气机为 2 倍。
 			SymbolPrism: 10, SymbolOrbit: 30, SymbolPulse: 80,
 			SymbolNova: 100, SymbolTank: 150, SymbolCircuit: 200,

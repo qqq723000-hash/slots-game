@@ -2,8 +2,11 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Slots Game RGS Integration API
-  version: 1.2.1
+  version: 1.2.2
   summary: Operator and player-client contract for the clean-room RGS.
+  license:
+    name: No repository API license is granted
+    identifier: LicenseRef-Proprietary
   description: |
     This draft documents the production RGS HTTP boundary implemented under
     `server/internal/rgsapi`. All money, revision and sequence values are
@@ -186,6 +189,8 @@ paths:
           $ref: '#/components/responses/SignedError'
         '405':
           $ref: '#/components/responses/SignedMethodNotAllowed'
+        '423':
+          $ref: '#/components/responses/SignedError'
         '429':
           $ref: '#/components/responses/SignedRateLimited'
         '500':
@@ -589,6 +594,8 @@ paths:
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/ClientUnauthorized'
+        '403':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
         '410':
@@ -652,6 +659,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '413':
+          $ref: '#/components/responses/Error'
+        '415':
+          $ref: '#/components/responses/Error'
         '405':
           $ref: '#/components/responses/ClientMethodNotAllowed'
         '423':

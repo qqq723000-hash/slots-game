@@ -1227,6 +1227,33 @@ cloudfront_distribution_id=$(json_value cloudfront_distribution_id)
         certificate.fetch("SSLSupportMethod") == "sni-only"
   ' "$delivery_json" || fail 'CloudFront distribution、global WAF 或私有 S3 OAC 绑定不满足'
 
+# X-Frame-Options 会先于精确 CSP frame-ancestors 阻断跨源运营商 iframe；
+# 生产 Response Headers Policy 必须让制品提取出的单一 CSP 成为嵌入授权源。
+cloudfront_response_headers_policy_id=$(json_value cloudfront_response_headers_policy_id)
+"$aws_binary" cloudfront get-response-headers-policy-config \
+  --id "$cloudfront_response_headers_policy_id" \
+  --no-cli-pager \
+  --output json | ruby -rjson -ruri -e '
+    response = JSON.parse(STDIN.read)
+    config = response.fetch("ResponseHeadersPolicyConfig")
+    security = config.fetch("SecurityHeadersConfig")
+    abort "CloudFront Response Headers Policy 仍注入 X-Frame-Options" if security.key?("FrameOptions")
+    content_security_policy = security.fetch("ContentSecurityPolicy")
+    policy = content_security_policy.fetch("ContentSecurityPolicy")
+    abort "CloudFront CSP 未启用覆盖" unless content_security_policy.fetch("Override") == true
+    frame_directives = policy.split(";").map(&:strip).reject(&:empty?).select { |item|
+      item.split(/[[:space:]]+/, 2).fetch(0) == "frame-ancestors"
+    }
+    abort "CloudFront CSP 必须精确包含一个 frame-ancestors" unless frame_directives.length == 1
+    sources = frame_directives.fetch(0).split(/[[:space:]]+/).drop(1)
+    abort "CloudFront frame-ancestors 必须精确绑定一个 HTTPS 运营商 origin" unless sources.length == 1
+    source = sources.fetch(0)
+    origin = URI.parse(source)
+    abort "CloudFront frame-ancestors 不是精确 HTTPS origin" unless
+      origin.is_a?(URI::HTTPS) && !origin.host.to_s.empty? && origin.userinfo.nil? &&
+        [nil, ""].include?(origin.path) && origin.query.nil? && origin.fragment.nil? && origin.to_s == source
+  ' || fail 'CloudFront Response Headers Policy 的跨源 iframe 契约不满足'
+
 # delivery 中的私有源站声明不能代替真实 S3 执行面。四项 Public Access
 # Block 必须同时开启；否则攻击者可以绕过 CloudFront/WAF 直读源站并制造成本。
 web_bucket_name=$(json_value web_bucket_name)
@@ -1263,12 +1290,12 @@ aws_account_id=$(json_value aws_account_id)
     abort "S3 bucket policy 顶层结构不精确" unless
       policy.keys.sort == %w[Statement Version] && policy.fetch("Version") == "2012-10-17"
     statements = policy.fetch("Statement")
-    abort "S3 bucket policy 必须精确包含两条语句" unless
-      statements.is_a?(Array) && statements.length == 2 &&
+    abort "S3 bucket policy 必须精确包含三条语句" unless
+      statements.is_a?(Array) && statements.length == 3 &&
         statements.all? { |statement| statement.is_a?(Hash) }
     by_sid = statements.to_h { |statement| [statement.fetch("Sid", nil), statement] }
     abort "S3 bucket policy Sid 集合缺失或重复" unless
-      by_sid.keys.sort == %w[AllowCloudFrontOacRead DenyInsecureTransport] &&
+      by_sid.keys.sort == %w[AllowCloudFrontOacRead DenyInsecureTransport DenyUnconditionalReleaseWrites] &&
         by_sid.length == statements.length
 
     delivery = JSON.parse(File.binread(ARGV.fetch(0)))
@@ -1285,6 +1312,18 @@ aws_account_id=$(json_value aws_account_id)
         allow.fetch("Principal") == {"Service" => "cloudfront.amazonaws.com"} &&
         allow.fetch("Condition") == {"StringEquals" => {"AWS:SourceArn" => distribution_arn}}
 
+    immutable = by_sid.fetch("DenyUnconditionalReleaseWrites")
+    immutable_principal = immutable.fetch("Principal")
+    abort "S3 release 条件写 Deny 语句漂移" unless
+      immutable.keys.sort == %w[Action Condition Effect Principal Resource Sid] &&
+        immutable.fetch("Effect") == "Deny" && one.call(immutable.fetch("Action")) == "s3:PutObject" &&
+        one.call(immutable.fetch("Resource")) == "#{bucket_arn}/releases/*" &&
+        ["*", {"AWS" => "*"}].include?(immutable_principal) &&
+        immutable.fetch("Condition") == {
+          "Bool" => {"s3:ObjectCreationOperation" => "true"},
+          "Null" => {"s3:if-none-match" => "true"},
+        }
+
     deny = by_sid.fetch("DenyInsecureTransport")
     principal = deny.fetch("Principal")
     resources = deny.fetch("Resource")
@@ -1295,7 +1334,7 @@ aws_account_id=$(json_value aws_account_id)
         resources.sort == [bucket_arn, "#{bucket_arn}/*"].sort &&
         ["*", {"AWS" => "*"}].include?(principal) &&
         deny.fetch("Condition") == {"Bool" => {"aws:SecureTransport" => "false"}}
-  ' "$delivery_json" || fail 'CloudFront 私有 S3 源站 bucket policy 未精确绑定 OAC 或 TLS 拒绝'
+  ' "$delivery_json" || fail 'CloudFront 私有 S3 源站 bucket policy 未精确绑定 OAC、release 条件写或 TLS 拒绝'
 
 alarm_names=$(ruby -rjson -e '
   value = JSON.parse(File.binread(ARGV.fetch(0))).fetch("api_edge_security_contract").fetch("alarm_names")

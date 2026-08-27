@@ -193,93 +193,19 @@ replace_once '          fail-on-severity: high' '          fail-on-severity: cri
 expect_rejected 'dependency review accepted newly introduced high vulnerabilities'
 
 reset_fixture
-replace_once '      pages: write' '      contents: write' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages deployment received repository write permission'
+mkdir -p "$fixture/.github/workflows"
+printf '%s\n' 'name: removed public demo' > "$fixture/.github/workflows/pages-demo.yml"
+expect_rejected 'removed GitHub Pages workflow reappeared'
 
 reset_fixture
-replace_once '        run: npm ci --ignore-scripts' '        run: npm ci' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages dependency installation re-enabled package lifecycle scripts'
+mkdir -p "$fixture/web/src/demo"
+printf '%s\n' 'export {};' > "$fixture/web/src/demo/reintroduced.ts"
+expect_rejected 'removed public demo source tree reappeared'
 
 reset_fixture
-replace_once '        run: npm --ignore-scripts run build:demo' '        run: npm run build:demo' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages demo build re-enabled package lifecycle hooks'
-
-reset_fixture
-replace_once '        run: npm --ignore-scripts run build:demo' '        run: npm --ignore-scripts run build' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages workflow replaced the isolated demo with the production RGS build'
-
-reset_fixture
-replace_once '  workflow_dispatch:' '  push:' "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages deployment became automatic'
-
-reset_fixture
-replace_once "    if: github.ref == 'refs/heads/main' && github.ref_protected == true" \
-  "    if: github.ref == 'refs/heads/main'" "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages deployment accepted an unprotected main ref'
-
-reset_fixture
-replace_once '      name: pages-demo-asset-approval' '      name: github-pages' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages upload bypassed the independent asset approval Environment'
-
-reset_fixture
-replace_once '          include-hidden-files: true' '          include-hidden-files: false' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages upload omitted the reviewed .nojekyll artifact'
-
-reset_fixture
-replace_once '          path: slots-game/web/dist-demo' '          path: slots-game/web' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages upload expanded beyond the exact demo output'
-
-reset_fixture
-replace_once '          STATIC_DEMO_ASSET_APPROVAL_B64: ${{ secrets.STATIC_DEMO_ASSET_APPROVAL_B64 }}' \
-  '          STATIC_DEMO_ASSET_APPROVAL_B64: missing' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages approval stopped consuming its Environment-scoped exact-hash input'
-
-reset_fixture
-replace_once '          node scripts/verify-static-demo-build.mjs' \
-  '          true # deployable output verification removed' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages approval stopped re-verifying the deployable output tree'
-
-reset_fixture
-replace_once '          approval_expires_at="$(STATIC_DEMO_ASSET_APPROVAL_FILE="$approval_file" node scripts/verify-static-demo-asset-approval.mjs --print-expires-at)"' \
-  '          approval_expires_at="$(STATIC_DEMO_ASSET_APPROVAL_FILE="$approval_file" npm run demo:approval-check -- --print-expires-at)"' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages approval returned to an npm lifecycle-enabled wrapper'
-
-reset_fixture
-replace_literal_once "          printf 'static demo approval sha256: %s\\n' \"\$approval_sha256\"" \
-  "          printf 'static demo approval sha256: %s\\n' \"\$approval_sha256\"; printf injected > dist-demo/unapproved.html" \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages artifact changed after exact-hash approval'
-
-reset_fixture
-replace_once '          test "$expires_epoch" -gt "$now_epoch"' '          true' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages deployment skipped post-review approval expiry validation'
-
-reset_fixture
-insert_after_once '        id: asset-approval' '        continue-on-error: true' \
-  "$fixture/.github/workflows/pages-demo.yml"
-expect_rejected 'GitHub Pages asset approval failure was allowed to continue'
-
-reset_fixture
-replace_once ' && node scripts/verify-static-demo-build.mjs",' '",' \
-  "$fixture/web/package.json"
-expect_rejected 'GitHub Pages demo package script omitted its final deployable-output verifier'
-
-reset_fixture
-insert_after_once '    "demo:approval-check": "node scripts/verify-static-demo-asset-approval.mjs",' \
-  '    "postbuild:demo": "printf injected > dist-demo/unapproved.html",' \
-  "$fixture/web/package.json"
-expect_rejected 'GitHub Pages package added a post-build lifecycle artifact mutation hook'
+insert_after_once '    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && node scripts/verify-production-javascript-bundles.mjs",' \
+  '    "build:demo": "vite build",' "$fixture/web/package.json"
+expect_rejected 'removed public demo package entrypoint reappeared'
 
 reset_fixture
 replace_once 'https://github.com/qqq723000-hash/slots-game/security/advisories/new' \
@@ -313,6 +239,11 @@ primal_web_title_line=$(printf '%s\134' 'LABEL org.opencontainers.image.title="p
 historical_web_title_line=$(printf '%s\134' 'LABEL org.opencontainers.image.title="iron-colossus-web" ')
 replace_once "$primal_web_title_line" "$historical_web_title_line" "$fixture/deploy/web/Dockerfile"
 expect_rejected 'release OCI title regressed to the historical internal name'
+
+reset_fixture
+replace_once 'org.opencontainers.image.licenses="NOASSERTION"' \
+  'org.opencontainers.image.licenses="Apache-2.0"' "$fixture/deploy/web/Dockerfile"
+expect_rejected 'Web OCI metadata asserted an unapproved repository license'
 
 # 用最小本地资产夹具证明 checks bundle 缺失时会失败关闭；无需 Docker 或网络。
 trivy_asset_root="$test_root/trivy-assets"
@@ -791,6 +722,12 @@ expect_rejected 'backend conformance lock omitted the workflow identity'
 reset_fixture
 replace_once '${{ github.ref }}' '${{ github.workflow }}' "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'frontend conformance lock omitted the ref identity'
+
+reset_fixture
+replace_once '            shellcheck -S warning -x -P . -P "$(dirname "$script")" "$script"' \
+  '            true # repository-wide shellcheck removed' \
+  "$fixture/.github/workflows/deployment-conformance.yml"
+expect_rejected 'deployment conformance stopped linting every tracked shell script'
 
 reset_fixture
 replace_once '        run: make verify-deployment-contracts' '        run: true # deployment contracts removed' "$fixture/.github/workflows/deployment-conformance.yml"
@@ -1319,12 +1256,15 @@ replace_literal_once '["require-trusted-types-for", "\u0027script\u0027"],' \
 expect_rejected 'AWS CloudFront CSP extraction lost the exact Trusted Types sink enforcement'
 
 reset_fixture
-replace_once 'aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/"' 'aws s3 sync web/dist/' "$fixture/docs/aws-production-deployment.md"
-expect_rejected 'AWS guide regressed to uploading mutable workspace dist'
+replace_once 'put-object --if-none-match' 'aws s3 sync web/dist/' \
+  "$fixture/docs/aws-production-deployment.md"
+expect_rejected 'AWS guide regressed to a mutable workspace sync without conditional writes'
 
 reset_fixture
-replace_once '  exit 1' '  :' "$fixture/docs/aws-production-deployment.md"
-expect_rejected 'AWS guide no longer rejected an existing immutable release prefix'
+insert_after_once 'set -euo pipefail' \
+  'SLOTS_EXISTING_OBJECT_COUNT=$(aws s3api list-objects-v2 --bucket "$SLOTS_WEB_BUCKET")' \
+  "$fixture/docs/aws-production-deployment.md"
+expect_rejected 'AWS guide restored the non-atomic release-prefix emptiness gate'
 
 reset_fixture
 replace_once '--distribution-root "$static_root"' '--distribution-root web/dist' "$fixture/.github/workflows/supply-chain-release.yml"

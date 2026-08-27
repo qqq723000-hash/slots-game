@@ -142,7 +142,8 @@ Terraform/AWS workflow/Cluster/Observability/Supply Chain/Web/本地生产静态
 ## 本次本地验证快照
 
 - Web：TypeScript 类型检查、production build、bundle/许可/来源/streaming manifest 契约全部通过；
-  串行 Vitest 为 `135/135` 文件、`1820/1820` 测试。13 个生产 JavaScript 分块均低于 500,000 bytes，
+  串行 Vitest 为 `141/141` 文件、`1915/1915` 测试，另有真实 `/casino/primal/` 子路径构建断言。13 个
+  生产 JavaScript 分块均低于 500,000 bytes，
   静态分块图无循环。真实 Chrome 在精确 CSP/Trusted Types 下完成 exchange、Spin、权威结果表现、
   余额更新和 ACK；`cspViolationCount=0`、WebGL 就绪、ACK/Spin/exchange 均精确一次。
 - Go：`go test ./...`、`go test -race ./...`、`go vet ./...` 与 `go build ./...` 全部通过。另以固定摘要的
@@ -150,7 +151,7 @@ Terraform/AWS workflow/Cluster/Observability/Supply Chain/Web/本地生产静态
   和 15 条精确 PostgreSQL conformance 测试；全部通过后删除容器和临时数据库，未触碰本地生产库。
 - 发布契约：供应链正向/负向合同、第三方声明、可观测性静态/渲染合同、34 条 Prometheus 规则、
   Cluster 五套 Helm 渲染与 kubeconform、AWS 渲染/工作流静态合同和完整本地 mock 回读套件均通过。
-  Terraform 静态合同通过，183 个危险变体全部被拒绝；21 组/933 项仅名称加固清单及跳过项审计通过。
+  Terraform 静态合同通过，204 个危险变体全部被拒绝；21 组/933 项仅名称加固清单及跳过项审计通过。
 - Vector 低流量归档：当前固定 0.57 镜像的隔离行为回归覆盖“A 阶段中断并证明磁盘持久化、B 阶段
   receiver-ready 后使用全新 sender/data_dir、每阶段各一条业务探针、10 秒四字段心跳、各自 25 秒内
   精确一次且无原始 metric”；本地完整部署仍须在最终提交

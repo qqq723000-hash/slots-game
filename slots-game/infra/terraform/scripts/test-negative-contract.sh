@@ -68,6 +68,8 @@ reject_mutation omit-web-origin-public-access-read contracts/landing-zone-interf
   's3:GetBucketPublicAccessBlock' 's3:GetBucketPublicAccessRemoved'
 reject_mutation omit-web-origin-policy-read contracts/landing-zone-interface.v1.yaml \
   's3:GetBucketPolicy' 's3:ReadBucketPolicyRemoved'
+reject_mutation omit-cloudfront-response-policy-read contracts/landing-zone-interface.v1.yaml \
+  'cloudfront:GetResponseHeadersPolicyConfig' 'cloudfront:GetDistributionConfig'
 reject_mutation omit-alb-listener-rule-read contracts/landing-zone-interface.v1.yaml \
   'elasticloadbalancing:DescribeRules' 'elasticloadbalancing:GetRules'
 reject_mutation omit-eks-addon-read contracts/landing-zone-interface.v1.yaml \
@@ -454,6 +456,27 @@ reject_mutation public-web-bucket modules/web-edge/main.tf \
   'block_public_acls       = true' 'block_public_acls       = false'
 reject_mutation disable-cloudfront-http3 modules/web-edge/main.tf \
   'http_version        = "http2and3"' 'http_version        = "http2"'
+reject_mutation restore-cloudfront-sameorigin modules/web-edge/main.tf \
+  '    content_type_options {
+      override = true
+    }' '    content_type_options {
+      override = true
+    }
+
+    frame_options {
+      frame_option = "SAMEORIGIN"
+      override     = true
+    }'
+reject_mutation weaken-release-cookie-samesite modules/web-edge/release-response.js \
+  'SameSite=None; Partitioned' 'SameSite=Strict'
+reject_mutation omit-release-cookie-partitioned modules/web-edge/release-response.js \
+  'SameSite=None; Partitioned' 'SameSite=None'
+reject_mutation allow-unconditional-release-writes modules/web-edge/main.tf \
+  'variable = "s3:if-none-match"' 'variable = "s3:if-none-match-disabled"'
+reject_mutation bypass-release-object-creation-gate modules/web-edge/main.tf \
+  'variable = "s3:ObjectCreationOperation"' 'variable = "s3:OtherOperation"'
+reject_mutation widen-immutable-release-prefix modules/web-edge/main.tf \
+  'resources = ["${aws_s3_bucket.web.arn}/releases/*"]' 'resources = ["${aws_s3_bucket.web.arn}/*"]'
 reject_mutation writable-archive-marker modules/archive/main.tf \
   'AutomatedExportReady = "false"' 'AutomatedExportReady = "true"'
 reject_mutation public-account-provider environments/dev/main.tf \

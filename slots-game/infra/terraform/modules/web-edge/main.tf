@@ -188,11 +188,6 @@ resource "aws_cloudfront_response_headers_policy" "security" {
       override = true
     }
 
-    frame_options {
-      frame_option = "SAMEORIGIN"
-      override     = true
-    }
-
     referrer_policy {
       referrer_policy = "no-referrer"
       override        = true
@@ -347,6 +342,33 @@ data "aws_iam_policy_document" "web_bucket" {
       test     = "StringEquals"
       variable = "AWS:SourceArn"
       values   = [aws_cloudfront_distribution.web.arn]
+    }
+  }
+
+  statement {
+    sid       = "DenyUnconditionalReleaseWrites"
+    effect    = "Deny"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.web.arn}/releases/*"]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    # Multipart sub-operations which cannot carry conditional headers remain
+    # usable; the object-creating PutObject/CompleteMultipartUpload request must
+    # still present If-None-Match so an existing release key cannot be replaced.
+    condition {
+      test     = "Bool"
+      variable = "s3:ObjectCreationOperation"
+      values   = ["true"]
+    }
+
+    condition {
+      test     = "Null"
+      variable = "s3:if-none-match"
+      values   = ["true"]
     }
   }
 

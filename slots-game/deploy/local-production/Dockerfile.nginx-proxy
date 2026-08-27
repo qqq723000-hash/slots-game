@@ -33,6 +33,7 @@ LABEL org.opencontainers.image.created="${OCI_IMAGE_CREATED}" \
       org.opencontainers.image.vendor="slots-game" \
       org.opencontainers.image.title="slots-nginx-proxy" \
       org.opencontainers.image.description="Slots Game 本机集成验收入口与告警代理" \
+      org.opencontainers.image.licenses="NOASSERTION" \
       com.slots-game.deployment.profile="local-production"
 
 RUN --network=none nginx -t

@@ -42,10 +42,10 @@ function icoSizes(bytes: Buffer): number[] {
 }
 
 describe("Pass 137 official provider browser-tab icon", () => {
-  it("declares exactly one root ICO entrypoint", () => {
+  it("declares exactly one public-base-aware ICO entrypoint", () => {
     expect(indexHtml.match(/rel="icon"/g)).toHaveLength(1);
     expect(indexHtml).toContain(
-      '<link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="any" />',
+      '<link rel="icon" type="image/x-icon" href="%BASE_URL%favicon.ico" sizes="any" />',
     );
   });
 

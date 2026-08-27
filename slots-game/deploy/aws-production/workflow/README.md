@@ -288,12 +288,20 @@ Migrator digest/Secret 和前向恢复约束，但尚未交付一个能同时证
 ## Web 不可变发布与切换接口
 
 Web 静态根只能从已经验证并按 digest 拉取的 OCI 镜像提取。每个对象使用 S3 `If-None-Match: *` 写入
-`releases/<release-id>/`，并立即回读核对：
+`releases/<release-id>/`，并立即使用 checksum mode 回读核对：
 
+- S3 原生 SHA-256 checksum 与本地内容摘要、`ContentLength` 与本地字节数；
 - release ID、Web digest、配置摘要和 CSP 摘要元数据；
 - Content-Type、Cache-Control 和 KMS 服务端加密，实际 `SSEKMSKeyId` 必须精确等于
   受保护 Environment 中的 `AWS_WEB_KMS_KEY_ARN`；
 - 本地普通文件数量与 S3 release 前缀对象数量完全一致。
+
+release 前缀不要求在发布开始时为空：上传中断后重跑仍会对每个本地对象执行条件 `PutObject`。条件写入
+非零（包括对象已存在或响应丢失）时，只有上述 SHA-256、长度、四项身份元数据、Content-Type、
+Cache-Control、KMS 算法与 key 全部回读一致才会把该对象视为已完成；任何字段漂移、对象缺失或最终对象
+总数不精确都会在 KVS 切换前失败关闭。因此重跑只补齐缺失对象，不会覆盖不可变前缀，也不会接受同名漂移。
+应用发布角色必须具备对应对象的最小 `s3:PutObject`/`s3:GetObject`、前缀 `s3:ListBucket`，以及该 Web
+CMK 的 `kms:GenerateDataKey*`/`kms:Decrypt`；后两项是 SSE-KMS 条件写入和 checksum HEAD 回读的必要权限。
 
 CloudFront Response Headers Policy 的 CSP 由 Terraform 管理，应用发布只能回读，不能制造 IaC drift；
 回读值必须与同一 OCI digest 提取的 CSP 逐字相同。工作流还会从 CloudFront 的不可变 release 路径读取

@@ -599,13 +599,21 @@ for unsafe_origin_mode in \
   cloudfront-origin-public-policy-enabled \
   cloudfront-origin-bucket-policy-missing \
   cloudfront-origin-source-arn-drift \
-  cloudfront-origin-external-principal
+  cloudfront-origin-external-principal \
+  cloudfront-release-write-deny-missing \
+  cloudfront-release-unconditional-write-allowed \
+  cloudfront-release-prefix-writable
 do
   if MOCK_PLATFORM_MODE=$unsafe_origin_mode KUBECTL_BIN=$mock_live_kubectl AWS_BIN=$mock_live_aws \
     "$platform_verifier" "$delivery_file" slots-production >/dev/null 2>&1; then
     fail "平台门禁未拒绝 CloudFront S3 源站公网访问漂移：$unsafe_origin_mode"
   fi
 done
+
+if MOCK_PLATFORM_MODE=cloudfront-frame-options-sameorigin KUBECTL_BIN=$mock_live_kubectl AWS_BIN=$mock_live_aws \
+  "$platform_verifier" "$delivery_file" slots-production >/dev/null 2>&1; then
+  fail '平台门禁未拒绝 CloudFront Response Headers Policy 重新注入 SAMEORIGIN'
+fi
 
 for unsafe_distribution_mode in \
   cloudfront-http-version-drift \
