@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"slots-game/server/internal/game"
+	"slots-game/server/internal/launch"
 	"slots-game/server/internal/operator"
 	"slots-game/server/internal/rgs"
 )
@@ -433,6 +434,7 @@ func TestOperatorLaunchIsAuthenticatedAndResponseSigned(t *testing.T) {
 			LaunchCode:  validTestLaunchCode(1),
 			ExchangeURL: "https://rgs.example" + ClientSessionExchangePath,
 			ExpiresAt:   security.now.Add(2 * time.Minute),
+			ValidatedAt: security.now,
 		}, nil
 	}
 	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
@@ -485,6 +487,44 @@ func TestOperatorErrorsAreSignedAndDoNotLeakInternalDetails(t *testing.T) {
 	}
 }
 
+func TestOperatorLaunchTerminalErrorsUseStableSignedContracts(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{name: "expired", err: rgs.ErrSessionExpired, status: http.StatusGone, code: "EXPIRED"},
+		{name: "blocked", err: rgs.ErrManualReview, status: http.StatusLocked, code: "MANUAL_REVIEW"},
+		{name: "changed claims", err: rgs.ErrIdempotencyConflict, status: http.StatusConflict, code: "IDEMPOTENCY_CONFLICT"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			security := newSecurityFixture(t)
+			launches := &fakeLaunchService{create: func(context.Context, LaunchCommand) (LaunchResult, error) {
+				return LaunchResult{}, test.err
+			}}
+			handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
+			request := security.signOperatorRequest(t, OperatorLaunchPath, operatorLaunchBody("12500"))
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+
+			response := recorder.Result()
+			body, _ := io.ReadAll(response.Body)
+			if response.StatusCode != test.status ||
+				!bytes.Contains(body, []byte(`"code":"`+test.code+`"`)) {
+				t.Fatalf("terminal launch response = %d %s", response.StatusCode, body)
+			}
+			if err := security.responseVerifier.Verify(
+				context.Background(), response, body, testOperatorID,
+				request.Header.Get(operator.HeaderRequestID),
+			); err != nil {
+				t.Fatalf("signed terminal launch response verification failed: %v", err)
+			}
+		})
+	}
+}
+
 func TestOperatorLaunchAcceptsIndependentHandoffIdempotencyKey(t *testing.T) {
 	security := newSecurityFixture(t)
 	launches := &fakeLaunchService{create: func(_ context.Context, command LaunchCommand) (LaunchResult, error) {
@@ -493,7 +533,7 @@ func TestOperatorLaunchAcceptsIndependentHandoffIdempotencyKey(t *testing.T) {
 		}
 		return LaunchResult{
 			LaunchCode: validTestLaunchCode(9), ExchangeURL: "https://rgs.example" + ClientSessionExchangePath,
-			ExpiresAt: security.now.Add(2 * time.Minute),
+			ExpiresAt: security.now.Add(2 * time.Minute), ValidatedAt: security.now,
 		}, nil
 	}}
 	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
@@ -515,11 +555,14 @@ func TestOperatorLaunchAcceptsIndependentHandoffIdempotencyKey(t *testing.T) {
 
 func TestOperatorLaunchSignsRetainedHistoricalReplay(t *testing.T) {
 	security := newSecurityFixture(t)
-	historicalExpiry := security.now.Add(-time.Minute)
+	// Pod 墙钟已越过文档保留边界，但 Store 权威观测仍在窗口内。
+	// HTTP 适配器必须使用 LaunchService 携带的裁决时间，不得以 Pod 时钟早拒。
+	historicalExpiry := security.now.Add(-launch.IdempotencyRetention - time.Hour)
+	authorityTime := historicalExpiry.Add(time.Minute)
 	launches := &fakeLaunchService{create: func(context.Context, LaunchCommand) (LaunchResult, error) {
 		return LaunchResult{
 			LaunchCode: validTestLaunchCode(10), ExchangeURL: "https://rgs.example" + ClientSessionExchangePath,
-			ExpiresAt: historicalExpiry, HistoricalReplay: true,
+			ExpiresAt: historicalExpiry, ValidatedAt: authorityTime, HistoricalReplay: true,
 		}, nil
 	}}
 	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})
@@ -846,6 +889,7 @@ func TestOperatorNonceReplayEmitsDedicatedEventAndKeepsGenericUnauthorizedRespon
 			LaunchCode:  validTestLaunchCode(15),
 			ExchangeURL: "https://rgs.example" + ClientSessionExchangePath,
 			ExpiresAt:   security.now.Add(2 * time.Minute),
+			ValidatedAt: security.now,
 		}, nil
 	}}
 	handler := security.newHandler(t, launches, &fakeCoordinator{}, &fakeRoundReader{})

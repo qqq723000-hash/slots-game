@@ -28,24 +28,35 @@ func newMemoryStore(now func() time.Time) *MemoryStore {
 	return &MemoryStore{records: make(map[CodeDigest]memoryRecord), now: now}
 }
 
-func (s *MemoryStore) Create(ctx context.Context, record Record) error {
+func (s *MemoryStore) Create(ctx context.Context, request CreateRequest) (Record, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return Record{}, err
 	}
-	if err := validateRecord(record); err != nil {
-		return err
+	if err := validateCreateRequest(request); err != nil {
+		return Record{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return err
+		return Record{}, err
 	}
-	s.purgeIdempotencyExpiredLocked(s.now())
-	if _, exists := s.records[record.Digest]; exists {
-		return ErrDigestExists
+	// 创建时间、到期时间、清理和冲突裁决共享锁内唯一一次权威时钟观测。
+	now := s.now().UTC()
+	s.purgeIdempotencyExpiredLocked(now)
+	if _, exists := s.records[request.Digest]; exists {
+		return Record{}, ErrDigestExists
+	}
+	record := Record{
+		Digest:    request.Digest,
+		Claims:    request.Claims,
+		CreatedAt: now,
+		ExpiresAt: now.Add(request.TTL),
+	}
+	if err := validateRecord(record); err != nil {
+		return Record{}, ErrStoreInvariant
 	}
 	s.records[record.Digest] = memoryRecord{record: record}
-	return nil
+	return record, nil
 }
 
 func (s *MemoryStore) Consume(ctx context.Context, request ConsumeRequest) (Record, error) {
@@ -61,7 +72,7 @@ func (s *MemoryStore) Consume(ctx context.Context, request ConsumeRequest) (Reco
 		return Record{}, err
 	}
 
-	now := s.now()
+	now := s.now().UTC()
 	s.purgeIdempotencyExpiredLocked(now)
 	stored, exists := s.records[request.Digest]
 	if !exists || !stored.consumedAt.IsZero() || !stored.record.ExpiresAt.After(now) ||
@@ -74,22 +85,23 @@ func (s *MemoryStore) Consume(ctx context.Context, request ConsumeRequest) (Reco
 	return stored.record, nil
 }
 
-func (s *MemoryStore) Get(ctx context.Context, digest CodeDigest) (Record, error) {
+func (s *MemoryStore) Get(ctx context.Context, digest CodeDigest) (ReplayObservation, error) {
 	if err := ctx.Err(); err != nil {
-		return Record{}, err
+		return ReplayObservation{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return Record{}, err
+		return ReplayObservation{}, err
 	}
-	now := s.now()
+	// 读取、清理和返回给 Service 的时间必须来自锁内同一次存储时钟观测。
+	now := s.now().UTC()
 	s.purgeIdempotencyExpiredLocked(now)
 	stored, exists := s.records[digest]
 	if !exists {
-		return Record{}, ErrCodeUnavailable
+		return ReplayObservation{}, ErrCodeUnavailable
 	}
-	return stored.record, nil
+	return ReplayObservation{Record: stored.record, ObservedAt: now}, nil
 }
 
 func (s *MemoryStore) purgeIdempotencyExpiredLocked(now time.Time) {

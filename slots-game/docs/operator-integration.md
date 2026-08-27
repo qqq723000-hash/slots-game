@@ -162,10 +162,15 @@ body。运营商准入控制错误（含 HTTP 429）留在该签名响应边界�
 
 RGS 把 launch-code 摘要作为幂等墓碑保留到其 `expiresAt` 后 25 小时。在该窗口内，确切重试返回
 原始响应，即使 code 已被消费或过期；它绝不扩展或重新激活该 code，exchange 仍拒绝它。保留清理
-可晚跑但绝不早跑。声明窗口后无重放保证；届时不可扩展会话的最大寿命也已结束。
+可晚跑但绝不早跑。确切重试查询优先于当前游戏定义/issuer 配置以及持久会话读取和状态门禁，因此
+即使会话随后变成 `BLOCKED`、`CLOSED`、`EXPIRED`、已不存在，或部署已轮换定义/issuer，仍可能
+重放原 201。该 201 只表示旧 handoff 响应被重放，不表示 code 或会话当前可兑换；已消费或过期
+code 的 exchange 继续失败。声明窗口后无重放保证；届时不可扩展会话的最大寿命也已结束。
 
 在该一次性 code 被消费或过期后，用新密码学随机幂等标识符与相同持久会话绑定创建下次 handoff。
 RGS 返回新 code 而不创建、重置或扩展现有会话。它拒绝为过期、关闭或阻塞会话重新 launch；
+新 handoff 对过期/关闭会话返回签名 410 `EXPIRED`，对阻塞会话返回签名 423 `MANUAL_REVIEW`；
+在墓碑窗口内用相同 handoff key 但变更请求声明返回签名 409 `IDEMPOTENCY_CONFLICT`。
 `MANUAL_REVIEW` 绝不能通过请求另一 code 绕过。
 
 `balanceMinor` 与 `sessionTtlSeconds` 是仅创建的 bootstrap 输入。重新 launch 时，持久化余额与

@@ -635,6 +635,8 @@ func TestNonLoopbackOperationsListenerRequiresBearerInEveryEnvironment(t *testin
 func TestConfigRejectsUnsafeOriginsAndCredentialTTLs(t *testing.T) {
 	for name, values := range map[string]map[string]string{
 		"wildcard":                     {"RGS_ALLOWED_ORIGINS": "*"},
+		"short launch":                 {"RGS_LAUNCH_TTL": "999ms"},
+		"submicrosecond launch":        {"RGS_LAUNCH_TTL": "1.000000001s"},
 		"long launch":                  {"RGS_LAUNCH_TTL": "6m"},
 		"tiny body":                    {"RGS_MAX_REQUEST_BYTES": "12"},
 		"body below public contract":   {"RGS_MAX_REQUEST_BYTES": "4096"},

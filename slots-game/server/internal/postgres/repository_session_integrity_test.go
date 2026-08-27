@@ -67,6 +67,55 @@ func TestGetSessionRestoresCompleteFeatureProjection(t *testing.T) {
 	assertRepositoryExpectations(t, mock)
 }
 
+func TestAuthorizeSessionRelaunchUsesDatabaseExpiryAndAllowsIdleRecovery(t *testing.T) {
+	tests := []struct {
+		name       string
+		expiresAt  time.Time
+		idleAt     time.Time
+		wantExpiry bool
+	}{
+		{
+			name:       "absolute expired",
+			expiresAt:  time.Date(2026, time.August, 27, 11, 59, 59, 0, time.UTC),
+			idleAt:     time.Date(2026, time.August, 27, 11, 30, 0, 0, time.UTC),
+			wantExpiry: true,
+		},
+		{
+			name:      "idle expired but absolute valid",
+			expiresAt: time.Date(2026, time.August, 27, 13, 0, 0, 0, time.UTC),
+			idleAt:    time.Date(2026, time.August, 27, 11, 30, 0, 0, time.UTC),
+		},
+	}
+	databaseNow := time.Date(2026, time.August, 27, 12, 0, 0, 0, time.UTC)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db, mock := newRepositoryMock(t)
+			repository, err := NewRepository(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture := newSessionRowFixture(t)
+			mock.ExpectQuery(regexp.QuoteMeta(
+				sessionTransportSelect+` WHERE operator_id=$1 AND session_id=$2`,
+			)).WithArgs(fixture.operatorID, fixture.sessionID).
+				WillReturnRows(fixture.transportRows(test.expiresAt, test.idleAt, databaseNow))
+
+			session, err := repository.AuthorizeSessionRelaunch(
+				context.Background(), fixture.operatorID, fixture.sessionID,
+			)
+			if test.wantExpiry {
+				if !errors.Is(err, rgs.ErrSessionExpired) {
+					t.Fatalf("AuthorizeSessionRelaunch() error = %v, want ErrSessionExpired", err)
+				}
+			} else if err != nil || !session.ServerTime.Equal(databaseNow) ||
+				!session.IdleDisconnectAt.Equal(test.idleAt) {
+				t.Fatalf("AuthorizeSessionRelaunch() = %+v, %v", session, err)
+			}
+			assertRepositoryExpectations(t, mock)
+		})
+	}
+}
+
 func TestGetSessionQuarantinesStrictFeatureFailureExactlyOnce(t *testing.T) {
 	db, mock := newRepositoryMock(t)
 	observer := &countingIntegrityObserver{}
@@ -324,6 +373,20 @@ func (fixture sessionRowFixture) prepareRows() *sqlmock.Rows {
 		fixture.sequence, fixture.revision, fixture.featureJSON,
 		fixture.pendingRoundID, time.Now().Add(time.Hour), int64(1200),
 		time.Now().Add(20*time.Minute), int64(1), fixture.quarantinedAt,
+	)
+}
+
+func (fixture sessionRowFixture) transportRows(
+	expiresAt, idleDisconnectAt, databaseNow time.Time,
+) *sqlmock.Rows {
+	columns := append(append([]string(nil), sessionRowColumns...), "clock_timestamp")
+	return sqlmock.NewRows(columns).AddRow(
+		fixture.operatorID, fixture.sessionID, "player-a", "wallet-account-a",
+		"wallet-session-a", "game-a", "math-v1", fixture.definitionHash,
+		"USD", 2, "MT", fixture.status, fixture.balanceMinor,
+		fixture.sequence, fixture.revision, fixture.featureJSON,
+		fixture.pendingRoundID, expiresAt, int64(1200), idleDisconnectAt,
+		int64(1), fixture.quarantinedAt, databaseNow,
 	)
 }
 

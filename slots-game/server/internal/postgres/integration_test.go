@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -981,10 +983,6 @@ func testPostgresCredentialConcurrency(t *testing.T, database *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := launch.NewService(store, launch.Options{TTL: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
 	claims := launch.Claims{
 		OperatorID: "operator-a", SessionID: "launch-session", PlayerID: "player-a",
 		WalletSessionID: "wallet-launch", GameID: "game-a",
@@ -992,6 +990,11 @@ func testPostgresCredentialConcurrency(t *testing.T, database *sql.DB) {
 		RequestFingerprint: strings.Repeat("b", 64),
 		Currency:           "EUR", CurrencyExponent: 2, Jurisdiction: "MT",
 		IdleDisconnectSeconds: 1200,
+	}
+	testPostgresLaunchCreateAuthorityAfterConflictWait(t, database, store, claims)
+	service, err := launch.NewService(store, launch.Options{TTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
 	}
 	issued, err := service.Issue(context.Background(), claims)
 	if err != nil {
@@ -1042,6 +1045,129 @@ func testPostgresCredentialConcurrency(t *testing.T, database *sql.DB) {
 	group.Wait()
 	if nonceSuccess.Load() != 1 {
 		t.Fatalf("nonce successes = %d", nonceSuccess.Load())
+	}
+}
+
+func testPostgresLaunchCreateAuthorityAfterConflictWait(
+	t *testing.T,
+	database *sql.DB,
+	store *LaunchStore,
+	claims launch.Claims,
+) {
+	t.Helper()
+	digest := launch.CodeDigest(sha256.Sum256([]byte("launch-authority-conflict-rollback")))
+	request := launch.CreateRequest{
+		Digest: digest,
+		Claims: claims,
+		TTL:    launch.MinimumTTL,
+	}
+	claimsJSON, err := json.Marshal(claimsDocumentFrom(claims))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digestText := hex.EncodeToString(digest[:])
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var (
+		storedDigest     string
+		storedOperatorID string
+		storedClaimsJSON []byte
+		createdAt        time.Time
+		expiresAt        time.Time
+	)
+	if err := tx.QueryRowContext(
+		ctx,
+		launchCreateSQL,
+		digestText,
+		claims.OperatorID,
+		claimsJSON,
+		request.TTL.Microseconds(),
+	).Scan(
+		&storedDigest,
+		&storedOperatorID,
+		&storedClaimsJSON,
+		&createdAt,
+		&expiresAt,
+	); err != nil {
+		t.Fatalf("hold first launch create transaction: %v", err)
+	}
+
+	type createResult struct {
+		record launch.Record
+		err    error
+	}
+	resultCh := make(chan createResult, 1)
+	go func() {
+		record, createErr := store.Create(ctx, request)
+		resultCh <- createResult{record: record, err: createErr}
+	}()
+
+	for {
+		var waiting int
+		if err := database.QueryRowContext(ctx, `
+			SELECT count(*)
+			FROM pg_locks
+			WHERE locktype = 'advisory'
+				AND NOT granted
+				AND database = (
+					SELECT oid FROM pg_database WHERE datname = current_database()
+				)`).Scan(&waiting); err != nil {
+			t.Fatalf("observe launch advisory lock waiter: %v", err)
+		}
+		if waiting > 0 {
+			break
+		}
+		select {
+		case result := <-resultCh:
+			t.Fatalf(
+				"competing launch create completed before authority lock release: record=%+v error=%v",
+				result.record,
+				result.err,
+			)
+		case <-time.After(10 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatalf("wait for launch advisory lock contention: %v", ctx.Err())
+		}
+	}
+
+	// 第二个 Create 已在摘要锁上等待；此时再观测数据库时钟，能证明它最终返回的
+	// CreatedAt 是等待之后而不是等待之前取得的值。
+	var beforeRollback time.Time
+	if err := database.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&beforeRollback); err != nil {
+		t.Fatalf("observe database time before rollback: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback competing launch create: %v", err)
+	}
+
+	var result createResult
+	select {
+	case result = <-resultCh:
+	case <-ctx.Done():
+		t.Fatalf("competing launch create did not resume: %v", ctx.Err())
+	}
+	if result.err != nil {
+		t.Fatalf("competing launch create after rollback: %v", result.err)
+	}
+	if result.record.CreatedAt.Before(beforeRollback.UTC()) {
+		t.Fatalf(
+			"createdAt %s predates pre-rollback database time %s",
+			result.record.CreatedAt,
+			beforeRollback.UTC(),
+		)
+	}
+	if result.record.ExpiresAt.Sub(result.record.CreatedAt) != request.TTL {
+		t.Fatalf(
+			"created launch TTL = %s, want %s",
+			result.record.ExpiresAt.Sub(result.record.CreatedAt),
+			request.TTL,
+		)
 	}
 }
 

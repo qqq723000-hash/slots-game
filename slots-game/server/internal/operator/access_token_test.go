@@ -43,6 +43,48 @@ func TestAccessTokenRoundTripBindsAllClaims(t *testing.T) {
 	}
 }
 
+func TestAccessTokenIssueAtUsesAuthoritativeTimeInsteadOfPodClock(t *testing.T) {
+	authoritativeNow := fixedTestTime().Add(875 * time.Millisecond)
+	signing, verification := testKeyPair(
+		t, "token-key-authority", "operator-a", KeyPurposeAccessToken, authoritativeNow,
+	)
+	issuer, err := NewAccessTokenIssuer(signing, AccessTokenIssuerOptions{
+		Issuer: "rgs-prod", Audience: "rgs-game-client",
+		Now: func() time.Time {
+			t.Fatal("IssueAt consulted the Pod clock")
+			return time.Time{}
+		},
+		MaxLifetime: DefaultAccessTokenLifetime,
+	})
+	if err != nil {
+		t.Fatalf("NewAccessTokenIssuer: %v", err)
+	}
+	token, claims, err := issuer.IssueAt(
+		testAccessSubject("operator-a"), 5*time.Minute, authoritativeNow,
+	)
+	if err != nil {
+		t.Fatalf("IssueAt: %v", err)
+	}
+	wantIssuedAt := authoritativeNow.Truncate(time.Second)
+	if claims.IssuedAt != wantIssuedAt.Unix() ||
+		claims.ExpiresAt != wantIssuedAt.Add(5*time.Minute).Unix() {
+		t.Fatalf("IssueAt claims = %+v, want iat=%v exp=%v", claims, wantIssuedAt, wantIssuedAt.Add(5*time.Minute))
+	}
+	ring, err := NewMemoryKeyRing(verification)
+	if err != nil {
+		t.Fatalf("NewMemoryKeyRing: %v", err)
+	}
+	verifier := testTokenVerifier(t, ring, wantIssuedAt, "rgs-prod", "rgs-game-client")
+	if _, err := verifier.Verify(context.Background(), token, "operator-a"); err != nil {
+		t.Fatalf("Verify authoritative token: %v", err)
+	}
+	if _, _, err := issuer.IssueAt(
+		testAccessSubject("operator-a"), time.Minute, time.Time{},
+	); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("IssueAt zero authority error = %v, want ErrMalformed", err)
+	}
+}
+
 func TestAccessTokenRejectsTamperingAndNonProfileShapes(t *testing.T) {
 	now := fixedTestTime()
 	signing, verification := testKeyPair(t, "token-key-1", "operator-a", KeyPurposeAccessToken, now)

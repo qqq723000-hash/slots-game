@@ -303,6 +303,21 @@ func TestDisabledRuntimeIsNoopAndDoesNotChangeHandler(t *testing.T) {
 	}
 }
 
+func TestPublicHTTPAllowsClientSessionStatusRoute(t *testing.T) {
+	runtime, recorder, provider := recordingRuntime(t, sdktrace.AlwaysSample())
+	defer provider.Shutdown(context.Background())
+	handler := runtime.WrapPublicHTTP(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}), func(*http.Request) string { return "client.session_status" })
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "https://rgs.example/client/v1/sessions/status", nil))
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("ended spans = %d, want 1", len(spans))
+	}
+	assertSafeHTTPAttributes(t, spans[0].Attributes(), "POST", "client.session_status", http.StatusOK)
+}
+
 func TestEndDoesNotRecordErrorTextOrTreatCallerCancellationAsBackendFailure(t *testing.T) {
 	runtime, recorder, provider := recordingRuntime(t, sdktrace.AlwaysSample())
 	defer provider.Shutdown(context.Background())

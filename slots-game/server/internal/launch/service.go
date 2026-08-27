@@ -21,15 +21,14 @@ type Service struct {
 	store Store
 	ttl   time.Duration
 	rand  io.Reader
-	now   func() time.Time
 }
 
 func NewService(store Store, options Options) (*Service, error) {
-	return newService(store, options, cryptorand.Reader, time.Now)
+	return newService(store, options, cryptorand.Reader)
 }
 
-func newService(store Store, options Options, random io.Reader, now func() time.Time) (*Service, error) {
-	if store == nil || random == nil || now == nil {
+func newService(store Store, options Options, random io.Reader) (*Service, error) {
+	if store == nil || random == nil {
 		return nil, fmt.Errorf("%w: launch service dependencies are required", ErrInvalidInput)
 	}
 	if options.TTL == 0 {
@@ -38,7 +37,10 @@ func newService(store Store, options Options, random io.Reader, now func() time.
 	if options.TTL < MinimumTTL || options.TTL > MaximumTTL {
 		return nil, fmt.Errorf("%w: launch TTL must be between %s and %s", ErrInvalidInput, MinimumTTL, MaximumTTL)
 	}
-	return &Service{store: store, ttl: options.TTL, rand: random, now: now}, nil
+	if options.TTL%time.Microsecond != 0 {
+		return nil, fmt.Errorf("%w: launch TTL must use microsecond precision", ErrInvalidInput)
+	}
+	return &Service{store: store, ttl: options.TTL, rand: random}, nil
 }
 
 // Issue 创建不透明、高熵且短期有效的凭据。只有 SHA-256 摘要能够跨越 Store 边界。
@@ -57,18 +59,16 @@ func (s *Service) Issue(ctx context.Context, claims Claims) (IssuedCode, error) 
 		}
 		code := CodePrefix + base64.RawURLEncoding.EncodeToString(entropy[:])
 		digest := CodeDigest(sha256.Sum256([]byte(code)))
-		createdAt := s.now().UTC()
-		record := Record{
-			Digest: digest, Claims: claims,
-			CreatedAt: createdAt, ExpiresAt: createdAt.Add(s.ttl),
-		}
-		if err := s.store.Create(ctx, record); err != nil {
+		record, err := s.create(ctx, digest, claims)
+		if err != nil {
 			if errors.Is(err, ErrDigestExists) {
 				continue
 			}
 			return IssuedCode{}, err
 		}
-		return IssuedCode{Code: code, ExpiresAt: record.ExpiresAt}, nil
+		return IssuedCode{
+			Code: code, ExpiresAt: record.ExpiresAt, ValidatedAt: record.CreatedAt,
+		}, nil
 	}
 	return IssuedCode{}, fmt.Errorf("%w: repeated launch-code digest collision", ErrEntropy)
 }
@@ -86,38 +86,106 @@ func (s *Service) IssueCode(ctx context.Context, claims Claims, code string) (Is
 	if err := validateCode(code); err != nil {
 		return IssuedCode{}, err
 	}
-	replays, ok := s.store.(ReplayStore)
-	if !ok {
+	if _, ok := s.store.(ReplayStore); !ok {
 		return IssuedCode{}, fmt.Errorf("%w: store does not support idempotent replay", ErrStoreInvariant)
 	}
 	digest := CodeDigest(sha256.Sum256([]byte(code)))
-	createdAt := s.now().UTC()
-	record := Record{
-		Digest: digest, Claims: claims,
-		CreatedAt: createdAt, ExpiresAt: createdAt.Add(s.ttl),
-	}
-	err := s.store.Create(ctx, record)
+	record, err := s.create(ctx, digest, claims)
 	if err == nil {
-		return IssuedCode{Code: code, ExpiresAt: record.ExpiresAt}, nil
+		return IssuedCode{
+			Code: code, ExpiresAt: record.ExpiresAt, ValidatedAt: record.CreatedAt,
+		}, nil
 	}
 	if !errors.Is(err, ErrDigestExists) {
 		return IssuedCode{}, err
 	}
-	existing, getErr := replays.Get(ctx, digest)
-	if getErr != nil {
-		return IssuedCode{}, getErr
+	replayed, found, replayErr := s.findCodeReplay(ctx, claims, code)
+	if replayErr != nil {
+		return IssuedCode{}, replayErr
 	}
+	if !found {
+		return IssuedCode{}, ErrCodeUnavailable
+	}
+	return replayed, nil
+}
+
+func (s *Service) create(ctx context.Context, digest CodeDigest, claims Claims) (Record, error) {
+	record, err := s.store.Create(ctx, CreateRequest{
+		Digest: digest,
+		Claims: claims,
+		TTL:    s.ttl,
+	})
+	if err != nil {
+		return Record{}, err
+	}
+	if err := validateRecord(record); err != nil {
+		return Record{}, fmt.Errorf("%w: invalid created launch record", ErrStoreInvariant)
+	}
+	if record.Digest != digest || record.Claims != claims ||
+		record.ExpiresAt.Sub(record.CreatedAt) != s.ttl {
+		return Record{}, ErrStoreInvariant
+	}
+	return record, nil
+}
+
+// FindCodeReplay 只查询已持久化的确定性交接响应，不创建新的启动码。它供上层在
+// durable session 绝对到期后仍满足同一 idempotency key 的有界 HTTP 重放，同时
+// 确保新的 handoff 必须先通过会话有效期裁决。
+func (s *Service) FindCodeReplay(
+	ctx context.Context,
+	claims Claims,
+	code string,
+) (IssuedCode, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return IssuedCode{}, false, err
+	}
+	if err := validateClaims(claims); err != nil {
+		return IssuedCode{}, false, err
+	}
+	if err := validateCode(code); err != nil {
+		return IssuedCode{}, false, err
+	}
+	return s.findCodeReplay(ctx, claims, code)
+}
+
+func (s *Service) findCodeReplay(
+	ctx context.Context,
+	claims Claims,
+	code string,
+) (IssuedCode, bool, error) {
+	replays, ok := s.store.(ReplayStore)
+	if !ok {
+		return IssuedCode{}, false, fmt.Errorf(
+			"%w: store does not support idempotent replay", ErrStoreInvariant,
+		)
+	}
+	digest := CodeDigest(sha256.Sum256([]byte(code)))
+	observation, err := replays.Get(ctx, digest)
+	if errors.Is(err, ErrCodeUnavailable) {
+		return IssuedCode{}, false, nil
+	}
+	if err != nil {
+		return IssuedCode{}, false, err
+	}
+	if observation.ObservedAt.IsZero() {
+		return IssuedCode{}, false, fmt.Errorf(
+			"%w: replay observation time is required", ErrStoreInvariant,
+		)
+	}
+	existing := observation.Record
+	observedAt := observation.ObservedAt.UTC()
 	if existing.Digest != digest || existing.Claims != claims ||
-		!idempotencyRetained(existing, createdAt) {
-		return IssuedCode{}, ErrDigestExists
+		!idempotencyRetained(existing, observedAt) {
+		return IssuedCode{}, false, ErrDigestExists
 	}
 	if err := validateRecord(existing); err != nil {
-		return IssuedCode{}, fmt.Errorf("%w: %v", ErrStoreInvariant, err)
+		return IssuedCode{}, false, fmt.Errorf("%w: %v", ErrStoreInvariant, err)
 	}
 	return IssuedCode{
 		Code: code, ExpiresAt: existing.ExpiresAt,
-		HistoricalReplay: !existing.ExpiresAt.After(createdAt),
-	}, nil
+		ValidatedAt:      observedAt,
+		HistoricalReplay: !existing.ExpiresAt.After(observedAt),
+	}, true, nil
 }
 
 // Consume 仅在启动码原始运营商及会话绑定下执行一次性兑换。
@@ -131,7 +199,6 @@ func (s *Service) Consume(ctx context.Context, code string, binding Binding) (Cl
 	if err := validateCode(code); err != nil {
 		return Claims{}, err
 	}
-	exchangeAt := s.now().UTC()
 	digest := CodeDigest(sha256.Sum256([]byte(code)))
 	record, err := s.store.Consume(ctx, ConsumeRequest{Digest: digest, Binding: binding})
 	if err != nil {
@@ -141,8 +208,7 @@ func (s *Service) Consume(ctx context.Context, code string, binding Binding) (Cl
 		return Claims{}, fmt.Errorf("%w: %v", ErrStoreInvariant, err)
 	}
 	if subtle.ConstantTimeCompare(record.Digest[:], digest[:]) != 1 ||
-		record.Claims.OperatorID != binding.OperatorID || record.Claims.SessionID != binding.SessionID ||
-		!record.ExpiresAt.After(exchangeAt) {
+		record.Claims.OperatorID != binding.OperatorID || record.Claims.SessionID != binding.SessionID {
 		return Claims{}, ErrStoreInvariant
 	}
 	return record.Claims, nil

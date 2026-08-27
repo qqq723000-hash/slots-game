@@ -47,10 +47,15 @@ func validateOperatorLaunchRequest(request operatorLaunchRequest) error {
 	return nil
 }
 
-func validateLaunchResult(result LaunchResult, _ operatorLaunchRequest, now time.Time) error {
-	validExpiry := result.ExpiresAt.After(now)
+func validateLaunchResult(result LaunchResult, _ operatorLaunchRequest) error {
+	if result.ValidatedAt.IsZero() {
+		return errors.New("launch result authority time is required")
+	}
+	validatedAt := result.ValidatedAt.UTC()
+	validExpiry := result.ExpiresAt.After(validatedAt)
 	if result.HistoricalReplay {
-		validExpiry = result.ExpiresAt.Add(launch.IdempotencyRetention).After(now)
+		validExpiry = !result.ExpiresAt.After(validatedAt) &&
+			result.ExpiresAt.Add(launch.IdempotencyRetention).After(validatedAt)
 	}
 	if !validLaunchCode(result.LaunchCode) || !validExpiry {
 		return errors.New("invalid launch result")

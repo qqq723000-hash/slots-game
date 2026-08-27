@@ -78,6 +78,31 @@ func (r *MemoryRepository) GetSession(ctx context.Context, operatorID, sessionID
 	return entry.session, nil
 }
 
+func (r *MemoryRepository) AuthorizeSessionRelaunch(
+	ctx context.Context,
+	operatorID, sessionID string,
+) (Session, error) {
+	entry, err := r.lookupSession(ctx, operatorID, sessionID)
+	if err != nil {
+		return Session{}, err
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Session{}, err
+	}
+	now := time.Now().UTC()
+	if entry.session.Status == SessionBlocked {
+		return Session{}, ErrManualReview
+	}
+	if entry.session.Status != SessionActive || !entry.session.ExpiresAt.After(now) {
+		return Session{}, ErrSessionExpired
+	}
+	result := entry.session
+	result.ServerTime = now
+	return result, nil
+}
+
 func (r *MemoryRepository) ResetSessionTransport(
 	ctx context.Context,
 	operatorID, sessionID string,

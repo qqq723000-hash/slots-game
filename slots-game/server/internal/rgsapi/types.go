@@ -192,6 +192,9 @@ type LaunchResult struct {
 	LaunchCode  string
 	ExchangeURL string
 	ExpiresAt   time.Time
+	// ValidatedAt 是 LaunchService 完成签发或重放时间裁决时使用的权威观测，
+	// 仅供适配器验证内部结果，不序列化到协议响应。
+	ValidatedAt time.Time
 	// HistoricalReplay 是适配器内部元数据：只允许在启动幂等保留窗口内精确重放，
 	// 不能让新签发凭据继承一个已经过期的兑换窗口。
 	HistoricalReplay bool

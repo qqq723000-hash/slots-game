@@ -15,25 +15,32 @@ func TestValidateLaunchResultAllowsOnlyBoundedHistoricalReplay(t *testing.T) {
 		LaunchCode:  launch.CodePrefix + strings.Repeat("A", 43),
 		ExchangeURL: "https://rgs.example" + ClientSessionExchangePath,
 		ExpiresAt:   now.Add(time.Minute),
+		ValidatedAt: now,
 	}
-	if err := validateLaunchResult(base, operatorLaunchRequest{}, now); err != nil {
+	if err := validateLaunchResult(base, operatorLaunchRequest{}); err != nil {
 		t.Fatalf("new result rejected: %v", err)
 	}
 
 	expired := base
 	expired.ExpiresAt = now.Add(-time.Second)
-	if err := validateLaunchResult(expired, operatorLaunchRequest{}, now); err == nil {
+	if err := validateLaunchResult(expired, operatorLaunchRequest{}); err == nil {
 		t.Fatal("newly issued expired result unexpectedly accepted")
 	}
 	expired.HistoricalReplay = true
-	if err := validateLaunchResult(expired, operatorLaunchRequest{}, now); err != nil {
+	if err := validateLaunchResult(expired, operatorLaunchRequest{}); err != nil {
 		t.Fatalf("retained historical replay rejected: %v", err)
 	}
 
 	tooOld := expired
 	tooOld.ExpiresAt = now.Add(-launch.IdempotencyRetention)
-	if err := validateLaunchResult(tooOld, operatorLaunchRequest{}, now); err == nil {
+	if err := validateLaunchResult(tooOld, operatorLaunchRequest{}); err == nil {
 		t.Fatal("historical replay outside retention unexpectedly accepted")
+	}
+
+	missingAuthority := base
+	missingAuthority.ValidatedAt = time.Time{}
+	if err := validateLaunchResult(missingAuthority, operatorLaunchRequest{}); err == nil {
+		t.Fatal("launch result without authority time unexpectedly accepted")
 	}
 }
 

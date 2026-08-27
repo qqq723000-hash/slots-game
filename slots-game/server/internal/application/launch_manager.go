@@ -124,18 +124,58 @@ func (m *LaunchManager) CreateLaunch(
 	if !launchIdempotencyPattern.MatchString(command.IdempotencyKey) {
 		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
 	}
+	requestFingerprint := launchRequestFingerprint(command)
+	claims := launch.Claims{
+		OperatorID: command.OperatorID, SessionID: command.SessionID,
+		PlayerID: command.PlayerID, WalletSessionID: command.WalletSessionID,
+		GameID: command.GameID, DefinitionVersion: command.DefinitionVersion,
+		DefinitionHash:     command.DefinitionHash,
+		RequestFingerprint: requestFingerprint,
+		Currency:           command.Currency, CurrencyExponent: command.CurrencyExponent,
+		Jurisdiction:          command.Jurisdiction,
+		IdleDisconnectSeconds: int64(command.IdleDisconnect / time.Second),
+	}
+	code := m.launchCode(command.OperatorID, command.SessionID, command.IdempotencyKey)
+	// 相同交接幂等身份的查询重试必须在 durable session 的创建、读取或终态
+	// 裁决之前返回已持久化的原始响应。它只重放 handoff 响应；exchange 仍按
+	// 当前 durable 状态拒绝，不会创建或复活会话。
+	replayed, found, replayErr := m.launches.FindCodeReplay(ctx, claims, code)
+	if errors.Is(replayErr, launch.ErrDigestExists) {
+		return rgsapi.LaunchResult{}, rgs.ErrIdempotencyConflict
+	}
+	if errors.Is(replayErr, launch.ErrInvalidInput) {
+		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
+	}
+	if replayErr != nil {
+		return rgsapi.LaunchResult{}, fmt.Errorf(
+			"%w: launch replay persistence failed", rgsapi.ErrUnavailable,
+		)
+	}
+	if found {
+		return rgsapi.LaunchResult{
+			LaunchCode: replayed.Code, ExchangeURL: m.exchangeURL,
+			ExpiresAt: replayed.ExpiresAt, ValidatedAt: replayed.ValidatedAt,
+			HistoricalReplay: replayed.HistoricalReplay,
+		}, nil
+	}
 	if command.SessionTTL < time.Minute || command.SessionTTL > 24*time.Hour {
 		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
 	}
-	if command.IdleDisconnect < m.idleDisconnectMin || command.IdleDisconnect > m.idleDisconnectMax ||
+	if command.IdleDisconnect < time.Second || command.IdleDisconnect > 24*time.Hour ||
 		command.IdleDisconnect%time.Second != 0 {
 		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
 	}
+	// 当前定义与 access-token issuer 只约束新的 handoff。已认证请求的 exact
+	// replay 必须跨定义/issuer 滚动继续返回原响应，且不会因此恢复兑换能力。
 	if command.GameID != m.gameID || command.DefinitionVersion != m.version ||
 		command.DefinitionHash != m.hash {
 		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
 	}
 	if _, exists := m.issuers[command.OperatorID]; !exists {
+		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
+	}
+	if command.IdleDisconnect < m.idleDisconnectMin ||
+		command.IdleDisconnect > m.idleDisconnectMax {
 		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
 	}
 	now := m.now().UTC()
@@ -157,17 +197,6 @@ func (m *LaunchManager) CreateLaunch(
 	if err := rgs.ValidateSession(session); err != nil {
 		return rgsapi.LaunchResult{}, err
 	}
-	requestFingerprint := launchRequestFingerprint(command)
-	claims := launch.Claims{
-		OperatorID: command.OperatorID, SessionID: command.SessionID,
-		PlayerID: command.PlayerID, WalletSessionID: command.WalletSessionID,
-		GameID: command.GameID, DefinitionVersion: command.DefinitionVersion,
-		DefinitionHash:     command.DefinitionHash,
-		RequestFingerprint: requestFingerprint,
-		Currency:           command.Currency, CurrencyExponent: command.CurrencyExponent,
-		Jurisdiction:          command.Jurisdiction,
-		IdleDisconnectSeconds: int64(command.IdleDisconnect / time.Second),
-	}
 	if err := m.repository.CreateSession(ctx, session); err != nil {
 		if !errors.Is(err, rgs.ErrSessionExists) {
 			return rgsapi.LaunchResult{}, err
@@ -179,19 +208,19 @@ func (m *LaunchManager) CreateLaunch(
 		if !sameLaunchIdentity(existing, command) {
 			return rgsapi.LaunchResult{}, rgs.ErrIdempotencyConflict
 		}
-		if existing.Status == rgs.SessionBlocked {
-			return rgsapi.LaunchResult{}, rgs.ErrManualReview
-		}
-		if existing.Status != rgs.SessionActive {
-			return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
+		// GetSession 保留稳定的身份冲突语义；absolute expiry 与终态必须随后在
+		// 同一次权威存储观测中裁决。idle 超时仍允许 relaunch，并只在 exchange
+		// 阶段通过 ResetSessionTransport 推进浏览器隔离代际。
+		if _, authorizeErr := m.repository.AuthorizeSessionRelaunch(
+			ctx, command.OperatorID, command.SessionID,
+		); authorizeErr != nil {
+			return rgsapi.LaunchResult{}, authorizeErr
 		}
 		// balanceMinor 与 sessionTTL 仅用于首次创建会话。再次启动时，持久化余额和
 		// 绝对过期时间仍是权威值；新的浏览器交接绝不能重置或延长持久会话状态。
-		// 这里不以 Pod 时钟裁决绝对过期；一次性交接在 exchange 阶段由
-		// ResetSessionTransport 使用数据库时钟原子裁决，避免时钟偏快的 Pod
-		// 错误拒绝仍有效的持久会话。
+		// 预检与 exchange 都不使用 Pod 时钟；最终 ResetSessionTransport 仍在
+		// 兑换时原子重检，覆盖签发交接码后才跨越 absolute expiry 的竞态。
 	}
-	code := m.launchCode(command.OperatorID, command.SessionID, command.IdempotencyKey)
 	issued, err := m.launches.IssueCode(ctx, claims, code)
 	if errors.Is(err, launch.ErrDigestExists) {
 		return rgsapi.LaunchResult{}, rgs.ErrIdempotencyConflict
@@ -201,7 +230,7 @@ func (m *LaunchManager) CreateLaunch(
 	}
 	return rgsapi.LaunchResult{
 		LaunchCode: issued.Code, ExchangeURL: m.exchangeURL, ExpiresAt: issued.ExpiresAt,
-		HistoricalReplay: issued.HistoricalReplay,
+		ValidatedAt: issued.ValidatedAt, HistoricalReplay: issued.HistoricalReplay,
 	}, nil
 }
 
@@ -310,14 +339,14 @@ func (m *LaunchManager) issueSessionToken(
 	if lifetime < time.Second {
 		return rgsapi.ExchangeResult{}, rgs.ErrSessionExpired
 	}
-	token, _, err := issuer.Issue(operator.AccessTokenSubject{
+	token, _, err := issuer.IssueAt(operator.AccessTokenSubject{
 		OperatorID: session.OperatorID, PlayerID: session.PlayerID,
 		WalletSessionID: session.WalletSessionID, SessionID: session.SessionID,
 		GameID: session.GameID, GameDefinitionVersion: session.DefinitionVersion,
 		GameDefinitionHash: session.DefinitionHash, Currency: session.Currency,
 		CurrencyExponent: session.CurrencyExponent, Jurisdiction: session.Jurisdiction,
 		TransportGeneration: session.TransportGeneration,
-	}, lifetime)
+	}, lifetime, authoritativeNow)
 	if err != nil {
 		return rgsapi.ExchangeResult{}, fmt.Errorf("%w: access token issue failed", rgsapi.ErrUnavailable)
 	}

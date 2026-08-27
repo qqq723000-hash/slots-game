@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Slots Game RGS Integration API
-  version: 1.2.2
+  version: 1.2.3
   summary: Operator and player-client contract for the clean-room RGS.
   license:
     name: No repository API license is granted
@@ -58,13 +58,22 @@ paths:
         use the same key and replay the same launch code and original expiry,
         including after consumption or exchange expiry. That response is never
         reactivated. Its digest remains an idempotency tombstone until 25 hours
-        after `expiresAt`. A new key issues a new code for the same active,
-        unexpired session without resetting its balance, absolute expiry,
-        revision, or feature state. For an existing session `balanceMinor` and
-        `sessionTtlSeconds` are creation-only inputs and do not replace durable
-        state. Within the same operator/session scope, reusing a key with
-        different request data is rejected. `idleDisconnectSeconds` is a
-        signed operator policy input and cannot be supplied by the browser.
+        after `expiresAt`. During that window the exact-response lookup runs
+        before current definition/issuer configuration and before durable
+        session lookup or status gates. The original 201 can therefore replay
+        even when the session is now BLOCKED, CLOSED, EXPIRED, or missing, or
+        the deployment has rotated its definition or issuer. This 201 only
+        replays the old handoff; it does not prove that its code or session can
+        currently be exchanged, and exchange still rejects an expired or
+        consumed code. A new key issues a new code only after current gates for
+        the same active, unexpired session; a signed 410 uses stable body code
+        EXPIRED, a signed 423 uses MANUAL_REVIEW, and changed request data under
+        the retained key uses signed 409 IDEMPOTENCY_CONFLICT. A new code never
+        resets balance, absolute expiry, revision, or feature state. For an
+        existing session `balanceMinor` and `sessionTtlSeconds` are
+        creation-only inputs and do not replace durable state.
+        `idleDisconnectSeconds` is a signed operator policy input and cannot
+        be supplied by the browser.
         It replaces the idle deadline only when a newly issued launch code is
         exchanged; it never changes the absolute session expiry. Every
         response after the pre-authentication capacity gate is signed when a
@@ -116,6 +125,7 @@ paths:
           $ref: '#/components/responses/SignedError'
         '409':
           $ref: '#/components/responses/SignedError'
+          description: For createLaunch, the stable signed body code is IDEMPOTENCY_CONFLICT.
         '413':
           $ref: '#/components/responses/SignedError'
         '415':
@@ -124,8 +134,10 @@ paths:
           $ref: '#/components/responses/SignedMethodNotAllowed'
         '410':
           $ref: '#/components/responses/SignedError'
+          description: For a new createLaunch handoff against an expired or closed durable session, the stable signed body code is EXPIRED.
         '423':
           $ref: '#/components/responses/SignedError'
+          description: For a new createLaunch handoff against a BLOCKED session, the stable signed body code is MANUAL_REVIEW.
         '429':
           $ref: '#/components/responses/SignedRateLimited'
         '500':

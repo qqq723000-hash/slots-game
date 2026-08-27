@@ -1527,6 +1527,8 @@ func normalizedPublicRoute(request *http.Request) string {
 		return "client.session_exchange"
 	case rgsapi.ClientSessionRefreshPath:
 		return "client.session_refresh"
+	case rgsapi.ClientSessionStatusPath:
+		return "client.session_status"
 	case rgsapi.ClientSpinPath:
 		return "client.spin"
 	case rgsapi.ClientRoundStatusPath:

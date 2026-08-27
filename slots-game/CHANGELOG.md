@@ -5,6 +5,17 @@
 
 ## 未发布
 
+## 1.2.3 - 2026-08-28
+
+- 修复已有持久会话重新启动时的交接边界：新 handoff 在签发前使用 PostgreSQL 权威时钟拒绝
+  absolute-expired 会话，同时继续允许 idle-timeout 会话通过 exchange 恢复 transport generation，
+  不重置余额、Feature 或绝对有效期；
+- 将 launch code 的创建/到期、exact-retry 25 小时墓碑、历史重放和一次性兑换统一绑定存储层权威时间，
+  访问令牌 `iat/exp` 绑定会话操作返回的同一服务端时间；移除 Pod 时钟二次裁决，终态会话只重放原响应，
+  exchange 仍按当前状态失败关闭，不会复活凭据；
+- 补齐 `client.session_status` 与 `operator.risk_decision` 的固定低基数遥测/Vector 路由白名单和负向契约，
+  避免合法恢复流量在采集链中被错误归入 `other`，同时保持玩家、会话和轮次标识不进入日志标签。
+
 ## 1.2.2 - 2026-08-27
 
 - 完整移除 GitHub Pages、公开静态试玩入口、源码、构建脚本与宣传说明，并增加供应链负向门禁，
