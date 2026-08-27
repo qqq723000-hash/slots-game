@@ -465,6 +465,11 @@ AWS 容量。HPA 只按 CPU/内存扩缩时，下游容量先到顶应降低 `ma
 禁止使用宽泛递归删除、未解析变量或开发者本机凭据清理正式资源。`local-operator` 及本机验收状态
 与 AWS 正式环境完全分离；清理本机环境不能影响 Tunnelblick、公司网络或任何正式 AWS 资源。
 
+发布身份必须在 IAM/SCP 中没有 `s3:DeleteObject` 与 `s3:DeleteObjectVersion`；旧 Web release 的删除只
+授予独立、版本感知、精确前缀的双人审批清理身份。`web-edge` bucket policy 已拒绝 `releases/*` 无
+`If-None-Match: *` 的对象创建，但为保留本节受控清理和 versioning lifecycle，不设置全局删除 Deny。
+目标账号权限回读、审批链和一次可恢复清理演练完成前，删除保护仍属于外部门槛。
+
 ## 16. 关联手册
 
 - [多副本集群运行契约](cluster-runtime-contract.md)

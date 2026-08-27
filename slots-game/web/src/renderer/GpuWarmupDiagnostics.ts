@@ -1,3 +1,5 @@
+import { isPublicAssetPathname } from "../assets/publicAssetUrl";
+
 export const GPU_WARMUP_TOP_SLOW_LIMIT = 8;
 export const GPU_WARMUP_RESOURCE_LIMIT = 4;
 export const GPU_WARMUP_PUBLIC_URL_LIMIT = 180;
@@ -53,19 +55,21 @@ export interface CreateGpuWarmupUploadDiagnosticOptions {
 }
 
 /**
- * 确保 DOM 数据属性的诊断安全：只有来自当前源的 `/assets/` 路径能够幸存，而凭证/查询/哈希永远不会。
+ * 确保 DOM 数据属性的诊断安全：只有来自当前源、当前 Vite public base 下的 `assets/` 路径能够幸存，
+ * 而凭证/查询/哈希永远不会。
  */
 export function sanitizeGpuWarmupPublicUrl(
   value: unknown,
   origin: string | null | undefined,
   maxLength = GPU_WARMUP_PUBLIC_URL_LIMIT,
+  baseUrl: string = import.meta.env.BASE_URL || "/",
 ): string | null {
   if (typeof value !== "string" || value.length === 0 || !origin) return null;
   try {
     const safeOrigin = new URL(origin).origin;
     const resolved = new URL(value, `${safeOrigin}/`);
     if (resolved.origin !== safeOrigin || !/^https?:$/.test(resolved.protocol)) return null;
-    if (!resolved.pathname.startsWith("/assets/")) return null;
+    if (!isPublicAssetPathname(resolved.pathname, baseUrl)) return null;
     const capacity = Math.max(1, Math.floor(maxLength));
     if (resolved.pathname.length <= capacity) return resolved.pathname;
     if (capacity === 1) return "…";

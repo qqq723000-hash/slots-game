@@ -236,23 +236,24 @@ ALB 与 CloudFront 的公开证书由 ACM 管理。数据库、钱包和审计�
    `deploy/supply-chain/extract-aws-web-static-root.sh` 只创建文件系统视图，从同一 digest 提取
    `/usr/share/nginx/html` 与 `/etc/nginx/conf.d/default.conf`；脚本拒绝 tag，并把静态根中的每个普通
    文件与 `release-manifest.json` 双向对照，任何额外、缺失、软链接、大小或 SHA-256 漂移都失败；
-4. 确认 `releases/<release-id>/` 不存在，随后只写一次上传上一步的新目录；对 HTML 使用短缓存/不缓存
-   策略，对内容哈希和 release 隔离对象使用长缓存；
+4. 对每个 `releases/<release-id>/...` 对象执行带 `If-None-Match: *` 的条件写；bucket policy 同时通过
+   `s3:if-none-match` 与 `s3:ObjectCreationOperation` 拒绝无条件 `s3:PutObject`，因此发布前列表查询只
+   能用于诊断，不能充当并发互斥；对 HTML 使用短缓存/不缓存策略，对内容哈希和 release 隔离对象使用长缓存；
 5. 把同一 digest 提取出的唯一 CSP 写入 CloudFront Response Headers Policy，核对 AWS 回读值与
-   `cloudfront-content-security-policy.txt` 完全一致，并把 bundle/job output 中的
+   `cloudfront-content-security-policy.txt` 完全一致，同时确认 policy 没有 `X-Frame-Options`，并把 bundle/job output 中的
    `CONFIGURATION_SHA256`、`CLOUDFRONT_CSP_SHA256`、OCI digest 和 policy ID/ETag 归档在同一变更证据；
 6. 从 CloudFront 预览路由执行真实浏览器、CORS、CSP、压缩、Range 和错误页验收；
-7. 更新 release router，把新浏览器固定到新 release；旧浏览器继续使用旧 release；
+7. 更新 release router，以 host-only `Secure; HttpOnly; SameSite=None; Partitioned` cookie 把新浏览器
+   固定到新 release；旧浏览器继续使用旧 release；
 8. 观察稳定窗口后再结束回退保留期，不执行覆盖式 `sync --delete`。
 
-提取与上传动作的最小形态如下；变量由受保护流水线注入，命令不得在开发者终端使用正式角色。
+提取动作的最小形态如下；变量由受保护流水线注入，命令不得在开发者终端使用正式角色。
 `SLOTS_WEB_IMAGE` 必须是不带 tag/digest 的仓库，`SLOTS_WEB_DIGEST` 必须来自已签名且已反向验证的
 最终发布结果，`SLOTS_CONFIGURATION_SHA256` 必须与离线复核的 bundle/job output 完全相同：
 
 ```sh
 set -euo pipefail
 
-test -n "${SLOTS_WEB_BUCKET:?}"
 test -n "${SLOTS_WEB_IMAGE:?}"
 printf '%s\n' "${SLOTS_WEB_DIGEST:?}" | grep -Eq '^sha256:[0-9a-f]{64}$'
 printf '%s\n' "${SLOTS_CONFIGURATION_SHA256:?}" | grep -Eq '^[0-9a-f]{64}$'
@@ -264,25 +265,6 @@ sh deploy/supply-chain/extract-aws-web-static-root.sh \
   "$SLOTS_EXTRACTED_STATIC_ROOT" \
   "$SLOTS_WEB_DELIVERY_EVIDENCE" \
   "$SLOTS_CONFIGURATION_SHA256"
-
-SLOTS_RELEASE_ID=$(jq -er '.releaseId' \
-  "$SLOTS_EXTRACTED_STATIC_ROOT/release-manifest.json")
-
-SLOTS_EXISTING_OBJECT_COUNT=$(aws s3api list-objects-v2 \
-  --bucket "$SLOTS_WEB_BUCKET" \
-  --prefix "releases/$SLOTS_RELEASE_ID/" \
-  --max-keys 1 \
-  --query 'length(Contents || `[]`)' \
-  --output text)
-if [ "$SLOTS_EXISTING_OBJECT_COUNT" != 0 ]; then
-  echo '目标 release 前缀已存在，拒绝覆盖或合并不可变 Web 发布目录' >&2
-  exit 1
-fi
-
-aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/" \
-  "s3://$SLOTS_WEB_BUCKET/releases/$SLOTS_RELEASE_ID/" \
-  --no-follow-symlinks \
-  --only-show-errors
 ```
 
 `extract-aws-web-static-root.sh` 不执行 `docker pull` 或 Cosign 验证：这两步必须由受保护 AWS 发布
@@ -291,7 +273,9 @@ aws s3 sync "$SLOTS_EXTRACTED_STATIC_ROOT/" \
 签名替代品。CloudFront policy 的 CSP 必须从同目录的 `cloudfront-content-security-policy.txt` 读取，
 禁止从手写模板、旧 release 或另一组 origin 生成。
 
-列表结果必须精确为 `0` 才可上传；流水线应将此检查实现为失败关闭，而不是依靠人工查看。
+上传与路由切换只应调用 `deploy/aws-production/workflow/publish-web-release.sh`；该脚本逐对象使用
+`put-object --if-none-match '*'`、精确 KMS key、SHA-256 checksum 与 HEAD 回读。bucket policy 是服务端
+并发保护，客户端列表结果不是授权条件，也不得改回不带条件头的 `sync`。
 `infra/terraform/modules/web-edge` 已实现 CloudFront KeyValueStore 与 Function release router；具体
 distribution ID、KVS/函数 ARN 只能来自目标账号中已应用 state 的 delivery 输出，不能在说明书中
 虚构。当前稳定 `/assets/...` 路径的版本固定要求见
@@ -446,7 +430,10 @@ Helm 成功不等于排空完成：发布系统必须保存渲染 diff，并等�
 ## 11. 上线验收清单
 
 - [ ] 正式基础设施 IaC plan/apply、策略扫描和审批记录可追溯。
-- [ ] CloudFront 只能通过 OAC 读私有 S3；应用发布角色已获最小 `s3:GetBucketPublicAccessBlock`/`s3:GetBucketPolicy`，实时门禁确认四项 Block Public Access 全部为 `true`，且 policy 只允许当前 distribution 读取并拒绝明文传输。
+- [ ] CloudFront 只能通过 OAC 读私有 S3；应用发布角色已获最小
+  `cloudfront:GetResponseHeadersPolicyConfig`、`s3:GetBucketPublicAccessBlock` 与 `s3:GetBucketPolicy`，实时
+  门禁确认无 `X-Frame-Options`、精确 `frame-ancestors`、四项 Block Public Access 全部为 `true`，且
+  bucket policy 只允许当前 distribution 读取、拒绝无条件 release 写入并拒绝明文传输。
 - [ ] S3 静态根来自已验证 OCI digest，逐文件通过 `release-manifest.json`；没有从工作区 dist 直传。
 - [ ] CloudFront CSP 与同一 digest 提取值逐字节一致，且变更证据绑定 `CONFIGURATION_SHA256`。
 - [ ] 两个并发 Web release 的真实浏览器追踪证明会话没有跨版本资源。

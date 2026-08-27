@@ -316,18 +316,28 @@ Aurora cluster 指标。所有告警显式固定 unit、SNS 动作与 `notBreach
 当前 Web 包含稳定 `/assets/...` 路径，仅靠 CloudFront 缓存失效或把新旧对象覆盖在同一路径，无法
 证明浏览器不会混用两个版本。AWS 正式发布必须同时满足：
 
-- 完整构建写入新的 `releases/<release-id>/`，上传后禁止覆盖；
+- 完整构建写入新的 `releases/<release-id>/`；每个对象创建都携带 `If-None-Match: *`，bucket policy
+  通过 `s3:if-none-match` 与 `s3:ObjectCreationOperation` 拒绝无条件 `s3:PutObject`，使并发发布也不能
+  覆盖已存在的 release key；
 - CloudFront 只通过 OAC 读取，S3 Block Public Access 保持开启；
 - distribution 显式使用 `http2and3`，delivery contract 与目标账号 `get-distribution` 回读都拒绝退回
   仅 HTTP/2；HTTP/3 的实际 QUIC 协商率和收益仍由目标网络 RUM 验收；
-- release router 以经验证的 cookie、独立 release host 或等价机制，把一次浏览器会话的 HTML、
-  JS、CSS 和稳定素材固定到同一个前缀；
+- CloudFront Response Headers Policy 不得注入 `X-Frame-Options`；从同一已验证 Web digest 提取的唯一
+  精确 `frame-ancestors` CSP 是跨源运营商 iframe 的授权源；
+- release router 使用 host-only 的 `Secure; HttpOnly; SameSite=None; Partitioned` cookie，把跨站 iframe
+  中一次浏览器会话的 HTML、JS、CSS 和稳定素材固定到同一个前缀；目标浏览器的 CHIPS/第三方 cookie
+  行为仍须按正式浏览器矩阵验收；
 - 新 release 健康检查通过后才切换默认路由，旧前缀保留到最长会话与回退窗口结束；
 - 回退只切换路由，不在原路径回写旧文件；
 - 上线证据包含两个并发版本的浏览器资源追踪，证明没有跨 release 请求。
 
 如果目标账号尚未应用并验证仓库中的 release pinning IaC，则 S3/CloudFront 目标架构仍未验收，不能用全量
 `aws s3 sync --delete` 或一次 `/*` invalidation 代替。
+
+Web bucket 没有对 `releases/*` 设置全局 `DeleteObject`/`DeleteObjectVersion` Deny：该 Deny 会同时破坏本章
+保留窗口结束后的受控清理和现有 versioning lifecycle。正式账号必须在独立 IAM/SCP 门禁中移除发布身份的
+删除权限，只把精确前缀、版本感知的删除授予双人审批清理身份；该目标账号权限回读与清理演练是外部门槛，
+不能由 Terraform 静态检查宣称完成。
 
 ## 8. 身份、秘密与加密
 

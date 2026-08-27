@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  GPU_WARMUP_PUBLIC_URL_LIMIT,
   GPU_WARMUP_RESOURCE_LIMIT,
   collectGpuWarmupDiagnosticBaseTextures,
   createGpuWarmupUploadDiagnostic,
@@ -66,6 +67,18 @@ describe("GPU warmup diagnostics", () => {
     expect(sanitizeGpuWarmupPublicUrl(
       "/internal/session/player-123.png",
       LOCAL_ORIGIN,
+    )).toBeNull();
+    expect(sanitizeGpuWarmupPublicUrl(
+      "https://game.example/casino/primal/assets/primal-runtime/spine/ui.avif?token=secret#frame",
+      LOCAL_ORIGIN,
+      GPU_WARMUP_PUBLIC_URL_LIMIT,
+      "/casino/primal/",
+    )).toBe("/casino/primal/assets/primal-runtime/spine/ui.avif");
+    expect(sanitizeGpuWarmupPublicUrl(
+      "https://game.example/assets/primal-runtime/spine/ui.avif",
+      LOCAL_ORIGIN,
+      GPU_WARMUP_PUBLIC_URL_LIMIT,
+      "/casino/primal/",
     )).toBeNull();
 
     const bounded = sanitizeGpuWarmupPublicUrl(

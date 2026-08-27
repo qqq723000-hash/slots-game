@@ -5,6 +5,22 @@
 
 ## 未发布
 
+## 1.2.2 - 2026-08-27
+
+- 完整移除 GitHub Pages、公开静态试玩入口、源码、构建脚本与宣传说明，并增加供应链负向门禁，
+  防止这些已退出产品范围的表面重新进入仓库；
+- 修复 Vite 子路径部署中的流式特殊玩法资源、favicon 和 GPU 预热路径契约，补充覆盖 CSS、字体与
+  Feature Preview 的真实 `/casino/primal/` 构建验证；同时修正 PAYTABLE 金额辅助文本在无投注状态下
+  残留旧值的问题；
+- 将失败恢复、游戏规则、OpenAPI 响应矩阵和符号赔付注释与运行时实现同步；OpenAPI 以
+  `LicenseRef-Proprietary` 明确仓库未授予 API 许可，不虚构开源或商业授权；
+- 移除阻断跨源运营商 iframe 的 CloudFront `X-Frame-Options: SAMEORIGIN`，将 release cookie 收紧为
+  `Secure; HttpOnly; SameSite=None; Partitioned`，并为 S3 release 前缀增加条件写 bucket policy；
+- Web release 上传支持中断后按内容 SHA-256、长度、元数据、MIME、缓存和 KMS 属性精确回读续传，
+  任一漂移均在切换 CloudFront KVS 前失败关闭；
+- 将 Web OCI 许可证标签显式覆盖为 `NOASSERTION`，扩展全仓 ShellCheck 门禁，并澄清本机多数据源
+  备份只保证完整备份集原子发布，不宣称跨数据源时间点原子性。
+
 ## 1.2.1 - 2026-08-27
 
 - 收窄本机运营审计/日志持久化的底层 writer 为 `*os.File`，防止今后误将客户端提交内容

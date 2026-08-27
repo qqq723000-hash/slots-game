@@ -23,6 +23,7 @@ import {
   FREE_SPIN_VERIFIED_SPINE_KEYS,
   WHEEL_VERIFIED_SPINE_KEYS,
   disposeVerifiedWheelArtwork,
+  normalizedVerifiedFeatureAssetPath,
   verifiedFeatureArtworkFromPackage,
 } from "../src/renderer/VerifiedFeatureArtwork";
 import { primalSpineSkeletonUrl } from "../src/renderer/spine/PrimalSpineAssets";
@@ -42,6 +43,28 @@ beforeEach(() => {
 });
 
 describe("verified Free Spins / Wheel event artwork", () => {
+  it("accepts only the configured public asset prefix for a subpath build", () => {
+    expect(normalizedVerifiedFeatureAssetPath(
+      "/casino/primal/assets/primal-runtime/spine/wheel.skel",
+      "/casino/primal/",
+    )).toBe("primal-runtime/spine/wheel.skel");
+    expect(normalizedVerifiedFeatureAssetPath(
+      "/assets/primal-runtime/spine/wheel.skel",
+      "/",
+    )).toBe(normalizedVerifiedFeatureAssetPath(
+      "/casino/primal/assets/primal-runtime/spine/wheel.skel",
+      "/casino/primal/",
+    ));
+    expect(() => normalizedVerifiedFeatureAssetPath(
+      "/assets/primal-runtime/spine/wheel.skel",
+      "/casino/primal/",
+    )).toThrow("Invalid verified feature asset path");
+    expect(() => normalizedVerifiedFeatureAssetPath(
+      "/casino/primal/assets/primal-runtime/spine/wheel.skel?token=secret",
+      "/casino/primal/",
+    )).toThrow("Invalid verified feature asset path");
+  });
+
   it("parses all five Free Spins skeletons from verified bytes without a URL fetch", async () => {
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);

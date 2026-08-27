@@ -6,7 +6,7 @@ function handler(event) {
   if (releaseHeader) {
     response.cookies['slots-release'] = {
       value: releaseHeader.value,
-      attributes: 'Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Strict'
+      attributes: 'Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=None; Partitioned'
     };
   }
 

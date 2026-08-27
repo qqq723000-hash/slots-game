@@ -41,6 +41,14 @@ jobs:
         with:
           node-version: 22.22.0
 
+      - name: Shellcheck every tracked shell script
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r script; do
+            shellcheck -S warning -x -P . -P "$(dirname "$script")" "$script"
+          done < <(git ls-files -- '*.sh')
+
       - name: Set up fixed Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:

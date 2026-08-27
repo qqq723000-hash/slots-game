@@ -1182,6 +1182,18 @@ describe("game control configuration", () => {
       .toEqual(["2.00", "1.50", "1.00", "0.80", "0.30", "0.10"]);
     expect(labels[0]).toHaveBeenCalledWith("aria-label", "Jet, x3, 2.00");
     expect(labels[5]).toHaveBeenCalledWith("aria-label", "Q, x3, 0.10");
+
+    (overlay as unknown as { bet: { value: string } }).bet.value = "";
+    (overlay as unknown as { syncPaytableAwards(): void }).syncPaytableAwards();
+    expect(amounts.every(({ textContent }) => textContent === "—")).toBe(true);
+    expect(labels[0]).toHaveBeenLastCalledWith(
+      "aria-label",
+      "Jet, x3, amount unavailable",
+    );
+    expect(labels[5]).toHaveBeenLastCalledWith(
+      "aria-label",
+      "Q, x3, amount unavailable",
+    );
   });
 
   it("uses the exact official Way Wins description instead of a derived payline claim", () => {

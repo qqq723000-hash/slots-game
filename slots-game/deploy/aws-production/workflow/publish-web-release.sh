@@ -53,9 +53,6 @@ test -n "$csp" || fail 'CSP 为空'
 csp_sha256=$(sha256sum "$extraction_evidence/cloudfront-content-security-policy.txt" | awk '{ print $1 }')
 
 release_prefix="releases/${release_id}/"
-existing_count=$(aws s3api list-objects-v2 --bucket "$AWS_WEB_BUCKET" --prefix "$release_prefix" \
-  --max-keys 1 --query "length(Contents || \`[]\`)" --output text)
-test "$existing_count" = 0 || fail '不可变 release 前缀已经存在'
 
 content_type_for() {
   case "$1" in
@@ -91,6 +88,8 @@ cache_control_for() {
 file_list="$delivery_evidence/uploaded-files.txt"
 (cd "$static_root" && find . -type f -print | LC_ALL=C sort) > "$file_list"
 test -s "$file_list" || fail '静态根没有普通文件'
+upload_results="$delivery_evidence/upload-results.tsv"
+: > "$upload_results"
 local_count=0
 while IFS= read -r relative_path; do
   relative_path=${relative_path#./}
@@ -99,28 +98,59 @@ while IFS= read -r relative_path; do
   object_key="${release_prefix}${relative_path}"
   content_type=$(content_type_for "$relative_path") || fail "发现未审批的静态文件扩展名：$relative_path"
   cache_control=$(cache_control_for "$relative_path")
-  aws s3api put-object --bucket "$AWS_WEB_BUCKET" --key "$object_key" \
+  content_sha256=$(sha256sum "$static_root/$relative_path" | awk '{ print $1 }')
+  printf '%s\n' "$content_sha256" | grep -Eq '^[0-9a-f]{64}$' || \
+    fail "无法计算静态文件 SHA-256：$relative_path"
+  content_sha256_base64=$(node -e '
+    const value = process.argv[1];
+    if (!/^[0-9a-f]{64}$/.test(value)) process.exit(1);
+    process.stdout.write(Buffer.from(value, "hex").toString("base64"));
+  ' "$content_sha256") || fail "无法编码静态文件 SHA-256：$relative_path"
+  content_length=$(wc -c < "$static_root/$relative_path" | tr -d '[:space:]')
+  printf '%s\n' "$content_length" | grep -Eq '^[0-9]+$' || \
+    fail "无法计算静态文件长度：$relative_path"
+
+  put_response="$delivery_evidence/put-object-${local_count}.json"
+  put_stderr="$delivery_evidence/put-object-${local_count}.stderr"
+  put_status=created
+  if ! aws s3api put-object --bucket "$AWS_WEB_BUCKET" --key "$object_key" \
     --body "$static_root/$relative_path" --content-type "$content_type" \
     --cache-control "$cache_control" --if-none-match '*' \
+    --checksum-algorithm SHA256 --checksum-sha256 "$content_sha256_base64" \
     --metadata "release-id=${release_id},web-image-digest=${web_digest},configuration-sha256=${configuration_sha256},csp-sha256=${csp_sha256}" \
-    --server-side-encryption aws:kms --ssekms-key-id "$AWS_WEB_KMS_KEY_ARN" >/dev/null
-  head_json=$(aws s3api head-object --bucket "$AWS_WEB_BUCKET" --key "$object_key" --output json)
+    --server-side-encryption aws:kms --ssekms-key-id "$AWS_WEB_KMS_KEY_ARN" \
+    --output json > "$put_response" 2> "$put_stderr"; then
+    # 非零可能是 If-None-Match 命中，也可能是响应丢失。两者都只能由完整 HEAD 回读裁决。
+    put_status=reconciled
+  fi
+  head_json=$(aws s3api head-object --bucket "$AWS_WEB_BUCKET" --key "$object_key" \
+    --checksum-mode ENABLED --output json) || fail "对象写入后无法权威回读：$relative_path"
   printf '%s\n' "$head_json" | jq -e \
     --arg release "$release_id" --arg image "$web_digest" --arg configuration "$configuration_sha256" \
     --arg csp_sha "$csp_sha256" --arg content_type "$content_type" --arg cache "$cache_control" \
-    --arg kms_key "$AWS_WEB_KMS_KEY_ARN" '
-      .Metadata["release-id"] == $release and
-      .Metadata["web-image-digest"] == $image and
-      .Metadata["configuration-sha256"] == $configuration and
-      .Metadata["csp-sha256"] == $csp_sha and
+    --arg kms_key "$AWS_WEB_KMS_KEY_ARN" --arg checksum "$content_sha256_base64" \
+    --argjson content_length "$content_length" '
+      .Metadata == {
+        "release-id": $release,
+        "web-image-digest": $image,
+        "configuration-sha256": $configuration,
+        "csp-sha256": $csp_sha
+      } and
+      .ChecksumSHA256 == $checksum and .ContentLength == $content_length and
       .ContentType == $content_type and .CacheControl == $cache and
       .ServerSideEncryption == "aws:kms" and .SSEKMSKeyId == $kms_key
-    ' >/dev/null || fail "对象元数据回读不一致：$relative_path"
+    ' >/dev/null || fail "对象身份回读不一致：$relative_path"
+  printf '%s\t%s\t%s\t%s\n' "$put_status" "$relative_path" "$content_sha256" "$content_length" >> \
+    "$upload_results"
   local_count=$((local_count + 1))
 done < "$file_list"
 
-remote_count=$(aws s3api list-objects-v2 --bucket "$AWS_WEB_BUCKET" --prefix "$release_prefix" \
-  --query "length(Contents || \`[]\`)" --output text)
+remote_objects="$delivery_evidence/release-objects.json"
+aws s3api list-objects-v2 --bucket "$AWS_WEB_BUCKET" --prefix "$release_prefix" \
+  --output json > "$remote_objects"
+remote_count=$(jq -er '(.Contents // []) | length' "$remote_objects") || \
+  fail '无法解析 S3 release 前缀对象总数'
+printf '%s\n' "$remote_count" | grep -Eq '^[0-9]+$' || fail '无法取得 S3 release 前缀对象总数'
 test "$remote_count" = "$local_count" || fail 'S3 对象数量与已验证静态根不一致'
 
 policy_json="$delivery_evidence/response-headers-policy.json"
@@ -131,8 +161,9 @@ policy_etag=$(jq -er '.ETag | select(test("^[A-Za-z0-9_-]+$"))' "$policy_json") 
 jq -e --arg csp "$csp" --arg etag "$policy_etag" '
   .ETag == $etag and
   .ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.Override == true and
-  .ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy == $csp
-' "$policy_json" >/dev/null || fail 'Terraform 管理的 CloudFront CSP 与 Web digest 不一致'
+  .ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy == $csp and
+  (.ResponseHeadersPolicyConfig.SecurityHeadersConfig | has("FrameOptions") | not)
+' "$policy_json" >/dev/null || fail 'Terraform 管理的 CloudFront CSP 与 Web digest 不一致或仍注入 X-Frame-Options'
 
 distribution_before=$(aws cloudfront get-distribution-config \
   --id "$AWS_CLOUDFRONT_DISTRIBUTION_ID" --output json)

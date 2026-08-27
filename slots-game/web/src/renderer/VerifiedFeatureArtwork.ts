@@ -1,6 +1,7 @@
 import type { Texture } from "pixi.js";
 import { PRIMAL_ASSETS } from "../assets/PrimalAssetManifest";
 import type { PrimalRuntimeAssetChannel } from "../assets/primalRuntimeAssets";
+import { publicAssetPathPrefix } from "../assets/publicAssetUrl";
 import type {
   LoadedAssetPackage,
   LoadedAssetResource,
@@ -171,9 +172,10 @@ function requiredVerifiedFeatureResource(
   url: string,
   decoder: "binary",
 ): LoadedAssetResource {
-  const expected = normalizedAssetPath(url);
+  const expected = normalizedVerifiedFeatureAssetPath(url);
   const resource = [...loaded.resources.values()].find((candidate) => (
-    normalizedAssetPath(candidate.spec.url) === expected
+    // streaming manifest 保留 `/assets/...` 根相对键，实际请求才按 Vite BASE_URL 重基。
+    normalizedVerifiedFeatureAssetPath(candidate.spec.url, "/") === expected
       && candidate.spec.decoder === decoder
   ));
   if (!resource || resource.bytes.byteLength !== resource.spec.bytes) {
@@ -182,12 +184,18 @@ function requiredVerifiedFeatureResource(
   return resource;
 }
 
-function normalizedAssetPath(value: string): string {
+export function normalizedVerifiedFeatureAssetPath(
+  value: string,
+  baseUrl: string = import.meta.env.BASE_URL || "/",
+): string {
   try {
     const parsed = new URL(value, "https://verified-assets.invalid");
     if (parsed.search || parsed.hash) throw new Error("query not allowed");
-    if (!parsed.pathname.startsWith("/assets/")) throw new Error("asset path required");
-    return parsed.pathname;
+    const prefix = publicAssetPathPrefix(baseUrl);
+    if (!parsed.pathname.startsWith(prefix)) throw new Error("asset path required");
+    const key = parsed.pathname.slice(prefix.length);
+    if (!key) throw new Error("asset file required");
+    return key;
   } catch {
     throw new Error("Invalid verified feature asset path");
   }

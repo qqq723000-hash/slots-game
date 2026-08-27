@@ -727,6 +727,22 @@ replace_once "--if-none-match '*'" '--no-guess-mime-type' \
 expect_rejected '允许覆盖 Web release 对象'
 
 reset_fixture
+replace_once '(.ResponseHeadersPolicyConfig.SecurityHeadersConfig | has("FrameOptions") | not)' \
+  'true # X-Frame-Options accepted' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'Web publisher 接受 CloudFront X-Frame-Options'
+
+reset_fixture
+replace_once 'security.key?("FrameOptions")' 'false # X-Frame-Options ignored' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected '平台实时门禁忽略 CloudFront X-Frame-Options'
+
+reset_fixture
+replace_once '"s3:if-none-match" => "true"' '"s3:if-none-match-disabled" => "true"' \
+  "$fixture_root/slots-game/deploy/aws-production/verify-live-platform-prerequisites.sh"
+expect_rejected '平台实时门禁接受缺失 release 条件写保护'
+
+reset_fixture
 replace_once 'test "$rollback_public_ready" = true' 'true # public rollback not verified' \
   "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
 expect_rejected 'Web KVS 回退后未验证 CloudFront 公网读路径'
@@ -777,6 +793,58 @@ replace_once '--server-side-encryption aws:kms --ssekms-key-id "$AWS_WEB_KMS_KEY
   '--server-side-encryption aws:kms' \
   "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
 expect_rejected 'Web S3 上传未显式绑定固定 CMK'
+
+reset_fixture
+replace_once '--checksum-algorithm SHA256 --checksum-sha256 "$content_sha256_base64"' \
+  '--checksum-algorithm CRC32 --checksum-crc32 "$content_sha256_base64"' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'Web S3 上传未绑定本地内容 SHA-256'
+
+reset_fixture
+replace_once '--checksum-mode ENABLED --output json' '--output json' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'Web S3 HEAD 未请求原生 checksum'
+
+reset_fixture
+replace_once '.ChecksumSHA256 == $checksum and .ContentLength == $content_length and' \
+  'true and # content identity ignored' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'Web S3 HEAD 未同时核对 SHA-256 与长度'
+
+reset_fixture
+replace_once '.Metadata == {' '.Metadata | {' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'Web S3 HEAD 允许额外身份元数据'
+
+reset_fixture
+replace_once 'if ! aws s3api put-object --bucket "$AWS_WEB_BUCKET" --key "$object_key"' \
+  'if aws s3api put-object --bucket "$AWS_WEB_BUCKET" --key "$object_key"' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'Web S3 条件写失败后未进入权威回读续传'
+
+reset_fixture
+replace_once 'test "$remote_count" = "$local_count"' \
+  'test "$remote_count" -ge "$local_count"' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/publish-web-release.sh"
+expect_rejected 'Web S3 release 前缀允许额外对象'
+
+reset_fixture
+replace_once 'invoke_upload_scenario "$upload_root" upload-interrupt delivery-interrupted' \
+  'true # interrupted upload fixture removed' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/test-web-release-switch-faults.sh"
+expect_rejected '删除 Web S3 上传中断夹具'
+
+reset_fixture
+replace_once 'for drift_mode in checksum length release image configuration csp metadata-extra content-type cache encryption kms; do' \
+  'for drift_mode in checksum; do' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/test-web-release-switch-faults.sh"
+expect_rejected 'Web S3 续传漂移负测未覆盖全部身份字段'
+
+reset_fixture
+replace_once 'invoke_upload_scenario "$count_drift_root" upload-drift-object-count delivery' \
+  'true # exact object count fixture removed' \
+  "$fixture_root/slots-game/deploy/aws-production/workflow/test-web-release-switch-faults.sh"
+expect_rejected '删除 Web S3 release 前缀额外对象负测'
 
 reset_fixture
 replace_once '--if-match "$kvs_etag_before" --key active-release --value "$release_id"' \

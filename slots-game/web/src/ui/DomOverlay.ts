@@ -4382,6 +4382,10 @@ export class DomOverlay {
       const amount = figure.querySelector<HTMLElement>(".base-paytable__amount");
       if (entry === undefined || amount === null || !betMinor) {
         if (amount !== null) amount.textContent = "—";
+        figure.setAttribute(
+          "aria-label",
+          `${entry?.label ?? "Paying symbol"}, x3, amount unavailable`,
+        );
         return;
       }
       const formatted = this.activeMoneyFormatter().format(

@@ -86,6 +86,12 @@ Organizations、Control Tower、SCP、集中 CloudTrail、Security Hub、GuardDu
 Allowed/Blocked 请求量告警。正式 RGS 协议不使用 query；URI path/method 仍保留用于事件处置。
 Shield Standard 是 ALB 的 AWS 服务基线；Terraform 源码、本地 plan 或夹具都不能证明真实账号已经
 历经攻击验证。CloudFront 仅承载静态 Web，使用企业 global WAF 和 private S3 OAC，不是 API 代理。
+Web Response Headers Policy 不注入 `X-Frame-Options`，由已验证 digest 中唯一的精确
+`frame-ancestors` CSP 授权跨源运营商 iframe；release cookie 固定为
+`Secure; HttpOnly; SameSite=None; Partitioned`。Web bucket policy 通过 `s3:if-none-match` 与
+`s3:ObjectCreationOperation` 拒绝 `releases/*` 无条件 `PutObject`。为兼容经审批的旧 release 清理与
+versioning lifecycle，模块不设置全局删除 Deny；发布身份删除权限的 IAM/SCP 收口和真实账号回读仍是
+企业落地区门槛。
 
 Regional WAF 还精确 Block 公网 `/healthz` 并返回 404。AWS Load Balancer Controller 的 `ip` target
 业务端口仍是 8080，但 ALB target health 以数值端口 8081 直连 Pod 私有 operations `/healthz`；该

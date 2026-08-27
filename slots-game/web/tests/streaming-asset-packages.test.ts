@@ -303,6 +303,26 @@ describe("StreamingAssetPackageManager", () => {
     expect(manager.readyPackageIds()).toEqual(["shell", "base", "wheel"]);
   });
 
+  it("rebases manifest resources under the configured Vite public subpath", async () => {
+    const fetcher = vi.fn(async () => response("wheel"));
+    const manager = new StreamingAssetPackageManager(manifest([{
+      id: "wheel",
+      version: "1",
+      stage: "feature-on-demand",
+      resources: [resource("wheel", "wheel")],
+    }]), {
+      fetch: fetcher,
+      publicAssetBaseUrl: "/casino/primal/",
+    });
+
+    await manager.load("wheel");
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/casino/primal/assets/wheel.bin",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+  });
+
   it("enforces the global resource concurrency cap", async () => {
     let active = 0;
     let peak = 0;

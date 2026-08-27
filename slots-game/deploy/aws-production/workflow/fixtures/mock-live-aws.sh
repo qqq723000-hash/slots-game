@@ -52,7 +52,7 @@ if test "$1" = s3api; then
     test "$region" = ap-southeast-1 || fail 'CloudFront origin bucket policy region 不匹配'
     test "${MOCK_PLATFORM_MODE:-valid}" != cloudfront-origin-bucket-policy-missing || exit 254
     policy=$(jq -nc --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
-      {Version: "2012-10-17", Statement: ([
+      {Version: "2012-10-17", Statement: (([
         {
           Sid: "AllowCloudFrontOacRead", Effect: "Allow", Action: "s3:GetObject",
           Resource: "arn:aws:s3:::slots-production/*",
@@ -62,11 +62,21 @@ if test "$1" = s3api; then
             else "arn:aws:cloudfront::123456789012:distribution/E1234567890ABC" end)}}
         },
         {
+          Sid: "DenyUnconditionalReleaseWrites", Effect: "Deny", Action: "s3:PutObject",
+          Resource: (if $mode == "cloudfront-release-prefix-writable" then "arn:aws:s3:::slots-production/*"
+            else "arn:aws:s3:::slots-production/releases/*" end),
+          Principal: "*", Condition: (if $mode == "cloudfront-release-unconditional-write-allowed"
+            then {Null: {"s3:if-none-match-disabled": "true"}}
+            else {Bool: {"s3:ObjectCreationOperation": "true"}, Null: {"s3:if-none-match": "true"}} end)
+        },
+        {
           Sid: "DenyInsecureTransport", Effect: "Deny", Action: "s3:*",
           Resource: ["arn:aws:s3:::slots-production", "arn:aws:s3:::slots-production/*"],
           Principal: "*", Condition: {Bool: {"aws:SecureTransport": "false"}}
         }
-      ] + (if $mode == "cloudfront-origin-external-principal" then [{
+      ] | (if $mode == "cloudfront-release-write-deny-missing" then
+        map(select(.Sid != "DenyUnconditionalReleaseWrites")) else . end)) +
+      (if $mode == "cloudfront-origin-external-principal" then [{
         Sid: "ExternalRead", Effect: "Allow", Action: "s3:GetObject",
         Resource: "arn:aws:s3:::slots-production/*",
         Principal: {AWS: "arn:aws:iam::999999999999:root"}
@@ -635,6 +645,25 @@ if test "$1" = ec2; then
   exit 0
 fi
 if test "$1" = cloudfront; then
+  if test "$2" = get-response-headers-policy-config; then
+    shift 2
+    policy_id=$(argument_value --id "$@")
+    test "$policy_id" = 22222222-2222-4222-8222-222222222222 || \
+      fail 'CloudFront Response Headers Policy ID 不匹配'
+    jq -n --arg mode "${MOCK_PLATFORM_MODE:-valid}" '
+      {ETag: "fixture-policy-etag", ResponseHeadersPolicyConfig: {
+        Name: "slots-prod-primary-web-security",
+        SecurityHeadersConfig: ({
+          ContentSecurityPolicy: {
+            Override: true,
+            ContentSecurityPolicy: "default-src \u0027self\u0027; object-src \u0027none\u0027; frame-ancestors https://operator.example.com;"
+          }
+        } + (if $mode == "cloudfront-frame-options-sameorigin" then
+          {FrameOptions: {Override: true, FrameOption: "SAMEORIGIN"}} else {} end))
+      }}
+    '
+    exit 0
+  fi
   test "$2" = get-distribution || fail '只允许读取 CloudFront distribution'
   shift 2
   distribution_id=$(argument_value --id "$@")

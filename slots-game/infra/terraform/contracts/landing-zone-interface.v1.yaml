@@ -127,6 +127,7 @@ spec:
     applicationRelease:
       requiredReadOnlyActions:
         - cloudfront:GetDistribution
+        - cloudfront:GetResponseHeadersPolicyConfig
         - cloudwatch:DescribeAlarms
         - ec2:DescribeSecurityGroupRules
         - elasticache:DescribeCacheClusters
