@@ -25,6 +25,14 @@ const baseEnvironment = {
   LOCAL_PRODUCTION_IMAGE_TAG: "candidate-one",
   LOCAL_PRODUCTION_ASSET_APPROVAL_HASH: "c".repeat(64),
 };
+const metadataEnvironmentNames = [
+  "LOCAL_PRODUCTION_IMAGE_CREATED",
+  "LOCAL_PRODUCTION_IMAGE_REVISION",
+  "LOCAL_PRODUCTION_IMAGE_SOURCE",
+  "LOCAL_PRODUCTION_IMAGE_VERSION",
+  "LOCAL_PRODUCTION_IMAGE_TAG",
+  "LOCAL_PRODUCTION_ASSET_APPROVAL_HASH",
+];
 
 function restrictedWrite(path, contents) {
   writeFileSync(path, contents, { encoding: "utf8", mode: 0o600 });
@@ -71,6 +79,27 @@ function runPrepare(state, environment, ...arguments_) {
     env: environment,
   });
 }
+
+test("rejects surrounding image-metadata whitespace before creating derived state", () => {
+  const fixture = makeState();
+  try {
+    for (const name of metadataEnvironmentNames) {
+      const value = baseEnvironment[name];
+      for (const invalidValue of [` ${value}`, `${value} `]) {
+        const rejected = runPrepare(fixture.state, {
+          ...baseEnvironment,
+          [name]: invalidValue,
+        }, "--validate-only");
+        assert.notEqual(rejected.status, 0, `${name} accepted surrounding whitespace`);
+        assert.match(rejected.stderr, new RegExp(`${name} must not contain surrounding whitespace`, "u"));
+      }
+    }
+    assert.throws(() => statSync(join(fixture.secrets, "compose.env")), { code: "ENOENT" });
+    assert.throws(() => statSync(join(fixture.secrets, "postgres-backup.password")), { code: "ENOENT" });
+  } finally {
+    rmSync(fixture.root, { force: true, recursive: true });
+  }
+});
 
 test("validates before mutation, atomically selects a candidate, and preserves the last selector on invalid input", () => {
   const fixture = makeState();

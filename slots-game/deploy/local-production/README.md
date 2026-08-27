@@ -55,10 +55,14 @@ macOS 本机部署使用 BSD `lockf`，Linux 合同门禁使用等价的 util-li
 本地镜像构建会注入 OCI `created/revision/source/version` 标签，并由 `bootstrap.sh`
 通过 BuildKit 命令行参数显式生成 `mode=max` SLSA provenance；Compose 文件本身
 保持兼容稳定版 schema。默认 revision 来自当前 Git commit；工作区未提交时追加
-`-dirty`，避免把脏源码误标为已提交版本。自动化构建可显式设置
+`-dirty`，避免把脏源码误标为已提交版本；默认 version 来自仓库根目录的 `VERSION`，
+并在修改仓库外状态前验证它与 CHANGELOG、Web、Helm 等版本合同一致，避免本机镜像与源码
+发布版本失配。自动化构建可显式设置
 `LOCAL_PRODUCTION_IMAGE_CREATED`、`LOCAL_PRODUCTION_IMAGE_REVISION`、
-`LOCAL_PRODUCTION_IMAGE_SOURCE` 与 `LOCAL_PRODUCTION_IMAGE_VERSION`，格式会在写入
-Compose 环境前校验。静态约束可单独执行：
+`LOCAL_PRODUCTION_IMAGE_SOURCE`；`LOCAL_PRODUCTION_IMAGE_VERSION` 只能重复仓库的 canonical
+版本，不能留空，也不能用作 profile、环境名或任意别名。部署类型单独记录为
+`com.slots-game.deployment.profile=local-production`。所有格式会在写入 Compose 环境前校验。
+静态约束可单独执行：
 
 Web、HTTPS 入口与告警代理继续使用固定多架构摘要的官方 `nginxinc/nginx-unprivileged`
 基线和 UID `101`。由于该上游基线尚未包含 Alpine 的 OpenSSL 安全修复，构建按
