@@ -73,7 +73,7 @@ CSP_CONFIG="$evidence_dir/release-nginx.conf" CSP_OUTPUT="$evidence_dir/cloudfro
     if (directives.size !== required.length || required.some((name) => !directives.has(name))) process.exit(1);
     const exact = new Map([
       ["default-src", "\u0027self\u0027"],
-      ["script-src", "\u0027self\u0027"],
+      ["script-src", "\u0027self\u0027 \u0027sha256-vUs+nbdxmdqOL3f/mZqTupLfHkYf373z+iYtj/+kHtM=\u0027"],
       ["style-src", "\u0027self\u0027 \u0027unsafe-inline\u0027"],
       ["img-src", "\u0027self\u0027 data: blob:"],
       ["font-src", "\u0027self\u0027"],

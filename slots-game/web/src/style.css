@@ -1357,19 +1357,21 @@ select {
   text-transform: none;
 }
 
-.status-panel__provider {
+.status-panel__identity {
   position: absolute;
   left: 4px;
   top: 2px;
-  display: block;
+  display: grid;
   width: 68px;
   height: 20px;
   overflow: hidden;
-  background-image: url("/assets/primal-runtime/interface/statusbar_texture0_level1.avif");
-  background-position: -48px -28px;
-  background-repeat: no-repeat;
-  background-size: 1492px 48px;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.78);
+  font: 700 7px/1 system-ui, sans-serif;
+  letter-spacing: 0.08em;
   opacity: 0.9;
+  pointer-events: none;
+  user-select: none;
 }
 
 .status-metric {
@@ -2172,11 +2174,18 @@ select {
   animation: primal-mark-breathe 1.65s ease-in-out infinite;
 }
 
-.launch-loading__mark img {
-  display: block;
+.launch-loading__monogram {
+  display: grid;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  place-items: center;
+  border: 1px solid rgba(255, 195, 72, 0.68);
+  border-radius: 999px;
+  color: #ffc348;
+  background: linear-gradient(135deg, rgba(0, 97, 167, 0.92), rgba(0, 14, 32, 0.96));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 18px rgba(0, 97, 167, 0.36);
+  font: 800 34px/1 system-ui, sans-serif;
+  letter-spacing: 0.08em;
 }
 
 .launch-loading__brand {
@@ -3246,20 +3255,27 @@ select {
   outline: none;
 }
 
-.launcher-powered-by {
+.launcher-independent {
   position: absolute;
   left: 50%;
   bottom: 7.2px;
-  bottom: var(--launcher-powered-bottom, 7.2px);
+  bottom: var(--launcher-independent-bottom, 7.2px);
   z-index: 4;
-  display: block;
+  display: grid;
   width: 140.4px;
-  width: var(--launcher-powered-width, 140.4px);
+  width: var(--launcher-independent-width, 140.4px);
   height: 52.8px;
-  height: var(--launcher-powered-height, 52.8px);
+  height: var(--launcher-independent-height, 52.8px);
+  margin: 0;
+  place-items: center;
   transform: translateX(-50%);
-  object-fit: contain;
+  color: rgba(255, 255, 255, 0.72);
+  font: 600 10px/1.15 "Primal Roboto Condensed", system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
   pointer-events: none;
+  user-select: none;
 }
 
 .feature-preview__sound {
@@ -4404,12 +4420,12 @@ select {
   background: transparent;
 }
 
-.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-panel__provider {
+.game-frame[data-channel="mobile"][data-mobile-layout="ls"] .status-panel__identity {
   left: 0.4%;
   top: 50%;
   width: 68px;
   height: 20px;
-  transform: translateY(-50%) scale(var(--mobile-status-provider-scale, 0.7));
+  transform: translateY(-50%) scale(var(--mobile-status-identity-scale, 0.7));
   transform-origin: left center;
 }
 
@@ -4532,7 +4548,7 @@ select {
   background: transparent;
 }
 
-.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel__provider {
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel__identity {
   left: 7px;
   top: auto;
   bottom: 5px;
@@ -4769,9 +4785,9 @@ select {
  * 将预设的 FPS 标签保留在与 Pixi 内容相同的捕获的 1280x720 投影上。内联变量来自官方 FPS 最小绑定，因此手机和平板电脑不再需要不相关的手动调整文本坐标。
  */
 .game-frame[data-channel="mobile"][data-fps-layout] {
-  --launcher-powered-bottom: 10px;
-  --launcher-powered-width: var(--fps-powered-width, 86px);
-  --launcher-powered-height: var(--fps-powered-height, 32px);
+  --launcher-independent-bottom: 10px;
+  --launcher-independent-width: var(--fps-independent-width, 86px);
+  --launcher-independent-height: var(--fps-independent-height, 32px);
 }
 
 .game-frame[data-channel="mobile"][data-fps-layout] .feature-preview[data-authored="true"] .feature-preview__features {
@@ -4942,21 +4958,21 @@ select {
 }
 
 /*
- * Pass 131：Pass 136 的用户认可的 340x103 G'm GO 图稿取代了早期提供商的遗漏。它被投影到接受的 16px 页脚中；
- * Balance/Bet使用采样的15%半透明官方式盘。
+ * 状态栏以代码原生的个人独立开发标识替代供应商式署名，并保持既有 16px 页脚投影；
+ * Balance/Bet 使用 15% 半透明底板。
  */
-.status-panel__provider {
+.status-panel__identity {
   position: absolute;
   left: 4px;
   top: 50%;
-  display: block;
+  display: grid;
   width: 45.3333px;
   height: 13.3333px;
   transform: translateY(-50%);
+  place-items: center;
   border: 0;
   background: none;
-  object-fit: contain;
-  object-position: left center;
+  font-size: 6px;
   opacity: 1;
   pointer-events: none;
   user-select: none;
@@ -4985,7 +5001,7 @@ select {
   background: transparent;
 }
 
-/* 原版 GAME RULES 是独立的白色文档面；固定公开玩法与运营商补充条款保持来源分层。 */
+/* GAME RULES 使用独立白色文档面；固定公开玩法与运营商补充条款保持来源分层。 */
 #game-menu-rules {
   width: auto;
   margin-top: -8px;
@@ -5448,7 +5464,7 @@ select {
   max-width: calc(42% - var(--mobile-hud-edge));
 }
 
-.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel__provider {
+.game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .status-panel__identity {
   left: var(--mobile-hud-edge);
   bottom: 5%;
   width: clamp(42px, 13cqw, 62px);
@@ -5630,7 +5646,7 @@ select {
 }
 
 .game-frame[data-channel="mobile"]
-  .status-panel[data-money-density="extreme"] .status-panel__provider,
+  .status-panel[data-money-density="extreme"] .status-panel__identity,
 .game-frame[data-channel="mobile"]
   .status-panel[data-money-density="extreme"] .status-panel__game {
   display: none;
@@ -6202,8 +6218,8 @@ select {
 }
 
 /* 三端状态栏最终合约：PC 与移动端使用独立但完整的终态投影。
- * 原版 PC 在 1280x720 的可见 footer 为 16px；整套几何必须
- * 保持同一投影，不能把 24px 字号/行高叠到已验收的 16px provider 与锚点上。
+ * PC 参考基线在 1280x720 的可见 footer 为 16px；整套几何必须
+ * 保持同一投影，不能把 24px 字号/行高叠到已验收的 16px 独立身份标识与锚点上。
  * 移动端继续只消费 ResponsiveLayout 注入的物理区域变量。
  */
 .game-frame:not([data-channel="mobile"]) .status-panel {
@@ -6231,7 +6247,7 @@ select {
   line-height: 16px;
 }
 
-.game-frame:not([data-channel="mobile"]) .status-panel__provider {
+.game-frame:not([data-channel="mobile"]) .status-panel__identity {
   left: 4px;
   top: 50%;
   width: 45.3333px;
@@ -6253,7 +6269,7 @@ select {
   font: 400 8px/16px "Primal Roboto Condensed Regular", "Arial Narrow", sans-serif;
 }
 
-/* 桌面原版没有移动端 Balance/Bet 背板；保留状态条自身的官方纹理。 */
+/* 桌面构图没有移动端 Balance/Bet 背板；保留状态条自身的已验收纹理。 */
 .game-frame:not([data-channel="mobile"]) .status-metric--balance,
 .game-frame:not([data-channel="mobile"]) .status-metric--bet {
   padding: 0;

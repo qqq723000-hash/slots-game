@@ -225,12 +225,15 @@ require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_n
 last_web_stage=$(awk '/^FROM[[:space:]]+/ { stage = $NF } END { print stage }' "$web_dockerfile")
 test "$last_web_stage" = runtime || fail 'web runtime must remain the default final Docker target'
 require_line '    "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",' "$web_package_json"
-require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' "$makefile"
+require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' "$makefile"
 require_regex '^[[:space:]]+node --test deploy/supply-chain/verify-release-version\.test\.mjs$' "$makefile"
 require_regex '^[[:space:]]+node deploy/supply-chain/verify-release-version\.mjs$' "$makefile"
 require_line 'verify-hardening-checklist:' "$makefile"
 require_regex '^[[:space:]]+node --test scripts/verify-hardening-checklist\.test\.mjs$' "$makefile"
 require_regex '^[[:space:]]+node scripts/verify-hardening-checklist\.mjs$' "$makefile"
+require_line 'verify-personal-project-docs:' "$makefile"
+require_regex '^[[:space:]]+node --test scripts/verify-personal-project-docs\.test\.mjs$' "$makefile"
+require_regex '^[[:space:]]+node scripts/verify-personal-project-docs\.mjs$' "$makefile"
 require_regex '^[[:space:]]+sh \./deploy/verify-supply-chain-contract\.sh$' "$makefile"
 require_line 'verify-backend-licenses:' "$makefile"
 require_regex '^[[:space:]]+cd server && go run \./scripts/third-party-notices --check$' "$makefile"
@@ -390,11 +393,11 @@ do
 done
 
 checkout_count=$(grep -F -c -- "uses: actions/checkout@$checkout_sha # v7.0.1" "$frontend_workflow" || true)
-test "$checkout_count" -eq 2 || fail 'frontend workflow must pin both checkout actions to the reviewed SHA'
-test "$(grep -F -c -- '          lfs: true' "$frontend_workflow" || true)" -eq 2 ||
-  fail 'both frontend jobs must materialize the reviewed LFS source'
-test "$(grep -F -c -- '          persist-credentials: false' "$frontend_workflow" || true)" -eq 2 ||
-  fail 'both frontend jobs must remove checkout credentials before repository code runs'
+test "$checkout_count" -eq 4 || fail 'all four frontend jobs must pin checkout to the reviewed SHA'
+test "$(grep -F -c -- '          lfs: true' "$frontend_workflow" || true)" -eq 4 ||
+  fail 'all four frontend jobs must materialize the reviewed LFS source'
+test "$(grep -F -c -- '          persist-credentials: false' "$frontend_workflow" || true)" -eq 4 ||
+  fail 'all four frontend jobs must remove checkout credentials before repository code runs'
 
 invalid_actions=$(grep -RE '^[[:space:]]*uses:[[:space:]]+' "$workflows_root" | grep -Ev '@[0-9a-f]{40}([[:space:]]|$)' || true)
 test -z "$invalid_actions" || fail "workflow contains a mutable or malformed action reference: $invalid_actions"

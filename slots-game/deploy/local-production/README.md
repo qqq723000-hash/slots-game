@@ -1,5 +1,10 @@
 # 本机集成验收
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 此目录在一台 macOS 主机上以 `RGS_ENVIRONMENT=production` 配置分支运行完整集成验收，
 不属于 AWS 正式生产拓扑，也不能证明多可用区、托管服务或云端安全控制已经落地。环境使用
 TLS PostgreSQL、TLS/ACL Valkey 共享准入、一次性迁移器、独立公网/运维监听器、HTTPS 入口、持久化钱包与审计
@@ -110,7 +115,7 @@ pbcopy < "$slots_state_root/secrets/local-operator-admin.token"
 本机运营服务会使用部署时固定的默认测试身份。入口返回 `401` 时，应重新从上述文件
 复制当前令牌，不要把令牌写入 URL、截图、聊天记录或仓库。
 
-本地 profile 把已签名 operator 空闲策略固定为 20 分钟；这是本机验收策略，不是对原游戏
+本地 profile 把已签名 operator 空闲策略固定为 20 分钟；这是本机验收策略，不是对外部参考版本
 公开分钟数的声明。只有成功接受的新经济轮次续期，status/refresh/保活不续期。超时后新的
 launch 会复用同一尚未绝对过期的服务端会话并重置 transport generation，保留余额、revision、
 feature 与 pending result；浏览器不能提交 `sessionId` 选择要复用的会话。Web 构建还固定注入

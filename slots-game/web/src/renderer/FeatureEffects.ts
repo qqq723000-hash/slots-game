@@ -2451,7 +2451,7 @@ export class FeatureEffects {
         // 两个表现流程均归 FreeSpinHudView 所有。额外旋转使用批量预设的收集轨迹； CAPLIMIT 使用重新触发面板。
         return;
       case "win_cap.reached":
-        // 纯经济边界事实，保持可观测但不伪造原游戏不存在的独立动画。
+        // 纯经济边界事实，保持可观测但不额外伪造未定义的独立动画。
         return;
       case "free_spins.completed":
         await this.presentFreeSpinsSummary(event, reducedMotion, token);

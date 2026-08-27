@@ -1,10 +1,10 @@
 variable "contract_version" {
-  description = "企业落地区接口版本"
+  description = "外部运行环境接口版本"
   type        = string
 
   validation {
     condition     = var.contract_version == "1.0.0"
-    error_message = "只接受企业落地区接口 1.0.0。"
+    error_message = "只接受外部运行环境接口 1.0.0。"
   }
 }
 

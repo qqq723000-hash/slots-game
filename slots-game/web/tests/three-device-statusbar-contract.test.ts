@@ -46,7 +46,7 @@ describe("PC/phone/tablet status typography contract", () => {
       /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-metric\s*\{[^}]*height:\s*16px;[^}]*gap:\s*3px;[^}]*line-height:\s*16px;/s,
     );
     expect(finalContract).toMatch(
-      /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-panel__provider\s*\{[^}]*left:\s*4px;[^}]*width:\s*45\.3333px;[^}]*height:\s*13\.3333px;/s,
+      /\.game-frame:not\(\[data-channel="mobile"\]\) \.status-panel__identity\s*\{[^}]*left:\s*4px;[^}]*width:\s*45\.3333px;[^}]*height:\s*13\.3333px;/s,
     );
     expect(finalContract).toContain(
       '.game-frame:not([data-channel="mobile"]) .status-metric--balance { left: 56px; }',

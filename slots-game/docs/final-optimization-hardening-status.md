@@ -1,5 +1,10 @@
 # Primal Rampage 最终优化与加固状态矩阵
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 状态日期：2026-08-27
 
 本文把《前后端持续优化加固清单》映射到当前仓库的实际实现、可重复验证与外部上线门禁。
@@ -23,7 +28,7 @@
 | 首屏与资源分发 | 静态 HTML 首屏、分帧初始化、JS 分块预算、桌面/移动资源清单、SHA-256 发布清单、CloudFront OAC、Brotli 协商、immutable release、HTTP/2+3，以及 Big Win、Free Spins、Wheel 真实事件租约延迟加载已有仓库门禁 | `web/index.html`、`web/src/startup/StreamingAssetRuntime.ts`、`web/src/app/AppController.ts`、`web/src/renderer/VerifiedFeatureArtwork.ts`、`web/src/renderer/BigWinView.ts`、`web/scripts/`、`infra/terraform/modules/web-edge/` | Big Win 四项独占首启减少 4,044,706 B。Free Spins 独占 117,536 B；Wheel 目标包独占 1,507,291 B，其中实际从旧首启路径移出的资源为 1,498,108 B（`wheel_hyperspin.skel` 原本未首启加载）。完整事件闭包包含共享 `spine-ui` 和交互音频：Free Spins desktop/mobile 为 8,128,853 B / 7,781,712 B，Wheel 为 9,518,608 B / 9,171,467 B，不能计作独占请求。没有真实弱网/设备 RUM、Brotli level-11 预压缩、边缘预热或目标 Route 53 延迟路由证据 |
 | 前端安全与恢复 | 浏览器只表现权威结果；一次性 Launch Code 清除、内存 token、严格解码、pending ledger、状态查询、ACK、空闲断开、transport generation、运营商 relaunch、CSP、Trusted Types、资源完整性、生命周期清理、运行期全局故障关闭，以及无持久身份的逐请求 W3C `traceparent` 已实现 | `web/src/protocol/`、`web/src/main.ts`、`deploy/web/` | 生产浏览器指标/视觉遥测出口仍未实现；真实 BFCache、多标签页、辅助技术和设备矩阵仍是外部门禁 |
 | 后端资金与并发 | PostgreSQL 权威事务、服务端 RNG、Operation ID 幂等、原子钱包命令、未知结果只查询、持久恢复、Outbox、Valkey 新意图准入、舱壁/熔断、HPA/PDB、日志脱敏、默认关闭的 W3C/OTLP 服务端追踪，以及默认关闭的高额派奖 `RISK_PENDING` 持久审批状态机已有实现 | `server/internal/rgs/`、`server/internal/postgres/`、`server/internal/recovery/`、`server/internal/outbox/`、`server/internal/sharedadmission/`、`server/internal/telemetry/` | Progressive Jackpot 资金账本尚未实现；高额风控的个人 SSO/MFA、职责分离与双人复核仍由外部运营平台交付；正式钱包 conformance、数学/RNG/RTP 认证、真实 collector 父子链和容量/故障演练均未完成 |
-| 数据、AWS 与运维 | 私有 VPC/EKS/RDS/Valkey、Multi-AZ、PITR、KMS、Secrets、Pod Identity、WAF、ECR、S3 Object Lock、跨区备份接口、AMP/CloudWatch、RDS 总 IOPS/总吞吐与日志派生 deadlock 告警、Vector 低流量磁盘归档有界推进门禁、默认关闭的同区域 PostgreSQL read replica/独立 endpoint/ReplicaLag 与容量告警接口、受控 OTLP collector 接口及供应链门禁已有 IaC/契约 | `infra/terraform/`、`deploy/aws-production/`、`deploy/cluster-production/`、`deploy/observability/` | Vector 0.57 方案的稳定运行名义值为每实例 8,640 条固定心跳/日，启动/重启余量另计；它是竞态缓解而非上游修复，外部归档容量/费用/TLS/保留/合规仍待验收；应用尚未采用 reader endpoint，RDS Proxy/PgBouncer、时间分区、定时 RDS 冷归档和 Bot Control 尚未实现；真实副本/KMS/告警、collector TLS/容量/保留期、Route 53、GuardDuty、共享防火墙和告警到人由企业平台验收 |
+| 数据、AWS 与运维 | 私有 VPC/EKS/RDS/Valkey、Multi-AZ、PITR、KMS、Secrets、Pod Identity、WAF、ECR、S3 Object Lock、跨区备份接口、AMP/CloudWatch、RDS 总 IOPS/总吞吐与日志派生 deadlock 告警、Vector 低流量磁盘归档有界推进门禁、默认关闭的同区域 PostgreSQL read replica/独立 endpoint/ReplicaLag 与容量告警接口、受控 OTLP collector 接口及供应链门禁已有 IaC/契约 | `infra/terraform/`、`deploy/aws-production/`、`deploy/cluster-production/`、`deploy/observability/` | Vector 0.57 方案的稳定运行名义值为每实例 8,640 条固定心跳/日，启动/重启余量另计；它是竞态缓解而非上游修复，外部归档容量/费用/TLS/保留/合规仍待验收；应用尚未采用 reader endpoint，RDS Proxy/PgBouncer、时间分区、定时 RDS 冷归档和 Bot Control 尚未实现；真实副本/KMS/告警、collector TLS/容量/保留期、Route 53、GuardDuty、共享防火墙和告警到人由采用方平台验收 |
 | 文档、品牌与视频 | Primal Rampage 已作为交付品牌统一；README、架构、运行手册、资产权属分类和精确哈希审批失败关闭门禁存在 | `README.md`、`docs/`、`web/ASSETS.md`、`web/asset-provenance.json` | `gameId=iron-colossus`、存储键和 runtime manifest 标识是既有部署/缓存兼容协议，不代表产品品牌且不得在无迁移方案时改名；Primal Rampage 运行素材权利证据未在仓库验证；仓库没有 60 FPS 宣传视频制品。不得通过删除水印或来源声明代替授权和原创替换 |
 
 ## 本轮落地的高优先级补强

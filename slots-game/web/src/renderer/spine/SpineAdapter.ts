@@ -74,7 +74,7 @@ export function createSpineView(data: SpineData, options: SpineViewOptions = {})
 }
 
 /**
- * Play'n GO 将附加帧存储在不透明的 RGB 图集页面上，并对 `add/` 区域路径中的预期材料进行编码。导出的二进制文件可以将这些插槽标记为 NORMAL，
+ * 资产管线将叠加帧存储在不透明的 RGB 图集页面上，并通过 `add/` 区域路径编码预期材质。导出的二进制文件可以将这些插槽标记为 NORMAL，
  * 因此附件交换必须在绘制之前重新声明 Spine 插槽和 Pixi 的当前可渲染内容上的材质。
  */
 export function enforcePrimalRegionBlendModes(

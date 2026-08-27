@@ -29,7 +29,7 @@ describe("Pass 95 official PC loading-blue contract", () => {
     );
   });
 
-  it("uses the frozen ContainerLauncher radial gradient as the final loader background", () => {
+  it("uses the frozen launch-shell radial gradient as the final loader background", () => {
     const loader = lastRuleBody(".launch-loading");
     const declaration = loader.match(/background\s*:\s*([^;]+);/)?.[1]
       ?.replace(/\s+/g, " ")

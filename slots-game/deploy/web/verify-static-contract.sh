@@ -23,6 +23,7 @@ replica_verifier="$script_dir/verify-replica-consistency.mjs"
 replica_verifier_test="$script_dir/verify-replica-consistency.test.mjs"
 browser_smoke="$repo_root/web/scripts/verify-production-browser-bootstrap.mjs"
 browser_smoke_contract_test="$repo_root/web/tests/production-browser-bootstrap-contract.test.ts"
+browser_preflight_verifier="$repo_root/web/scripts/verify-browser-preflight-build.mjs"
 operations_readme="$script_dir/README.md"
 frontend_workflow="$repo_root/../.github/workflows/frontend-conformance.yml"
 nginx_openssl_patch_verifier="$repo_root/deploy/supply-chain/verify-nginx-openssl-patch.sh"
@@ -69,6 +70,7 @@ for required_file in \
   "$replica_verifier_test" \
   "$browser_smoke" \
   "$browser_smoke_contract_test" \
+  "$browser_preflight_verifier" \
   "$operations_readme" \
   "$frontend_workflow" \
   "$nginx_openssl_patch_verifier"
@@ -106,6 +108,8 @@ require_fixed '"licenses:check": "node scripts/generate-third-party-notices.mjs 
 require_fixed '"licenses:check-artifacts": "node scripts/generate-third-party-notices.mjs --check-artifacts"' "$repo_root/web/package.json"
 require_fixed '"licenses:test": "node scripts/test-third-party-notices.mjs"' "$repo_root/web/package.json"
 require_fixed 'vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs' "$repo_root/web/package.json"
+require_fixed 'npm run build:browser-preflight-check' "$repo_root/web/package.json"
+require_fixed '"build:browser-preflight-check": "node scripts/verify-browser-preflight-build.mjs"' "$repo_root/web/package.json"
 require_fixed '"prebuild": "npm run licenses:check && npm run assets:provenance-check"' "$repo_root/web/package.json"
 require_fixed '"pretest": "npm run licenses:test && npm run licenses:check && npm run assets:provenance-check"' "$repo_root/web/package.json"
 if node -e '
@@ -115,7 +119,7 @@ if node -e '
   fail 'postbuild lifecycle hooks are forbidden for approval-gated Web builds'
 fi
 require_fixed 'run: npm run build:determinism-check' "$frontend_workflow"
-require_fixed 'new Set(["index.html", "favicon.ico", "THIRD_PARTY_NOTICES.txt"])' "$repo_root/web/scripts/finalize-production-assets.mjs"
+require_fixed '"browser-preflight.js",' "$repo_root/web/scripts/finalize-production-assets.mjs"
 require_fixed 'npm run licenses:generate' "$operations_readme"
 require_fixed '/THIRD_PARTY_NOTICES.txt' "$operations_readme"
 
@@ -463,7 +467,11 @@ require_fixed 'add_header Referrer-Policy "strict-origin-when-cross-origin" alwa
 require_fixed 'add_header X-Frame-Options "SAMEORIGIN" always;' "$nginx_conf"
 require_fixed 'add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;' "$nginx_conf"
 require_fixed 'add_header Content-Security-Policy ' "$nginx_conf"
-require_fixed "script-src 'self';" "$nginx_conf"
+launch_fragment_scrub_csp_source="'sha256-vUs+nbdxmdqOL3f/mZqTupLfHkYf373z+iYtj/+kHtM='"
+require_fixed "script-src 'self' $launch_fragment_scrub_csp_source;" "$nginx_conf"
+require_fixed "LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE =" "$policy_verifier"
+require_fixed "$launch_fragment_scrub_csp_source" "$policy_verifier"
+require_fixed "$launch_fragment_scrub_csp_source" "$browser_preflight_verifier"
 require_fixed "connect-src 'self';" "$nginx_conf"
 require_fixed "form-action 'none';" "$nginx_conf"
 require_fixed 'trusted-types slots-game-static-html;' "$nginx_conf"
@@ -507,7 +515,7 @@ if grep -E "connect-src[^;]*(ws:|wss:|\*)" "$nginx_conf" >/dev/null; then
   fail "CSP connect-src must not permit wildcard WebSocket origins"
 fi
 if grep -E "script-src[^;]*('unsafe-eval'|'unsafe-inline'|\*|data:|blob:)" "$nginx_conf" >/dev/null; then
-  fail "CSP script-src must allow only self"
+  fail "CSP script-src must allow only self and the reviewed inline scrub hash"
 fi
 if grep -E "trusted-types[^;]*(\*|'allow-duplicates')" "$nginx_conf" >/dev/null; then
   fail "CSP trusted-types must allow only the reviewed static HTML policy"

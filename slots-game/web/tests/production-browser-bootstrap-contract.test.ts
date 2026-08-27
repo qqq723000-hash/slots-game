@@ -123,6 +123,8 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).toContain('"--disable-breakpad"');
     expect(smoke).toContain('send("Runtime.evaluate"');
     expect(smoke).toContain("await import(url)");
+    expect(smoke).toContain('if (releasePath.startsWith("assets/"))');
+    expect(smoke).toContain("禁止在此用 import() 二次执行");
     expect(smoke).toContain('from "../../deploy/web/content-security-policy.mjs"');
     expect(smoke).toContain('"Content-Security-Policy": browserContentSecurityPolicy');
     expect(smoke).toContain("CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE");
@@ -210,6 +212,17 @@ describe("production browser bootstrap contract", () => {
     expect(smoke).toContain("horizontalOverflowDataset");
     expect(smoke).toContain("createPresentationApprovedFixture");
     expect(smoke).toContain("verifyOpeningOverlayLayout");
+    const overlayVerification = smoke.indexOf("const openingOverlayVerification = await verifyOpeningOverlayLayout(");
+    const fastPathNavigationGuard = smoke.indexOf(
+      "if (executionContextsCleared !== expectedExecutionContextsCleared)",
+      overlayVerification,
+    );
+    const openingReadyFastPath = smoke.indexOf(
+      "let browserState = openingOverlayVerification?.browserState",
+      overlayVerification,
+    );
+    expect(fastPathNavigationGuard).toBeGreaterThan(overlayVerification);
+    expect(fastPathNavigationGuard).toBeLessThan(openingReadyFastPath);
     expect(smoke).toContain("featurePreview=force");
     expect(smoke).toContain("const overlayDeadline = Date.now() + startupTimeoutMs");
     expect(smoke).toContain("controlled-transaction-fixture-feature-mode-none");

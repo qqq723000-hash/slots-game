@@ -1,11 +1,16 @@
 # AWS 正式生产架构
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 状态：AWS 目标架构与平台交付契约
 
 基准更新时间：2026-08-21
 
-本文定义本仓库唯一正式生产目标。它把应用能力与仓库内 `infra/terraform` 映射到 AWS
-托管服务，并明确企业落地区、运营商集成和安全团队在目标账号中仍必须提供的能力。
+本文定义本项目唯一的目标生产参考架构。它把应用能力与仓库内 `infra/terraform` 映射到 AWS
+托管服务，并明确采用方 AWS 基础环境、运营商集成和采用方安全责任角色在目标账号中仍必须提供的能力。
 本文和 Terraform 源码都不是资源已经创建的声明；AWS 实际状态只能由目标账号中受保护的
 plan/apply、云资源清单与验收证据证明。
 
@@ -21,7 +26,7 @@ plan/apply、云资源清单与验收证据证明。
 - 数据库基线是 Amazon RDS for PostgreSQL Multi-AZ **DB instance deployment**，运行时与迁移器
   使用分离角色和 `sslmode=verify-full`。RDS Proxy 只有在连接固定、会话状态和事务语义压测通过后
   才可启用。
-- 公司必须提供正式运营商控制面：管理员经企业 SSO、授权和审计后，由服务端签名调用
+- 采用方必须提供正式运营商控制面：管理员经企业 SSO、授权和审计后，由服务端签名调用
   `/operator/v1/launches` 并把一次性交接值传给玩家。不得把 `local-operator` 管理令牌或 operations
   Bearer 交给普通浏览器。
 - 正式秘密存放在 AWS Secrets Manager，独立同步控制器通过 EKS Pod Identity 或等价短期身份读取
@@ -31,7 +36,7 @@ plan/apply、云资源清单与验收证据证明。
   `remote_write` 到 Amazon Managed Service for Prometheus；Amazon Managed Grafana 查询 AMP 与
   CloudWatch。结构化容器日志由 CloudWatch Observability EKS add-on 的 OpenTelemetry 管道采集。
 - 数据库备份、CloudTrail/访问日志与必要归档执行跨账号、跨区域复制；备份保管库、KMS 密钥、保留
-  期和恢复演练由安全与平台团队审批。
+  期和恢复演练由采用方安全与平台责任角色审批。
 - `local-operator`、本机 PostgreSQL、Compose Prometheus/Grafana/Vector 只属于本地验收，不得部署
   到 AWS 正式环境。
 
@@ -39,7 +44,7 @@ plan/apply、云资源清单与验收证据证明。
 
 下树中的“应用专属基础设施”由本仓库 `infra/terraform` 交付，其中包括 API Regional WAF；账号工厂、
 state/部署身份、Route 53/ACM、静态 Web 的 CloudFront global WAF、可选 Shield Advanced/DRT 和组织级
-安全能力由公司落地区提供。仓库没有假装任何 AWS 账号已经执行这些源码。
+安全能力由采用方 AWS 基础环境提供。仓库没有假装任何 AWS 账号已经执行这些源码。
 
 ```text
 AWS Organizations
@@ -74,7 +79,7 @@ AWS Organizations
         │       ├── regional ACM + 固定 TLS 1.2/1.3 policy、仅 HTTPS listener、受控安全组
         │       └── IP target → 业务 Pod:8080；健康检查 → 私有 operations Pod:8081
         │
-        ├── 正式运营商控制面（公司外部服务，非本 Chart）
+        ├── 正式运营商控制面（采用方负责的项目外部服务，非本 Chart）
         │   ├── 企业 SSO/MFA → RBAC/ABAC → 管理操作审计
         │   ├── 服务端保管用途限定的运营商请求签名密钥
         │   ├── 签名调用 RGS /operator/v1/launches
@@ -236,7 +241,7 @@ flowchart TB
 
 - Web 静态表现层；
 - 一次性数据库迁移器；
-- 公司正式运营商入口、钱包和审计系统；
+- 采用方正式运营商入口、钱包和审计系统；
 - 边缘安全、API 共享准入、日志、指标与发布平台；
 - 未来经协议、故障模式和对账验证后拆出的纯异步只读/分析消费者。
 
@@ -258,9 +263,9 @@ flowchart TB
 | PostgreSQL | RDS Multi-AZ instance | 会话、轮次、nonce、租约、游标和 outbox 权威状态 | 公网暴露；与运行时共用管理角色 |
 | PostgreSQL 可选读扩展 | 同区域 RDS read replica，默认关闭 | 仅承载经应用显式分类的非权威读取 | 接受写入；冒充 Multi-AZ standby、备份、Proxy 或跨区 DR |
 | Valkey 共享准入 | ElastiCache Multi-AZ replication group | 跨 API 副本的新启动与 Spin 身份令牌桶 | 充当资金、轮次、钱包结果或 `operationId` 幂等权威 |
-| 正式运营商控制面 | 公司服务 | SSO、授权、管理审计、签名启动与一次性交接 | 把管理 token/签名 key/operations Bearer 发给玩家 |
-| 正式钱包 | 公司或运营商服务 | 余额、原子借贷、查询和回滚协议 | 用 `local-operator` 代替；忽略幂等查询 |
-| 正式审计接收端 | 公司审计服务 | 持久化、验签、按 `eventId` 去重与归档 | 仅内存接收；未持久化即返回成功 |
+| 正式运营商控制面 | 采用方负责的项目外部服务 | SSO、授权、管理审计、签名启动与一次性交接 | 把管理 token/签名 key/operations Bearer 发给玩家 |
+| 正式钱包 | 采用方或外部运营服务 | 余额、原子借贷、查询和回滚协议 | 用 `local-operator` 代替；忽略幂等查询 |
+| 正式审计接收端 | 采用方审计服务 | 持久化、验签、按 `eventId` 去重与归档 | 仅内存接收；未持久化即返回成功 |
 | Prometheus Agent/ADOT | EKS 平台组件 | 认证抓取、限流处理、远程写入 AMP | 访问钱包/数据库私钥；把 token 写进配置日志 |
 | CloudWatch 日志管道 | EKS add-on + CloudWatch | 节点采集、元数据、脱敏、保留和管道告警 | 无界缓冲；采集请求体、token、签名或 DSN |
 | `local-operator` | 仅本机 Compose | 本地启动器、模拟签名钱包和接收端 | 出现在正式 EKS、正式拓扑或生产验收证据中 |
@@ -309,7 +314,7 @@ PostgreSQL CloudWatch log export 由精确 `"deadlock detected"` metric filter �
 MetricDataQueries；不会把虚拟 Total 指标伪装为 `AWS/RDS` 原生指标，也不会误用
 Aurora cluster 指标。所有告警显式固定 unit、SNS 动作与 `notBreaching` 缺失数据语义。`notBreaching`
 不证明采集健康，CloudWatch 也不会自动产生死锁事务快照；受控日志/Performance Insights 取证和不可变
-事件归档仍是企业平台外部门禁。
+事件归档仍是采用方平台外部门禁。
 
 ## 7. Web 版本隔离
 
@@ -373,7 +378,7 @@ Web bucket 没有对 `releases/*` 设置全局 `DeleteObject`/`DeleteObjectVersi
 
 ## 10. 已实现能力与平台待办
 
-| 项目 | 仓库源码与 IaC 已实现 | 目标账号/企业平台仍须实施并验收 |
+| 项目 | 仓库源码与 IaC 已实现 | 目标账号/采用方平台仍须实施并验收 |
 | --- | --- | --- |
 | 应用 | RGS API/Worker 独立部署边界、迁移器、Web、探针、结构化日志 | 正式钱包、运营商入口、审计 sink |
 | Kubernetes | Helm、HPA/PDB/NetworkPolicy，以及 Terraform VPC、EKS、节点组和核心 add-on 接口 | 落地区账号/身份/state、平台控制器安装，以及目标集群实时策略证据 |

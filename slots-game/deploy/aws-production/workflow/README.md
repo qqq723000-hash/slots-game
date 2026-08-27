@@ -1,5 +1,10 @@
 # AWS 工作流交付边界
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 本目录由三个 GitHub Actions 工作流调用。只有人工 `workflow_dispatch` 按目标环境共享同一个不可取消
 concurrency group；PR 与 push 的无凭据静态 run 使用“workflow identity + ref”独立分组，避免 GitHub 在同组
 已有 running 与 pending 时用新的 pending 替换并取消另一条 workflow 的 required check：
@@ -26,7 +31,7 @@ API 或 CloudFront 任一 staged WAF rule 从 Count 晋升为 Block，或者已�
 前读取精确 S3 version，重算 SHA-256，并重验 SSE-KMS、COMPLIANCE Object Lock、schema、原始 40 位
 source SHA 与 configuration hash；它不会把应用发布的 `GITHUB_SHA` 当成 WAF 证据 SHA，历史批准到期也
 不是阻断日常发布的租约。规则配置或证据引用一旦变化，infra pre-apply 会再次要求未过期审批。对象正文
-不会输出到日志；这不替代安全团队对原始观测真实性的审批。
+不会输出到日志；这不替代采用方安全责任角色对原始观测真实性的审批。
 
 GitHub Branch Protection API 的 required status-check context 使用 job 的 `name`，不包含 workflow display
 name。为避免三个 workflow 共同使用 job id `static-contract` 造成歧义，分支保护必须精确配置以下三个唯一

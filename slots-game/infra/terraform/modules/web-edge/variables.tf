@@ -63,7 +63,7 @@ variable "waf_web_acl_arn" {
 }
 
 variable "waf_evidence_kms_key_arn" {
-  description = "CloudFront WAF Block 晋级证据对象必须使用的企业批准 KMS key ARN"
+  description = "CloudFront WAF Block 晋级证据对象必须使用的采用方批准 KMS key ARN"
   type        = string
 
   validation {
@@ -73,7 +73,7 @@ variable "waf_evidence_kms_key_arn" {
 }
 
 variable "waf_rate_limit_per_minute" {
-  description = "企业平台 CloudFront WAF 的每来源 IP 一分钟静态请求限额"
+  description = "采用方 CloudFront WAF 的每来源 IP 一分钟静态请求限额"
   type        = number
 
   validation {
@@ -87,7 +87,7 @@ variable "waf_rate_limit_per_minute" {
 }
 
 variable "waf_rate_rule_rollout" {
-  description = "企业 CloudFront WAF 按来源 IP rate rule 的 Count→Block 校准状态"
+  description = "采用方 CloudFront WAF 按来源 IP rate rule 的 Count→Block 校准状态"
   type = object({
     action             = string
     evidence_reference = string
@@ -105,7 +105,7 @@ variable "waf_rate_rule_rollout" {
 }
 
 variable "waf_log_group_name" {
-  description = "企业平台 CloudFront WAF 的 us-east-1 CloudWatch Log Group 名"
+  description = "采用方 CloudFront WAF 的 us-east-1 CloudWatch Log Group 名"
   type        = string
 
   validation {
@@ -118,7 +118,7 @@ variable "waf_log_group_name" {
 }
 
 variable "waf_managed_rule_rollout" {
-  description = "企业 CloudFront WAF managed rules 的 Count→Block 状态与观测证据"
+  description = "采用方 CloudFront WAF managed rules 的 Count→Block 状态与观测证据"
   type = object({
     action             = string
     evidence_reference = string
@@ -136,7 +136,7 @@ variable "waf_managed_rule_rollout" {
 }
 
 variable "waf_managed_rule_versions" {
-  description = "企业 CloudFront WAF 三个 AWS Managed Rule Group 的精确版本交接"
+  description = "采用方 CloudFront WAF 三个 AWS Managed Rule Group 的精确版本交接"
   type        = map(string)
 
   validation {

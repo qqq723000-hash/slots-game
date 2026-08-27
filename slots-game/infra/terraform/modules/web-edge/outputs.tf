@@ -54,7 +54,7 @@ output "log_prefix" {
 }
 
 output "waf_web_acl_arn" {
-  description = "CloudFront distribution 绑定的企业 global WAFv2 Web ACL ARN"
+  description = "CloudFront distribution 绑定的采用方 global WAFv2 Web ACL ARN"
   value       = var.waf_web_acl_arn
 }
 

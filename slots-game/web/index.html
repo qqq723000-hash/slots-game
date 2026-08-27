@@ -3,6 +3,84 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+    <script id="launch-fragment-scrub">
+(function () {
+  "use strict";
+  var timeoutHandle = null;
+  var available = true;
+  var originalPageUrl = String(window.location.href || "");
+  var fragment = String(window.location.hash || "");
+  var retained = [];
+  var hadLaunchHandoff = false;
+  if (fragment.charAt(0) === "#") fragment = fragment.slice(1);
+  if (fragment) {
+    var entries = fragment.split("&");
+    for (var index = 0; index < entries.length; index += 1) {
+      var entry = entries[index];
+      var separator = entry.indexOf("=");
+      var encodedKey = separator < 0 ? entry : entry.slice(0, separator);
+      var decodedKey = encodedKey;
+      try {
+        decodedKey = decodeURIComponent(encodedKey.replace(/\+/g, " "));
+      } catch (_) {
+        decodedKey = encodedKey;
+      }
+      if (decodedKey === "rgsLaunchCode"
+        || decodedKey === "rgsOperatorId"
+        || decodedKey === "rgsSessionId") hadLaunchHandoff = true;
+      else retained.push(entry);
+    }
+  }
+  if (hadLaunchHandoff) {
+    var sanitizedUrl = String(window.location.pathname || "/")
+      + String(window.location.search || "")
+      + (retained.length ? "#" + retained.join("&") : "");
+    try {
+      window.history.replaceState(window.history.state, "", sanitizedUrl);
+    } catch (_) {
+      available = false;
+      originalPageUrl = "";
+      try { window.location.replace(sanitizedUrl); } catch (_) {}
+    }
+  }
+  var take = function () {
+    if (!available) return null;
+    available = false;
+    if (timeoutHandle !== null) window.clearTimeout(timeoutHandle);
+    timeoutHandle = null;
+    var pageUrl = originalPageUrl;
+    originalPageUrl = "";
+    if (!pageUrl) return null;
+    return Object.freeze({
+      schema: 1,
+      pageUrl: pageUrl,
+      hadLaunchHandoff: hadLaunchHandoff
+    });
+  };
+  try {
+    Object.defineProperty(window, "__slotsEarlyLaunchHandoff", {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: Object.freeze({
+        schema: 1,
+        hadLaunchHandoff: hadLaunchHandoff,
+        take: take
+      })
+    });
+  } catch (_) {
+    available = false;
+    originalPageUrl = "";
+    return;
+  }
+  timeoutHandle = window.setTimeout(function () {
+    available = false;
+    timeoutHandle = null;
+    originalPageUrl = "";
+  }, 15000);
+}());
+    </script>
+    <script src="%BASE_URL%browser-preflight.js"></script>
     <meta name="theme-color" content="#000e20" />
     <meta name="description" content="Primal Rampage — a server-authoritative monster-city VideoSlot experience." />
     <title>Primal Rampage</title>
@@ -20,9 +98,9 @@
         aria-live="polite"
       >
         <div class="launch-loading__mark" aria-hidden="true">
-          <img src="assets/brand/powered-by-gm-go.png" alt="" />
+          <span class="launch-loading__monogram">PR</span>
         </div>
-        <span class="launch-loading__brand">Powered by G'm GO</span>
+        <span class="launch-loading__brand">Independent developer</span>
         <span class="launch-loading__status">Loading game resources</span>
         <div
           class="launch-loading__track"

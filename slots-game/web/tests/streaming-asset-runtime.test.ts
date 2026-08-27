@@ -712,6 +712,32 @@ describe("StreamingAssetRuntime Phase-B shadow bridge", () => {
       expect(lease.release()).toBe(false);
     });
 
+    it("preserves a nonzero post-release terminal count instead of hiding failed cleanup", () => {
+      const runtime = new StreamingAssetRuntime({
+        channel: "desktop",
+        mode: "shadow",
+      });
+      const internal = runtime as unknown as {
+        activeConsumerLeases: Set<{ release(): boolean }>;
+        consumerManager: { retainedPayloadBytes(): number } | null;
+      };
+      internal.consumerManager = { retainedPayloadBytes: () => 7 };
+      internal.activeConsumerLeases.add({
+        release: () => {
+          throw new Error("simulated release failure");
+        },
+      });
+
+      runtime.destroy();
+
+      expect(runtime.diagnostics()).toMatchObject({
+        manifestState: "destroyed",
+        retainedPayloadBytes: 7,
+        packages: [],
+      });
+      expect(internal.consumerManager).toBeNull();
+    });
+
     it("synchronously releases active stage leases on destroy", async () => {
       const runtime = new StreamingAssetRuntime({
         channel: "desktop",

@@ -1116,7 +1116,7 @@ cloudfront_waf_id=${cloudfront_waf_arn##*/}
         rate.keys.sort == %w[AggregateKeyType EvaluationWindowSec Limit] &&
         rate_rule.fetch("Action").keys == [expected_rate_action == "count" ? "Count" : "Block"]
     abort "CloudFront WAF 规则集合夹带未审批规则" unless rules.length == managed.length + 1
-  ' "$delivery_json" || fail 'CloudFront global WAF 实际规则与企业交接合同不一致'
+  ' "$delivery_json" || fail 'CloudFront global WAF 实际规则与采用方交接合同不一致'
 
 "$aws_binary" wafv2 get-logging-configuration \
   --resource-arn "$cloudfront_waf_arn" \

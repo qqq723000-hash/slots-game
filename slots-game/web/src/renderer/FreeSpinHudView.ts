@@ -145,7 +145,7 @@ function mobileHudNode(
   });
 }
 
-/** 从原版 mobile config 提取的 Free Spins HUD 根节点投影。 */
+/** 从移动端参考配置提取的 Free Spins HUD 根节点投影。 */
 export const FREE_SPIN_HUD_MOBILE_LAYOUTS: Readonly<
   Record<MobileHandMode, Readonly<Record<MobileLayoutProfile, FreeSpinHudMobileLayout>>>
 > = Object.freeze({
@@ -215,7 +215,7 @@ export function freeSpinHudDesktopCounterLayout(
 }
 
 /**
- * 将 HUD 投影到当前连续 gameplay 设计域。参考档位只选择原版节点规则，
+ * 将 HUD 投影到当前连续 gameplay 设计域。参考档位只选择已验收节点规则，
  * 不选择或锁定物理视口尺寸。
  */
 export function freeSpinHudResponsiveLayout(

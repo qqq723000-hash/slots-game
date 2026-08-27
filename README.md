@@ -1,6 +1,11 @@
-# Primal Rampage
+# Primal Rampage 个人独立商用级源码交付
 
-面向公司正式交付的槽位游戏源码仓库。生产主线以 AWS 多可用区集群为目标：静态 Web 发布到
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+本仓库由个人独立开发者维护，按商用级源码交付标准建设。目标生产架构采用 AWS 多可用区集群：静态 Web 发布到
 Amazon S3 并通过 CloudFront OAC 分发，公共 API 经 Route 53、AWS WAF、ALB 进入 Amazon EKS，
 权威交易状态存储在 Amazon RDS for PostgreSQL Multi-AZ 实例。
 
@@ -20,12 +25,12 @@ Amazon S3 并通过 CloudFront OAC 分发，公共 API 经 Route 53、AWS WAF、
 变更记录、Web 包元数据、Helm Chart 和发布示例必须由机器门禁保持一致；只有受保护 Tag、
 GitHub Release 说明以及 OCI/SBOM/来源证明/签名证据全部完成后，才构成正式发布。
 
-macOS Docker Compose 仅用于开发、集成与端到端验收，不是公司正式生产拓扑，也不能作为 AWS
+macOS Docker Compose 仅用于开发、集成与端到端验收，不是目标生产拓扑，也不能作为 AWS
 高可用、灾难恢复或安全控制已经生效的证明。
 
 本仓库同时交付应用源码、容器构建、Helm Chart、验证门禁与应用专属 AWS Terraform。
 `slots-game/infra/terraform/` 可创建 VPC、EKS、RDS、ElastiCache Valkey、ECR、Secrets Manager
-元数据、S3/CloudFront、应用 API Regional WAF、AMP、CloudWatch、备份与归档基线；企业落地区
+元数据、S3/CloudFront、应用 API Regional WAF、AMP、CloudWatch、备份与归档基线；采用方的 AWS 基础环境
 仍必须提供账号、state/部署身份、DNS、ACM 证书、可选 Shield Advanced 订阅和组织级安全能力。
 源码中存在 IaC 不等于任何 AWS
 账号已经执行 `plan`/`apply` 或通过上线验收。

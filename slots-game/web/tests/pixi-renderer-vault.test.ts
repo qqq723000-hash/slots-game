@@ -295,7 +295,7 @@ describe("PixiRenderer Wheel result reveal", () => {
       renderer.cueFeatureEnvironment({ type: "wheel.started" }, false);
       renderer.cueFeatureEnvironment(award, false);
 
-    // Wheel 结果虽已提前解码，但在真正落定前必须保持不可见；原版不会在场景
+    // Wheel 结果虽已提前解码，但在真正落定前必须保持不可见；验收基线不会在场景
     // 进入或就绪时变暗。
       expect(darkenAllPanels).not.toHaveBeenCalled();
       expect(highlightAward).not.toHaveBeenCalled();

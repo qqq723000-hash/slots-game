@@ -17,7 +17,7 @@ concurrency:
 jobs:
   verify-frontend:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: slots-game/web
@@ -77,6 +77,18 @@ jobs:
           VITE_RGS_HOST_ORIGIN: https://operator.ci.invalid
         run: npm run build:browser-smoke
 
+      - name: Install Firefox and WebKit engines
+        # Ubuntu runner 的受管 Chrome 已由上一步真实 Chrome 门禁验证；这里只下载其余引擎。
+        run: npx playwright install --with-deps firefox webkit
+
+      - name: Verify production transaction across browser engines
+        env:
+          VITE_RGS_BASE_URL: https://rgs.ci.invalid
+          VITE_RGS_BET_OPTIONS_MINOR: 100,200,500
+          VITE_RGS_DEFAULT_BET_MINOR: "200"
+          VITE_RGS_HOST_ORIGIN: https://operator.ci.invalid
+        run: npm run build:browser-matrix
+
       - name: Rebuild and verify deterministic release bytes
         env:
           VITE_RGS_BASE_URL: https://rgs.ci.invalid
@@ -84,6 +96,86 @@ jobs:
           VITE_RGS_DEFAULT_BET_MINOR: "200"
           VITE_RGS_HOST_ORIGIN: https://operator.ci.invalid
         run: npm run build:determinism-check
+
+  verify-special-features:
+    name: verify-special-features (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    # 脚本保留 15 分钟单浏览器硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    defaults:
+      run:
+        working-directory: slots-game/web
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: slots-game/web/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install selected browser engine
+        run: npx playwright install --with-deps "${{ matrix.browser }}"
+
+      - name: Verify non-production special-feature fixtures
+        run: npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"
+
+  verify-edge:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+        working-directory: slots-game/web
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: slots-game/web/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build production frontend
+        env:
+          VITE_RGS_BASE_URL: https://rgs.ci.invalid
+          VITE_RGS_BET_OPTIONS_MINOR: 100,200,500
+          VITE_RGS_DEFAULT_BET_MINOR: "200"
+          VITE_RGS_HOST_ORIGIN: https://operator.ci.invalid
+        run: npm run build
+
+      - name: Verify production transaction in Microsoft Edge
+        env:
+          VITE_RGS_BASE_URL: https://rgs.ci.invalid
+          VITE_RGS_BET_OPTIONS_MINOR: 100,200,500
+          VITE_RGS_DEFAULT_BET_MINOR: "200"
+          VITE_RGS_HOST_ORIGIN: https://operator.ci.invalid
+        run: npm run build:browser-matrix -- --browser msedge
+
+      - name: Verify non-production special-feature fixtures in Microsoft Edge
+        run: npm run test:visual-fixtures-browser-matrix -- --browser msedge
 
   verify-web-static-image:
     runs-on: ubuntu-latest

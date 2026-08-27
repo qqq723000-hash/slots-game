@@ -1,14 +1,9 @@
-// @ts-nocheck -- 仅在 Node 中运行的源码与资源契约测试。
-import { createHash } from "node:crypto";
+// @ts-nocheck -- 仅在 Node 中运行的源码契约测试。
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { computeResponsiveLayoutSnapshot } from "../src/renderer/ResponsiveLayout";
 
 const css = readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
-const logo = readFileSync(
-  new URL("../public/assets/brand/statusbar-gm-go.png", import.meta.url),
-);
-
 const targets = [
   { width: 390, height: 844, designWidth: 390, designHeight: 844, profile: "pt", top: 760, statusHeight: 84 },
   { width: 844, height: 390, designWidth: 844, designHeight: 390, profile: "ls", top: 372, statusHeight: 18 },
@@ -43,27 +38,25 @@ describe("Pass 142 mobile/tablet status-bar containment", () => {
   });
 
   it.each(targets.filter(({ profile }) => profile === "ls"))(
-    "keeps the scaled landscape provider clear of Balance at $width x $height",
+    "keeps the scaled landscape identity clear of Balance at $width x $height",
     ({ designWidth, statusHeight }) => {
       const scale = statusHeight / 25.7142857143;
-      const provider = {
+      const identity = {
         left: designWidth * 0.004,
         width: 68 * scale,
         height: 20 * scale,
       };
       const balanceLeft = statusHeight * 3.05;
-      expect(provider.left).toBeGreaterThanOrEqual(0);
-      expect(provider.height).toBeLessThanOrEqual(statusHeight);
-      expect(provider.left + provider.width).toBeLessThan(balanceLeft);
+      expect(identity.left).toBeGreaterThanOrEqual(0);
+      expect(identity.height).toBeLessThanOrEqual(statusHeight);
+      expect(identity.left + identity.width).toBeLessThan(balanceLeft);
       expect(balanceLeft).toBeLessThan(designWidth);
     },
   );
 
-  it("retains the exact user-approved G'm GO source", () => {
-    expect(logo.readUInt32BE(16)).toBe(340);
-    expect(logo.readUInt32BE(20)).toBe(103);
-    expect(logo[25]).toBe(6);
-    expect(createHash("sha256").update(logo).digest("hex"))
-      .toBe("73c39cc74c061d79d7c4395db3c4ce561d007569e2df8a77d4299ba3883d8295");
+  it("keeps the independent identity code-native at every mobile status size", () => {
+    expect(css).toMatch(/\.status-panel__identity\s*\{[^}]*background:\s*none;/s);
+    expect(css).toContain("--mobile-status-identity-scale");
+    expect(css).not.toMatch(/\.status-panel__identity\s*\{[^}]*url\(/s);
   });
 });

@@ -110,35 +110,31 @@ describe("authored feature preview", () => {
     );
   });
 
-  it("renders the approved G'm GO provider mark without synthetic atlas pieces", () => {
+  it("renders a code-native independent-development caption", () => {
     const overlay = readFileSync(new URL("../src/ui/DomOverlay.ts", import.meta.url), "utf8");
-    const mark = readFileSync(
-      new URL("../public/assets/brand/powered-by-gm-go.png", import.meta.url),
+    expect(overlay).toContain(
+      '<p class="launcher-independent">Independent developer build</p>',
     );
-
-    expect(mark.subarray(1, 4).toString("ascii")).toBe("PNG");
-    expect(mark.byteLength).toBeGreaterThan(1_024);
-    expect(overlay).toContain('publicAssetUrl("assets/brand/powered-by-gm-go.png")');
-    expect(overlay).toMatch(/<img\s+[\s\S]*?class="launcher-powered-by"[\s\S]*?role="img"[\s\S]*?aria-label="Powered by G'm GO"[\s\S]*?\/>/);
-    expect(overlay).not.toContain("<span>Powered by</span>");
+    expect(overlay).not.toContain("assets/brand/");
+    expect(overlay).not.toMatch(/launcher-independent[^>]*data-static-image/);
     expect(overlay).not.toMatch(/<i[^>]*--statusbar-texture/);
   });
 
   it("locks the final authored mark bounds and caption anchor without later overrides", () => {
     const css = readFileSync(new URL("../src/style.css", import.meta.url), "utf8");
-    const poweredByRules = [...css.matchAll(/\.launcher-powered-by\s*\{([^}]*)\}/g)];
+    const independentRules = [...css.matchAll(/\.launcher-independent\s*\{([^}]*)\}/g)];
     const captionRule = css.match(
       /\.feature-preview\[data-authored="true"\] \.feature-card__copy\s*\{([^}]*)\}/,
     );
 
-    expect(poweredByRules).toHaveLength(1);
-    expect(poweredByRules[0]?.[1]).toMatch(/left:\s*50%;/);
-    expect(poweredByRules[0]?.[1]).toMatch(/bottom:\s*7\.2px;/);
-    expect(poweredByRules[0]?.[1]).toMatch(/width:\s*140\.4px;/);
-    expect(poweredByRules[0]?.[1]).toMatch(/height:\s*52\.8px;/);
-    expect(poweredByRules[0]?.[1]).toMatch(/transform:\s*translateX\(-50%\);/);
-    expect(poweredByRules[0]?.[1]).toMatch(/object-fit:\s*contain;/);
-    expect(css).not.toMatch(/\.launcher-powered-by\s+i\s*\{/);
+    expect(independentRules).toHaveLength(1);
+    expect(independentRules[0]?.[1]).toMatch(/left:\s*50%;/);
+    expect(independentRules[0]?.[1]).toMatch(/bottom:\s*7\.2px;/);
+    expect(independentRules[0]?.[1]).toMatch(/width:\s*140\.4px;/);
+    expect(independentRules[0]?.[1]).toMatch(/height:\s*52\.8px;/);
+    expect(independentRules[0]?.[1]).toMatch(/transform:\s*translateX\(-50%\);/);
+    expect(independentRules[0]?.[1]).toMatch(/text-transform:\s*uppercase;/);
+    expect(independentRules[0]?.[1]).not.toMatch(/object-fit:/);
     expect(captionRule?.[1]).toMatch(/top:\s*509px;/);
     expect(captionRule?.[1]).not.toMatch(/top:\s*499px;/);
   });

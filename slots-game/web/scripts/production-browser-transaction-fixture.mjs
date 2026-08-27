@@ -155,9 +155,9 @@ function binding(options) {
   return {
     operatorId: options.operatorId,
     sessionId: options.sessionId,
-    gameId: "primal-rampage",
-    definitionVersion: "browser-gate-v1",
-    definitionHash: DEFINITION_HASH,
+    gameId: options.gameId ?? "primal-rampage",
+    definitionVersion: options.definitionVersion ?? "browser-gate-v1",
+    definitionHash: options.definitionHash ?? DEFINITION_HASH,
     currency: "EUR",
     currencyExponent: 2,
     jurisdiction: "GB",

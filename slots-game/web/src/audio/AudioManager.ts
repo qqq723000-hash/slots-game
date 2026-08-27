@@ -612,7 +612,7 @@ export class AudioManager {
     if (inFreeSpins) {
       this.endFreeSpinsLoop(options, "none");
     } else {
-      // 原版不会为 Big Win 重新启动 Base 音乐。两个源都保持运行，并且只有当前选定的茎会停靠 2 秒。
+      // 已验收声轨不会为 Big Win 重新启动 Base 音乐。两个源都保持运行，并且只有当前选定的茎会停靠 2 秒。
       this.baseMusicDocked = true;
       this.baseMusicPot.dock();
       this.stopBaseMusicTicker();

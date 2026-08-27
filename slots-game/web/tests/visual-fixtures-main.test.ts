@@ -41,6 +41,7 @@ describe("visual fixture entry source contract", () => {
       .toBeLessThan(fixtureMain.indexOf("await AppController.create"));
     expect(fixtureMain).toContain('body.dataset.fixtureStatus = "booting"');
     expect(fixtureMain).toContain('body.dataset.fixtureStatus = "failed"');
+    expect(fixtureMain).toContain("body.dataset.fixtureStartupError = error instanceof Error");
   });
 
   it("bypasses preview through dependency injection without mutating player storage", () => {
@@ -182,6 +183,8 @@ describe("visual fixture entry source contract", () => {
       requirement: "conditional",
       mode: "authored",
     });
+    expect(dataset.fixtureVisualActiveIds).toBe("wheel.spin");
+    expect(dataset.fixtureVisualActiveOperations).toBe(`wheel.spin@${wheel.operationId}`);
     reporter.complete(wheel);
     reporter.failedToStart({
       id: "wheel.summary",
@@ -211,6 +214,8 @@ describe("visual fixture entry source contract", () => {
     expect(dataset.fixtureVisualFailureCount).toBe("2");
     expect(dataset.fixtureVisualLoadedCount).toBe("1");
     expect(dataset.fixtureVisualActiveCount).toBe("0");
+    expect(dataset.fixtureVisualActiveIds).toBe("");
+    expect(dataset.fixtureVisualActiveOperations).toBe("");
     expect(dataset.fixtureVisualMissingRequired).toBe("");
   });
 
@@ -227,8 +232,23 @@ describe("visual fixture entry source contract", () => {
     expect(destroyBody).toContain("clearVisualFixturePresentationBranches(body.dataset)");
     expect(destroyBody).toContain("clearVisualFixtureTrace(body.dataset)");
     expect(destroyBody).toContain("delete body.dataset.fixtureVisualKind");
+    expect(destroyBody).toContain("delete body.dataset.fixtureVisualActiveIds");
+    expect(destroyBody).toContain("delete body.dataset.fixtureVisualActiveOperations");
     expect(destroyBody).toContain("delete body.dataset.fixtureVisualMissingRequired");
-    expect(destroyBody.indexOf("destroyed = true")).toBeLessThan(destroyBody.indexOf("app?.destroy()"));
+    expect(destroyBody).not.toContain("retainedPayloadBytesAtDestroy");
+    expect(destroyBody).not.toContain("activeVisualCountAtDestroy");
+    expect(destroyBody).toContain("getDestroyedStreamingAssetDiagnostics()");
+    expect(destroyBody).toContain("retainedPayloadBytesAfterDestroy");
+    expect(destroyBody).toContain("activeVisualCountAfterDestroy");
+    expect(destroyBody).toContain("fixtureDestroyAppDisposed");
+    expect(destroyBody).toContain("fixtureDestroyCanvasCount");
+    expect(destroyBody).toContain("fixtureDestroyRetainedPayloadBytes");
+    expect(destroyBody).toContain("fixtureDestroySpinCount");
+    expect(destroyBody).toContain("fixtureDestroyVisualActiveCount");
+    expect(destroyBody.indexOf("destroyed = true"))
+      .toBeLessThan(destroyBody.indexOf("activeApp?.destroy()"));
+    expect(destroyBody.indexOf("activeApp?.destroy()"))
+      .toBeLessThan(destroyBody.indexOf("getDestroyedStreamingAssetDiagnostics()"));
     expect(fixtureMain).toContain("if (destroyed) return");
   });
 

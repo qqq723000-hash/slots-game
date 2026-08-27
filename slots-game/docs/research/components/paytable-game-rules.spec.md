@@ -1,14 +1,19 @@
-# Official PAYTABLE / Game Rules parity specification
+# PAYTABLE / Game Rules reference parity specification
+
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
 
 ## Evidence boundary
 
-- Visual and interaction authority is the live en_GB original at source revision `1.2.1-primalrampage.471`, captured at PC 1440x900 and the original mobile channel on 2026-08-26.
+- Visual and interaction authority is the captured en_GB reference build `1.2.1-primalrampage.471`, recorded at PC 1440x900 and the mobile reference channel on 2026-08-26.
 - Author geometry and atlas frames come from `web/public/assets/primal-runtime/mobile/config/config_mobile.json`; local screenshots are retained only under `.artifacts/paytable-parity/` and are not release inputs.
-- Player copy is the live original en_GB text. Hidden reel strips, weights, RTP and probabilities are not present in the captured client and are not inferred from its presentation.
+- Player copy follows the captured en_GB reference text. Hidden reel strips, weights, RTP and probabilities are not present in the captured client and are not inferred from its presentation.
 
 ## Shared shell and interaction
 
-- The overlay background is near-black. PC and original mobile-landscape use the fixed left rail in this order: `SETTINGS`, `PAYTABLE`, `GAME RULES`; the selected tab is white with black text. The close control is circular and fixed at the top right.
+- The overlay background is near-black. PC and the captured mobile-landscape layout use the fixed left rail in this order: `SETTINGS`, `PAYTABLE`, `GAME RULES`; the selected tab is white with black text. The close control is circular and fixed at the top right.
 - PAYTABLE is a single vertical authored surface. Opening it or switching into it starts at scroll position 0. Each tab owns its scroll position; a deep PAYTABLE position must never leak into GAME RULES.
 - The content surface is 750 logical pixels wide and receives one isotropic outer scale. No internal card reflow, font rescaling, horizontal scrolling or separate X/Y stretch is allowed.
 
@@ -37,9 +42,9 @@ The surface uses the captured author anchors below. A tolerance of 1 logical pix
 ## Typography
 
 - Normal section title: the final runtime `KANIT_BOLD` header route, 45px/60px, centered. `WAY WINS` uses 42px. The maximum-win statement uses 45px. The raw timeline fallback names Roboto Condensed, but the live client applies the `GameFont` style route before paint.
-- Title fill is the final visible orange/red treatment from the original, not the raw fallback colour and not a dark-red silhouette. Implement a separate stroke underlay if browser gradient clipping and `-webkit-text-stroke` cannot preserve the fill.
+- Title fill is the final visible orange/red treatment from the captured reference, not the raw fallback colour and not a dark-red silhouette. Implement a separate stroke underlay if browser gradient clipping and `-webkit-text-stroke` cannot preserve the fill.
 - Title fill/stroke reference: top `#ff250a`, bottom `#ff710a`, dark-red outline `#5c0001` with the captured Canvas `lineWidth=10` author stroke. Its CSS projection is 5px because browser text-stroke expands by the declared width on both sides of the glyph edge.
-- Body: `ROBOTO_CONDENSED_REGULAR`, 30px/40px, white, centered. WAY WINS body is 740px wide. Although the raw timeline records `lsp=3`, the live original renders the English sentence as two lines without that spacing; the browser projection therefore uses 0px.
+- Body: `ROBOTO_CONDENSED_REGULAR`, 30px/40px, white, centered. WAY WINS body is 740px wide. Although the raw timeline records `lsp=3`, the captured reference build renders the English sentence as two lines without that spacing; the browser projection therefore uses 0px.
 
 ## Exact PAYTABLE content
 
@@ -71,9 +76,9 @@ PT1-PT24 and WAY WINS copy remain byte-for-byte equal to the captured en_GB bund
 
 ## GAME RULES
 
-- GAME RULES uses the original white card, black text and centered black headings, not the PAYTABLE dark-card styling.
+- GAME RULES uses the captured white card, black text and centered black headings, not the PAYTABLE dark-card styling.
 - Packaged gameplay sections reproduce the captured `Game Rules` material: base 3-reel/ways statement, WILD, VAULT BONUS, RAGE SYMBOL, PRIMAL WHEEL, KONG QUEST FREE SPINS, KING SPIN FREE SPINS and player actions.
-- The captured generic `Information` section and public gameplay rules are packaged in their original order. Operator-specific `Unfinished Games`, retention, malfunction and jurisdiction copy stays on the validated operator bundle boundary and may be prepended only when supplied and approved; the packaged gameplay guide must not be hidden merely because those supplemental terms are absent.
+- The captured generic `Information` section and public gameplay rules are packaged in their captured order. Operator-specific `Unfinished Games`, retention, malfunction and jurisdiction copy stays on the validated operator bundle boundary and may be prepended only when supplied and approved; the packaged gameplay guide must not be hidden merely because those supplemental terms are absent.
 - KONG QUEST explicitly states the 27/64/125/216/343/512 ways and the 30-spin cap. KING SPIN states the X1000/X500/X250/X150/X75/X60/X30/X20/X10/X9..X1 values and its 8-spin cap. PRIMAL WHEEL states that its presentation does not reflect real probabilities.
 
 ## Responsive and accessibility

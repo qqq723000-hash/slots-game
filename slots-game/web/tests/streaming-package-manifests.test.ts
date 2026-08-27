@@ -2,12 +2,16 @@
 // 配置排除了 Node 类型。
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  validateAudioSpriteDescriptorBinding,
+  verifyAudioSpriteDescriptorBindings,
+} from "../scripts/audio-sprite-descriptor-contract.mjs";
 import {
   validateAssetPackageManifest,
   type AssetPackageManifest,
@@ -26,8 +30,8 @@ const generatorPath = join(
 const channels = ["desktop", "mobile"] as const;
 const PHASE_B_MAX_OPERATION_BYTES = 16 * 1024 * 1024;
 const expectedFeatureClosureBytes = {
-  desktop: 13_680_850,
-  mobile: 13_333_709,
+  desktop: 13_700_382,
+  mobile: 13_353_241,
 } as const;
 const EXPECTED_BIG_WIN_EXCLUSIVE_BYTES = 4_044_706;
 const expectedBigWinClosureBytes = {
@@ -37,18 +41,19 @@ const expectedBigWinClosureBytes = {
 const EXPECTED_WHEEL_EXCLUSIVE_BYTES = 1_507_291;
 const EXPECTED_FREE_SPINS_EXCLUSIVE_BYTES = 117_536;
 const expectedWheelClosureBytes = {
-  desktop: 9_518_608,
-  mobile: 9_171_467,
+  desktop: 9_538_140,
+  mobile: 9_190_999,
 } as const;
 const expectedFreeSpinsClosureBytes = {
-  desktop: 8_128_853,
-  mobile: 7_781_712,
+  desktop: 8_148_385,
+  mobile: 7_801_244,
 } as const;
 const WHEEL_REFERENCE_URLS = Object.freeze([
   "/assets/primal-reference/10023.png",
   "/assets/primal-reference/10026.png",
   "/assets/primal-reference/10027.png",
 ]);
+const FORBIDDEN_PUBLIC_MANIFEST_BRAND = /playngonetwork|play(?:\s|['’])*n\s*go|playngo|containerlauncher|\bg\s*['’]?\s*m(?:[\s_-]+)go\b/iu;
 
 function loadPackageManifest(
   channel: (typeof channels)[number],
@@ -80,7 +85,80 @@ function atlasPageNames(path: string): string[] {
     .sort();
 }
 
+interface Mp4TopLevelAtom {
+  readonly offset: number;
+  readonly size: number;
+  readonly type: string;
+}
+
+function mp4TopLevelAtoms(path: string): readonly Mp4TopLevelAtom[] {
+  const bytes = readFileSync(path);
+  const atoms: Mp4TopLevelAtom[] = [];
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    if (offset + 8 > bytes.byteLength) {
+      throw new Error(`${path} has a truncated MP4 atom header`);
+    }
+    let size = bytes.readUInt32BE(offset);
+    const type = bytes.toString("ascii", offset + 4, offset + 8);
+    let headerBytes = 8;
+    if (size === 1) {
+      if (offset + 16 > bytes.byteLength) {
+        throw new Error(`${path} has a truncated extended MP4 atom header`);
+      }
+      size = Number(bytes.readBigUInt64BE(offset + 8));
+      headerBytes = 16;
+    } else if (size === 0) {
+      size = bytes.byteLength - offset;
+    }
+    if (!Number.isSafeInteger(size)
+      || size < headerBytes
+      || offset + size > bytes.byteLength) {
+      throw new Error(`${path} has an invalid ${type} MP4 atom size`);
+    }
+    atoms.push(Object.freeze({ offset, size, type }));
+    offset += size;
+  }
+  return Object.freeze(atoms);
+}
+
 describe("checked-in streaming package manifests", () => {
+  it("publishes neutral fail-closed provenance without source locators or brand residue", () => {
+    const runtimeSource = readFileSync(runtimeManifestPath, "utf8");
+    const runtime = JSON.parse(runtimeSource);
+    expect(runtimeSource).not.toMatch(FORBIDDEN_PUBLIC_MANIFEST_BRAND);
+    expect(runtime.provenance).toEqual({
+      package: "iron-colossus-runtime-2026.08",
+      repositoryEvidence: "UNVERIFIED_IN_REPOSITORY",
+      releaseDisposition: "EXTERNAL_APPROVAL_REQUIRED",
+      sourceLocator: "not-published-and-not-resolvable",
+    });
+    expect(runtime.mobile).not.toHaveProperty("exclusions");
+    expect(runtime.mobile).not.toHaveProperty("sourceInventory");
+    expect(runtimeSource).not.toMatch(/"source"\s*:/u);
+
+    expect(runtime.interface.files).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "runtime-badge" }),
+    ]));
+    expect(existsSync(filePath("/assets/primal-runtime/interface/runtime-badge.png")))
+      .toBe(false);
+    expect(existsSync(filePath("/assets/primal-runtime/interface/powered-by-playngo.png")))
+      .toBe(false);
+
+    for (const channel of channels) {
+      const serialized = readFileSync(
+        join(runtimeDirectory, `streaming-packages.${channel}.json`),
+        "utf8",
+      );
+      expect(serialized).not.toMatch(FORBIDDEN_PUBLIC_MANIFEST_BRAND);
+      const manifest = JSON.parse(serialized) as AssetPackageManifest;
+      const resources = manifest.packages.flatMap((entry) => entry.resources);
+      expect(resources).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: `${channel}:shell:shared:runtime-badge` }),
+      ]));
+    }
+  });
+
   it("are reproducible from the checked runtime manifest without network access", () => {
     const source = readFileSync(generatorPath, "utf8");
     expect(source).not.toMatch(/\bfetch\s*\(/);
@@ -95,6 +173,41 @@ describe("checked-in streaming package manifests", () => {
     expect(result.stdout).toContain(
       "Verified deterministic streaming package manifests",
     );
+  });
+
+  it.each(channels)(
+    "binds every %s sprite descriptor M4A size to runtime bytes and the real file",
+    async (channel) => {
+      const runtime = JSON.parse(readFileSync(runtimeManifestPath, "utf8"));
+      await expect(verifyAudioSpriteDescriptorBindings({
+        audio: channel === "desktop" ? runtime.audio : runtime.mobile.audio,
+        channel,
+        publicRoot: publicDirectory,
+      })).resolves.toBeUndefined();
+    },
+  );
+
+  it("rejects stale embedded M4A byte metadata even when outer runtime bytes are current", () => {
+    const runtime = JSON.parse(readFileSync(runtimeManifestPath, "utf8"));
+    const sprite = runtime.audio.sprites.find(
+      (entry: { codec?: string }) => entry.codec === "audio/mp4",
+    );
+    const descriptor = JSON.parse(readFileSync(filePath(sprite.manifest), "utf8"));
+    const staleDescriptor = {
+      ...descriptor,
+      files: {
+        ...descriptor.files,
+        m4a: { ...descriptor.files.m4a, size: sprite.bytes - 1 },
+      },
+    };
+
+    expect(() => validateAudioSpriteDescriptorBinding({
+      actualBytes: sprite.bytes,
+      channel: "desktop",
+      descriptor: staleDescriptor,
+      descriptorUrl: sprite.manifest,
+      sprite,
+    })).toThrow(/files\.m4a\.size mismatch/u);
   });
 
   it.each(channels)(
@@ -160,6 +273,30 @@ describe("checked-in streaming package manifests", () => {
           expect(statSync(path).size, resource.url).toBe(resource.bytes);
           expect(sha256(path), resource.url).toBe(resource.sha256);
         }
+      }
+    },
+  );
+
+  it.each(channels)(
+    "keeps every %s MP4 audio sprite fast-started for WebKit decodeAudioData",
+    (channel) => {
+      const runtime = JSON.parse(readFileSync(runtimeManifestPath, "utf8"));
+      const audio = channel === "desktop" ? runtime.audio : runtime.mobile.audio;
+      const mp4Sprites = audio.sprites.filter(
+        (entry: { codec?: string }) => entry.codec === "audio/mp4",
+      );
+      expect(mp4Sprites).toHaveLength(4);
+
+      for (const sprite of mp4Sprites) {
+        const path = filePath(sprite.publicUrl);
+        const atoms = mp4TopLevelAtoms(path);
+        const moov = atoms.find((entry) => entry.type === "moov");
+        const mdat = atoms.find((entry) => entry.type === "mdat");
+        expect(atoms[0]?.type, sprite.publicUrl).toBe("ftyp");
+        expect(moov, sprite.publicUrl).toBeDefined();
+        expect(mdat, sprite.publicUrl).toBeDefined();
+        expect(moov!.offset, sprite.publicUrl).toBeLessThan(mdat!.offset);
+        expect(moov!.offset + moov!.size, sprite.publicUrl).toBeLessThanOrEqual(64 * 1024);
       }
     },
   );

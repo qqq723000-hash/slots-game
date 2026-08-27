@@ -1,5 +1,10 @@
 # AWS 应用基础设施 Terraform
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 本目录定义 Slots 应用自己负责的 AWS 基础设施。它可以独立创建 VPC、EKS、RDS PostgreSQL、
 ECR、Secrets Manager 元数据、S3/CloudFront、AMP、CloudWatch 与 AWS Backup 基线；不会创建
 AWS Organizations、账号工厂、集中身份、组织级审计或安全账号。
@@ -43,7 +48,7 @@ infra/terraform
 
 - Terraform Core 固定为 `1.15.9`，AWS Provider 固定为 `6.57.1`；每个环境提交
   `.terraform.lock.hcl`。
-- 每个环境使用独立 S3 state key 和 S3 原生锁文件。state bucket、KMS key 和部署角色由企业落地区
+- 每个环境使用独立 S3 state key 和 S3 原生锁文件。state bucket、KMS key 和部署角色由采用方 AWS 基础环境
   提前提供，仓库只提交 `backend.example.hcl`。
 - Provider 使用 `allowed_account_ids`，账号不匹配时拒绝执行；示例账号、域名、ARN 和 bucket 均为
   不可部署占位值。
@@ -68,9 +73,9 @@ infra/terraform
 - `prod-primary` 必须配置跨区域备份目标 vault ARN；`prod-dr` 先创建目标 vault，再把输出交给主区域。
 - 本目录不会连接或修改任何 AWS 账号，除非操作者明确执行经审批的 `plan`/`apply`。
 
-## 企业落地区接口
+## 采用方 AWS 基础环境接口
 
-企业平台必须先满足 [`contracts/landing-zone-interface.v1.yaml`](contracts/landing-zone-interface.v1.yaml)。
+采用方平台必须先满足 [`contracts/landing-zone-interface.v1.yaml`](contracts/landing-zone-interface.v1.yaml)。
 应用仓库只接收账号 ID、区域、三个可用区、Terraform state 接口、DNS/证书标识和受保护部署角色；
 Organizations、Control Tower、SCP、集中 CloudTrail、Security Hub、GuardDuty、预算与网络互联仍由平台仓库负责。
 应用发布角色还需对 delivery 指向的 Cluster Autoscaler role 具有只读 `iam:GetRolePolicy`，
@@ -91,7 +96,7 @@ Web Response Headers Policy 不注入 `X-Frame-Options`，由已验证 digest �
 `Secure; HttpOnly; SameSite=None; Partitioned`。Web bucket policy 通过 `s3:if-none-match` 与
 `s3:ObjectCreationOperation` 拒绝 `releases/*` 无条件 `PutObject`。为兼容经审批的旧 release 清理与
 versioning lifecycle，模块不设置全局删除 Deny；发布身份删除权限的 IAM/SCP 收口和真实账号回读仍是
-企业落地区门槛。
+采用方 AWS 基础环境门槛。
 
 Regional WAF 还精确 Block 公网 `/healthz` 并返回 404。AWS Load Balancer Controller 的 `ip` target
 业务端口仍是 8080，但 ALB target health 以数值端口 8081 直连 Pod 私有 operations `/healthz`；该
@@ -132,7 +137,7 @@ version/hash/config/schema，但历史批准到期不是日常 infra/app 发布�
 因为 logging redaction 不会脱敏 `GetSampledRequests`。
 
 Route 53 hosted zone/alias、DNSSEC、注册商保护、CloudFront global WAF 和 Shield Advanced/DRT 属于
-企业落地区。Global Accelerator、CloudFront API proxy、Shield Advanced 均为可选接口，启用时必须
+采用方 AWS 基础环境。Global Accelerator、CloudFront API proxy、Shield Advanced 均为可选接口，启用时必须
 同时交付上游可达性/健康、源站访问迁移、成本审批与真实回读，不能只修改 ALB 安全组或在文档中宣称
 已经启用。
 
@@ -147,7 +152,7 @@ Controller、Cluster Autoscaler、External Secrets、Prometheus Operator 与 Pro
 同一 delivery 还固定 `amazon-cloudwatch-observability` 的版本、container logs/增强 Container Insights
 配置和 cloudwatch-agent Pod Identity；应用发布前后必须回读 add-on `ACTIVE`，并确认 cloudwatch-agent
 与 fluent-bit DaemonSet 在所有调度节点就绪。仓库 mock 仅验证失败闭合逻辑，真实账号状态仍是外部门禁。
-企业落地区还必须提供经批准的 ALB access log bucket 与每环境独占 prefix；Terraform delivery、Helm
+采用方 AWS 基础环境还必须提供经批准的 ALB access log bucket 与每环境独占 prefix；Terraform delivery、Helm
 渲染和发布后 ALB 属性必须三方精确一致。legacy ALB access logs 的服务端加密边界是 SSE-S3，不得将
 WAF 证据或 Terraform delivery 的 SSE-KMS 要求误套到该 bucket。
 
@@ -376,7 +381,7 @@ terraform apply /secure/change/environment.tfplan
 该门禁读取 `terraform_data.rotation_guard` 的真实 before/after 状态，而不是相信 tfvars 的自我声明：
 活动槽不变时只允许唯一非活动槽的密码版本和 fingerprint 精确递增；活动槽切换时禁止改变任一密码，且
 Secret 版本必须精确递增 1。它稳定拒绝“声明另一槽已活动但实际重置当前活动槽”以及“同一次 apply
-切槽并修改新槽密码”。部署角色必须由企业落地区限制为只能应用已通过该门禁的保存 plan，禁止直接
+切槽并修改新槽密码”。部署角色必须由采用方 AWS 基础环境限制为只能应用已通过该门禁的保存 plan，禁止直接
 `terraform apply` 自动重新计划。
 
 `live_evidence_reference` 字符串本身不是真实性证明。受保护轮换流程必须先在私网集群保存带时间戳的
@@ -453,7 +458,7 @@ make -C infra/terraform verify
 
 ## 应用顺序
 
-1. 企业平台创建账号、受保护部署角色、state bucket/KMS 和集中安全能力。
+1. 采用方平台创建账号、受保护部署角色、state bucket/KMS 和集中安全能力。
 2. 先应用 `prod-dr`，记录 `backup_vault_arn`。
 3. 把该 ARN 写入受限的 `prod-primary.tfvars`，再评审和应用主区域。
 4. 在 VPC 内受保护执行器安装配置中声明的精确版本 add-on，并使用

@@ -20,6 +20,8 @@ export type VisualFixtureDataset = Record<string, string | undefined>;
 export interface VisualFixtureTelemetryProjectionState {
   readonly loadedVisualIds: Set<string>;
   readonly activeVisualOperations: Set<number>;
+  /** 仅保留表现 ID 与本地 operationId，供截图把像素绑定到仍存活的具体视觉实例。 */
+  readonly activeVisualIdsByOperation: Map<number, string>;
   readonly missingRequiredVisualIds: Set<string>;
   visualFailureCount: number;
   strictFailureLocked: boolean;
@@ -31,6 +33,7 @@ export function createVisualFixtureTelemetryProjectionState(
   return {
     loadedVisualIds: new Set(),
     activeVisualOperations: new Set(),
+    activeVisualIdsByOperation: new Map(),
     missingRequiredVisualIds: new Set(requiredIds),
     visualFailureCount: 0,
     strictFailureLocked: false,
@@ -43,6 +46,13 @@ export function publishVisualFixtureTelemetryCounts(
 ): void {
   dataset.fixtureVisualLoadedCount = String(state.loadedVisualIds.size);
   dataset.fixtureVisualActiveCount = String(state.activeVisualOperations.size);
+  dataset.fixtureVisualActiveIds = [...new Set(state.activeVisualIdsByOperation.values())]
+    .sort()
+    .join(",");
+  dataset.fixtureVisualActiveOperations = [...state.activeVisualIdsByOperation]
+    .sort(([left], [right]) => left - right)
+    .map(([operationId, id]) => `${id}@${operationId}`)
+    .join(",");
   dataset.fixtureVisualFailureCount = String(state.visualFailureCount);
   dataset.fixtureVisualMissingRequired = [...state.missingRequiredVisualIds].join(",");
 }
@@ -86,8 +96,10 @@ export function applyVisualFixtureTelemetryEvent(
     state.missingRequiredVisualIds.delete(event.id);
   } else if (event.kind === "start") {
     state.activeVisualOperations.add(event.operationId);
+    state.activeVisualIdsByOperation.set(event.operationId, event.id);
   } else {
     state.activeVisualOperations.delete(event.operationId);
+    state.activeVisualIdsByOperation.delete(event.operationId);
   }
   if (event.kind === "fail") {
     state.visualFailureCount += 1;

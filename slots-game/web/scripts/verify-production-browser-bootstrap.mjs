@@ -552,7 +552,10 @@ async function productionModulePaths(root, parent = root) {
     const path = resolve(parent, entry.name);
     if (entry.isDirectory()) paths.push(...await productionModulePaths(root, path));
     else if (entry.isFile() && entry.name.endsWith(".js")) {
-      paths.push(`/${relative(root, path).split(sep).join("/")}`);
+      const releasePath = relative(root, path).split(sep).join("/");
+      // browser-preflight.js 是先于模块入口执行且锁定全局交接的经典脚本；它由
+      // verify-browser-preflight-build 单独做字节/顺序校验，禁止在此用 import() 二次执行。
+      if (releasePath.startsWith("assets/")) paths.push(`/${releasePath}`);
     }
   }
   return paths.sort((left, right) => {
@@ -749,9 +752,42 @@ async function verifyBootstrap(
   let transportFailure = null;
   let activeTransactionFixture = transactionFixture;
   let expectedDocumentUrl = documentUrlWithoutHash(pageUrl);
+  const topLevelNavigations = [];
+  const defaultExecutionContextsByFrame = new Map();
+  let executionContextGeneration = 0;
+  let mainExecutionContextId = null;
+  let mainFrameId = null;
+  let executionContextsCleared = 0;
   const pending = new Map();
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
+    if (message.method === "Page.frameNavigated") {
+      const frame = message.params?.frame;
+      if (frame && !frame.parentId) {
+        topLevelNavigations.push(String(frame.url ?? "").slice(0, 512));
+      }
+    }
+    if (message.method === "Runtime.executionContextsCleared") executionContextsCleared += 1;
+    if (message.method === "Runtime.executionContextCreated") {
+      const context = message.params?.context;
+      const frameId = context?.auxData?.frameId;
+      if (Number.isInteger(context?.id)
+        && typeof frameId === "string"
+        && context?.auxData?.isDefault === true) {
+        executionContextGeneration += 1;
+        defaultExecutionContextsByFrame.set(frameId, {
+          generation: executionContextGeneration,
+          id: context.id,
+        });
+      }
+    }
+    if (message.method === "Runtime.executionContextDestroyed") {
+      const destroyedId = message.params?.executionContextId;
+      for (const [frameId, context] of defaultExecutionContextsByFrame) {
+        if (context.id === destroyedId) defaultExecutionContextsByFrame.delete(frameId);
+      }
+      if (destroyedId === mainExecutionContextId) mainExecutionContextId = null;
+    }
     if (message.method === "Network.responseReceived") {
       const response = message.params?.response;
       if (message.params?.type === "Document" && response?.url === expectedDocumentUrl.href) {
@@ -783,13 +819,18 @@ async function verifyBootstrap(
 
   const send = (method, params = {}) => {
     const id = ++identifier;
+    const effectiveParams = method === "Runtime.evaluate"
+      && Number.isInteger(mainExecutionContextId)
+      && params.contextId === undefined
+      ? { ...params, contextId: mainExecutionContextId }
+      : params;
     return new Promise((resolvePromise, rejectPromise) => {
       const timer = setTimeout(() => {
         pending.delete(id);
         rejectPromise(new Error(`浏览器调试命令超时：${method}`));
       }, commandTimeoutMs);
       pending.set(id, { resolve: resolvePromise, reject: rejectPromise, timer });
-      socket.send(JSON.stringify({ id, method, params }));
+      socket.send(JSON.stringify({ id, method, params: effectiveParams }));
     });
   };
 
@@ -844,8 +885,23 @@ async function verifyBootstrap(
   await send("Page.addScriptToEvaluateOnNewDocument", {
     source: IMAGE_DECODE_OBSERVATION_PROBE_SOURCE,
   });
-  await send("Page.navigate", { url: pageUrl });
+  const preNavigationContextGeneration = executionContextGeneration;
+  const navigation = await send("Page.navigate", { url: pageUrl });
+  mainFrameId = navigation.frameId;
+  const contextDeadline = Date.now() + 5_000;
+  while (Date.now() < contextDeadline && !Number.isInteger(mainExecutionContextId)) {
+    const context = defaultExecutionContextsByFrame.get(mainFrameId);
+    mainExecutionContextId = context?.generation > preNavigationContextGeneration
+      ? context.id
+      : null;
+    if (!Number.isInteger(mainExecutionContextId)) await delay(20);
+  }
+  if (!Number.isInteger(mainExecutionContextId)) {
+    throw new Error("生产浏览器没有为主框架发布默认执行上下文");
+  }
   await waitForDocumentReady(send);
+  const expectedTopLevelNavigationCount = topLevelNavigations.length;
+  const expectedExecutionContextsCleared = executionContextsCleared;
   await setBrowserProbePhase(send, "bootstrap");
   if (documentContentSecurityPolicy !== browserContentSecurityPolicy) {
     throw new Error("生产浏览器主文档未收到共享的精确发布 CSP");
@@ -987,11 +1043,39 @@ async function verifyBootstrap(
     `,
   });
   await setBrowserProbePhase(send, "opening-overlay");
-  const openingOverlayEvidence = bootstrap.rendererReady && bootstrap.moduleFailures.length === 0
-    ? await verifyOpeningOverlayLayout(send, transactionFixture, () => transportFailure)
-    : null;
-  await setBrowserProbePhase(send, "ready");
-  let browserState = await waitForApplicationReady(send, () => transportFailure);
+  // 冷缓存下模块入口的首个装配快照可能先于重量级渲染器完成。只要模块没有
+  // 明确失败，就由开场 overlay 门禁在自己的有界窗口继续等待并执行真实点击；
+  // 禁止因为一个过早的 rendererReady=false 快照跳过 Continue 后再误报 intro 卡死。
+  const openingOverlayVerification = await verifyOpeningOverlayLayout(
+    send,
+    transactionFixture,
+    () => transportFailure,
+  );
+  const openingOverlayEvidence = openingOverlayVerification?.evidence ?? null;
+  // 弹层辅助流程可能直接返回已就绪状态；快速返回和慢速轮询都必须先验证导航计数。
+  if (executionContextsCleared !== expectedExecutionContextsCleared) {
+    throw new Error(`生产浏览器主执行上下文被意外重建：${JSON.stringify({
+      executionContextsCleared,
+      expectedExecutionContextsCleared,
+      topLevelNavigations,
+    })}`);
+  }
+  if (topLevelNavigations.length !== expectedTopLevelNavigationCount) {
+    throw new Error(`生产浏览器发生意外的顶层重复导航：${JSON.stringify(topLevelNavigations)}`);
+  }
+  let browserState = openingOverlayVerification?.browserState ?? await waitForApplicationReady(send, () => {
+    if (executionContextsCleared !== expectedExecutionContextsCleared) {
+      return new Error(`生产浏览器主执行上下文被意外重建：${JSON.stringify({
+        executionContextsCleared,
+        expectedExecutionContextsCleared,
+        topLevelNavigations,
+      })}`);
+    }
+    if (topLevelNavigations.length !== expectedTopLevelNavigationCount) {
+      return new Error(`生产浏览器发生意外的顶层重复导航：${JSON.stringify(topLevelNavigations)}`);
+    }
+    return transportFailure;
+  });
   if (!browserState.ready) {
     return completeBrowserResult(bootstrap, browserState, transactionFixture.snapshot());
   }
@@ -1443,15 +1527,19 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
     }));
   }
 
+  await setBrowserProbePhase(send, "ready");
   await clickElement(send, '[data-role="preview-continue"]');
-  await waitForElementDataset(send, '[data-role="feature-preview"]', "visible", "false");
+  const browserState = await waitForApplicationReady(send, transportFailure);
+  if (!browserState?.ready) {
+    throw new Error(`开场 Continue 后未形成可下注快照：${JSON.stringify(browserState)}`);
+  }
   assertTransactionStatePreserved(
     expectedTransaction,
     fixture.snapshot(),
     OFFICIAL_HELP_VIEWPORTS.at(-1),
     "mobile",
   );
-  return Object.freeze({
+  const evidence = Object.freeze({
     desktopTouchLocked: Object.freeze({
       coarsePointer: desktopTouchLayout.coarsePointer,
       featurePreviewContained: true,
@@ -1470,6 +1558,7 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
     }),
     steps: Object.freeze(steps),
   });
+  return Object.freeze({ browserState, evidence });
 }
 
 function assertOpeningOverlayGeometry(opening, viewport, surface) {
@@ -1526,7 +1615,7 @@ async function readOpeningOverlayLayout(send) {
         const optOut = document.querySelector('.feature-preview__opt-out');
         const sound = document.querySelector('[data-role="preview-sound"]');
         const logo = document.querySelector('.feature-preview__logo');
-        const powered = document.querySelector('.launcher-powered-by');
+        const identity = document.querySelector('.launcher-independent');
         const rectangle = (element) => {
           if (!(element instanceof HTMLElement)) return null;
           const bounds = element.getBoundingClientRect();
@@ -1560,7 +1649,7 @@ async function readOpeningOverlayLayout(send) {
             continue: rectangle(continuation),
             logo: rectangle(logo),
             optOut: rectangle(optOut),
-            powered: rectangle(powered),
+            identity: rectangle(identity),
             sound: rectangle(sound),
           },
           featuresMatrix,
@@ -2088,11 +2177,23 @@ async function clickElement(send, selector) {
         if (!(element instanceof HTMLElement)) return null;
         const bounds = element.getBoundingClientRect();
         if (bounds.width <= 0 || bounds.height <= 0) return null;
-        return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
+        const x = bounds.left + bounds.width / 2;
+        const y = bounds.top + bounds.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return {
+          x,
+          y,
+          targetReceivesPointer: hit === element || (hit instanceof Node && element.contains(hit)),
+          hitClass: hit instanceof Element ? hit.getAttribute('class') : null,
+          hitRole: hit instanceof HTMLElement ? hit.dataset.role ?? null : null,
+        };
       })()
     `,
   });
   if (!point) throw new Error(`正式浏览器找不到可点击控件：${selector}`);
+  if (!point.targetReceivesPointer) {
+    throw new Error(`正式浏览器控件被其他表面遮挡：${selector} ${JSON.stringify(point)}`);
+  }
   await dispatchMouseClick(send, point);
 }
 
@@ -2529,7 +2630,7 @@ function assertDesktopStatusLayout(snapshot, viewport) {
     || !/rgb\(19, 10, 3\) 0px -1px 0px(?: 0px)?/.test(
       snapshot.controlLayout.statusBoxShadow,
     )) {
-    throw new Error(`PC 状态栏缺少原版顶部 1px 纹理接缝：${detail()}`);
+    throw new Error(`PC 状态栏缺少参考基线顶部 1px 纹理接缝：${detail()}`);
   }
   if (snapshot.controlLayout.statusScrollHeight
       > snapshot.controlLayout.statusClientHeight + 1
@@ -2685,14 +2786,18 @@ async function dispatchMouseClick(send, point) {
     x: point.x,
     y: point.y,
     button: "left",
+    buttons: 1,
     clickCount: 1,
+    pointerType: "mouse",
   });
   await send("Input.dispatchMouseEvent", {
     type: "mouseReleased",
     x: point.x,
     y: point.y,
     button: "left",
+    buttons: 0,
     clickCount: 1,
+    pointerType: "mouse",
   });
 }
 

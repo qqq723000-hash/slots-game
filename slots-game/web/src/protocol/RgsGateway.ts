@@ -176,7 +176,7 @@ export interface RgsGatewayConfig {
   readonly acknowledgementRetryMaxDelayMs?: number;
   readonly acknowledgementMaxAttempts?: number;
   readonly acknowledgementRetryWindowMs?: number;
-  /** online + visible 时原版 25-30 秒 FLUSH 等价探测的确定性测试接缝。 */
+  /** online + visible 时 25-30 秒 FLUSH 等价探测的确定性测试接缝。 */
   readonly sessionStatusIntervalMs?: () => number;
   /** 仅供 Vitest 旧计时器夹具；生产构建传入 true 会在构造时失败关闭。 */
   readonly disableSessionMonitoringForTests?: boolean;

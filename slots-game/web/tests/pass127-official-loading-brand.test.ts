@@ -1,31 +1,25 @@
-// @ts-nocheck -- 仅在 Node 中运行的源码与 PNG 契约测试。
+// @ts-nocheck -- 仅在 Node 中运行的源码与 CSS 契约测试。
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 import indexHtml from "../index.html?raw";
 import overlaySource from "../src/ui/DomOverlay.ts?raw";
 
-const BRAND_PATH = "assets/brand/powered-by-gm-go.png";
 const loadingCss = readFileSync(
   new URL("../src/loading-official.css", import.meta.url),
   "utf8",
 );
 
-function pngDimensions(bytes: Buffer): readonly [number, number] {
-  expect(bytes.subarray(1, 4).toString("ascii")).toBe("PNG");
-  return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)];
-}
-
-describe("Pass 127 official responsive loading brand", () => {
-  it("ships the approved 500x188 G'm GO alpha asset in both startup shells", () => {
-    const mark = readFileSync(new URL(`../public/${BRAND_PATH}`, import.meta.url));
-
-    expect(pngDimensions(mark)).toEqual([500, 188]);
-    expect(mark.byteLength).toBeGreaterThan(20_000);
-    expect(indexHtml).toContain(`src="${BRAND_PATH}"`);
-    expect(indexHtml).toContain("Powered by G'm GO");
-    expect(overlaySource).toContain(`publicAssetUrl("${BRAND_PATH}")`);
-    expect(overlaySource).toContain('aria-label="Powered by G\'m GO"');
+describe("Pass 127 responsive independent loading identity", () => {
+  it("uses the same code-native personal identity in both startup shells", () => {
+    for (const source of [indexHtml, overlaySource]) {
+      expect(source).toContain('<span class="launch-loading__monogram">PR</span>');
+      expect(source).toContain('<span class="launch-loading__brand">Independent developer</span>');
+      expect(source).not.toContain("assets/brand/");
+    }
+    expect(loadingCss).toMatch(
+      /\.launch-loading__monogram\s*\{[^}]*display:\s*grid;[^}]*background:\s*linear-gradient\(/s,
+    );
     expect(indexHtml).not.toContain("primal-rampage-logo.png");
   });
 

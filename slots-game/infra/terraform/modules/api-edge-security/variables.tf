@@ -9,7 +9,7 @@ variable "kms_key_arn" {
 }
 
 variable "evidence_kms_key_arn" {
-  description = "WAF Block 晋级证据对象必须使用的企业批准 KMS key ARN"
+  description = "WAF Block 晋级证据对象必须使用的采用方批准 KMS key ARN"
   type        = string
 
   validation {

@@ -1,4 +1,4 @@
-.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract test-vector-bounded-flush verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract verify-hardening-stability-50 verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
+.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract test-vector-bounded-flush verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-personal-project-docs verify-hardening-checklist verify-hardening-stability-contract verify-hardening-stability-50 verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
 
 BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid
 
@@ -89,7 +89,7 @@ verify-observability-release:
 	test -n "$${OBSERVABILITY_RENDERED_DIR:-}" || { echo "OBSERVABILITY_RENDERED_DIR is required" >&2; exit 2; }
 	./deploy/observability/verify-static-contract.sh --rendered-dir "$${OBSERVABILITY_RENDERED_DIR}"
 
-verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract
+verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs
 	node --test deploy/supply-chain/verify-codeql-sarif.test.mjs
 	node --test deploy/supply-chain/verify-release-version.test.mjs
 	node deploy/supply-chain/verify-release-version.mjs
@@ -105,6 +105,10 @@ verify-backend-licenses:
 verify-chinese-comments:
 	node --test scripts/verify-chinese-comments.test.mjs
 	node scripts/verify-chinese-comments.mjs
+
+verify-personal-project-docs:
+	node --test scripts/verify-personal-project-docs.test.mjs
+	node scripts/verify-personal-project-docs.mjs
 
 verify-hardening-checklist:
 	node --test scripts/verify-hardening-checklist.test.mjs

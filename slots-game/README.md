@@ -1,16 +1,21 @@
-# Primal Rampage 生产级工程交付候选
+# Primal Rampage 个人独立商用级工程交付
+
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
 
 本仓库交付 Go RGS 后端、PostgreSQL 迁移器、TypeScript/PixiJS Web、生产容器、Helm Chart、
 可观测性规则与供应链门禁。浏览器只是表现层；会话、余额、RNG、轮次、派彩、特性状态、幂等与
 恢复均由服务端负责。
 
-当前源码交付元数据版本为 [`1.2.3`](VERSION)。该版本号必须与变更记录、Web package/lock、
+当前源码交付元数据版本为 [`1.3.0`](VERSION)。该版本号必须与变更记录、Web package/lock、
 Helm Chart 和发布示例一致；正式发布还需要创建同版本受保护 Tag、GitHub Release 说明，并保存
 三个 OCI 制品各自的 SBOM、来源证明、签名和不可变摘要，不能只凭版本文件宣称已经发布。
 
 ## 正式生产主线
 
-AWS 是本仓库唯一正式生产目标。macOS Docker Compose 只保留为开发、集成和端到端验收环境，
+AWS 是本项目定义的唯一目标生产架构。macOS Docker Compose 只保留为开发、集成和端到端验收环境，
 不得写入生产变更单，也不得作为多可用区、高可用、备份恢复或安全控制已经落地的证据。
 
 ```text
@@ -35,19 +40,20 @@ AWS 是本仓库唯一正式生产目标。macOS Docker Compose 只保留为开�
 - [高并发性能与数据生命周期契约](docs/performance-optimization-contract.md)
 - [DDoS 威胁模型、分层防护与演练边界](docs/ddos-threat-model.md)
 - [通用 Helm 应用交付](deploy/cluster-production/README.md)
+- [浏览器支持与验收矩阵](docs/browser-support-matrix.md)
 
 ## 交付边界
 
 | 能力 | 仓库状态 | 正式上线责任 |
 | --- | --- | --- |
-| RGS、迁移器、Web 源码与测试 | 已实现 | 应用团队维护并通过受保护门禁 |
+| RGS、迁移器、Web 源码与测试 | 已实现 | 个人项目维护者维护并通过受保护门禁 |
 | OCI 构建、摘要部署、SBOM、来源证明、签名契约 | 已实现 | 发布平台绑定 ECR 与 AWS/GitHub OIDC |
-| RGS/Web 通用 Kubernetes Chart、HPA、PDB、NetworkPolicy、监控规则 | 已实现 | 平台团队提供目标集群并验证渲染结果 |
+| RGS/Web 通用 Kubernetes Chart、HPA、PDB、NetworkPolicy、监控规则 | 已实现 | 采用方的平台责任角色提供目标集群并验证渲染结果 |
 | 应用专属 AWS VPC、EKS、RDS、Valkey、ECR、S3/CloudFront、Regional WAF、IAM/KMS、监控与备份 IaC | 已实现 | 受保护 AWS 工作流评审并应用保存的 plan；目标账号仍需实时验收 |
-| AWS Organizations/账号工厂、state/部署身份、DNS/ACM 证书、可选 Shield Advanced、组织级审计与安全账号 | 不在应用仓库的创建边界 | 企业落地区先提供并验收 |
+| AWS Organizations/账号工厂、state/部署身份、DNS/ACM 证书、可选 Shield Advanced、组织级审计与安全账号 | 不在应用仓库的创建边界 | 采用方的 AWS 基础环境先提供并验收 |
 | Web 运行素材完整性与权属分类门禁 | 已实现；部分素材的仓库内权属证据未验证 | 权利主体提供可审计授权或自主替换，并以仓库外逐文件哈希审批放行 |
-| 正式钱包、运营商入口、审计接收端 | 仅定义协议契约 | 运营商集成团队提供并完成一致性验收 |
-| 正式 Secret 值、私钥与告警接收凭据 | Git 中禁止保存 | 安全与平台团队在目标账号受控注入并轮换 |
+| 正式钱包、运营商入口、审计接收端 | 仅定义协议契约 | 采用方指定的外部集成责任角色提供并完成一致性验收 |
+| 正式 Secret 值、私钥与告警接收凭据 | Git 中禁止保存 | 采用方指定的安全与平台责任角色在目标账号受控注入并轮换 |
 | `local-operator` | 仅本机验收工具 | 正式环境禁止部署或依赖 |
 
 “仓库检查通过”只证明源码和交付契约成立，不等于某个 AWS 账号已经完成部署。正式上线必须同时
@@ -72,12 +78,14 @@ AWS 是本仓库唯一正式生产目标。macOS Docker Compose 只保留为开�
 - `docs/`：AWS 架构、部署、运维和应用级安全运行手册。
 
 当前正式版本及兼容边界见 [变更记录](CHANGELOG.md)。
+前端最低版本、跨引擎自动化与真实设备门禁见
+[浏览器支持与验收矩阵](docs/browser-support-matrix.md)。
 
 ## AWS 发布流程摘要
 
 正式发布必须由受保护流水线和独立审批驱动，不得从开发者电脑直接上传生产制品或长期凭据。
 
-1. 企业落地区先提供账号、state/部署身份、DNS/ACM 证书、CloudFront global WAF 和组织级安全能力；
+1. 采用方的 AWS 基础环境先提供账号、state/部署身份、DNS/ACM 证书、CloudFront global WAF 和组织级安全能力；
    应用 API Regional WAF 由本仓库 IaC 创建并在目标账号回读验收。
 2. 受保护基础设施工作流评审并应用 `infra/terraform` 的保存 plan，生成不含秘密的应用交接对象；实时 add-on 和外部系统验收不得省略。
 3. 受保护供应链流水线构建、扫描、签名并推送不可变镜像；AWS 应用流水线使用 GitHub Actions
@@ -147,7 +155,7 @@ VITE_RGS_BASE_URL=https://rgs.example.com \
 VITE_RGS_BET_OPTIONS_MINOR=10,20,50,100,200 \
 VITE_RGS_DEFAULT_BET_MINOR=100 \
 VITE_RGS_HOST_ORIGIN=https://slots.example.com \
-WEB_RELEASE_VERSION=1.2.3 \
+WEB_RELEASE_VERSION=1.3.0 \
 WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
   make build-web-release-image
 ```

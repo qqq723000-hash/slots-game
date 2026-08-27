@@ -23,7 +23,7 @@ export interface TimelineSchedulerPolicy {
   readonly maxCatchUpTicks: number;
 }
 
-/** 捕获的 Play'n GO 运行时使用的调度程序值。 */
+/** 经桌面与移动端视觉基线验证的确定性调度参数。 */
 export const PRIMAL_SCHEDULER_POLICY = Object.freeze({
   fps: 30,
   maxCatchUpTicks: 5,

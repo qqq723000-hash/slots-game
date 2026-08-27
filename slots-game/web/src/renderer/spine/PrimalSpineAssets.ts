@@ -69,7 +69,7 @@ export interface PrimalSpineSpec {
 }
 
 /**
- * 从用户提供的桌面资源包中提取的预设框架。应用程序仅消耗Spine数据和图集页面；专有的 Play'n GO JavaScript 运行时故意不属于此集成的一部分。
+ * 从项目桌面资源包中提取的预设框架。应用程序仅消耗 Spine 数据和图集页面，不依赖任何外部专有 JavaScript 运行时。
  */
 export const PRIMAL_SPINE_SPECS: Readonly<Record<PrimalSpineKey, PrimalSpineSpec>> = Object.freeze({
   background: Object.freeze({

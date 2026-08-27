@@ -21,19 +21,96 @@ describe("minimal launch bootstrap", () => {
     const indexHtml = source("../index.html");
     const bootstrap = source("../src/bootstrap.ts");
     const main = source("../src/main.ts");
+    const preflight = source("../public/browser-preflight.js");
 
     expect(indexHtml).toContain('src="/src/bootstrap.ts"');
     expect(indexHtml).not.toContain('src="/src/main.ts"');
+    expect(indexHtml.indexOf('id="launch-fragment-scrub"'))
+      .toBeLessThan(indexHtml.indexOf('src="%BASE_URL%browser-preflight.js"'));
+    expect(indexHtml.indexOf('src="%BASE_URL%browser-preflight.js"'))
+      .toBeLessThan(indexHtml.indexOf('src="/src/bootstrap.ts"'));
     expect(bootstrap).not.toMatch(/^\s*import(?:\s|["'])/m);
     expect(bootstrap).not.toMatch(/pixi|AppController|configuredGateway|sessionStorage|localStorage/i);
     expect(bootstrap).not.toMatch(/\.get(?:All)?\(/);
+    expect(bootstrap.indexOf("burnEarlyLaunchHandoff(window)"))
+      .toBeLessThan(bootstrap.indexOf("scrubLaunchFragment(window)"));
     expect(bootstrap.indexOf("scrubLaunchFragment(window)"))
       .toBeLessThan(bootstrap.indexOf('import("./main")'));
+    expect(bootstrap).toContain("if (import.meta.env.PROD)");
+    expect(bootstrap).toContain('Promise.reject(new Error("Browser preflight state is missing"))');
     expect(bootstrap).not.toContain("console.");
+    expect(preflight).toContain("if (!scrubFallbackLaunchFragment()) return;");
+    expect(preflight.indexOf("if (!scrubFallbackLaunchFragment()) return;"))
+      .toBeLessThan(preflight.indexOf("presentBootstrapFailure();"));
+    expect(preflight).not.toContain("window.location.href");
     expect(main).toContain("export function startApplication(");
     expect(main).toContain("pageUrl: launchPageUrl");
     expect(main.indexOf('document.querySelector<HTMLElement>("#app")'))
       .toBeGreaterThan(main.indexOf("export function startApplication("));
+  });
+
+  it("does not reread location or load the application after preflight fixed failure", async () => {
+    const mainModuleFactory = vi.fn(() => ({ startApplication: vi.fn() }));
+    const takeLaunchHandoff = vi.fn(() => null);
+    const windowValue = { parent: null };
+    windowValue.parent = windowValue;
+    Object.defineProperty(windowValue, "location", {
+      configurable: false,
+      get: () => { throw new Error("fixed-failure bootstrap reread location"); },
+    });
+    Object.defineProperty(windowValue, "__slotsBrowserPreflight", {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: Object.freeze({
+        schema: 1,
+        supported: false,
+        hadLaunchHandoff: false,
+        takeLaunchHandoff,
+      }),
+    });
+    vi.stubGlobal("window", windowValue);
+    vi.stubGlobal("document", { querySelector: vi.fn(() => null) });
+    vi.doMock("../src/main", mainModuleFactory);
+
+    const bootstrap = await import("../src/bootstrap");
+    await expect(bootstrap.applicationBootstrap).resolves.toBeUndefined();
+
+    expect(takeLaunchHandoff).not.toHaveBeenCalled();
+    expect(mainModuleFactory).not.toHaveBeenCalled();
+  });
+
+  it("immediately burns the inline handoff when the external preflight is missing", async () => {
+    const sanitizedUrl = "https://game.example/play?channel=desktop#view=mobile";
+    const take = vi.fn(() => Object.freeze({
+      schema: 1,
+      pageUrl: `https://game.example/play#rgsLaunchCode=${LAUNCH_CODE}`,
+      hadLaunchHandoff: true,
+    }));
+    const startApplication = vi.fn();
+    const windowValue = {
+      location: { href: sanitizedUrl },
+      history: { state: null, replaceState: vi.fn() },
+      parent: null,
+    };
+    windowValue.parent = windowValue;
+    Object.defineProperty(windowValue, "__slotsEarlyLaunchHandoff", {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: Object.freeze({ schema: 1, hadLaunchHandoff: true, take }),
+    });
+    vi.stubGlobal("window", windowValue);
+    vi.stubGlobal("document", { querySelector: vi.fn(() => null) });
+    vi.doMock("../src/main", () => ({ startApplication }));
+
+    const bootstrap = await import("../src/bootstrap");
+    await expect(bootstrap.applicationBootstrap).resolves.toBeUndefined();
+
+    expect(take).toHaveBeenCalledOnce();
+    expect(startApplication).toHaveBeenCalledOnce();
+    expect(startApplication).toHaveBeenCalledWith(sanitizedUrl);
+    expect(JSON.stringify(startApplication.mock.calls)).not.toContain(LAUNCH_CODE);
   });
 
   it("scrubs every launch key before a downstream chunk failure and never renders the raw error", async () => {
@@ -46,8 +123,13 @@ describe("minimal launch bootstrap", () => {
     const replaceState = vi.fn();
     const postMessage = vi.fn();
     const status = { textContent: "Loading game resources" };
-    const loading = { querySelector: vi.fn(() => status) };
-    const root = { querySelector: vi.fn(() => loading) };
+    const loading = {
+      dataset: {},
+      querySelector: vi.fn(() => status),
+      removeAttribute: vi.fn(),
+      setAttribute: vi.fn(),
+    };
+    const root = { dataset: {}, querySelector: vi.fn(() => loading) };
     vi.stubGlobal("window", {
       location: { href: originalUrl },
       history: { state: null, replaceState },
@@ -70,6 +152,11 @@ describe("minimal launch bootstrap", () => {
     expect(replacement).not.toContain("rgsOperatorId");
     expect(replacement).not.toContain("rgsSessionId");
     expect(status.textContent).toBe("The game could not start. Please try again.");
+    expect(root.dataset.browserCompatibility).toBe("bootstrap-failed");
+    expect(loading.dataset).toMatchObject({
+      stage: "bootstrap-failed",
+      visible: "true",
+    });
     expect(status.textContent).not.toContain(originalUrl);
     expect(postMessage).toHaveBeenCalledWith({
       type: "slots-game:operator-session-required",

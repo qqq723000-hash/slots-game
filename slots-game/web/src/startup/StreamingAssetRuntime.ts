@@ -268,6 +268,8 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     release(): boolean;
   }>();
   private destroyed = false;
+  /** 销毁释放完成后、内部 manager 引用清空前采样的不可变终态。 */
+  private destroyedDiagnostics: StreamingAssetRuntimeDiagnostics | null = null;
 
   constructor(options: StreamingAssetRuntimeOptions) {
     this.channel = options.channel;
@@ -413,6 +415,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
   }
 
   diagnostics(): StreamingAssetRuntimeDiagnostics {
+    if (this.destroyedDiagnostics) return this.destroyedDiagnostics;
     const featurePackages = [...this.packageDiagnostics.values()].filter(
       (entry) => entry.stage === "feature-on-demand",
     );
@@ -456,6 +459,10 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
       }
     }
     this.activeConsumerLeases.clear();
+    // 必须在 manager 引用清空前读取释放后的真实计数；否则 `null ?? 0` 会把失败的
+    // release 伪装成零 retained bytes。终态仍保持既有的空 packages 合同。
+    const retainedPayloadBytesAfterRelease =
+      this.consumerManager?.retainedPayloadBytes() ?? 0;
     this.manifest = null;
     this.manifestPromise = null;
     this.packageDiagnostics.clear();
@@ -463,6 +470,10 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     this.consumerManagerPromise = null;
     this.manifestState = "destroyed";
     this.manifestError = null;
+    this.destroyedDiagnostics = Object.freeze({
+      ...this.diagnostics(),
+      retainedPayloadBytes: retainedPayloadBytesAfterRelease,
+    });
     // 故意不要在这里发布：被销毁的所有者没有有效的 DOM 或遥测接收器，并且此生命周期禁止延迟回调。
   }
 
@@ -479,11 +490,12 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
   ): Promise<TWrapped> {
     const operation = this.linkOperation(callerSignal);
     const signal = operation.controller.signal;
+    let manager: StreamingAssetPackageManager | null = null;
     let underlying: TUnderlying | null = null;
     let wrapped: TWrapped | null = null;
     try {
       this.throwIfInactive(signal);
-      const manager = await this.consumerPackageManager(signal);
+      manager = await this.consumerPackageManager(signal);
       this.throwIfInactive(signal);
       underlying = await acquire(manager, signal);
       this.throwIfInactive(signal);
@@ -498,7 +510,20 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
       throw normalizeError(cause, signal);
     } finally {
       operation.unlink();
+      // destroy 可能先于不可中止的 manager acquire 完成。该异步分支释放自己的
+      // pending/active reference 后，只更新冻结的数值终态，不把 manager 重新挂回 owner。
+      if (this.destroyed && manager) {
+        this.updateDestroyedRetainedPayloadBytes(manager.retainedPayloadBytes());
+      }
     }
+  }
+
+  private updateDestroyedRetainedPayloadBytes(retainedPayloadBytes: number): void {
+    if (!this.destroyedDiagnostics) return;
+    this.destroyedDiagnostics = Object.freeze({
+      ...this.destroyedDiagnostics,
+      retainedPayloadBytes,
+    });
   }
 
   private wrapPackageLease(

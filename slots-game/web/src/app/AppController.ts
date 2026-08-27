@@ -62,6 +62,10 @@ import { validateSpinResultAgainstOrigin } from "../protocol/spinResultOriginGua
 import { featureLockedBet, selectSessionBet } from "./state/betSelection";
 import { LaunchStateMachine, type LaunchPhase } from "../startup/LaunchStateMachine";
 import { IntroDirector, SwitchableLaunchClock } from "../startup/IntroDirector";
+import {
+  INTRO_DURATION_MS,
+  REDUCED_INTRO_DURATION_MS,
+} from "../startup/introTimeline";
 import { PreloadGate, type PreloadProgress } from "../startup/PreloadGate";
 import {
   waitForPaintedFrame,
@@ -127,6 +131,7 @@ import {
   publishStreamingAssetDiagnostics,
   streamingFeaturePackageId,
   type StreamingAssetEventLease,
+  type StreamingAssetRuntimeDiagnostics,
   type StreamingAssetRuntimePort,
 } from "../startup/StreamingAssetRuntime";
 import {
@@ -639,6 +644,8 @@ function bestEffortAppCleanup(cleanup: () => void): void {
   }
 }
 
+const LAUNCH_INTRO_WALL_DEADLINE_GRACE_MS = 3_000;
+
 export class AppController {
   private readonly root: HTMLElement;
   private readonly startupFrameRequest?: FrameRequest;
@@ -660,6 +667,9 @@ export class AppController {
   private readonly launch = new LaunchStateMachine();
   private readonly launchClock: SwitchableLaunchClock;
   private readonly intro: IntroDirector;
+  private launchIntroWallDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  private launchIntroWallDeadlineResolver: (() => void) | null = null;
+  private launchIntroWallDeadlineGeneration = 0;
   /** 随启动分支选择一次；仅用于表现，绝不影响玩法。 */
   private launchIntroClockMode: GameIntroClockMode = "playback-clock";
   private readonly preload: PreloadGate;
@@ -669,6 +679,8 @@ export class AppController {
   private readonly wheelAssetPackageId: string;
   private freeSpinsAssetLease: StreamingAssetEventLease | null = null;
   private wheelAssetLease: StreamingAssetEventLease | null = null;
+  /** 仅供同文档夹具在 destroy 返回后读取；不发布到生产 DOM。 */
+  private destroyedStreamingAssetDiagnostics: StreamingAssetRuntimeDiagnostics | null = null;
   private freeSpinsArtworkReady: Promise<void> | null = null;
   private wheelArtworkReady: Promise<void> | null = null;
   private readonly reducedMotion: boolean;
@@ -1188,10 +1200,16 @@ export class AppController {
     return this.ui.prepareSpinMessageCapture(message);
   }
 
+  /** 销毁后只读的资源终态；活动控制器不提供推测值。 */
+  getDestroyedStreamingAssetDiagnostics(): StreamingAssetRuntimeDiagnostics | null {
+    return this.destroyed ? this.destroyedStreamingAssetDiagnostics : null;
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     bestEffortAppCleanup(() => this.stopPostWinIdleRepeat());
+    bestEffortAppCleanup(() => this.clearLaunchIntroWallDeadline());
     bestEffortAppCleanup(() => this.clearInitialRgsSessionTimeout());
     bestEffortAppCleanup(() => finishStartupPerformanceMonitor(this.root));
     // 若构造过程在启动设置前中断，确保拆卸流程安全。
@@ -1199,6 +1217,9 @@ export class AppController {
     bestEffortAppCleanup(() => this.releaseFeatureAssetEventLease("wheel"));
     bestEffortAppCleanup(() => this.releaseFeatureAssetEventLease("free-spins"));
     bestEffortAppCleanup(() => this.streamingAssets?.destroy());
+    bestEffortAppCleanup(() => {
+      this.destroyedStreamingAssetDiagnostics = this.streamingAssets?.diagnostics() ?? null;
+    });
     if (this.activeObservedFeatureEvents.length > 0) {
       this.activeObservedFeatureEvents.length = 0;
       bestEffortAppCleanup(() => this.notifyFeatureEvent(null, null));
@@ -1291,7 +1312,7 @@ export class AppController {
       }
       if (this.destroyed || this.sessionTimedOut) return;
       this.syncLaunchUi();
-      await this.intro.play();
+      await this.playLaunchIntroWithinWallDeadline();
       if (this.destroyed || this.sessionTimedOut) return;
       // Base 音乐已在 Continue/SPLASH_HIDE 时启动。GameReady 没有第二套 SoundStage 程序，
       // 因此 Intro 完成时不得重写淡化效果。
@@ -1311,6 +1332,7 @@ export class AppController {
       }
     } catch (error) {
       if (this.destroyed || this.sessionTimedOut) return;
+      this.clearLaunchIntroWallDeadline();
       finishStartupPerformanceMonitor(this.root);
       this.completeLaunchFailure(this.initialSessionFailure
         ?? playerFacingErrorFor(error, "launch"));
@@ -2761,6 +2783,7 @@ export class AppController {
   }
 
   private completeLaunchFailure(error: PlayerFacingError): void {
+    this.clearLaunchIntroWallDeadline();
     // 启动失败不得保留会话成功标记，避免探针把失败页面误判为可服务。
     if (this.root?.dataset) delete this.root.dataset.rgsSession;
     this.launch.transition({ type: "FAIL" });
@@ -2905,6 +2928,7 @@ export class AppController {
     this.root.dataset.rgsSessionTimeout = "true";
     this.root.dataset.rgsSessionTimeoutCode = timeout.code;
     this.clearInitialRgsSessionTimeout();
+    this.clearLaunchIntroWallDeadline();
     this.cancelScheduledFreeSpin();
     this.stopPostWinIdleRepeat();
     this.normalWinFinishRequested = true;
@@ -3077,29 +3101,94 @@ export class AppController {
     });
   }
 
+  private async playLaunchIntroWithinWallDeadline(): Promise<void> {
+    const deadline = this.armLaunchIntroWallDeadline();
+    try {
+      // 即使浏览器音频播放时钟或 Timeline 的完成 Promise 永久停滞，绝对挂钟
+      // 分支也会独立结算；skip 只负责把装饰场景推到终帧，不是解除 await 的条件。
+      await Promise.race([this.intro.play(), deadline]);
+    } finally {
+      this.clearLaunchIntroWallDeadline();
+    }
+  }
+
+  private armLaunchIntroWallDeadline(): Promise<void> {
+    this.clearLaunchIntroWallDeadline();
+    const generation = this.launchIntroWallDeadlineGeneration;
+    // IntroDirector 在构造时冻结该偏好，因此即使启动期间媒体查询变化，
+    // 独立挂钟截止也必须使用同一份快照。
+    const authoredDuration = this.reducedMotion
+      ? REDUCED_INTRO_DURATION_MS
+      : INTRO_DURATION_MS;
+    let settleDeadline = (): void => undefined;
+    const deadline = new Promise<void>((resolve) => {
+      let settled = false;
+      settleDeadline = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+    });
+    this.launchIntroWallDeadlineResolver = settleDeadline;
+    this.launchIntroWallDeadlineTimer = setTimeout(() => {
+      this.launchIntroWallDeadlineTimer = null;
+      if (this.launchIntroWallDeadlineResolver === settleDeadline) {
+        this.launchIntroWallDeadlineResolver = null;
+      }
+      if (!this.destroyed && !this.sessionTimedOut
+        && generation === this.launchIntroWallDeadlineGeneration
+        && this.launch.phase === "intro") {
+        // 该栅栏只结束装饰性介绍。会话、RNG、余额、轮次和结果交付均不读取此路径。
+        bestEffortAppCleanup(() => this.audio.stopGameIntro(200));
+        bestEffortAppCleanup(() => this.intro.skip());
+      }
+      settleDeadline();
+    }, authoredDuration + LAUNCH_INTRO_WALL_DEADLINE_GRACE_MS);
+    return deadline;
+  }
+
+  private clearLaunchIntroWallDeadline(): void {
+    this.launchIntroWallDeadlineGeneration += 1;
+    if (this.launchIntroWallDeadlineTimer !== null) {
+      clearTimeout(this.launchIntroWallDeadlineTimer);
+      this.launchIntroWallDeadlineTimer = null;
+    }
+    const settleDeadline = this.launchIntroWallDeadlineResolver;
+    this.launchIntroWallDeadlineResolver = null;
+    settleDeadline?.();
+  }
+
   private continueFeaturePreview(): void {
     const resolveGate = this.featurePreviewResolver;
     if (!resolveGate || this.featurePreviewContinuePending || !this.launch.hasSession) return;
-    this.featurePreviewContinuePending = true;
-    this.ui.setFeaturePreviewPending(true);
-    // 指针/点击捕获已请求恢复。键盘激活时幂等地重复，但在 SPLASH_HIDE 前绝不等待浏览器音频。
-    const playbackClock = this.audio.getLaunchPlaybackClock();
-    if (playbackClock) this.launchClock.follow(playbackClock);
-    const audioUnlock = this.audio.unlock();
-    void audioUnlock.then((unlocked) => {
-      if (!unlocked && !this.destroyed) this.launchClock.followWall();
-    }, () => {
-      if (!this.destroyed) this.launchClock.followWall();
-    });
-    this.audio.playSplashContinue({ intensity: 1 });
-    this.syncGameMusic();
+    // 权威会话门通过后先原子夺取 resolver；从这里开始，任何 DOM、
+    // 音频或渲染器副作用抛错都不得使已接受的 Continue 再次可入或悬挂。
     this.featurePreviewResolver = null;
-    this.featurePreviewContinuePending = false;
-    this.ui.setFeaturePreviewPending(false);
+    this.featurePreviewContinuePending = true;
     this.featurePreviewActive = false;
-    this.ui.setFeaturePreviewVisible(false);
-    this.renderer.setFeaturePreviewVisible(false);
-    resolveGate();
+    bestEffortAppCleanup(() => this.ui.setFeaturePreviewPending(true));
+    // 指针/点击捕获已请求恢复。键盘激活时幂等地重复，但在 SPLASH_HIDE 前绝不等待浏览器音频。
+    try {
+      const playbackClock = this.audio.getLaunchPlaybackClock();
+      if (playbackClock) this.launchClock.follow(playbackClock);
+      const audioUnlock = this.audio.unlock();
+      void audioUnlock.then((unlocked) => {
+        if (!unlocked && !this.destroyed) {
+          bestEffortAppCleanup(() => this.launchClock.followWall());
+        }
+      }, () => {
+        if (!this.destroyed) bestEffortAppCleanup(() => this.launchClock.followWall());
+      });
+    } catch {
+      bestEffortAppCleanup(() => this.launchClock.followWall());
+    }
+    bestEffortAppCleanup(() => this.audio.playSplashContinue({ intensity: 1 }));
+    bestEffortAppCleanup(() => this.syncGameMusic());
+    this.featurePreviewContinuePending = false;
+    bestEffortAppCleanup(() => this.ui.setFeaturePreviewPending(false));
+    bestEffortAppCleanup(() => this.ui.setFeaturePreviewVisible(false));
+    bestEffortAppCleanup(() => this.renderer.setFeaturePreviewVisible(false));
+    bestEffortAppCleanup(resolveGate);
   }
 
   private waitForInitialSession(): Promise<void> {

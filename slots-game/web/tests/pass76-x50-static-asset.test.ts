@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const X50_STATIC_ASSET = resolve(process.cwd(), "public/assets/primal-reference/wild-x50.png");
 
 describe("Pass76 official static x50 Wild asset", () => {
-  it("ships the full official Paytable frame rather than the cropped placeholder", () => {
+  it("ships the full packaged Paytable frame rather than the cropped placeholder", () => {
     const png = readFileSync(X50_STATIC_ASSET);
 
     expect(png.subarray(1, 4).toString("ascii")).toBe("PNG");

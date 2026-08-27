@@ -454,7 +454,7 @@ export function responsiveLayoutChannel(
   const params = new URLSearchParams(environment.search ?? "");
   const explicit = params.get("layout")?.toLowerCase();
   if (explicit === "mobile" || explicit === "desktop") return explicit;
-  // ContainerLauncher 的显式桌面通道必须同时约束布局；否则触屏 PC 会加载桌面资源，
+  // 启动参数中的显式桌面通道必须同时约束布局；否则触屏 PC 会加载桌面资源，
   // 却因 coarse pointer 切到移动坐标域，导致 HUD 与特殊玩法使用两套投影。
   if (params.get("channel")?.toLowerCase() === "desktop") return "desktop";
 
@@ -480,7 +480,7 @@ export function responsiveLayoutChannel(
 }
 
 /**
- * 投影原版 PC 的 1200x900 authored composition。
+ * 投影 PC 参考基线的 1200x900 authored composition。
  *
  * 逻辑渲染器仍是 1280x720；桌面先让 4:3 authored 区域完整适配视口，再对称裁掉
  * 1280 渲染器的左右翼。这样 16:10/4:3 PC 的画面与状态栏贴住物理底边，同时
@@ -917,8 +917,8 @@ export class ResponsiveLayout {
         "--fps-continue-bottom",
         "--fps-sound-size",
         "--fps-sound-edge",
-        "--fps-powered-width",
-        "--fps-powered-height",
+        "--fps-independent-width",
+        "--fps-independent-height",
         "--fps-optout-left",
         "--fps-small-font-size",
         "--fps-checkbox-size",
@@ -953,11 +953,11 @@ export class ResponsiveLayout {
     this.frame.style.setProperty("--fps-sound-size", `${soundSize}px`);
     this.frame.style.setProperty("--fps-sound-edge", `${soundEdge}px`);
     this.frame.style.setProperty(
-      "--fps-powered-width",
+      "--fps-independent-width",
       `${Math.max(84, Math.min(150, shortEdge * 0.195))}px`,
     );
     this.frame.style.setProperty(
-      "--fps-powered-height",
+      "--fps-independent-height",
       `${Math.max(32, Math.min(56.4, shortEdge * 0.0733))}px`,
     );
     this.frame.style.setProperty(
@@ -983,7 +983,7 @@ export class ResponsiveLayout {
     const properties = [
       "--mobile-status-font-size",
       "--mobile-status-game-font-size",
-      "--mobile-status-provider-scale",
+      "--mobile-status-identity-scale",
       "--mobile-status-balance-left",
       "--mobile-status-balance-min-width",
       "--mobile-status-bet-left",
@@ -998,7 +998,7 @@ export class ResponsiveLayout {
     }
     this.frame.style.setProperty("--mobile-status-font-size", `${height * 0.67}px`);
     this.frame.style.setProperty("--mobile-status-game-font-size", `${height * 0.43}px`);
-    this.frame.style.setProperty("--mobile-status-provider-scale", `${height / 25.7142857143}`);
+    this.frame.style.setProperty("--mobile-status-identity-scale", `${height / 25.7142857143}`);
     this.frame.style.setProperty("--mobile-status-balance-left", `${height * 3.05}px`);
     this.frame.style.setProperty("--mobile-status-balance-min-width", `${height * 6.05}px`);
     this.frame.style.setProperty("--mobile-status-bet-left", `${height * 9.4}px`);

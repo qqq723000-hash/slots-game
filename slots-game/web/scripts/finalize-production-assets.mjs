@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,19 +13,11 @@ import {
   UNAVAILABLE_RELEASE_REVISION,
   verifyReleaseManifest,
 } from "./release-manifest.mjs";
-
-async function filesUnder(root) {
-  const output = [];
-  async function visit(directory) {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const path = resolve(directory, entry.name);
-      if (entry.isDirectory()) await visit(path);
-      else if (entry.isFile()) output.push(path);
-    }
-  }
-  await visit(root);
-  return output.sort();
-}
+import {
+  assertNoForbiddenProductionSentinels,
+  reachableProductionAssets,
+} from "./production-asset-graph.mjs";
+import { regularFilesUnder } from "./production-file-tree.mjs";
 
 function slash(path) {
   return path.split(sep).join("/");
@@ -33,20 +25,34 @@ function slash(path) {
 
 async function referencedPrimalFiles() {
   // 生产引用由源码常量和 CSS 构成。这里只解析已有文件名，不接受任意路径。
-  const candidates = await filesUnder(resolve(publicRoot, "assets/primal-reference"));
-  const sourceFiles = (await filesUnder(resolve(webRoot, "src"))).filter((path) => /\.(?:ts|css)$/.test(path));
+  const candidates = await regularFilesUnder(resolve(publicRoot, "assets/primal-reference"));
+  const sourceFiles = (await regularFilesUnder(resolve(webRoot, "src"))).filter((path) => {
+    const sourceName = slash(relative(webRoot, path));
+    return /\.(?:ts|css)$/.test(sourceName) && !sourceName.startsWith("src/testing/");
+  });
   const source = (await Promise.all(sourceFiles.map((path) => readFile(path, "utf8")))).join("\n");
   return new Set(candidates.filter((path) => source.includes(path.split(sep).at(-1))).map((path) => slash(relative(publicRoot, path))));
 }
 
 async function expectedPaths() {
-  const keep = new Set(["index.html", "favicon.ico", "THIRD_PARTY_NOTICES.txt"]);
-  for (const path of await filesUnder(distRoot)) {
+  const keep = new Set([
+    "index.html",
+    "favicon.ico",
+    "THIRD_PARTY_NOTICES.txt",
+    "browser-preflight.js",
+  ]);
+  const distributionFiles = await regularFilesUnder(distRoot);
+  const moduleArtifacts = [];
+  for (const path of distributionFiles) {
     const name = slash(relative(distRoot, path));
-    if (/^assets\/[^/]+\.(?:js|css)$/.test(name)) keep.add(name);
+    if (/^assets\/[^/]+\.(?:m?js|css)$/.test(name)) {
+      moduleArtifacts.push({ name, source: await readFile(path, "utf8") });
+    }
     if (name.startsWith("assets/primal-runtime/")) keep.add(name);
-    if (name.startsWith("assets/brand/")) keep.add(name);
   }
+  assertNoForbiddenProductionSentinels(moduleArtifacts);
+  const indexSource = await readFile(resolve(distRoot, "index.html"), "utf8");
+  for (const name of reachableProductionAssets(indexSource, moduleArtifacts)) keep.add(name);
   for (const name of await referencedPrimalFiles()) keep.add(name);
   return keep;
 }
@@ -56,7 +62,7 @@ async function sha256(path) {
 }
 
 async function releaseEntries() {
-  const releaseFiles = (await filesUnder(distRoot))
+  const releaseFiles = (await regularFilesUnder(distRoot))
     .map((path) => ({ path, name: slash(relative(distRoot, path)) }))
     .filter(({ name }) => name !== "release-manifest.json");
   const entries = [];
@@ -76,7 +82,7 @@ function exactEntries(left, right) {
 }
 
 const keep = await expectedPaths();
-const before = (await filesUnder(distRoot)).map((path) => slash(relative(distRoot, path)));
+const before = (await regularFilesUnder(distRoot)).map((path) => slash(relative(distRoot, path)));
 const forbidden = before.filter((name) =>
   name.endsWith(".map") ||
   /(^|\/)README(?:\.[^/]*)?$/i.test(name) ||
