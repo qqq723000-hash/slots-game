@@ -55,6 +55,7 @@ const chromiumKingScenarioDeadlineMs = 210_000;
 const chromiumDesktopKongScenarioDeadlineMs = 360_000;
 const edgeKingScenarioDeadlineMs = 240_000;
 const edgeDesktopKongScenarioDeadlineMs = 360_000;
+const edgeCapSummaryScenarioDeadlineMs = 300_000;
 const slowExtendedScenarioDeadlineMs = 240_000;
 const slowKongScenarioDeadlineMs = 270_000;
 const standardBrowserDeadlineMs = 20 * 60_000;
@@ -447,6 +448,11 @@ function resolveScenarioDeadlineMs(browserName, contract, surface) {
     && surface.id === "desktop-1440x900"
     && contract.scenario === "kong-flow") {
     return edgeDesktopKongScenarioDeadlineMs;
+  }
+  if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "cap-summary") {
+    return edgeCapSummaryScenarioDeadlineMs;
   }
   if (browserName === "chromium"
     && surface.id === "desktop-1440x900"

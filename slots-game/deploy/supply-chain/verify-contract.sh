@@ -712,9 +712,12 @@ require_fixed 'npm run test:visual-fixtures-browser-matrix -- --browser "${{ mat
 require_line '        run: npm run test:visual-fixtures-browser-matrix -- --browser msedge' "$frontend_workflow"
 
 require_line 'const chromiumDesktopKongScenarioDeadlineMs = 360_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeCapSummaryScenarioDeadlineMs = 300_000;' "$visual_fixture_browser_gate"
 require_line 'const slowKongScenarioDeadlineMs = 270_000;' "$visual_fixture_browser_gate"
 require_line 'const slowBrowserDeadlineMs = 32 * 60_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeBrowserDeadlineMs = 32 * 60_000;' "$visual_fixture_browser_gate"
 require_line 'const slowMaximumBrowserBudgetMs = 33 * 60_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeMaximumBrowserBudgetMs = 33 * 60_000;' "$visual_fixture_browser_gate"
 node - "$visual_fixture_browser_gate" <<'NODE'
 const { readFileSync } = require("node:fs");
 const source = readFileSync(process.argv[2], "utf8");
@@ -731,6 +734,20 @@ const sharedSlowKongBranch = [
   "    return slowKongScenarioDeadlineMs;",
   "  }",
 ].join("\n");
+const edgeCapSummaryBranch = [
+  '  if (browserName === "msedge"',
+  '    && surface.id === "desktop-1440x900"',
+  '    && contract.scenario === "cap-summary") {',
+  "    return edgeCapSummaryScenarioDeadlineMs;",
+  "  }",
+].join("\n");
+const sharedSlowExtendedBranch = [
+  '  if (slowBrowser',
+  '    && ((surface.id === "desktop-1440x900" && contract.scenario === "cap-summary")',
+  '      || (surface.id === "mobile-390x844" && contract.scenario === "king-flow"))) {',
+  "    return slowExtendedScenarioDeadlineMs;",
+  "  }",
+].join("\n");
 const count = (value) => source.split(value).length - 1;
 if (count(chromiumDesktopKongBranch) !== 1) {
   throw new Error("Chromium desktop Kong timing tuple drifted");
@@ -738,8 +755,17 @@ if (count(chromiumDesktopKongBranch) !== 1) {
 if (count(sharedSlowKongBranch) !== 1) {
   throw new Error("shared slow Kong timing tuple drifted");
 }
+if (count(edgeCapSummaryBranch) !== 1) {
+  throw new Error("Edge desktop cap-summary timing tuple drifted");
+}
+if (count(sharedSlowExtendedBranch) !== 1) {
+  throw new Error("shared slow extended timing tuple drifted");
+}
 if (source.indexOf(chromiumDesktopKongBranch) >= source.indexOf(sharedSlowKongBranch)) {
   throw new Error("Chromium desktop Kong timing tuple must precede the shared slow tuple");
+}
+if (source.indexOf(edgeCapSummaryBranch) >= source.indexOf(sharedSlowExtendedBranch)) {
+  throw new Error("Edge desktop cap-summary timing tuple must precede the shared slow tuple");
 }
 NODE
 
