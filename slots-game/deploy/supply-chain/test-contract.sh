@@ -736,10 +736,21 @@ replace_once '    timeout-minutes: 25' '    timeout-minutes: 18' "$fixture/.gith
 expect_rejected 'special-feature browser matrix lost its setup and cleanup budget'
 
 reset_fixture
-replace_once '        run: npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"' \
-  '        run: true # special-feature matrix bypassed' \
+replace_once '  npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"' \
+  '  true # special-feature non-Firefox matrix bypassed' \
   "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'special-feature browser matrix command was bypassed'
+
+reset_fixture
+replace_once '          GALLIUM_DRIVER=llvmpipe \' '          GALLIUM_DRIVER=softpipe \' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'production Firefox matrix stopped requiring reviewed Mesa llvmpipe'
+
+reset_fixture
+replace_once '            SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1 \' \
+  '            SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=0 \' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'special-feature Firefox matrix disabled the Xvfb software WebGL contract'
 
 reset_fixture
 insert_after_once '  verify-special-features:' '    if: false' \

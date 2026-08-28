@@ -10,6 +10,10 @@ import {
   CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE,
   createReleaseContentSecurityPolicy,
 } from "../../deploy/web/content-security-policy.mjs";
+import {
+  resolveBrowserRenderingContract,
+  validateProductionBrowserTimingBudget,
+} from "./browser-rendering-contract.mjs";
 import { createControlledRgsTransactionFixture } from "./production-browser-transaction-fixture.mjs";
 import { validateReleaseRgsBuildEnvironment } from "../src/validateReleaseRgsBuildConfig.mjs";
 
@@ -39,6 +43,8 @@ const approvedBinding = Object.freeze({
   definitionHash: "9e9b9b5f23f0f2cfed0a4a5ff5961dbc76a91ba9e614f3cfadb47824a46d2205",
 });
 const startupTimeoutMs = 45_000;
+const featurePreviewStartupTimeoutMs = 90_000;
+const maximumFeaturePreviewStartupTimeoutMs = 2 * 60_000;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
 // ResponsiveLayout 在 390x844 移动设计面使用 390x844、scale=1 的唯一根投影；
 // DomOverlay 将捕获的 Spin 中心 638.36328125 与 85.91 外圈发布到同一设计坐标域。
@@ -58,6 +64,10 @@ const mobilePortraitGeometryContract = Object.freeze({
 });
 
 validateReleaseRgsBuildEnvironment(process.env);
+validateProductionBrowserTimingBudget({
+  featurePreviewStartupTimeoutMs,
+  maximumFeaturePreviewStartupTimeoutMs,
+});
 const selectedBrowsers = parseSelectedBrowsers(process.argv.slice(2));
 const browserRgsBaseUrl = process.env.VITE_RGS_BASE_URL;
 const browserHostOrigin = process.env.VITE_RGS_HOST_ORIGIN;
@@ -106,13 +116,9 @@ async function verifyBrowser(browserName, port) {
   let browser = null;
   let context = null;
   try {
+    const renderingContract = resolveBrowserRenderingContract({ browserName });
     browser = await browserType.launch({
-      headless: true,
-      ...(browserName === "chromium"
-        ? { channel: "chrome" }
-        : browserName === "msedge"
-          ? { channel: "msedge" }
-          : {}),
+      ...renderingContract.launchOptions,
     });
     context = await browser.newContext({
       reducedMotion: "reduce",
@@ -172,7 +178,7 @@ async function verifyBrowser(browserName, port) {
       rgsSessionId: sessionId,
     })}`;
     await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: startupTimeoutMs });
-    await waitForFeaturePreviewReady(page, browserName);
+    await waitForFeaturePreviewReady(page, browserName, runtimeErrors, transportErrors);
     const cspViolations = await page.evaluate(() => (
       globalThis.__slotsContentSecurityPolicyProbe?.violations ?? null
     ));
@@ -371,6 +377,7 @@ async function verifyBrowser(browserName, port) {
       browser: browserName,
       canvas: initialCanvas,
       cspViolationCount: cspViolations.length,
+      renderingMode: renderingContract.renderingMode,
       mobileBottomContained: true,
       mobileBottomGeometry: Object.freeze({
         frameBottom: mobileGeometry.frameBottom,
@@ -916,18 +923,24 @@ async function waitForAcknowledgedTransaction(
   return snapshot;
 }
 
-async function waitForFeaturePreviewReady(page, browserName) {
-  const handle = await page.waitForFunction(() => {
-    const button = document.querySelector('[data-role="preview-continue"]');
-    const previewVisible = document.querySelector('[data-role="feature-preview"]')
-      ?.getAttribute("data-visible") === "true";
-    if (button instanceof HTMLButtonElement && !button.disabled && previewVisible) return "ready";
-    if (document.querySelector('[data-role="overlay"]')?.getAttribute("data-launch") === "failed") {
-      return "failed";
-    }
-    return null;
-  }, undefined, { timeout: startupTimeoutMs });
-  const outcome = await handle.jsonValue();
+async function waitForFeaturePreviewReady(page, browserName, runtimeErrors, transportErrors) {
+  let outcome = null;
+  let timeoutCause = null;
+  try {
+    const handle = await page.waitForFunction(() => {
+      const button = document.querySelector('[data-role="preview-continue"]');
+      const previewVisible = document.querySelector('[data-role="feature-preview"]')
+        ?.getAttribute("data-visible") === "true";
+      if (button instanceof HTMLButtonElement && !button.disabled && previewVisible) return "ready";
+      if (document.querySelector('[data-role="overlay"]')?.getAttribute("data-launch") === "failed") {
+        return "failed";
+      }
+      return null;
+    }, undefined, { timeout: featurePreviewStartupTimeoutMs });
+    outcome = await handle.jsonValue();
+  } catch (error) {
+    timeoutCause = error;
+  }
   if (outcome === "ready") return;
   const diagnostic = await page.evaluate(() => {
     const root = document.querySelector("#app");
@@ -972,7 +985,15 @@ async function waitForFeaturePreviewReady(page, browserName) {
         : null,
     };
   });
-  throw new Error(`${browserName} 的生产 Feature Preview 启动失败：${JSON.stringify(diagnostic)}`);
+  throw new Error(
+    `${browserName} 的生产 Feature Preview 未在 ${featurePreviewStartupTimeoutMs}ms 内就绪：`
+      + JSON.stringify({
+        ...diagnostic,
+        runtimeErrorCount: runtimeErrors.length,
+        transportErrorCount: transportErrors.length,
+      }),
+    timeoutCause ? { cause: timeoutCause } : undefined,
+  );
 }
 
 async function waitForReady(page) {

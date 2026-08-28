@@ -14,12 +14,17 @@ import {
   CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE,
   verifyBaseContentSecurityPolicy,
 } from "../../deploy/web/content-security-policy.mjs";
+import {
+  resolveBrowserRenderingContract,
+  validateVisualFixtureTimingBudget,
+} from "./browser-rendering-contract.mjs";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
 const startupTimeoutMs = 45_000;
-const scenarioDeadlineMs = 90_000;
-const browserDeadlineMs = 15 * 60_000;
+const primaryActionTimeoutMs = 5_000;
+const scenarioDeadlineMs = 120_000;
+const browserDeadlineMs = 18 * 60_000;
 const maximumBrowserBudgetMs = 20 * 60_000;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
@@ -298,15 +303,14 @@ const scenarioRuns = Object.freeze([
   Object.freeze({ contract: requireFeatureScenario("kong"), surface: tabletLandscapeSurface }),
 ]);
 const maximumBrowserScenarioBudgetMs = scenarioRuns.length * scenarioDeadlineMs;
-if (maximumBrowserScenarioBudgetMs >= maximumBrowserBudgetMs) {
-  throw new Error("特殊玩法单浏览器最坏场景预算必须小于 20 分钟");
-}
-if (browserDeadlineMs >= maximumBrowserBudgetMs) {
-  throw new Error("特殊玩法浏览器级墙钟截止必须小于 20 分钟总预算");
-}
-if (maximumBrowserScenarioBudgetMs >= browserDeadlineMs) {
-  throw new Error("特殊玩法场景预算必须为浏览器级墙钟截止保留启动与清理时间");
-}
+validateVisualFixtureTimingBudget({
+  browserDeadlineMs,
+  maximumBrowserBudgetMs,
+  maximumBrowserScenarioBudgetMs,
+  primaryActionTimeoutMs,
+  scenarioCount: scenarioRuns.length,
+  scenarioDeadlineMs,
+});
 
 const selectedBrowsers = parseSelectedBrowsers(process.argv.slice(2));
 const gateStartedAt = Date.now();
@@ -543,14 +547,10 @@ async function verifyBrowser(browserName, originValue) {
   const scenarioEvidence = [];
   const browserWork = (async () => {
     try {
+      const renderingContract = resolveBrowserRenderingContract({ browserName });
       browser = await browserType.launch({
-        headless: true,
         timeout: startupTimeoutMs,
-        ...(browserName === "chromium"
-          ? { channel: "chrome" }
-          : browserName === "msedge"
-            ? { channel: "msedge" }
-            : {}),
+        ...renderingContract.launchOptions,
       });
       if (deadlineExpired) {
         throw new Error(`${browserName} 在浏览器启动期间超过墙钟截止时间`);
@@ -573,6 +573,7 @@ async function verifyBrowser(browserName, originValue) {
         durationMs: Date.now() - browserStartedAt,
         browserDeadlineMs,
         maximumBrowserScenarioBudgetMs,
+        renderingMode: renderingContract.renderingMode,
         scenarios: Object.freeze(scenarioEvidence),
       });
     } finally {
@@ -1452,7 +1453,7 @@ async function clickCurrentPrimaryAction(page, expectedAction) {
   ), expectedAction).catch(() => false);
   if (!canClick) return false;
   try {
-    await spin.click({ timeout: 1_500 });
+    await spin.click({ timeout: primaryActionTimeoutMs });
     return true;
   } catch (error) {
     const stillClickable = await spin.evaluate((element, action) => (

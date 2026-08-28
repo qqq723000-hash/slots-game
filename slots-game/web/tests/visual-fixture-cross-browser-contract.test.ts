@@ -1,7 +1,12 @@
+// @ts-nocheck -- 浏览器门禁合同会直接执行 Node .mjs 运维辅助模块。
 import { describe, expect, it } from "vitest";
 
 import workflow from "../../../.github/workflows/frontend-conformance.yml?raw";
 import packageJson from "../package.json?raw";
+import {
+  resolveBrowserRenderingContract,
+  validateVisualFixtureTimingBudget,
+} from "../scripts/browser-rendering-contract.mjs";
 import fixtureBrowserGate from "../scripts/verify-visual-fixture-cross-browser.mjs?raw";
 import fixtureMain from "../src/testing/visualFixturesMain.ts?raw";
 
@@ -49,15 +54,34 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(workflow).toContain("name: verify-special-features (${{ matrix.browser }})");
     expect(workflow).toContain("browser: [chromium, firefox, webkit]");
     expect(workflow).toContain("timeout-minutes: 25");
-    expect(workflow).toContain(
-      'run: npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"\n',
-    );
-    expect(workflow).toContain(
-      "run: npm run test:visual-fixtures-browser-matrix -- --browser msedge\n",
-    );
     const frontendJob = workflow.slice(
       workflow.indexOf("  verify-frontend:"),
       workflow.indexOf("  verify-special-features:"),
+    );
+    const productionMatrixStep = frontendJob.slice(
+      frontendJob.indexOf("Verify production transaction across browser engines"),
+      frontendJob.indexOf("Rebuild and verify deterministic release bytes"),
+    );
+    expect(productionMatrixStep).toContain("SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1");
+    expect(productionMatrixStep).toContain("LIBGL_ALWAYS_SOFTWARE=true");
+    expect(productionMatrixStep).toContain("GALLIUM_DRIVER=llvmpipe");
+    expect(productionMatrixStep).toContain("xvfb-run --auto-servernum");
+    expect(productionMatrixStep).toContain("npm run build:browser-matrix");
+
+    const specialFeatureJob = workflow.slice(
+      workflow.indexOf("  verify-special-features:"),
+      workflow.indexOf("  verify-edge:"),
+    );
+    expect(specialFeatureJob).toContain('if [[ "${{ matrix.browser }}" == "firefox" ]]');
+    expect(specialFeatureJob).toContain("SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1");
+    expect(specialFeatureJob).toContain("LIBGL_ALWAYS_SOFTWARE=true");
+    expect(specialFeatureJob).toContain("GALLIUM_DRIVER=llvmpipe");
+    expect(specialFeatureJob).toContain("xvfb-run --auto-servernum");
+    expect(specialFeatureJob).toContain(
+      'npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"',
+    );
+    expect(workflow).toContain(
+      "run: npm run test:visual-fixtures-browser-matrix -- --browser msedge\n",
     );
     expect(frontendJob).not.toContain("test:visual-fixtures-browser-matrix");
   });
@@ -177,8 +201,8 @@ describe("non-production special-feature browser fixture contract", () => {
   });
 
   it("enforces scenario and browser wall-clock deadlines below the CI budget", () => {
-    expect(fixtureBrowserGate).toContain("const scenarioDeadlineMs = 90_000");
-    expect(fixtureBrowserGate).toContain("const browserDeadlineMs = 15 * 60_000");
+    expect(fixtureBrowserGate).toContain("const scenarioDeadlineMs = 120_000");
+    expect(fixtureBrowserGate).toContain("const browserDeadlineMs = 18 * 60_000");
     expect(fixtureBrowserGate).toContain("const maximumBrowserBudgetMs = 20 * 60_000");
     expect(fixtureBrowserGate).toContain(
       "const maximumBrowserScenarioBudgetMs = scenarioRuns.length * scenarioDeadlineMs",
@@ -193,6 +217,110 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain("void requestBrowserClose()");
     expect(fixtureBrowserGate).toContain("await requestBrowserClose()");
     expect(fixtureBrowserGate).toContain("浏览器启动、全部场景与清理");
+  });
+
+  it("keeps slow-runner deadlines bounded and rejects budgets without cleanup headroom", () => {
+    expect(validateVisualFixtureTimingBudget({
+      browserDeadlineMs: 18 * 60_000,
+      maximumBrowserBudgetMs: 20 * 60_000,
+      maximumBrowserScenarioBudgetMs: 8 * 120_000,
+      primaryActionTimeoutMs: 5_000,
+      scenarioCount: 8,
+      scenarioDeadlineMs: 120_000,
+    })).toEqual({ maximumBrowserScenarioBudgetMs: 960_000 });
+    expect(() => validateVisualFixtureTimingBudget({
+      browserDeadlineMs: 960_000,
+      maximumBrowserBudgetMs: 20 * 60_000,
+      maximumBrowserScenarioBudgetMs: 960_000,
+      primaryActionTimeoutMs: 5_000,
+      scenarioCount: 8,
+      scenarioDeadlineMs: 120_000,
+    })).toThrow("必须为浏览器启动与清理保留时间");
+    expect(() => validateVisualFixtureTimingBudget({
+      browserDeadlineMs: 18 * 60_000,
+      maximumBrowserBudgetMs: 20 * 60_000,
+      maximumBrowserScenarioBudgetMs: 8 * 150_000,
+      primaryActionTimeoutMs: 5_000,
+      scenarioCount: 8,
+      scenarioDeadlineMs: 150_000,
+    })).toThrow("最坏场景预算必须小于总预算");
+    expect(() => validateVisualFixtureTimingBudget({
+      browserDeadlineMs: 20 * 60_000,
+      maximumBrowserBudgetMs: 20 * 60_000,
+      maximumBrowserScenarioBudgetMs: 960_000,
+      primaryActionTimeoutMs: 5_000,
+      scenarioCount: 8,
+      scenarioDeadlineMs: 120_000,
+    })).toThrow("浏览器级墙钟截止必须小于总预算");
+    expect(() => validateVisualFixtureTimingBudget({
+      browserDeadlineMs: 18 * 60_000,
+      maximumBrowserBudgetMs: 20 * 60_000,
+      maximumBrowserScenarioBudgetMs: 960_000,
+      primaryActionTimeoutMs: 120_000,
+      scenarioCount: 8,
+      scenarioDeadlineMs: 120_000,
+    })).toThrow("主控件动作预算必须小于单场景硬截止");
+  });
+
+  it("requires a real Xvfb and Mesa boundary for Linux CI Firefox", () => {
+    const softwareEnvironment = {
+      CI: "true",
+      DISPLAY: ":99",
+      GALLIUM_DRIVER: "llvmpipe",
+      LIBGL_ALWAYS_SOFTWARE: "true",
+      SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL: "1",
+    };
+    expect(resolveBrowserRenderingContract({
+      browserName: "firefox",
+      environment: softwareEnvironment,
+      platform: "linux",
+    })).toEqual({
+      launchOptions: {
+        firefoxUserPrefs: {
+          "gfx.webrender.software": true,
+          "webgl.disabled": false,
+          "webgl.force-enabled": true,
+        },
+        headless: false,
+      },
+      renderingMode: "linux-xvfb-mesa-llvmpipe",
+    });
+    expect(() => resolveBrowserRenderingContract({
+      browserName: "firefox",
+      environment: { CI: "true" },
+      platform: "linux",
+    })).toThrow("必须通过 SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1");
+    expect(() => resolveBrowserRenderingContract({
+      browserName: "firefox",
+      environment: { ...softwareEnvironment, DISPLAY: "" },
+      platform: "linux",
+    })).toThrow("缺少 DISPLAY");
+    expect(() => resolveBrowserRenderingContract({
+      browserName: "firefox",
+      environment: { ...softwareEnvironment, LIBGL_ALWAYS_SOFTWARE: "false" },
+      platform: "linux",
+    })).toThrow("LIBGL_ALWAYS_SOFTWARE=true");
+    expect(() => resolveBrowserRenderingContract({
+      browserName: "firefox",
+      environment: { ...softwareEnvironment, GALLIUM_DRIVER: "softpipe" },
+      platform: "linux",
+    })).toThrow("GALLIUM_DRIVER=llvmpipe");
+    expect(() => resolveBrowserRenderingContract({
+      browserName: "firefox",
+      environment: softwareEnvironment,
+      platform: "darwin",
+    })).toThrow("只允许在 Linux 启用");
+
+    const chromium = resolveBrowserRenderingContract({
+      browserName: "chromium",
+      environment: softwareEnvironment,
+      platform: "linux",
+    });
+    expect(chromium.launchOptions).toEqual({ channel: "chrome", headless: true });
+    expect(chromium.renderingMode).toBe("browser-default");
+    expect(fixtureBrowserGate).toContain('canvas.getContext("webgl2")');
+    expect(fixtureBrowserGate).toContain("initialSurface.maximumTextureSize < 4_096");
+    expect(fixtureBrowserGate).not.toContain("maximumTextureSize: 4_096");
   });
 
   it("actively destroys the same document and requires zero retained resources", () => {
@@ -217,8 +345,14 @@ describe("non-production special-feature browser fixture contract", () => {
     const clickEnd = fixtureBrowserGate.indexOf("function validateScenarioEvidence", clickStart);
     const clickContract = fixtureBrowserGate.slice(clickStart, clickEnd);
     expect(clickContract).toContain("page.locator('[data-role=\"spin\"]')");
-    expect(clickContract).toContain("await spin.click({ timeout: 1_500 })");
+    expect(fixtureBrowserGate).toContain("const primaryActionTimeoutMs = 5_000");
+    expect(clickContract).toContain("await spin.click({ timeout: primaryActionTimeoutMs })");
+    expect(clickContract).toContain("if (!stillClickable) return false");
+    expect(clickContract).toContain("throw error");
+    expect(clickContract).not.toContain("timeout: 1_500");
+    expect(clickContract).not.toContain("force: true");
     expect(clickContract).not.toContain("element.click()");
+    expect(clickContract).not.toContain("dispatchEvent");
     expect(fixtureBrowserGate).not.toContain("真实主控件");
   });
 });

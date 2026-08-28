@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";
 
+import { validateProductionBrowserTimingBudget } from "../scripts/browser-rendering-contract.mjs";
 import viteConfiguration, { PRODUCTION_BROWSER_TARGETS } from "../vite.config";
 
 const EXPECTED_TARGETS = [
@@ -47,10 +48,42 @@ describe("production browser support contract", () => {
     expect(launch).toBeLessThan(context);
     expect(context).toBeLessThan(probe);
     expect(probe).toBeLessThan(page);
+    expect(source).toContain('resolveBrowserRenderingContract({ browserName })');
+    expect(source).toContain("...renderingContract.launchOptions");
+    expect(source).toContain("renderingMode: renderingContract.renderingMode");
     expect(source).toContain("globalThis.__slotsContentSecurityPolicyProbe?.violations");
     expect(source).toContain("!Array.isArray(cspViolations) || cspViolations.length !== 0");
     expect(source).toContain("await context?.close().catch(() => undefined)");
     expect(source).toContain("await browser?.close().catch(() => undefined)");
+    expect(source).toContain('canvas.getContext("webgl2")');
+    expect(source).toContain("initialCanvas.maximumTextureSize < 4_096");
+    expect(source).not.toContain("maximumTextureSize: 4_096");
+  });
+
+  it("bounds the slower CI feature-preview startup and preserves safe timeout diagnostics", async () => {
+    const source = await readFile(
+      new URL("../scripts/verify-production-cross-browser.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(validateProductionBrowserTimingBudget({
+      featurePreviewStartupTimeoutMs: 90_000,
+      maximumFeaturePreviewStartupTimeoutMs: 2 * 60_000,
+    })).toEqual({ featurePreviewStartupTimeoutMs: 90_000 });
+    expect(() => validateProductionBrowserTimingBudget({
+      featurePreviewStartupTimeoutMs: 2 * 60_000,
+      maximumFeaturePreviewStartupTimeoutMs: 2 * 60_000,
+    })).toThrow("启动截止必须小于两分钟上限");
+    expect(source).toContain("const featurePreviewStartupTimeoutMs = 90_000");
+    expect(source).toContain("const maximumFeaturePreviewStartupTimeoutMs = 2 * 60_000");
+    expect(source).toContain("{ timeout: featurePreviewStartupTimeoutMs }");
+    expect(source).toContain("timeoutCause = error");
+    expect(source).toContain("domReadiness:");
+    expect(source).toContain("readinessProgress:");
+    expect(source).toContain("readinessStage:");
+    expect(source).toContain("runtimeErrorCount: runtimeErrors.length");
+    expect(source).toContain("transportErrorCount: transportErrors.length");
+    expect(source).toContain("...diagnostic");
+    expect(source).toContain("Feature Preview 未在 ${featurePreviewStartupTimeoutMs}ms 内就绪");
   });
 
   it("redacts every startup failure channel and locks the 390x844 bottom geometry", async () => {

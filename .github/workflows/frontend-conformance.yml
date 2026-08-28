@@ -87,7 +87,12 @@ jobs:
           VITE_RGS_BET_OPTIONS_MINOR: 100,200,500
           VITE_RGS_DEFAULT_BET_MINOR: "200"
           VITE_RGS_HOST_ORIGIN: https://operator.ci.invalid
-        run: npm run build:browser-matrix
+        run: |
+          SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1 \
+          LIBGL_ALWAYS_SOFTWARE=true \
+          GALLIUM_DRIVER=llvmpipe \
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24 -nolisten tcp +extension GLX +extension RENDER -noreset" \
+            npm run build:browser-matrix
 
       - name: Rebuild and verify deterministic release bytes
         env:
@@ -100,7 +105,7 @@ jobs:
   verify-special-features:
     name: verify-special-features (${{ matrix.browser }})
     runs-on: ubuntu-latest
-    # 脚本保留 15 分钟单浏览器硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。
+    # 脚本保留 18 分钟单浏览器硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -131,7 +136,16 @@ jobs:
         run: npx playwright install --with-deps "${{ matrix.browser }}"
 
       - name: Verify non-production special-feature fixtures
-        run: npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"
+        run: |
+          if [[ "${{ matrix.browser }}" == "firefox" ]]; then
+            SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1 \
+            LIBGL_ALWAYS_SOFTWARE=true \
+            GALLIUM_DRIVER=llvmpipe \
+            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24 -nolisten tcp +extension GLX +extension RENDER -noreset" \
+              npm run test:visual-fixtures-browser-matrix -- --browser firefox
+          else
+            npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"
+          fi
 
   verify-edge:
     runs-on: windows-latest
