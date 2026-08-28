@@ -3491,9 +3491,8 @@ export function isCapSummaryInputCheckpointCapture(
 }
 
 /**
- * Cross-browser pixel evidence may opt into a fixture-only hold at the final
- * free-spins summary input gate. Scenario and sequence checks prevent this
- * diagnostic seam from pausing any other presentation path.
+ * 跨浏览器像素取证可在最终免费旋转总结输入门选择启用仅夹具保持；
+ * 场景与序列校验确保该诊断接口不会暂停其他表现路径。
  */
 export function isFreeSpinsSummaryInputCheckpointHold(
   scenario: string,

@@ -1229,7 +1229,7 @@ async function captureNewRenderCheckpoints(
       } catch (error) {
         cleanupError ??= error;
       }
-      // Cleanup must never replace the pixel/timing failure which caused this path.
+      // 清理失败不得覆盖触发当前路径的原始像素或时序错误。
       if (captureError === null && cleanupError !== null) throw cleanupError;
     }
   }
@@ -1864,8 +1864,8 @@ async function clickCurrentPrimaryActionWithTrustedPointer(page, expectedLease, 
     let guardResult = null;
     let pointerError = null;
     try {
-      // Mouse input has no locator actionability or scroll phase. Keep this as one
-      // awaited protocol operation; the scenario deadline owns context cancellation.
+      // 鼠标输入不经过定位器可操作性或滚动阶段；这里只等待一次协议操作，
+      // 场景级硬截止统一负责关闭上下文。
       await page.mouse.click(pointerTarget.x, pointerTarget.y);
     } catch (error) {
       pointerError = error;
