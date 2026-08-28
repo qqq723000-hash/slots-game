@@ -778,6 +778,34 @@ replace_once 'const slowKongScenarioDeadlineMs = 270_000;' \
 expect_rejected 'shared tablet Kong deadline expanded without evidence'
 
 reset_fixture
+replace_once 'const edgeCapSummaryScenarioDeadlineMs = 300_000;' \
+  'const edgeCapSummaryScenarioDeadlineMs = 240_000;' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge desktop cap-summary deadline regressed'
+
+reset_fixture
+replace_literal_once \
+  'if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "cap-summary")' \
+  'if (browserName === "chromium"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "cap-summary")' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge desktop cap-summary timing tuple changed browser'
+
+reset_fixture
+replace_literal_once \
+  'if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "cap-summary")' \
+  'if (browserName === "msedge"
+    && surface.id === "mobile-390x844"
+    && contract.scenario === "cap-summary")' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge desktop cap-summary timing tuple changed surface'
+
+reset_fixture
 replace_once 'const slowBrowserDeadlineMs = 32 * 60_000;' \
   'const slowBrowserDeadlineMs = 30 * 60_000;' \
   "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
@@ -788,6 +816,18 @@ replace_once 'const slowMaximumBrowserBudgetMs = 33 * 60_000;' \
   'const slowMaximumBrowserBudgetMs = 31 * 60_000;' \
   "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
 expect_rejected 'Chromium maximum browser budget regressed'
+
+reset_fixture
+replace_once 'const edgeBrowserDeadlineMs = 32 * 60_000;' \
+  'const edgeBrowserDeadlineMs = 31 * 60_000;' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge browser deadline lost startup and cleanup headroom'
+
+reset_fixture
+replace_once 'const edgeMaximumBrowserBudgetMs = 33 * 60_000;' \
+  'const edgeMaximumBrowserBudgetMs = 32 * 60_000;' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge maximum browser budget regressed'
 
 reset_fixture
 replace_once '    timeout-minutes: 40' '    timeout-minutes: 33' "$fixture/.github/workflows/frontend-conformance.yml"
