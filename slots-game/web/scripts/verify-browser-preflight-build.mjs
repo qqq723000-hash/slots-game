@@ -18,7 +18,7 @@ export function verifyReviewedIndexSource(indexSource) {
   if (typeof indexSource !== "string" || indexSource === "") {
     throw new Error("生产 HTML 必须是非空 UTF-8 文本");
   }
-  const scriptTags = [...indexSource.matchAll(/<script\b[^>]*>[\s\S]*?<\/script>/giu)]
+  const scriptTags = [...indexSource.matchAll(/<script\b[^>]*>[\s\S]*?<\/script\s*>/giu)]
     .map((match) => match[0]);
   const inlineScrubTag = scriptTags[0] ?? "";
   const preflightTag = scriptTags[1] ?? "";

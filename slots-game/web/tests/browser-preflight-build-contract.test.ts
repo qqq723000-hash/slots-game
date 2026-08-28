@@ -35,6 +35,20 @@ describe("browser preflight build byte contract", () => {
     );
   });
 
+  it("does not ignore a script candidate with closing-tag whitespace", async () => {
+    const indexSource = await readFile(indexUrl, "utf8");
+    const canonicalOpeningTag = '<script id="launch-fragment-scrub">';
+    expect(indexSource.split(canonicalOpeningTag)).toHaveLength(2);
+    const whitespaceClosingCandidate = indexSource.replace(
+      canonicalOpeningTag,
+      `<script src="/unexpected.js"></script >\n    ${canonicalOpeningTag}`,
+    );
+
+    expect(() => verifyReviewedIndexSource(whitespaceClosingCandidate)).toThrow(
+      "生产 HTML 必须且只能依次执行内联片段清理",
+    );
+  });
+
   it("rejects simulated Windows CRLF bytes and pins text checkout to LF", async () => {
     const [indexSource, attributes] = await Promise.all([
       readFile(indexUrl, "utf8"),
