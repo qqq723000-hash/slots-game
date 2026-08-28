@@ -24,7 +24,13 @@
 - 将浏览器端供应商式署名替换为代码原生的个人独立开发标识，移除相关位图及生产清单引用，同时保留
   Primal Rampage 游戏标题与游戏内 Spine logo；全仓身份门禁覆盖普通文本与二进制文件名，阻止旧标识回退；
 - 将桌面与移动端 M4A 音频重封装为 WebKit 可渐进解码的 fast-start 容器，并以音频描述、实际字节和
-  流式清单三方一致性门禁锁定资源；应用销毁后再发布 retained/active/canvas/spin 零残留诊断证据。
+  流式清单三方一致性门禁锁定资源；应用销毁后再发布 retained/active/canvas/spin 零残留诊断证据；
+- 将本机生产候选的 Web `release-manifest.json` 与 Compose/OCI 镜像绑定同一 canonical version 和
+  完整 Git revision；revision override 只能逐字节断言 `HEAD^{commit}`，Git 失败、多值输出、dirty
+  工作区、ignored 构建输入、Vite `.env*`、npm project/user/global 配置与未批准构建环境均失败关闭，
+  两份进程内空 `0600` npm 临时配置在每次调用前后复核并清理；在 Web/Compose/最终提交
+  边界重复复核；宿主与不可变候选镜像的静态根逐文件复算、Nginx 配置逐字节重渲染核对，资源审批
+  prepare/commit 再以 canonical releaseId 拒绝同资产身份漂移。
 
 ## 1.2.3 - 2026-08-28
 

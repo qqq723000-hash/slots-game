@@ -9,8 +9,10 @@ require_state
 
 ca_file="$secrets_root/local-production-root-ca.pem"
 csp_verifier="$repository_root/deploy/web/content-security-policy.mjs"
+release_manifest_verifier="$repository_root/web/scripts/release-manifest.mjs"
 test -s "$ca_file"
 test -s "$csp_verifier"
+test -s "$release_manifest_verifier"
 
 metadata_value() {
   value="$(sed -n "s/^$1=//p" "$compose_environment")"
@@ -134,15 +136,19 @@ verify_web_content_security_policy /release-manifest.json 'Web 发布清单'
 release_manifest_json="$(curl --fail --silent --show-error --cacert "$ca_file" \
   --resolve slots.localhost:8443:127.0.0.1 \
   https://slots.localhost:8443/release-manifest.json)"
-representative_script_path="$(printf '%s' "$release_manifest_json" | node -e '
-let source="";
-process.stdin.on("data", chunk => { source += chunk; }).on("end", () => {
-  const manifest=JSON.parse(source);
-  const script=(manifest.files ?? []).find((file) =>
-    typeof file?.path === "string" && /^assets\/[A-Za-z0-9_-]+\.js$/u.test(file.path));
-  if (!script) process.exit(1);
-  process.stdout.write(script.path);
-});')"
+representative_script_path="$(printf '%s' "$release_manifest_json" | node --input-type=module -e '
+import {readFileSync} from "node:fs";
+import {pathToFileURL} from "node:url";
+const {verifyReleaseManifest}=await import(pathToFileURL(process.argv[1]).href);
+const manifest=verifyReleaseManifest(JSON.parse(readFileSync(0, "utf8")), { requireRevision: true });
+if (manifest.version !== process.argv[2] || manifest.revision !== process.argv[3]) {
+  throw new Error("Web 发布清单身份与已提交镜像版本或 revision 不一致");
+}
+const script=(manifest.files ?? []).find((file) =>
+  typeof file?.path === "string" && /^assets\/[A-Za-z0-9_-]+\.js$/u.test(file.path));
+if (!script) process.exit(1);
+process.stdout.write(script.path);
+' "$release_manifest_verifier" "$image_version" "$image_revision")"
 test -n "$representative_script_path" || {
   printf '%s\n' '发布清单中没有可用于响应头验收的代表性脚本。' >&2
   exit 1

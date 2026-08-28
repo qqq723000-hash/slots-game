@@ -42,8 +42,9 @@ Valkey 只加入未发布到宿主机的内部 `admission` 网络，使用固定
 证书、口令、令牌和持久化数据不会随之轮换。只识别明确列入迁移器的旧定义，未知、损坏
 或签名不匹配的状态会失败关闭。受本机技术授权约束的资源审批也会与当前发布清单幂等核对：
 先在 0700 artifacts 目录生成并独立验证 0600 候选，不修改已提交审批；定义提交成功后才核对
-准备阶段记录的前序摘要、保留旧审批备份并原子提交候选。定义提交失败不会污染已提交审批，
-外部运营商审批也不会被自动覆盖。
+准备阶段记录的前序摘要和 canonical `releaseId`、保留旧审批备份并原子提交候选。即使受保护资产
+完全相同，只要 version、完整 revision 或清单其他内容在 prepare 后改变，commit 也会在读取或修改
+审批、候选和备份前失败关闭。定义提交失败不会污染已提交审批，外部运营商审批也不会被自动覆盖。
 
 `bootstrap.sh`、`up.sh`、`down.sh` 与 `destroy.sh` 共用仓库外状态目录中的内核排他锁；
 macOS 本机部署使用 BSD `lockf`，Linux 合同门禁使用等价的 util-linux `flock`。进程退出时锁由
@@ -59,10 +60,22 @@ macOS 本机部署使用 BSD `lockf`，Linux 合同门禁使用等价的 util-li
 
 本地镜像构建会注入 OCI `created/revision/source/version` 标签，并由 `bootstrap.sh`
 通过 BuildKit 命令行参数显式生成 `mode=max` SLSA provenance；Compose 文件本身
-保持兼容稳定版 schema。默认 revision 来自当前 Git commit；工作区未提交时追加
-`-dirty`，避免把脏源码误标为已提交版本；默认 version 来自仓库根目录的 `VERSION`，
-并在修改仓库外状态前验证它与 CHANGELOG、Web、Helm 等版本合同一致，避免本机镜像与源码
-发布版本失配。自动化构建可显式设置
+保持兼容稳定版 schema。revision 由 fail-closed 的 `HEAD^{commit}` 解析取得；任何 Git 命令失败、
+多行或非完整输出都会终止。`LOCAL_PRODUCTION_IMAGE_REVISION` 仅可作为与该结果逐字节相等的断言，
+不能覆盖源码身份。`bootstrap.sh` 在修改仓库外状态前、Web 构建后、Compose 构建后、不可逆提交前
+和最终选择器提交前重复核对同一 HEAD 与 clean 项目目录；Git 忽略规则也不能绕过该边界，任何会进入
+services Docker context 或 Web 源码的 ignored 字节都会被拒绝，只放行每次由 `npm ci`、Vite 和 Nginx
+渲染器确定性重建的 `web/node_modules`、`web/dist`、`web/release-nginx.conf`。默认 version 来自仓库
+根目录的 `VERSION`，并在同一前置阶段验证它与 CHANGELOG、Web、Helm 等版本合同一致。
+
+Web 构建拒绝 `web/.env*` 与 `.npmrc` 的任何大小写目录项（包括被 Git 忽略的文件和符号链接），
+并用固定白名单环境启动已审核的 Node/npm；不会继承 `NODE_OPTIONS`、额外 `VITE_*`、npm 配置、代理或
+用户 shell 变量。npm 的 user/global 配置分别绑定进程内新建的空 `0600` 临时文件，每次 npm 调用前后
+都会复核内容、类型与权限，并在成功或失败时清理，Node 安装目录中的可变配置不会进入依赖解析。
+Web `release-manifest.json` 与全部自有镜像的 OCI 标签必须使用同一 canonical version 和完整 revision；
+bootstrap 会分别逐文件复算宿主 dist 与按不可变 image ID 提取的候选 Web 静态根，拒绝清单外文件、
+缺失文件、字节数或 SHA-256 漂移；镜像 Nginx 配置也必须与从受控模板重新渲染的结果逐字节一致，随后
+再核对 version、revision、releaseId。动态验收也会逐字段比较。自动化构建可显式设置
 `LOCAL_PRODUCTION_IMAGE_CREATED`、`LOCAL_PRODUCTION_IMAGE_REVISION`、
 `LOCAL_PRODUCTION_IMAGE_SOURCE`；`LOCAL_PRODUCTION_IMAGE_VERSION` 只能重复仓库的 canonical
 版本，不能留空，也不能用作 profile、环境名或任意别名。部署类型单独记录为

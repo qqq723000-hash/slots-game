@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -13,8 +14,12 @@ import {
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test, { afterEach } from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { createReleaseManifest } from "../../web/scripts/release-manifest.mjs";
+import {
+  createReleaseManifest,
+  UNAVAILABLE_RELEASE_REVISION,
+} from "../../web/scripts/release-manifest.mjs";
 import { verifyReleaseAssetApproval } from "../../web/scripts/verify-release-asset-approval.mjs";
 import {
   commitLocalAssetApprovalCandidate,
@@ -25,6 +30,7 @@ import {
 
 const temporaryRoots = [];
 const digest = (character) => character.repeat(64);
+const rotationScript = fileURLToPath(new URL("./rotate-asset-approval.mjs", import.meta.url));
 
 function makeFixture() {
   const root = mkdtempSync(resolve(tmpdir(), "slots-local-asset-rotation-"));
@@ -54,10 +60,15 @@ function files(featureHash = digest("b")) {
   ];
 }
 
-function writeManifest(fixture, version, manifestFiles = files()) {
+function writeManifest(
+  fixture,
+  version,
+  manifestFiles = files(),
+  revision = "e".repeat(40),
+) {
   const manifest = createReleaseManifest({
     version,
-    revision: "e".repeat(40),
+    revision,
     files: manifestFiles,
     requireRevision: true,
   });
@@ -102,6 +113,81 @@ test("creates a missing local approval atomically without a backup", () => {
     approvalPath: fixture.approvalPath,
     now,
   }), expectedVerification(fixture.approvalPath));
+});
+
+test("rejects an anonymous legacy manifest through every rotation entry point", async (t) => {
+  const anonymousManifest = createReleaseManifest({
+    version: "asset-unidentified-1",
+    revision: UNAVAILABLE_RELEASE_REVISION,
+    files: files(),
+  });
+  const anonymousRaw = `${JSON.stringify(anonymousManifest, null, 2)}\n`;
+
+  await t.test("direct rotation", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.manifestPath, anonymousRaw, "utf8");
+    assert.throws(
+      () => rotate(fixture, new Date("2026-08-26T01:30:00.000Z")),
+      /release revision must be a complete lowercase Git commit digest/u,
+    );
+    assert.equal(existsSync(fixture.approvalPath), false);
+    assert.deepEqual(readdirSync(fixture.backups), []);
+  });
+
+  await t.test("prepare", () => {
+    const fixture = makeFixture();
+    writeFileSync(fixture.manifestPath, anonymousRaw, "utf8");
+    assert.throws(() => prepareLocalAssetApprovalCandidate({
+      manifestPath: fixture.manifestPath,
+      approvalPath: fixture.approvalPath,
+      pendingPath: fixture.pendingPath,
+      now: new Date("2026-08-26T01:30:00.000Z"),
+    }), /release revision must be a complete lowercase Git commit digest/u);
+    assert.equal(existsSync(fixture.pendingPath), false);
+    assert.equal(existsSync(fixture.approvalPath), false);
+  });
+
+  await t.test("commit", () => {
+    const fixture = makeFixture();
+    writeManifest(fixture, "asset-identified-1");
+    const prepared = prepareLocalAssetApprovalCandidate({
+      manifestPath: fixture.manifestPath,
+      approvalPath: fixture.approvalPath,
+      pendingPath: fixture.pendingPath,
+      now: new Date("2026-08-26T01:30:00.000Z"),
+    });
+    const pendingBefore = readFileSync(fixture.pendingPath, "utf8");
+    writeFileSync(fixture.manifestPath, anonymousRaw, "utf8");
+    assert.throws(() => commitLocalAssetApprovalCandidate({
+      manifestPath: fixture.manifestPath,
+      approvalPath: fixture.approvalPath,
+      backupRoot: fixture.backups,
+      pendingPath: fixture.pendingPath,
+      expectedApprovalSha256: prepared.expectedApprovalSha256,
+      candidateApprovalSha256: prepared.candidateApprovalSha256,
+      expectedReleaseId: prepared.releaseId,
+      now: new Date("2026-08-26T01:30:00.000Z"),
+    }), /release revision must be a complete lowercase Git commit digest/u);
+    assert.equal(readFileSync(fixture.pendingPath, "utf8"), pendingBefore);
+    assert.equal(existsSync(fixture.approvalPath), false);
+    assert.deepEqual(readdirSync(fixture.backups), []);
+  });
+});
+
+test("rejects a malformed revision before changing approval state", () => {
+  const fixture = makeFixture();
+  const manifest = writeManifest(fixture, "asset-malformed-revision");
+  writeFileSync(
+    fixture.manifestPath,
+    `${JSON.stringify({ ...manifest, revision: "abcdef0" }, null, 2)}\n`,
+    "utf8",
+  );
+  assert.throws(
+    () => rotate(fixture, new Date("2026-08-26T01:45:00.000Z")),
+    /release revision must be a complete lowercase Git commit digest/u,
+  );
+  assert.equal(existsSync(fixture.approvalPath), false);
+  assert.deepEqual(readdirSync(fixture.backups), []);
 });
 
 test("leaves an exact unexpired approval byte-for-byte unchanged", () => {
@@ -171,6 +257,7 @@ test("prepares a changed approval without polluting the committed approval when 
   });
 
   assert.equal(prepared.action, "rotated-manifest");
+  assert.equal(prepared.releaseId, JSON.parse(readFileSync(fixture.manifestPath, "utf8")).releaseId);
   assert.equal(readFileSync(fixture.approvalPath, "utf8"), committedBefore);
   assert.equal(mode(fixture.pendingPath), 0o600);
   assert.deepEqual(verifyReleaseAssetApproval({
@@ -204,6 +291,7 @@ test("commits only the exact prepared approval and retains a recoverable backup"
     pendingPath: fixture.pendingPath,
     expectedApprovalSha256: prepared.expectedApprovalSha256,
     candidateApprovalSha256: prepared.candidateApprovalSha256,
+    expectedReleaseId: prepared.releaseId,
     now,
   });
 
@@ -219,6 +307,122 @@ test("commits only the exact prepared approval and retains a recoverable backup"
     readFileSync(resolve(fixture.backups, backupName, "release-asset-approval.json"), "utf8"),
     committedBefore,
   );
+});
+
+test("CLI emits and commits one exact six-field release transaction", () => {
+  const fixture = makeFixture();
+  const manifest = writeManifest(fixture, "asset-cli-transaction");
+  const prepared = spawnSync(process.execPath, [
+    rotationScript,
+    "prepare",
+    fixture.manifestPath,
+    fixture.approvalPath,
+    fixture.pendingPath,
+  ], { encoding: "utf8" });
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const fields = prepared.stdout.trim().split(" ");
+  assert.equal(fields.length, 6);
+  assert.equal(fields[0], "prepared");
+  assert.equal(fields[5], manifest.releaseId);
+
+  const committed = spawnSync(process.execPath, [
+    rotationScript,
+    "commit",
+    fixture.manifestPath,
+    fixture.approvalPath,
+    fixture.backups,
+    fixture.pendingPath,
+    fields[2],
+    fields[3],
+    fields[5],
+  ], { encoding: "utf8" });
+  assert.equal(committed.status, 0, committed.stderr);
+  assert.match(committed.stdout, /asset approval: created \(3 exact files\)/u);
+  assert.equal(existsSync(fixture.pendingPath), false);
+  assert.equal(existsSync(fixture.approvalPath), true);
+
+  const extraArgument = spawnSync(process.execPath, [
+    rotationScript,
+    "prepare",
+    fixture.manifestPath,
+    fixture.approvalPath,
+    fixture.pendingPath,
+    "unexpected",
+  ], { encoding: "utf8" });
+  assert.notEqual(extraArgument.status, 0);
+  assert.match(extraArgument.stderr, /prepare requires manifest, approval, and pending paths/u);
+});
+
+test("does not commit the same assets after canonical release identity changes", () => {
+  const fixture = makeFixture();
+  writeManifest(fixture, "asset-identity-old");
+  rotate(fixture, new Date("2026-08-26T07:30:00.000Z"));
+  const committedBefore = readFileSync(fixture.approvalPath, "utf8");
+  const preparedManifest = writeManifest(
+    fixture,
+    "asset-identity-a",
+    files(digest("f")),
+    "1".repeat(40),
+  );
+  const now = new Date("2026-08-26T08:00:00.000Z");
+  const prepared = prepareLocalAssetApprovalCandidate({
+    manifestPath: fixture.manifestPath,
+    approvalPath: fixture.approvalPath,
+    pendingPath: fixture.pendingPath,
+    now,
+  });
+  assert.equal(prepared.releaseId, preparedManifest.releaseId);
+  const pendingBefore = readFileSync(fixture.pendingPath, "utf8");
+  const backupsBefore = readdirSync(fixture.backups);
+
+  const changedIdentity = writeManifest(
+    fixture,
+    "asset-identity-b",
+    files(digest("f")),
+    "2".repeat(40),
+  );
+  assert.deepEqual(changedIdentity.files, preparedManifest.files);
+  assert.notEqual(changedIdentity.releaseId, prepared.releaseId);
+
+  assert.throws(() => commitLocalAssetApprovalCandidate({
+    manifestPath: fixture.manifestPath,
+    approvalPath: fixture.approvalPath,
+    backupRoot: fixture.backups,
+    pendingPath: fixture.pendingPath,
+    expectedApprovalSha256: prepared.expectedApprovalSha256,
+    candidateApprovalSha256: prepared.candidateApprovalSha256,
+    expectedReleaseId: prepared.releaseId,
+    now,
+  }), /release manifest identity changed after candidate validation/u);
+  assert.equal(readFileSync(fixture.approvalPath, "utf8"), committedBefore);
+  assert.equal(readFileSync(fixture.pendingPath, "utf8"), pendingBefore);
+  assert.deepEqual(readdirSync(fixture.backups), backupsBefore);
+});
+
+test("rejects a malformed expected releaseId without changing prepared state", () => {
+  const fixture = makeFixture();
+  writeManifest(fixture, "asset-invalid-expected-id");
+  const now = new Date("2026-08-26T08:30:00.000Z");
+  const prepared = prepareLocalAssetApprovalCandidate({
+    manifestPath: fixture.manifestPath,
+    approvalPath: fixture.approvalPath,
+    pendingPath: fixture.pendingPath,
+    now,
+  });
+  const pendingBefore = readFileSync(fixture.pendingPath, "utf8");
+  assert.throws(() => commitLocalAssetApprovalCandidate({
+    manifestPath: fixture.manifestPath,
+    approvalPath: fixture.approvalPath,
+    backupRoot: fixture.backups,
+    pendingPath: fixture.pendingPath,
+    expectedApprovalSha256: prepared.expectedApprovalSha256,
+    candidateApprovalSha256: prepared.candidateApprovalSha256,
+    expectedReleaseId: "invalid-release-id",
+    now,
+  }), /expected release manifest releaseId is invalid/u);
+  assert.equal(readFileSync(fixture.pendingPath, "utf8"), pendingBefore);
+  assert.equal(existsSync(fixture.approvalPath), false);
+  assert.deepEqual(readdirSync(fixture.backups), []);
 });
 
 test("backs up and renews an otherwise exact expired local approval", () => {

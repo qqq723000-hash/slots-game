@@ -31,6 +31,7 @@ const APPROVAL_KEYS = Object.freeze([
 ]);
 const ASSET_KEYS = Object.freeze(["bytes", "path", "sha256"]);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const RELEASE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
 export class LocalAssetApprovalRotationError extends Error {
   constructor(message) {
@@ -308,13 +309,7 @@ export function rotateLocalAssetApproval({
     fail("release asset approval backup root must be separate from its parent");
   }
 
-  let manifest;
-  try {
-    manifest = verifyReleaseManifest(readJSON(resolvedManifest, "release manifest").value);
-  } catch (error) {
-    fail(error instanceof Error ? error.message : "release manifest is invalid");
-  }
-  const assets = protectedManifestAssets(manifest);
+  const { assets } = manifestState(resolvedManifest);
   const replacement = `${JSON.stringify(targetApproval(assets, now), null, 2)}\n`;
 
   const exists = restrictedRegularFile(resolvedApproval, "release asset approval");
@@ -338,14 +333,20 @@ export function rotateLocalAssetApproval({
   };
 }
 
-function manifestAssets(manifestPath) {
+function manifestState(manifestPath) {
   let manifest;
   try {
-    manifest = verifyReleaseManifest(readJSON(resolve(manifestPath), "release manifest").value);
+    manifest = verifyReleaseManifest(
+      readJSON(resolve(manifestPath), "release manifest").value,
+      { requireRevision: true },
+    );
   } catch (error) {
     fail(error instanceof Error ? error.message : "release manifest is invalid");
   }
-  return protectedManifestAssets(manifest);
+  return {
+    releaseId: manifest.releaseId,
+    assets: protectedManifestAssets(manifest),
+  };
 }
 
 function sha256(contents) {
@@ -380,7 +381,7 @@ export function prepareLocalAssetApprovalCandidate({
     fail("manifest, approval, and pending paths are required");
   }
   const { resolvedApproval, resolvedPending } = validatePendingPath(approvalPath, pendingPath);
-  const assets = manifestAssets(manifestPath);
+  const { releaseId, assets } = manifestState(manifestPath);
   const existingPresent = restrictedRegularFile(resolvedApproval, "release asset approval");
   let expectedApprovalSha256 = "-";
   let action = "created";
@@ -405,6 +406,7 @@ export function prepareLocalAssetApprovalCandidate({
     approvedAssets: assets.length,
     expectedApprovalSha256,
     candidateApprovalSha256: sha256(candidate),
+    releaseId,
   };
 }
 
@@ -419,6 +421,7 @@ export function commitLocalAssetApprovalCandidate({
   pendingPath,
   expectedApprovalSha256,
   candidateApprovalSha256,
+  expectedReleaseId,
   now = new Date(),
 }) {
   if (!(now instanceof Date) || Number.isNaN(now.getTime())) fail("asset approval clock is invalid");
@@ -433,6 +436,9 @@ export function commitLocalAssetApprovalCandidate({
   if (!SHA256_PATTERN.test(candidateApprovalSha256)) {
     fail("candidate release asset approval digest is invalid");
   }
+  if (typeof expectedReleaseId !== "string" || !RELEASE_ID_PATTERN.test(expectedReleaseId)) {
+    fail("expected release manifest releaseId is invalid");
+  }
 
   const { resolvedApproval, resolvedPending } = validatePendingPath(approvalPath, pendingPath);
   const resolvedBackupRoot = resolve(backupRoot);
@@ -445,7 +451,10 @@ export function commitLocalAssetApprovalCandidate({
     fail("release asset approval backup root must be separate from its parent");
   }
 
-  const assets = manifestAssets(manifestPath);
+  const { releaseId, assets } = manifestState(manifestPath);
+  if (releaseId !== expectedReleaseId) {
+    fail("release manifest identity changed after candidate validation");
+  }
   if (!restrictedRegularFile(resolvedPending, "pending release asset approval")) {
     fail("pending release asset approval cannot be read");
   }
@@ -491,6 +500,9 @@ if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
   const [command, ...arguments_] = process.argv.slice(2);
   try {
     if (command === "prepare") {
+      if (arguments_.length !== 3) {
+        fail("prepare requires manifest, approval, and pending paths");
+      }
       const [manifestPath, approvalPath, pendingPath] = arguments_;
       const result = prepareLocalAssetApprovalCandidate({ manifestPath, approvalPath, pendingPath });
       process.stdout.write([
@@ -499,8 +511,12 @@ if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
         result.expectedApprovalSha256,
         result.candidateApprovalSha256,
         result.approvedAssets,
+        result.releaseId,
       ].join(" ") + "\n");
     } else if (command === "commit") {
+      if (arguments_.length !== 7) {
+        fail("commit requires manifest, approval, backup, pending, two approval digests, and releaseId");
+      }
       const [
         manifestPath,
         approvalPath,
@@ -508,6 +524,7 @@ if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
         pendingPath,
         expectedApprovalSha256,
         candidateApprovalSha256,
+        expectedReleaseId,
       ] = arguments_;
       const result = commitLocalAssetApprovalCandidate({
         manifestPath,
@@ -516,11 +533,15 @@ if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
         pendingPath,
         expectedApprovalSha256,
         candidateApprovalSha256,
+        expectedReleaseId,
       });
       process.stdout.write(
         `local production asset approval: ${result.action} (${result.approvedAssets} exact files)\n`,
       );
     } else {
+      if (typeof command !== "string" || command === "" || arguments_.length !== 2) {
+        fail("rotation requires manifest, approval, and backup paths");
+      }
       const [approvalPath, backupRoot] = arguments_;
       const result = rotateLocalAssetApproval({
         manifestPath: command,
