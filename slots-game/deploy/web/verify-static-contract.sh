@@ -384,6 +384,15 @@ for final_stage in "$static_stage" "$runtime_stage"; do
   printf '%s\n' "$final_stage" | grep -F 'USER 101:101' >/dev/null || fail "final stage must declare non-root 101:101"
   test "$(printf '%s\n' "$final_stage" | awk '/^USER[[:space:]]+/ { user = $2 } END { print user }')" = '101:101' \
     || fail "final stage must leave 101:101 as the effective image user"
+  test "$(printf '%s\n' "$final_stage" | grep -Fxc 'RUN --network=none rm -rf /usr/share/nginx/html && \')" -eq 1 \
+    || fail "final stage must clear the complete inherited Web root without a glob"
+  test "$(printf '%s\n' "$final_stage" | grep -Fxc '    install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html')" -eq 1 \
+    || fail "final stage must recreate the Web root with fixed ownership and permissions"
+  web_root_reset_line=$(printf '%s\n' "$final_stage" | grep -nF -x 'RUN --network=none rm -rf /usr/share/nginx/html && \' | cut -d: -f1)
+  web_dist_copy_line=$(printf '%s\n' "$final_stage" | grep -nE '^COPY .* /usr/share/nginx/html/$' | cut -d: -f1)
+  test -n "$web_root_reset_line" && test -n "$web_dist_copy_line" \
+    && test "$web_root_reset_line" -lt "$web_dist_copy_line" \
+    || fail "final stage must reset the inherited Web root before copying the manifest-bound dist"
   printf '%s\n' "$final_stage" | grep -F 'chown 0:0 /etc/nginx/conf.d /usr/share/nginx/html && \' >/dev/null || fail "final stage must root-own configuration and release roots"
   printf '%s\n' "$final_stage" | grep -F 'chmod -R a-w /etc/nginx/conf.d /usr/share/nginx/html' >/dev/null || fail "final stage must remove runtime write access from configuration and release bytes"
   printf '%s\n' "$final_stage" | grep -F 'CMD ["wget", "-q", "-T", "2", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]' >/dev/null || fail "healthcheck must use the Alpine BusyBox wget client and /readyz"

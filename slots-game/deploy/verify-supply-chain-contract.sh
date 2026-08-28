@@ -216,12 +216,41 @@ require_line 'COPY --from=static-conformance-build --chown=0:0 /src/web/dist/ /u
 require_line 'FROM ${NGINX_IMAGE} AS runtime' "$web_dockerfile"
 require_line 'COPY --from=release-build --chown=0:0 /src/web/release-nginx.conf /etc/nginx/conf.d/default.conf' "$web_dockerfile"
 require_line 'COPY --from=release-build --chown=0:0 /src/web/dist/ /usr/share/nginx/html/' "$web_dockerfile"
+static_stage=$(awk '
+  /^FROM[[:space:]].*[[:space:]]AS[[:space:]]static-conformance$/ { capture = 1 }
+  capture && /^FROM[[:space:]]+/ && $NF != "static-conformance" { capture = 0 }
+  capture { print }
+' "$web_dockerfile")
+runtime_stage=$(awk '
+  /^FROM[[:space:]].*[[:space:]]AS[[:space:]]runtime$/ { capture = 1 }
+  capture { print }
+' "$web_dockerfile")
+for served_stage in "$static_stage" "$runtime_stage"; do
+  test "$(printf '%s\n' "$served_stage" | grep -Fxc 'RUN --network=none rm -rf /usr/share/nginx/html && \' || true)" -eq 1 \
+    || fail 'each served Web stage must completely reset the inherited static root'
+  test "$(printf '%s\n' "$served_stage" | grep -Fxc '    install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html' || true)" -eq 1 \
+    || fail 'each served Web stage must recreate the static root with fixed metadata'
+  served_reset_line=$(printf '%s\n' "$served_stage" | grep -nF -x 'RUN --network=none rm -rf /usr/share/nginx/html && \' | cut -d: -f1)
+  served_copy_line=$(printf '%s\n' "$served_stage" | grep -nE '^COPY .* /usr/share/nginx/html/$' | cut -d: -f1)
+  test -n "$served_reset_line" && test -n "$served_copy_line" \
+    && test "$served_reset_line" -lt "$served_copy_line" \
+    || fail 'each served Web stage must reset the inherited static root before copying dist'
+done
 require_line 'RUN --network=none nginx -t' "$web_dockerfile"
 require_line 'LABEL org.opencontainers.image.title="primal-rampage-web" \' "$web_dockerfile"
 test "$(grep -F -c -- 'org.opencontainers.image.licenses="NOASSERTION"' "$web_dockerfile")" -eq 3 \
   || fail 'web targets must override inherited upstream license metadata'
 require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_web_dockerfile"
 require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_nginx_proxy_dockerfile"
+test "$(grep -Fxc 'RUN --network=none rm -rf /usr/share/nginx/html && \' "$local_web_dockerfile" || true)" -eq 1 \
+  || fail 'local Web image must completely reset the inherited static root'
+test "$(grep -Fxc '    install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html' "$local_web_dockerfile" || true)" -eq 1 \
+  || fail 'local Web image must recreate the static root with fixed metadata'
+local_web_reset_line=$(grep -nF -x 'RUN --network=none rm -rf /usr/share/nginx/html && \' "$local_web_dockerfile" | cut -d: -f1)
+local_web_copy_line=$(grep -nF -x 'COPY --chown=101:101 web/dist/ /usr/share/nginx/html/' "$local_web_dockerfile" | cut -d: -f1)
+test -n "$local_web_reset_line" && test -n "$local_web_copy_line" \
+  && test "$local_web_reset_line" -lt "$local_web_copy_line" \
+  || fail 'local Web image must reset the inherited static root before copying dist'
 last_web_stage=$(awk '/^FROM[[:space:]]+/ { stage = $NF } END { print stage }' "$web_dockerfile")
 test "$last_web_stage" = runtime || fail 'web runtime must remain the default final Docker target'
 require_line '    "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",' "$web_package_json"

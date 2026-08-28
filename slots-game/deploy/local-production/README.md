@@ -75,7 +75,9 @@ Web 构建拒绝 `web/.env*` 与 `.npmrc` 的任何大小写目录项（包括�
 Web `release-manifest.json` 与全部自有镜像的 OCI 标签必须使用同一 canonical version 和完整 revision；
 bootstrap 会分别逐文件复算宿主 dist 与按不可变 image ID 提取的候选 Web 静态根，拒绝清单外文件、
 缺失文件、字节数或 SHA-256 漂移；镜像 Nginx 配置也必须与从受控模板重新渲染的结果逐字节一致，随后
-再核对 version、revision、releaseId。动态验收也会逐字段比较。自动化构建可显式设置
+再核对 version、revision、releaseId。镜像复制 dist 前会整体删除并重建上游 Nginx 静态根，避免
+基础镜像自带的默认页或隐藏文件绕过 Web 构建白名单；禁止用会漏掉 dotfile 的通配符清理。动态验收
+也会逐字段比较。自动化构建可显式设置
 `LOCAL_PRODUCTION_IMAGE_CREATED`、`LOCAL_PRODUCTION_IMAGE_REVISION`、
 `LOCAL_PRODUCTION_IMAGE_SOURCE`；`LOCAL_PRODUCTION_IMAGE_VERSION` 只能重复仓库的 canonical
 版本，不能留空，也不能用作 profile、环境名或任意别名。部署类型单独记录为
@@ -91,7 +93,11 @@ Web、HTTPS 入口与告警代理继续使用固定多架构摘要的官方 `ngi
 
 ```sh
 ./deploy/local-production/verify-static-contract.sh
+make test-local-web-candidate-payload
 ```
+
+第二条命令使用已预载的固定摘要 Nginx 基础镜像真实构建最小候选，提取最终静态根并再次执行
+`release-manifest.json` 全量字节校验；它不读取或修改仓库外的本机部署状态。
 
 访问地址：
 

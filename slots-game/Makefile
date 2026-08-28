@@ -1,4 +1,4 @@
-.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract test-vector-bounded-flush verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-personal-project-docs verify-hardening-checklist verify-hardening-stability-contract verify-hardening-stability-50 verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
+.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract test-vector-bounded-flush test-local-web-candidate-payload verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-personal-project-docs verify-hardening-checklist verify-hardening-stability-contract verify-hardening-stability-50 verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
 
 BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid
 
@@ -84,6 +84,10 @@ test-observability-rendered-contract:
 # VECTOR_IMAGE 必须已由调用方按 digest 预载；行为门禁自身禁止访问镜像仓库。
 test-vector-bounded-flush:
 	@./deploy/observability/test-vector-bounded-flush.sh
+
+# 固定基础镜像必须已预载；该真实构建门禁不读取或修改本机生产部署状态。
+test-local-web-candidate-payload:
+	@./deploy/local-production/test-web-candidate-payload.sh
 
 verify-observability-release:
 	test -n "$${OBSERVABILITY_RENDERED_DIR:-}" || { echo "OBSERVABILITY_RENDERED_DIR is required" >&2; exit 2; }

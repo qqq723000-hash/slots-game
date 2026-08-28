@@ -22,6 +22,7 @@ web_build_runner_file="$script_dir/run-web-build.mjs"
 web_build_runner_test="$script_dir/run-web-build.test.mjs"
 release_identity_verifier_file="$script_dir/verify-release-identity.mjs"
 release_identity_verifier_test="$script_dir/verify-release-identity.test.mjs"
+web_candidate_payload_test="$script_dir/test-web-candidate-payload.sh"
 deployment_transaction_test="$script_dir/deployment-transaction.test.sh"
 verify_file="$script_dir/verify.sh"
 operator_log_probe_verifier_file="$script_dir/verify-operator-log-probe.mjs"
@@ -116,6 +117,17 @@ do
 done
 require_exact_line 'ARG VITE_OPERATOR_RETURN_URL' "$script_dir/Dockerfile.web" '本地 Web 镜像未锁定 operator 返回地址构建参数。'
 require_exact_line 'RUN --network=none test "${VITE_OPERATOR_RETURN_URL}" = /operator/ && \' "$script_dir/Dockerfile.web" '本地 Web 镜像未验证 operator 返回地址。'
+require_exact_line 'RUN --network=none rm -rf /usr/share/nginx/html && \' "$script_dir/Dockerfile.web" \
+  '本地 Web 镜像必须整体清空上游静态根，不能遗留默认或隐藏文件。'
+require_exact_line '    install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html' "$script_dir/Dockerfile.web" \
+  '本地 Web 镜像必须以固定属主和权限重建真实静态根。'
+web_root_reset_line="$(grep -nF -x 'RUN --network=none rm -rf /usr/share/nginx/html && \' "$script_dir/Dockerfile.web" | cut -d: -f1)"
+web_dist_copy_line="$(grep -nF -x 'COPY --chown=101:101 web/dist/ /usr/share/nginx/html/' "$script_dir/Dockerfile.web" | cut -d: -f1)"
+test -n "$web_root_reset_line" && test -n "$web_dist_copy_line" \
+  && test "$web_root_reset_line" -lt "$web_dist_copy_line" || {
+    printf '%s\n' '本地 Web 镜像必须先重建空静态根，再复制发布清单约束的 dist。' >&2
+    exit 1
+  }
 test -f "$browser_probe_file"
 test -f "$browser_probe_test"
 test -f "$csp_verifier_file"
@@ -134,6 +146,39 @@ test -f "$web_build_runner_file"
 test -f "$web_build_runner_test"
 test -f "$release_identity_verifier_file"
 test -f "$release_identity_verifier_test"
+test -x "$web_candidate_payload_test"
+sh -n "$web_candidate_payload_test"
+require_exact_line 'test-local-web-candidate-payload:' "$repository_root/Makefile" \
+  'Makefile 缺少真实本机 Web 候选 payload 回归目标。'
+web_candidate_payload_make_command=$(printf '\t%s' '@./deploy/local-production/test-web-candidate-payload.sh')
+require_exact_line "$web_candidate_payload_make_command" "$repository_root/Makefile" \
+  'Makefile 的真实本机 Web 候选 payload 回归命令发生漂移。'
+for web_payload_contract_line in \
+  "base_image='nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:bcf91d2c73ab64fa1c4ac7fbac5ac523057c8af7d553ab9251c7aef38c260979'" \
+  '  if [ "$candidate_image_tag_owned" = true ]; then' \
+  '    if [ "$current_tag_id" = "$candidate_image_id" ]; then' \
+  '      docker image rm "$candidate_image" >/dev/null 2>&1 || true' \
+  'node "$static_verifier" "$context_root/web/dist" >/dev/null' \
+  'docker cp "$base_container_id:/usr/share/nginx/html/50x.html" "$test_root/base-50x.html" >/dev/null' \
+  'DOCKER_BUILDKIT=1 docker build --pull=false \' \
+  '  --iidfile "$candidate_image_iidfile" \' \
+  '  --tag "$candidate_image" \' \
+  'tag_image_id=$(docker image inspect --format '\''{{.Id}}'\'' "$candidate_image")' \
+  'candidate_image_tag_owned=true' \
+  'candidate_container_id=$(docker create "$candidate_image_id")' \
+  'docker cp "$candidate_container_id:/usr/share/nginx/html/." "$candidate_static_root" >/dev/null' \
+  'test ! -e "$candidate_static_root/50x.html" || {' \
+  'node "$static_verifier" "$candidate_static_root" >/dev/null'
+do
+  require_exact_line "$web_payload_contract_line" "$web_candidate_payload_test" \
+    "真实本机 Web 候选 payload 回归缺少闭环步骤：$web_payload_contract_line"
+done
+if grep -F 'docker create "$candidate_image")' "$web_candidate_payload_test" >/dev/null \
+  || grep -F 'docker image rm "$candidate_image_id"' "$web_candidate_payload_test" >/dev/null \
+  || grep -E '^[[:space:]]*exit[[:space:]]+0([[:space:]]|$)' "$web_candidate_payload_test" >/dev/null; then
+  printf '%s\n' '真实本机 Web 候选 payload 回归绕过不可变 ID、清理所有权或提前成功退出。' >&2
+  exit 1
+fi
 node --check "$browser_probe_file"
 node --check "$browser_verifier_file"
 node --check "$operator_log_probe_verifier_file"

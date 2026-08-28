@@ -56,6 +56,9 @@ reset_fixture() {
   chmod 0755 "$fixture/deploy/observability/test-vector-bounded-flush.sh"
   cp "$repository_root/deploy/web/Dockerfile" "$fixture/deploy/web/Dockerfile"
   cp "$repository_root/deploy/local-production/Dockerfile.web" "$fixture/deploy/local-production/Dockerfile.web"
+  cp "$repository_root/deploy/local-production/test-web-candidate-payload.sh" \
+    "$fixture/deploy/local-production/test-web-candidate-payload.sh"
+  chmod 0755 "$fixture/deploy/local-production/test-web-candidate-payload.sh"
   cp "$repository_root/deploy/local-production/Dockerfile.nginx-proxy" "$fixture/deploy/local-production/Dockerfile.nginx-proxy"
   cp -R "$workflows_root" "$fixture/.github/workflows"
   cp "$github_root/dependabot.yml" "$fixture/.github/dependabot.yml"
@@ -133,6 +136,37 @@ writeFileSync(
   `${source.slice(0, first)}${newValue}${source.slice(first + oldValue.length)}`,
   "utf8",
 );
+NODE
+}
+
+move_web_root_reset_after_copy() {
+  target_file=$1
+  copy_line=$2
+  MOVE_RESET_FILE="$target_file" MOVE_RESET_COPY_LINE="$copy_line" node <<'NODE'
+const { readFileSync, writeFileSync } = require("node:fs");
+const file = process.env.MOVE_RESET_FILE;
+const copyLine = process.env.MOVE_RESET_COPY_LINE;
+const resetLine = "RUN --network=none rm -rf /usr/share/nginx/html && \\";
+const installLine = "    install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html";
+if (!file || !copyLine) process.exit(1);
+const lines = readFileSync(file, "utf8").split("\n");
+const copyIndexes = lines.flatMap((line, index) => line === copyLine ? [index] : []);
+if (copyIndexes.length !== 1) process.exit(1);
+const copyIndex = copyIndexes[0];
+let stageStart = -1;
+for (let index = 0; index < copyIndex; index += 1) {
+  if (lines[index].startsWith("FROM ")) stageStart = index;
+}
+const resetIndexes = [];
+for (let index = stageStart + 1; index < copyIndex; index += 1) {
+  if (lines[index] === resetLine && lines[index + 1] === installLine) resetIndexes.push(index);
+}
+if (resetIndexes.length !== 1) process.exit(1);
+lines.splice(resetIndexes[0], 2);
+const movedCopyIndex = lines.indexOf(copyLine);
+if (movedCopyIndex < 0) process.exit(1);
+lines.splice(movedCopyIndex + 1, 0, resetLine, installLine);
+writeFileSync(file, lines.join("\n"), "utf8");
 NODE
 }
 
@@ -660,6 +694,56 @@ expect_rejected 'local Nginx final effective user regressed to root'
 reset_fixture
 replace_once 'USER 101:101' 'USER 0:0' "$fixture/deploy/web/Dockerfile"
 expect_rejected 'web Nginx runtime stage did not restore effective user 101:101'
+
+reset_fixture
+replace_once 'RUN --network=none rm -rf /usr/share/nginx/html && \' 'RUN --network=none true && \' \
+  "$fixture/deploy/local-production/Dockerfile.web"
+expect_rejected 'local Web candidate retained the inherited Nginx static root'
+
+reset_fixture
+replace_once 'RUN --network=none rm -rf /usr/share/nginx/html && \' 'RUN --network=none rm -rf /usr/share/nginx/html/* && \' \
+  "$fixture/deploy/local-production/Dockerfile.web"
+expect_rejected 'local Web candidate used a glob that can retain inherited hidden files'
+
+reset_fixture
+replace_once 'RUN --network=none rm -rf /usr/share/nginx/html && \' 'RUN --network=none true && \' \
+  "$fixture/deploy/web/Dockerfile"
+expect_rejected 'Web static-conformance image retained the inherited Nginx static root'
+
+reset_fixture
+replace_last_exact_line 'RUN --network=none rm -rf /usr/share/nginx/html && \' 'RUN --network=none true && \' \
+  "$fixture/deploy/web/Dockerfile"
+expect_rejected 'approved Web runtime retained the inherited Nginx static root'
+
+reset_fixture
+move_web_root_reset_after_copy \
+  "$fixture/deploy/local-production/Dockerfile.web" \
+  'COPY --chown=101:101 web/dist/ /usr/share/nginx/html/'
+expect_rejected 'local Web candidate reset the inherited root only after copying dist'
+
+reset_fixture
+move_web_root_reset_after_copy \
+  "$fixture/deploy/web/Dockerfile" \
+  'COPY --from=release-build --chown=0:0 /src/web/dist/ /usr/share/nginx/html/'
+expect_rejected 'approved Web runtime reset the inherited root only after copying dist'
+
+reset_fixture
+replace_once 'node "$static_verifier" "$candidate_static_root" >/dev/null' \
+  'true # extracted candidate payload verification removed' \
+  "$fixture/deploy/local-production/test-web-candidate-payload.sh"
+expect_rejected 'real local Web candidate gate stopped verifying the extracted image payload'
+
+reset_fixture
+replace_once 'candidate_container_id=$(docker create "$candidate_image_id")' \
+  'candidate_container_id=$(docker create "$candidate_image")' \
+  "$fixture/deploy/local-production/test-web-candidate-payload.sh"
+expect_rejected 'real local Web candidate gate extracted a mutable tag instead of its BuildKit image ID'
+
+reset_fixture
+replace_once '    if [ "$current_tag_id" = "$candidate_image_id" ]; then' \
+  '    if [ -n "$current_tag_id" ]; then' \
+  "$fixture/deploy/local-production/test-web-candidate-payload.sh"
+expect_rejected 'real local Web candidate gate could remove a tag after its image ID changed'
 
 reset_fixture
 replace_once '    npm ci --ignore-scripts' '    npm ci' "$fixture/deploy/web/Dockerfile"

@@ -66,6 +66,7 @@ cluster_image_contract="$repository_root/deploy/cluster-production/verify-image-
 cluster_prometheus_rule_contract="$repository_root/deploy/cluster-production/verify-prometheus-rule-contract.sh"
 web_dockerfile="$repository_root/deploy/web/Dockerfile"
 local_web_dockerfile="$repository_root/deploy/local-production/Dockerfile.web"
+local_web_payload_test="$repository_root/deploy/local-production/test-web-candidate-payload.sh"
 local_nginx_proxy_dockerfile="$repository_root/deploy/local-production/Dockerfile.nginx-proxy"
 aws_deployment_guide="$repository_root/docs/aws-production-deployment.md"
 backend_release_gates="$repository_root/docs/backend-release-gates.md"
@@ -97,6 +98,18 @@ reject_fixed() {
   if grep -F -- "$forbidden" "$file" >/dev/null; then
     fail "forbidden '$forbidden' in ${file#"$repository_root/"}"
   fi
+}
+
+docker_stage_source() {
+  stage_name=$1
+  dockerfile=$2
+  awk -v wanted="$stage_name" '
+    /^FROM[[:space:]]+/ {
+      if (inside) exit
+      inside = ($NF == wanted)
+    }
+    inside { print }
+  ' "$dockerfile"
 }
 
 for required_file in \
@@ -139,6 +152,7 @@ for required_file in \
   "$cluster_prometheus_rule_contract" \
   "$web_dockerfile" \
   "$local_web_dockerfile" \
+  "$local_web_payload_test" \
   "$local_nginx_proxy_dockerfile" \
   "$aws_deployment_guide" \
   "$backend_release_gates"
@@ -1618,6 +1632,95 @@ test "$(grep -F -c -- 'org.opencontainers.image.licenses="NOASSERTION"' "$web_do
   fail 'all Web image targets must override inherited upstream license metadata'
 require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_web_dockerfile"
 require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_nginx_proxy_dockerfile"
+
+# Nginx 基础镜像的默认页面不是发布 payload。两个可服务目标和本机候选都必须先整体
+# 重建静态根，不能使用会漏掉 dotfile 的通配符删除，再复制 release-manifest 约束的 dist。
+for served_stage_name in static-conformance runtime; do
+  served_stage="$(docker_stage_source "$served_stage_name" "$web_dockerfile")"
+  test "$(printf '%s\n' "$served_stage" | grep -Fxc 'RUN --network=none rm -rf /usr/share/nginx/html && \' || true)" -eq 1 ||
+    fail "$served_stage_name must completely reset the inherited Web root"
+  test "$(printf '%s\n' "$served_stage" | grep -Fxc '    install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html' || true)" -eq 1 ||
+    fail "$served_stage_name must recreate the Web root with fixed metadata"
+  served_reset_line=$(printf '%s\n' "$served_stage" | grep -nF -x 'RUN --network=none rm -rf /usr/share/nginx/html && \' | cut -d: -f1)
+  served_copy_line=$(printf '%s\n' "$served_stage" | grep -nE '^COPY .* /usr/share/nginx/html/$' | cut -d: -f1)
+  test -n "$served_reset_line" && test -n "$served_copy_line" \
+    && test "$served_reset_line" -lt "$served_copy_line" ||
+    fail "$served_stage_name must reset the inherited Web root before copying dist"
+done
+test "$(grep -Fxc 'RUN --network=none rm -rf /usr/share/nginx/html && \' "$local_web_dockerfile" || true)" -eq 1 ||
+  fail 'local Web candidate must completely reset the inherited Web root'
+test "$(grep -Fxc '    install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html' "$local_web_dockerfile" || true)" -eq 1 ||
+  fail 'local Web candidate must recreate the Web root with fixed metadata'
+local_reset_line=$(grep -nF -x 'RUN --network=none rm -rf /usr/share/nginx/html && \' "$local_web_dockerfile" | cut -d: -f1)
+local_copy_line=$(grep -nF -x 'COPY --chown=101:101 web/dist/ /usr/share/nginx/html/' "$local_web_dockerfile" | cut -d: -f1)
+test -n "$local_reset_line" && test -n "$local_copy_line" \
+  && test "$local_reset_line" -lt "$local_copy_line" ||
+  fail 'local Web candidate must reset the inherited Web root before copying dist'
+
+# 真实候选回归自身也属于供应链门禁：固定上游摘要、按 BuildKit 返回的不可变 ID
+# 提取、全量清单复核和只删除本次随机 tag 的所有权边界均不得空实现。
+test -x "$local_web_payload_test" || fail 'local Web payload behavior gate must be executable'
+sh -n "$local_web_payload_test" || fail 'local Web payload behavior gate has invalid shell syntax'
+for payload_test_line in \
+  'set -eu' \
+  "base_image='nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:bcf91d2c73ab64fa1c4ac7fbac5ac523057c8af7d553ab9251c7aef38c260979'" \
+  'docker image inspect "$base_image" >/dev/null 2>&1 || {' \
+  'candidate_image="slots-local-web-payload-contract:test-${test_root##*.}-$$"' \
+  '  if [ "$candidate_image_tag_owned" = true ]; then' \
+  '    if [ "$current_tag_id" = "$candidate_image_id" ]; then' \
+  '      docker image rm "$candidate_image" >/dev/null 2>&1 || true' \
+  'node "$static_verifier" "$context_root/web/dist" >/dev/null' \
+  'docker cp "$base_container_id:/usr/share/nginx/html/50x.html" "$test_root/base-50x.html" >/dev/null' \
+  'test -s "$test_root/base-50x.html"' \
+  'docker image inspect "$candidate_image" >/dev/null 2>&1 && {' \
+  'DOCKER_BUILDKIT=1 docker build --pull=false \' \
+  '  --iidfile "$candidate_image_iidfile" \' \
+  '  --tag "$candidate_image" \' \
+  'if (!/^sha256:[0-9a-f]{64}\n?$/u.test(value)) process.exit(1);' \
+  'tag_image_id=$(docker image inspect --format '\''{{.Id}}'\'' "$candidate_image")' \
+  'test "$tag_image_id" = "$candidate_image_id" || {' \
+  'candidate_image_tag_owned=true' \
+  'candidate_container_id=$(docker create "$candidate_image_id")' \
+  'docker cp "$candidate_container_id:/usr/share/nginx/html/." "$candidate_static_root" >/dev/null' \
+  'test ! -e "$candidate_static_root/50x.html" || {' \
+  'node "$static_verifier" "$candidate_static_root" >/dev/null'
+do
+  require_line "$payload_test_line" "$local_web_payload_test"
+done
+reject_fixed 'docker create "$candidate_image")' "$local_web_payload_test"
+reject_fixed 'docker image rm "$candidate_image_id"' "$local_web_payload_test"
+reject_fixed 'docker pull' "$local_web_payload_test"
+if grep -E '^[[:space:]]*exit[[:space:]]+0([[:space:]]|$)' "$local_web_payload_test" >/dev/null; then
+  fail 'local Web payload behavior gate contains an unconditional successful exit'
+fi
+test "$(grep -Fxc 'node "$static_verifier" "$context_root/web/dist" >/dev/null' "$local_web_payload_test" || true)" -eq 1 ||
+  fail 'local Web payload behavior gate must verify the host fixture exactly once'
+test "$(grep -Fxc 'node "$static_verifier" "$candidate_static_root" >/dev/null' "$local_web_payload_test" || true)" -eq 1 ||
+  fail 'local Web payload behavior gate must verify the extracted candidate exactly once'
+payload_host_verify_line=$(grep -nF -x 'node "$static_verifier" "$context_root/web/dist" >/dev/null' "$local_web_payload_test" | cut -d: -f1)
+payload_base_copy_line=$(grep -nF -x 'docker cp "$base_container_id:/usr/share/nginx/html/50x.html" "$test_root/base-50x.html" >/dev/null' "$local_web_payload_test" | cut -d: -f1)
+payload_tag_precheck_line=$(grep -nF -x 'docker image inspect "$candidate_image" >/dev/null 2>&1 && {' "$local_web_payload_test" | cut -d: -f1)
+payload_build_line=$(grep -nF -x 'DOCKER_BUILDKIT=1 docker build --pull=false \' "$local_web_payload_test" | cut -d: -f1)
+payload_id_line=$(grep -nF -x 'candidate_image_id=$(node -e '\''' "$local_web_payload_test" | cut -d: -f1)
+payload_tag_id_line=$(grep -nF -x 'tag_image_id=$(docker image inspect --format '\''{{.Id}}'\'' "$candidate_image")' "$local_web_payload_test" | cut -d: -f1)
+payload_tag_match_line=$(grep -nF -x 'test "$tag_image_id" = "$candidate_image_id" || {' "$local_web_payload_test" | cut -d: -f1)
+payload_owned_line=$(grep -nF -x 'candidate_image_tag_owned=true' "$local_web_payload_test" | cut -d: -f1)
+payload_create_line=$(grep -nF -x 'candidate_container_id=$(docker create "$candidate_image_id")' "$local_web_payload_test" | cut -d: -f1)
+payload_copy_line=$(grep -nF -x 'docker cp "$candidate_container_id:/usr/share/nginx/html/." "$candidate_static_root" >/dev/null' "$local_web_payload_test" | cut -d: -f1)
+payload_absence_line=$(grep -nF -x 'test ! -e "$candidate_static_root/50x.html" || {' "$local_web_payload_test" | cut -d: -f1)
+payload_candidate_verify_line=$(grep -nF -x 'node "$static_verifier" "$candidate_static_root" >/dev/null' "$local_web_payload_test" | cut -d: -f1)
+test "$payload_host_verify_line" -lt "$payload_base_copy_line" \
+  && test "$payload_base_copy_line" -lt "$payload_tag_precheck_line" \
+  && test "$payload_tag_precheck_line" -lt "$payload_build_line" \
+  && test "$payload_build_line" -lt "$payload_id_line" \
+  && test "$payload_id_line" -lt "$payload_tag_id_line" \
+  && test "$payload_tag_id_line" -lt "$payload_tag_match_line" \
+  && test "$payload_tag_match_line" -lt "$payload_owned_line" \
+  && test "$payload_owned_line" -lt "$payload_create_line" \
+  && test "$payload_create_line" -lt "$payload_copy_line" \
+  && test "$payload_copy_line" -lt "$payload_absence_line" \
+  && test "$payload_absence_line" -lt "$payload_candidate_verify_line" ||
+  fail 'local Web payload behavior gate lost its build, immutable extraction, and verification order'
 
 # 两个发布 Environment 的真实审批/Secret 归属无法由仓库创建，运维文档必须明确列为上线阻断。
 require_fixed '## 版本与仓库治理门禁' "$readme"
