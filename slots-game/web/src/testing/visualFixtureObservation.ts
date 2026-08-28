@@ -3162,6 +3162,23 @@ export function applyVisualFixtureTrace(
   return false;
 }
 
+const PLAYWRIGHT_CAPTURE_CLOCK_PAST_TARGET_MESSAGE = "Cannot fast-forward to the past";
+const PLAYWRIGHT_FIREFOX_CAPTURE_CLOCK_STACK =
+  /(?:^|\n)[ \t]*(?:ClockController\.)?_innerFastForwardTo@debugger eval code(?=[: \t\r\n]|$)[^\r\n]*\r?\n[ \t]*(?:ClockController\.)?pauseAt@debugger eval code(?=[: \t\r\n]|$)/;
+
+/**
+ * Playwright Firefox 会把已恢复的 `clock.pauseAt` 过期目标竞态同时发布为协议拒绝和页面
+ * `unhandledrejection`。浏览器门禁仍负责协议/时钟验证与 pageerror 记账；此分类器只避免
+ * 夹具的通用拒绝钩子抢先把已经验证可恢复的截图锁为失败。
+ */
+export function isVisualFixtureCaptureClockPastTargetRejection(reason: unknown): boolean {
+  if (!(reason instanceof Error)
+    || reason.name !== "Error"
+    || reason.message !== PLAYWRIGHT_CAPTURE_CLOCK_PAST_TARGET_MESSAGE
+    || typeof reason.stack !== "string") return false;
+  return PLAYWRIGHT_FIREFOX_CAPTURE_CLOCK_STACK.test(reason.stack);
+}
+
 /** 首先清除过时的事实，并仅公开允许列出的功能投影。 */
 export function applyVisualFixtureFeatureEvent(
   dataset: VisualFixtureDataset,

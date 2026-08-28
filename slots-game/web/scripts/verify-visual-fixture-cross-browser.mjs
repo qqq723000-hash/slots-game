@@ -22,6 +22,7 @@ import {
   captureClockPauseAttempt,
   captureClockPauseWithAttempts,
   captureClockPastTargetMessage,
+  clearCaptureClockPageGuardAfterPause,
 } from "./visual-fixture-clock.mjs";
 import {
   checkpointInputLeaseMatchesCurrentControl,
@@ -1263,20 +1264,37 @@ async function releaseFixtureCheckpointHold(page, expectedCheckpoint) {
 }
 
 async function pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard) {
-  await captureClockPauseWithAttempts(() => captureClockPauseAttempt({
-    beginConsoleGuard: () => beginCaptureClockConsoleGuard(captureClockConsoleGuard),
-    pauseAt: (pauseTargetMs) => page.clock.pauseAt(pauseTargetMs),
-    readPageTime: () => page.evaluate(() => Date.now()),
-    resume: () => page.clock.resume(),
-    settleConsoleGuard: (consumeExpectedPastTarget) => settleCaptureClockConsoleGuard(
-      captureClockConsoleGuard,
-      runtimeErrors,
-      consumeExpectedPastTarget,
-    ),
-    waitForVerification: (delayMs) => new Promise((resolvePromise) => {
-      setTimeout(resolvePromise, delayMs);
-    }),
-  }));
+  await page.evaluate(() => {
+    document.body.dataset.fixtureCaptureClockGuard = "active";
+  });
+  let pauseError = null;
+  try {
+    await captureClockPauseWithAttempts(() => captureClockPauseAttempt({
+      beginConsoleGuard: () => beginCaptureClockConsoleGuard(captureClockConsoleGuard),
+      pauseAt: (pauseTargetMs) => page.clock.pauseAt(pauseTargetMs),
+      readPageTime: () => page.evaluate(() => Date.now()),
+      resume: () => page.clock.resume(),
+      settleConsoleGuard: (consumeExpectedPastTarget) => settleCaptureClockConsoleGuard(
+        captureClockConsoleGuard,
+        runtimeErrors,
+        consumeExpectedPastTarget,
+      ),
+      waitForVerification: (delayMs) => new Promise((resolvePromise) => {
+        setTimeout(resolvePromise, delayMs);
+      }),
+    }));
+  } catch (error) {
+    pauseError = error;
+    throw error;
+  } finally {
+    await clearCaptureClockPageGuardAfterPause({
+      clearPageGuard: () => page.evaluate(() => {
+        delete document.body.dataset.fixtureCaptureClockGuard;
+      }),
+      pauseError,
+      resume: () => page.clock.resume(),
+    });
+  }
 }
 
 function recordFixtureRuntimeError(runtimeErrors, captureClockConsoleGuard, message) {
@@ -1304,7 +1322,8 @@ function settleCaptureClockConsoleGuard(
 ) {
   const bufferedMessages = captureClockConsoleGuard.bufferedMessages.splice(0);
   captureClockConsoleGuard.active = false;
-  // 只消化与本次已捕获 pauseAt 异常对应的一条精确诊断；重复或无对应异常均继续失败。
+  // 只消化至多一条与本次已捕获 pauseAt 异常配对的精确诊断；部分引擎不会另发
+  // 页面诊断，因此零条也有效，但重复诊断或未分类诊断仍继续失败。
   const unconsumedMessages = consumeExpectedPastTarget
     ? bufferedMessages.slice(1)
     : bufferedMessages;

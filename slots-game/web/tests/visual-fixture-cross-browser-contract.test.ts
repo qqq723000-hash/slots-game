@@ -14,6 +14,7 @@ import {
   captureClockPauseAttempts,
   captureClockPauseLeadMs,
   captureClockPauseVerificationDelayMs,
+  clearCaptureClockPageGuardAfterPause,
   isRecoverableCaptureClockPastTarget,
   isStableCaptureClockPauseObservation,
 } from "../scripts/visual-fixture-clock.mjs";
@@ -205,6 +206,10 @@ describe("non-production special-feature browser fixture contract", () => {
     const pauseContract = fixtureBrowserGate.slice(pauseStart, pauseEnd);
     expect(pauseContract).toContain("await captureClockPauseWithAttempts(");
     expect(pauseContract).toContain("captureClockPauseAttempt({");
+    expect(pauseContract).toContain('fixtureCaptureClockGuard = "active"');
+    expect(pauseContract).toContain("clearCaptureClockPageGuardAfterPause({");
+    expect(pauseContract).toContain("delete document.body.dataset.fixtureCaptureClockGuard");
+    expect(pauseContract).toContain("resume: () => page.clock.resume()");
     expect(pauseContract).toContain("readPageTime: () => page.evaluate(() => Date.now())");
     expect(pauseContract).toContain("pauseAt: (pauseTargetMs) => page.clock.pauseAt(pauseTargetMs)");
     expect(pauseContract).toContain("resume: () => page.clock.resume()");
@@ -414,6 +419,47 @@ describe("non-production special-feature browser fixture contract", () => {
       name: "AggregateError",
       errors: [unknownPauseError, resumeError],
       cause: unknownPauseError,
+    });
+
+    const guardCleanupError = new Error("guard cleanup failed");
+    const successfulGuardCleanupResume = vi.fn(async () => undefined);
+    await expect(clearCaptureClockPageGuardAfterPause({
+      clearPageGuard: async () => undefined,
+      pauseError: null,
+      resume: successfulGuardCleanupResume,
+    })).resolves.toBeUndefined();
+    expect(successfulGuardCleanupResume).not.toHaveBeenCalled();
+
+    const guardCleanupResume = vi.fn(async () => undefined);
+    await expect(clearCaptureClockPageGuardAfterPause({
+      clearPageGuard: async () => { throw guardCleanupError; },
+      pauseError: null,
+      resume: guardCleanupResume,
+    })).rejects.toBe(guardCleanupError);
+    expect(guardCleanupResume).toHaveBeenCalledOnce();
+
+    const originalPauseError = new Error("original pause failed");
+    const originalPauseResume = vi.fn(async () => undefined);
+    await expect(clearCaptureClockPageGuardAfterPause({
+      clearPageGuard: async () => { throw guardCleanupError; },
+      pauseError: originalPauseError,
+      resume: originalPauseResume,
+    })).rejects.toMatchObject({
+      name: "AggregateError",
+      errors: [originalPauseError, guardCleanupError],
+      cause: originalPauseError,
+    });
+    expect(originalPauseResume).not.toHaveBeenCalled();
+
+    const guardCleanupResumeError = new Error("guard cleanup resume failed");
+    await expect(clearCaptureClockPageGuardAfterPause({
+      clearPageGuard: async () => { throw guardCleanupError; },
+      pauseError: null,
+      resume: async () => { throw guardCleanupResumeError; },
+    })).rejects.toMatchObject({
+      name: "AggregateError",
+      errors: [guardCleanupError, guardCleanupResumeError],
+      cause: guardCleanupError,
     });
 
     const retryErrors = Array.from(

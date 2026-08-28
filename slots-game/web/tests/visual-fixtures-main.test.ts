@@ -27,6 +27,7 @@ import {
   isFreeSpinsSummaryInputCheckpointHold,
   isNoSummaryTerminalCheckpointCapture,
   isNormalWinContinueClickTrigger,
+  isVisualFixtureCaptureClockPastTargetRejection,
   isPass45ForbiddenPresentationMilestone,
   isPass45ForbiddenVisualTelemetryEvent,
   isVisualFixtureCheckpointCapture,
@@ -188,6 +189,65 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).toContain('window.addEventListener("unhandledrejection", handleUnhandledRejection)');
     expect(fixtureMain).toContain("console.error = fixtureConsoleError");
     expect(fixtureMain).toContain("failureLocked = true");
+    const rejectionHandlerStart = fixtureMain.indexOf("const handleUnhandledRejection");
+    const rejectionHandlerEnd = fixtureMain.indexOf(
+      "window.addEventListener(\"error\"",
+      rejectionHandlerStart,
+    );
+    const rejectionHandler = fixtureMain.slice(rejectionHandlerStart, rejectionHandlerEnd);
+    expect(rejectionHandler).toContain('fixtureCaptureClockGuard === "active"');
+    expect(rejectionHandler).toContain(
+      "isVisualFixtureCaptureClockPastTargetRejection(event.reason)",
+    );
+    expect(rejectionHandler).toContain("fail()");
+    expect(rejectionHandler).not.toContain("preventDefault");
+  });
+
+  it("defers only the exact Playwright capture-clock past-target rejection to the browser gate", () => {
+    const firefoxClockError = new Error("Cannot fast-forward to the past");
+    firefoxClockError.stack = [
+      "_innerFastForwardTo@debugger eval code:202:13",
+      "pauseAt@debugger eval code:133:16",
+      "async*@debugger eval code line 311 > eval:1:33",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(firefoxClockError)).toBe(true);
+
+    const applicationError = new Error("Cannot fast-forward to the past");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(applicationError)).toBe(false);
+    const applicationStack = new Error("Cannot fast-forward to the past");
+    applicationStack.stack = [
+      "_innerFastForwardTo@app.js:1:1",
+      "pauseAt@app.js:2:2",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(applicationStack)).toBe(false);
+    const reversedClockStack = new Error("Cannot fast-forward to the past");
+    reversedClockStack.stack = [
+      "pauseAt@debugger eval code:133:16",
+      "_innerFastForwardTo@debugger eval code:202:13",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(reversedClockStack)).toBe(false);
+    const blankLineClockStack = new Error("Cannot fast-forward to the past");
+    blankLineClockStack.stack = [
+      "_innerFastForwardTo@debugger eval code:202:13",
+      "  ",
+      "pauseAt@debugger eval code:133:16",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(blankLineClockStack)).toBe(false);
+    const sourceSuffixClockStack = new Error("Cannot fast-forward to the past");
+    sourceSuffixClockStack.stack = [
+      "_innerFastForwardTo@debugger eval codeevil:202:13",
+      "pauseAt@debugger eval codeevil:133:16",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(sourceSuffixClockStack)).toBe(false);
+    const incompleteClockStack = new Error("Cannot fast-forward to the past");
+    incompleteClockStack.stack = "_innerFastForwardTo@debugger eval code:202:13";
+    expect(isVisualFixtureCaptureClockPastTargetRejection(incompleteClockStack)).toBe(false);
+    const wrongMessage = new Error("Cannot fast-forward to the past from application");
+    wrongMessage.stack = firefoxClockError.stack;
+    expect(isVisualFixtureCaptureClockPastTargetRejection(wrongMessage)).toBe(false);
+    expect(isVisualFixtureCaptureClockPastTargetRejection(
+      "Cannot fast-forward to the past",
+    )).toBe(false);
   });
 
   it("projects strict visual telemetry without serializing result data", () => {

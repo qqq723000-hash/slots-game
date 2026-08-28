@@ -15,6 +15,38 @@ async function resumeCaptureClockAfterFailure(resume, originalError) {
   }
 }
 
+/**
+ * 页面 guard 清理失败时，成功的暂停尚未交给调用方管理，因此必须先恢复时钟。
+ * 已有暂停错误的路径由单次尝试 helper 负责恢复；此处保留原错误，不用清理错误覆盖它。
+ */
+export async function clearCaptureClockPageGuardAfterPause({
+  clearPageGuard,
+  pauseError,
+  resume,
+}) {
+  try {
+    await clearPageGuard();
+  } catch (cleanupError) {
+    if (pauseError !== null) {
+      throw new AggregateError(
+        [pauseError, cleanupError],
+        "截图时钟页面 guard 清理失败",
+        { cause: pauseError },
+      );
+    }
+    try {
+      await resume();
+    } catch (resumeError) {
+      throw new AggregateError(
+        [cleanupError, resumeError],
+        "截图时钟页面 guard 清理与恢复失败",
+        { cause: cleanupError },
+      );
+    }
+    throw cleanupError;
+  }
+}
+
 export function isStableCaptureClockPauseObservation(
   pausedPageTimeMs,
   verifiedPausedPageTimeMs,

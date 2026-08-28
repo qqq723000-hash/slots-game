@@ -46,6 +46,7 @@ import {
   isFreeSpinsSummaryInputCheckpointHold,
   isNoSummaryTerminalCheckpointCapture,
   isNormalWinContinueClickTrigger,
+  isVisualFixtureCaptureClockPastTargetRejection,
   isPass48RageAuraCapture,
   isPass49RecoveredLevelUpCapture,
   isPass50CharacterIntroCapture,
@@ -969,7 +970,13 @@ if (!isVisualFixtureScenario(scenario)) {
   });
 
   const handleWindowError = (): void => fail();
-  const handleUnhandledRejection = (): void => fail();
+  const handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
+    // Firefox 也会把 Playwright 可恢复的截图时钟协议竞态发布为未处理页面拒绝。保持事件未处理，
+    // 使门禁仍能记录 pageerror，并且仅在精确协议拒绝与稳定暂停时钟共同证明恢复时才消化它。
+    if (body.dataset.fixtureCaptureClockGuard === "active"
+      && isVisualFixtureCaptureClockPastTargetRejection(event.reason)) return;
+    fail();
+  };
   // 捕获资源元素故障以及普通窗口错误。
   window.addEventListener("error", handleWindowError, true);
   window.addEventListener("unhandledrejection", handleUnhandledRejection);
