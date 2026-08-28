@@ -7,6 +7,12 @@ import {
   resolveBrowserRenderingContract,
   validateVisualFixtureTimingBudget,
 } from "../scripts/browser-rendering-contract.mjs";
+import {
+  captureClockPastTargetMessage,
+  captureClockPauseAttempts,
+  captureClockPauseLeadMs,
+  isRecoverableCaptureClockPastTarget,
+} from "../scripts/visual-fixture-clock.mjs";
 import fixtureBrowserGate from "../scripts/verify-visual-fixture-cross-browser.mjs?raw";
 import fixtureMain from "../src/testing/visualFixturesMain.ts?raw";
 
@@ -140,11 +146,14 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain("const capturesByRegion = new Map()");
     expect(fixtureBrowserGate).toContain("const regionKey = JSON.stringify(checkpoint.region)");
     expect(fixtureBrowserGate).toContain("capturesByRegion.set(regionKey, capture)");
-    expect(fixtureBrowserGate).toContain("const captureClockPauseLeadMs = 250");
-    expect(fixtureBrowserGate).toContain("const captureClockPauseAttempts = 4");
+    expect(captureClockPauseLeadMs).toBe(250);
+    expect(captureClockPauseAttempts).toBe(4);
+    expect(captureClockPastTargetMessage).toBe("Cannot fast-forward to the past");
     expect(captureContract).toContain("const controlledClockCapture = contract.renderCheckpoints.some(");
     expect(captureContract).toContain("if (controlledClockCapture) {");
-    expect(captureContract).toContain("await pauseCaptureClock(page)");
+    expect(captureContract).toContain(
+      "await pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard)",
+    );
     expect(captureContract).not.toContain("page.clock.pauseAt(Date.now()");
     expect(captureContract).toContain('controlledClockCapture ? "clock-paused" : "live"');
     expect(captureContract).toContain("await page.clock.runFor(temporalFrameAdvanceMs)");
@@ -163,11 +172,73 @@ describe("non-production special-feature browser fixture contract", () => {
     const pauseContract = fixtureBrowserGate.slice(pauseStart, pauseEnd);
     expect(pauseContract).toContain("attempt < captureClockPauseAttempts");
     expect(pauseContract).toContain("const pageTimeMs = await page.evaluate(() => Date.now())");
-    expect(pauseContract).toContain("pageTimeMs + captureClockPauseLeadMs");
-    expect(pauseContract).toContain('message.includes("Cannot fast-forward to the past")');
-    expect(pauseContract.indexOf("await page.clock.resume().catch(() => undefined)"))
-      .toBeLessThan(pauseContract.indexOf('message.includes("Cannot fast-forward to the past")'));
-    expect(pauseContract).toContain("lastPastTargetError = error");
+    expect(pauseContract).toContain("const pauseTargetMs = pageTimeMs + captureClockPauseLeadMs");
+    expect(pauseContract).toContain("pausedPageTimeMs = await page.evaluate(() => Date.now())");
+    expect(pauseContract).toContain("isRecoverableCaptureClockPastTarget(");
+    expect(pauseContract).toContain("if (clockStateReadError !== null) {");
+    expect(pauseContract).toContain("throw clockStateReadError");
+    expect(pauseContract).not.toContain("page.evaluate(() => undefined).catch");
+    expect(pauseContract).toContain("settleCaptureClockConsoleGuard(");
+    expect(pauseContract.indexOf("settleCaptureClockConsoleGuard("))
+      .toBeLessThan(pauseContract.indexOf("await page.clock.resume()"));
+    expect(pauseContract).toContain("lastPastTargetError = pauseError");
+  });
+
+  it("distinguishes a real past target from an application timer with the same error text", () => {
+    const target = 1_000;
+    const directClockError = new Error(captureClockPastTargetMessage);
+    const chromiumClockError = new Error(
+      `clock.pauseAt: Error: ${captureClockPastTargetMessage}\n`
+      + "    at ClockController._innerFastForwardTo (<anonymous>:201:13)",
+    );
+    const firefoxClockError = new Error(
+      `clock.pauseAt: ${captureClockPastTargetMessage}\n`
+      + "_innerFastForwardTo@debugger eval code:201:13\n",
+    );
+    const webkitClockError = new Error(`clock.pauseAt: Error: ${captureClockPastTargetMessage}`);
+    expect(isRecoverableCaptureClockPastTarget(chromiumClockError, target + 100, target)).toBe(true);
+    expect(isRecoverableCaptureClockPastTarget(firefoxClockError, target + 100, target)).toBe(true);
+    expect(isRecoverableCaptureClockPastTarget(webkitClockError, target + 100, target)).toBe(true);
+
+    // 应用 timer 在 pauseAt 推进到目标时刻后才抛错；同文错误也不得被恢复逻辑吞掉。
+    expect(isRecoverableCaptureClockPastTarget(directClockError, target + 1, target)).toBe(false);
+    expect(isRecoverableCaptureClockPastTarget(directClockError, target, target)).toBe(false);
+    expect(isRecoverableCaptureClockPastTarget(chromiumClockError, target, target)).toBe(false);
+    expect(isRecoverableCaptureClockPastTarget(firefoxClockError, target, target)).toBe(false);
+    expect(isRecoverableCaptureClockPastTarget(directClockError, target - 1, target)).toBe(false);
+    expect(isRecoverableCaptureClockPastTarget(
+      new Error(`${captureClockPastTargetMessage} from application`),
+      target + 1,
+      target,
+    )).toBe(false);
+    expect(isRecoverableCaptureClockPastTarget(directClockError, Number.NaN, target)).toBe(false);
+  });
+
+  it("consumes only the one console diagnostic paired with a recovered clock error", () => {
+    const scenarioStart = fixtureBrowserGate.indexOf("async function runScenario");
+    const scenarioEnd = fixtureBrowserGate.indexOf(
+      "async function captureNewRenderCheckpoints",
+      scenarioStart,
+    );
+    const scenarioContract = fixtureBrowserGate.slice(scenarioStart, scenarioEnd);
+    expect(scenarioContract).toContain(
+      "const captureClockConsoleGuard = { active: false, bufferedMessages: [] }",
+    );
+    expect(scenarioContract.match(/recordFixtureRuntimeError\(/g)).toHaveLength(2);
+
+    const guardStart = fixtureBrowserGate.indexOf("function recordFixtureRuntimeError");
+    const guardEnd = fixtureBrowserGate.indexOf(
+      "async function captureVisibleFrameRegion",
+      guardStart,
+    );
+    const guardContract = fixtureBrowserGate.slice(guardStart, guardEnd);
+    expect(guardContract).toContain("truncatedMessage === captureClockPastTargetMessage");
+    expect(guardContract).toContain("captureClockConsoleGuard.bufferedMessages.push");
+    expect(guardContract).toContain("runtimeErrors.push(truncatedMessage)");
+    expect(guardContract).toContain("captureClockConsoleGuard.active = true");
+    expect(guardContract).toContain("captureClockConsoleGuard.active = false");
+    expect(guardContract).toContain("bufferedMessages.slice(1)");
+    expect(guardContract).toContain("runtimeErrors.push(...unconsumedMessages)");
   });
 
   it("binds every rendered milestone to one stable current epoch", () => {

@@ -18,6 +18,12 @@ import {
   resolveBrowserRenderingContract,
   validateVisualFixtureTimingBudget,
 } from "./browser-rendering-contract.mjs";
+import {
+  captureClockPastTargetMessage,
+  captureClockPauseAttempts,
+  captureClockPauseLeadMs,
+  isRecoverableCaptureClockPastTarget,
+} from "./visual-fixture-clock.mjs";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
@@ -28,8 +34,6 @@ const extendedScenarioDeadlineMs = 150_000;
 const browserDeadlineMs = 18 * 60_000;
 const maximumBrowserBudgetMs = 20 * 60_000;
 const temporalFrameAdvanceMs = 180;
-const captureClockPauseLeadMs = 250;
-const captureClockPauseAttempts = 4;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
 const evidenceScope = "presentation-only-no-rgs-settlement";
@@ -686,12 +690,17 @@ async function runScenario(
     await page.clock.install();
   }
   const runtimeErrors = [];
+  const captureClockConsoleGuard = { active: false, bufferedMessages: [] };
   page.on("pageerror", (error) => {
     const message = String(error?.message ?? "unknown page error");
-    if (!message.startsWith("ResizeObserver loop")) runtimeErrors.push(message.slice(0, 256));
+    if (!message.startsWith("ResizeObserver loop")) {
+      recordFixtureRuntimeError(runtimeErrors, captureClockConsoleGuard, message);
+    }
   });
   page.on("console", (message) => {
-    if (message.type() === "error") runtimeErrors.push(message.text().slice(0, 256));
+    if (message.type() === "error") {
+      recordFixtureRuntimeError(runtimeErrors, captureClockConsoleGuard, message.text());
+    }
   });
 
   const pageParameters = new URLSearchParams({ scenario: contract.scenario });
@@ -767,6 +776,8 @@ async function runScenario(
         renderBaselines,
         observed.renderCheckpoints,
         browserName,
+        runtimeErrors,
+        captureClockConsoleGuard,
       );
 
       if (snapshot.completeCount === contract.expectedRounds
@@ -836,6 +847,8 @@ async function runScenario(
       renderBaselines,
       observed.renderCheckpoints,
       browserName,
+      runtimeErrors,
+      captureClockConsoleGuard,
     );
     validateScenarioEvidence(contract, observed, finalSnapshot, browserName);
     const lifecycle = await destroyFixtureDocument(page, browserName, contract.scenario);
@@ -955,6 +968,8 @@ async function captureNewRenderCheckpoints(
   baselines,
   captured,
   browserName,
+  runtimeErrors,
+  captureClockConsoleGuard,
 ) {
   for (const checkpoint of contract.renderCheckpoints) {
     const key = renderCheckpointKey(checkpoint);
@@ -971,7 +986,7 @@ async function captureNewRenderCheckpoints(
       if (controlledClockCapture) {
         // 以页面自己的受控时间为基准，仅预留一次短协议往返。繁忙 runner 仍可能让
         // 目标落入过去；Playwright 此时会留下暂停时钟，因此由有界 helper 恢复后重试。
-        await pauseCaptureClock(page);
+        await pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard);
         captureClockPaused = true;
         const pausedSnapshot = await readScenarioSnapshot(page);
         const pausedEpoch = renderCheckpointEpoch(pausedSnapshot, checkpoint);
@@ -1088,25 +1103,80 @@ async function captureNewRenderCheckpoints(
   }
 }
 
-async function pauseCaptureClock(page) {
+async function pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard) {
   let lastPastTargetError = null;
   for (let attempt = 0; attempt < captureClockPauseAttempts; attempt += 1) {
     const pageTimeMs = await page.evaluate(() => Date.now());
+    const pauseTargetMs = pageTimeMs + captureClockPauseLeadMs;
+    beginCaptureClockConsoleGuard(captureClockConsoleGuard);
+    let pauseError = null;
     try {
-      await page.clock.pauseAt(pageTimeMs + captureClockPauseLeadMs);
-      return;
+      await page.clock.pauseAt(pauseTargetMs);
     } catch (error) {
-      // pauseAt 的 past-target 分支会先暂停再抛错；必须恢复后才能从新的页面时间重试。
-      await page.clock.resume().catch(() => undefined);
-      const message = String(error?.message ?? error);
-      if (!message.includes("Cannot fast-forward to the past")) throw error;
-      lastPastTargetError = error;
+      pauseError = error;
     }
+    let pausedPageTimeMs = null;
+    let clockStateReadError = null;
+    try {
+      // 读取暂停态页面时间同时冲刷流水线，确保同步产生的 pageerror/console 已进入 guard。
+      pausedPageTimeMs = await page.evaluate(() => Date.now());
+    } catch (error) {
+      clockStateReadError = error;
+    }
+    const isPastTarget = clockStateReadError === null
+      && isRecoverableCaptureClockPastTarget(pauseError, pausedPageTimeMs, pauseTargetMs);
+    settleCaptureClockConsoleGuard(
+      captureClockConsoleGuard,
+      runtimeErrors,
+      isPastTarget,
+    );
+    if (clockStateReadError !== null) {
+      await page.clock.resume();
+      throw clockStateReadError;
+    }
+    if (pauseError === null) return;
+
+    // pauseAt 的 past-target 分支会先暂停再抛错；必须恢复后才能从新的页面时间重试。
+    await page.clock.resume();
+    if (!isPastTarget) throw pauseError;
+    lastPastTargetError = pauseError;
   }
   throw new Error(
     `特殊玩法截图时钟连续 ${captureClockPauseAttempts} 次无法在当前页面时刻暂停`,
     { cause: lastPastTargetError },
   );
+}
+
+function recordFixtureRuntimeError(runtimeErrors, captureClockConsoleGuard, message) {
+  const truncatedMessage = String(message).slice(0, 256);
+  if (captureClockConsoleGuard.active
+    && truncatedMessage === captureClockPastTargetMessage) {
+    captureClockConsoleGuard.bufferedMessages.push(truncatedMessage);
+    return;
+  }
+  runtimeErrors.push(truncatedMessage);
+}
+
+function beginCaptureClockConsoleGuard(captureClockConsoleGuard) {
+  if (captureClockConsoleGuard.active
+    || captureClockConsoleGuard.bufferedMessages.length !== 0) {
+    throw new Error("特殊玩法截图时钟控制台 guard 状态未闭合");
+  }
+  captureClockConsoleGuard.active = true;
+}
+
+function settleCaptureClockConsoleGuard(
+  captureClockConsoleGuard,
+  runtimeErrors,
+  consumeExpectedPastTarget,
+) {
+  const bufferedMessages = captureClockConsoleGuard.bufferedMessages.splice(0);
+  captureClockConsoleGuard.active = false;
+  // 只消化与本次已捕获 pauseAt 异常对应的一条精确诊断；重复或无对应异常均继续失败。
+  const unconsumedMessages = consumeExpectedPastTarget
+    ? bufferedMessages.slice(1)
+    : bufferedMessages;
+  runtimeErrors.push(...unconsumedMessages);
 }
 
 async function captureVisibleFrameRegion(
