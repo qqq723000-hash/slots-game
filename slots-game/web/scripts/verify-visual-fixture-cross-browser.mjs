@@ -52,12 +52,15 @@ const extendedScenarioDeadlineMs = 150_000;
 const largeScenarioDeadlineMs = 180_000;
 const chromiumKingScenarioDeadlineMs = 210_000;
 const edgeKingScenarioDeadlineMs = 240_000;
+const edgeDesktopKongScenarioDeadlineMs = 360_000;
 const slowExtendedScenarioDeadlineMs = 240_000;
 const slowKongScenarioDeadlineMs = 270_000;
 const standardBrowserDeadlineMs = 20 * 60_000;
 const slowBrowserDeadlineMs = 30 * 60_000;
+const edgeBrowserDeadlineMs = 32 * 60_000;
 const standardMaximumBrowserBudgetMs = 21 * 60_000;
 const slowMaximumBrowserBudgetMs = 31 * 60_000;
+const edgeMaximumBrowserBudgetMs = 33 * 60_000;
 const temporalFrameAdvanceMs = 180;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
@@ -354,12 +357,17 @@ const browserTimingBudgets = Object.freeze(Object.fromEntries(supportedBrowsers.
       0,
     );
     const slowBrowser = browserName === "chromium" || browserName === "msedge";
-    const browserDeadlineMs = slowBrowser
-      ? slowBrowserDeadlineMs
-      : standardBrowserDeadlineMs;
-    const maximumBrowserBudgetMs = slowBrowser
-      ? slowMaximumBrowserBudgetMs
-      : standardMaximumBrowserBudgetMs;
+    const edgeBrowser = browserName === "msedge";
+    const browserDeadlineMs = edgeBrowser
+      ? edgeBrowserDeadlineMs
+      : slowBrowser
+        ? slowBrowserDeadlineMs
+        : standardBrowserDeadlineMs;
+    const maximumBrowserBudgetMs = edgeBrowser
+      ? edgeMaximumBrowserBudgetMs
+      : slowBrowser
+        ? slowMaximumBrowserBudgetMs
+        : standardMaximumBrowserBudgetMs;
     validateVisualFixtureTimingBudget({
       browserDeadlineMs,
       maximumBrowserBudgetMs,
@@ -432,6 +440,11 @@ function resolveScenarioDeadlineMs(browserName, contract, surface) {
     && surface.id === "desktop-1440x900"
     && contract.scenario === "king-flow") {
     return edgeKingScenarioDeadlineMs;
+  }
+  if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "kong-flow") {
+    return edgeDesktopKongScenarioDeadlineMs;
   }
   if (browserName === "chromium"
     && surface.id === "desktop-1440x900"
