@@ -103,19 +103,31 @@ replace_last_exact_line() {
   old=$1
   new=$2
   file=$3
-  match_count=$(grep -F -x -c -- "$old" "$file" || true)
-  test "$match_count" -gt 0 || fail "test fixture is missing exact line '$old'"
-  awk -v old="$old" -v new="$new" -v wanted="$match_count" '
-    $0 == old {
-      seen++
-      if (seen == wanted) {
-        print new
-        next
-      }
-    }
-    { print }
-  ' "$file" > "$file.tmp"
-  mv "$file.tmp" "$file"
+  REPLACE_LAST_OLD="$old" REPLACE_LAST_NEW="$new" REPLACE_LAST_FILE="$file" node <<'NODE'
+const { readFileSync, writeFileSync } = require("node:fs");
+const file = process.env.REPLACE_LAST_FILE;
+const oldLine = Buffer.from(process.env.REPLACE_LAST_OLD ?? "", "utf8");
+const newLine = Buffer.from(process.env.REPLACE_LAST_NEW ?? "", "utf8");
+if (!file || oldLine.length === 0 || oldLine.includes(0x0a) || newLine.includes(0x0a)) process.exit(1);
+const source = readFileSync(file);
+let lineStart = 0;
+let lastStart = -1;
+let lastEnd = -1;
+for (let index = 0; index <= source.length; index += 1) {
+  if (index !== source.length && source[index] !== 0x0a) continue;
+  if (source.subarray(lineStart, index).equals(oldLine)) {
+    lastStart = lineStart;
+    lastEnd = index;
+  }
+  lineStart = index + 1;
+}
+if (lastStart < 0) process.exit(1);
+writeFileSync(file, Buffer.concat([
+  source.subarray(0, lastStart),
+  newLine,
+  source.subarray(lastEnd),
+]));
+NODE
 }
 
 # awk -v 会解释反斜杠转义；内嵌 JavaScript 的 \u0027 必须按原始字节替换，
@@ -195,6 +207,45 @@ expect_rejected() {
     fail "weakened fixture unexpectedly passed: $description"
   fi
 }
+
+# GNU awk 会在 -v 中重新解释尾随反斜杠；辅助函数必须直接按行字节边界替换最后一次
+# 精确匹配，同时保持其余重复行与源文件是否含最终 LF 不变。
+replace_last_old='RUN --network=none rm -rf /usr/share/nginx/html && \'
+replace_last_new='RUN --network=none true && \'
+replace_last_with_lf="$test_root/replace-last-with-lf.txt"
+replace_last_without_lf="$test_root/replace-last-without-lf.txt"
+REPLACE_LAST_TEST_OLD="$replace_last_old" \
+REPLACE_LAST_TEST_WITH_LF="$replace_last_with_lf" \
+REPLACE_LAST_TEST_WITHOUT_LF="$replace_last_without_lf" node <<'NODE'
+const { writeFileSync } = require("node:fs");
+const oldLine = process.env.REPLACE_LAST_TEST_OLD;
+const withLf = process.env.REPLACE_LAST_TEST_WITH_LF;
+const withoutLf = process.env.REPLACE_LAST_TEST_WITHOUT_LF;
+if (!oldLine || !withLf || !withoutLf) process.exit(1);
+writeFileSync(withLf, Buffer.from(`prefix\n${oldLine}\nmiddle\n${oldLine}\nsuffix\n`, "utf8"));
+writeFileSync(withoutLf, Buffer.from(`prefix\n${oldLine}\nmiddle\n${oldLine}\nsuffix`, "utf8"));
+NODE
+replace_last_exact_line "$replace_last_old" "$replace_last_new" "$replace_last_with_lf"
+replace_last_exact_line "$replace_last_old" "$replace_last_new" "$replace_last_without_lf"
+REPLACE_LAST_TEST_OLD="$replace_last_old" \
+REPLACE_LAST_TEST_NEW="$replace_last_new" \
+REPLACE_LAST_TEST_WITH_LF="$replace_last_with_lf" \
+REPLACE_LAST_TEST_WITHOUT_LF="$replace_last_without_lf" node <<'NODE'
+const { readFileSync } = require("node:fs");
+const oldLine = process.env.REPLACE_LAST_TEST_OLD;
+const newLine = process.env.REPLACE_LAST_TEST_NEW;
+const withLf = process.env.REPLACE_LAST_TEST_WITH_LF;
+const withoutLf = process.env.REPLACE_LAST_TEST_WITHOUT_LF;
+if (!oldLine || !newLine || !withLf || !withoutLf) process.exit(1);
+const expectedWithLf = Buffer.from(`prefix\n${oldLine}\nmiddle\n${newLine}\nsuffix\n`, "utf8");
+const expectedWithoutLf = Buffer.from(`prefix\n${oldLine}\nmiddle\n${newLine}\nsuffix`, "utf8");
+if (!readFileSync(withLf).equals(expectedWithLf)
+    || !readFileSync(withoutLf).equals(expectedWithoutLf)) process.exit(1);
+NODE
+if replace_last_exact_line 'missing exact line \' "$replace_last_new" "$replace_last_with_lf" \
+  >/dev/null 2>&1; then
+  fail 'replace_last_exact_line accepted a fixture without an exact match'
+fi
 
 reset_fixture
 "$verifier" --root "$fixture" >/dev/null || fail 'baseline fixture failed'
