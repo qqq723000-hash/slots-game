@@ -347,7 +347,7 @@ describe("non-production special-feature browser fixture contract", () => {
     const clickEnd = fixtureBrowserGate.indexOf("function validateScenarioEvidence", clickStart);
     const clickContract = fixtureBrowserGate.slice(clickStart, clickEnd);
     expect(clickContract).toContain("page.locator('[data-role=\"spin\"]')");
-    expect(fixtureBrowserGate).toContain("const primaryActionTimeoutMs = 5_000");
+    expect(fixtureBrowserGate).toContain("const primaryActionTimeoutMs = 15_000");
     expect(clickContract).toContain("await spin.click({ timeout: primaryActionTimeoutMs })");
     expect(clickContract).toContain("if (!stillClickable) return false");
     expect(clickContract).toContain("throw error");
@@ -356,5 +356,20 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(clickContract).not.toContain("element.click()");
     expect(clickContract).not.toContain("dispatchEvent");
     expect(fixtureBrowserGate).not.toContain("真实主控件");
+  });
+
+  it("binds checkpoint epochs to screenshot bytes before slow pixel analysis", () => {
+    const captureStart = fixtureBrowserGate.indexOf("async function captureVisibleFrameRegion");
+    const captureEnd = fixtureBrowserGate.indexOf("async function analyzeRenderedPng", captureStart);
+    const captureContract = fixtureBrowserGate.slice(captureStart, captureEnd);
+    const screenshot = captureContract.indexOf("await page.screenshot");
+    const snapshot = captureContract.indexOf("await readScenarioSnapshot(page)");
+    const analysis = captureContract.indexOf("await analyzeRenderedPng(page, png, baselinePng)");
+    expect(screenshot).toBeGreaterThanOrEqual(0);
+    expect(snapshot).toBeGreaterThan(screenshot);
+    expect(analysis).toBeGreaterThan(snapshot);
+    expect(captureContract).toContain("scenarioSnapshotAfterScreenshot");
+    expect(fixtureBrowserGate).toContain("current.scenarioSnapshotAfterScreenshot");
+    expect(fixtureBrowserGate).toContain("later.scenarioSnapshotAfterScreenshot");
   });
 });

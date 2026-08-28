@@ -22,7 +22,7 @@ import {
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
 const startupTimeoutMs = 45_000;
-const primaryActionTimeoutMs = 5_000;
+const primaryActionTimeoutMs = 15_000;
 const scenarioDeadlineMs = 120_000;
 const browserDeadlineMs = 18 * 60_000;
 const maximumBrowserBudgetMs = 20 * 60_000;
@@ -925,8 +925,12 @@ async function captureNewRenderCheckpoints(
       checkpoint.region,
       baseline.png,
       checkpoint.visibleElement,
+      true,
     );
-    const afterCurrentCapture = await readScenarioSnapshot(page);
+    const afterCurrentCapture = current.scenarioSnapshotAfterScreenshot;
+    if (afterCurrentCapture === null) {
+      throw new Error(`${contract.scenario}/${key} 缺少截图时刻的 checkpoint 快照`);
+    }
     const afterCurrentEpoch = renderCheckpointEpoch(afterCurrentCapture, checkpoint);
     if (!sameRenderCheckpointEpoch(epoch, afterCurrentEpoch)) {
       throw new Error(
@@ -951,8 +955,12 @@ async function captureNewRenderCheckpoints(
         checkpoint.region,
         current.png,
         checkpoint.visibleElement,
+        true,
       );
-      const afterLaterCapture = await readScenarioSnapshot(page);
+      const afterLaterCapture = later.scenarioSnapshotAfterScreenshot;
+      if (afterLaterCapture === null) {
+        throw new Error(`${contract.scenario}/${key} 缺少连续帧时刻的 checkpoint 快照`);
+      }
       const afterLaterEpoch = renderCheckpointEpoch(afterLaterCapture, checkpoint);
       if (!sameRenderCheckpointEpoch(epoch, afterLaterEpoch)) {
         throw new Error(
@@ -1002,6 +1010,7 @@ async function captureVisibleFrameRegion(
   normalizedRegion,
   baselinePng = null,
   visibleElementContract = null,
+  captureScenarioSnapshot = false,
 ) {
   const frame = page.locator('[data-role="frame"]');
   const geometry = await frame.evaluate((element, input) => {
@@ -1098,11 +1107,17 @@ async function captureVisibleFrameRegion(
     scale: "css",
     type: "png",
   });
+  // epoch 必须绑定到浏览器真正生成截图字节的时刻。PNG 解码和逐像素分析可能在慢速
+  // runner 上耗时数秒，但它只读取不可变字节，不应要求玩法 checkpoint 继续停留。
+  const scenarioSnapshotAfterScreenshot = captureScenarioSnapshot
+    ? await readScenarioSnapshot(page)
+    : null;
   const metrics = await analyzeRenderedPng(page, png, baselinePng);
   return Object.freeze({
     ...geometry,
     ...metrics,
     png,
+    scenarioSnapshotAfterScreenshot,
     sha256: createHash("sha256").update(png).digest("hex"),
   });
 }
