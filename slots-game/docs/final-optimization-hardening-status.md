@@ -5,7 +5,7 @@
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
 
-状态日期：2026-08-27
+状态日期：2026-08-29
 
 本文把《前后端持续优化加固清单》映射到当前仓库的实际实现、可重复验证与外部上线门禁。
 它是当前工作树的工程验收快照，不是素材授权书、真钱牌照、独立 RNG/数学认证、渗透测试报告，
@@ -29,7 +29,7 @@
 | 前端安全与恢复 | 浏览器只表现权威结果；一次性 Launch Code 清除、内存 token、严格解码、pending ledger、状态查询、ACK、空闲断开、transport generation、运营商 relaunch、CSP、Trusted Types、资源完整性、生命周期清理、运行期全局故障关闭，以及无持久身份的逐请求 W3C `traceparent` 已实现 | `web/src/protocol/`、`web/src/main.ts`、`deploy/web/` | 生产浏览器指标/视觉遥测出口仍未实现；真实 BFCache、多标签页、辅助技术和设备矩阵仍是外部门禁 |
 | 后端资金与并发 | PostgreSQL 权威事务、服务端 RNG、Operation ID 幂等、原子钱包命令、未知结果只查询、持久恢复、Outbox、Valkey 新意图准入、舱壁/熔断、HPA/PDB、日志脱敏、默认关闭的 W3C/OTLP 服务端追踪，以及默认关闭的高额派奖 `RISK_PENDING` 持久审批状态机已有实现 | `server/internal/rgs/`、`server/internal/postgres/`、`server/internal/recovery/`、`server/internal/outbox/`、`server/internal/sharedadmission/`、`server/internal/telemetry/` | Progressive Jackpot 资金账本尚未实现；高额风控的个人 SSO/MFA、职责分离与双人复核仍由外部运营平台交付；正式钱包 conformance、数学/RNG/RTP 认证、真实 collector 父子链和容量/故障演练均未完成 |
 | 数据、AWS 与运维 | 私有 VPC/EKS/RDS/Valkey、Multi-AZ、PITR、KMS、Secrets、Pod Identity、WAF、ECR、S3 Object Lock、跨区备份接口、AMP/CloudWatch、RDS 总 IOPS/总吞吐与日志派生 deadlock 告警、Vector 低流量磁盘归档有界推进门禁、默认关闭的同区域 PostgreSQL read replica/独立 endpoint/ReplicaLag 与容量告警接口、受控 OTLP collector 接口及供应链门禁已有 IaC/契约 | `infra/terraform/`、`deploy/aws-production/`、`deploy/cluster-production/`、`deploy/observability/` | Vector 0.57 方案的稳定运行名义值为每实例 8,640 条固定心跳/日，启动/重启余量另计；它是竞态缓解而非上游修复，外部归档容量/费用/TLS/保留/合规仍待验收；应用尚未采用 reader endpoint，RDS Proxy/PgBouncer、时间分区、定时 RDS 冷归档和 Bot Control 尚未实现；真实副本/KMS/告警、collector TLS/容量/保留期、Route 53、GuardDuty、共享防火墙和告警到人由采用方平台验收 |
-| 文档、品牌与视频 | Primal Rampage 已作为交付品牌统一；README、架构、运行手册、资产权属分类和精确哈希审批失败关闭门禁存在 | `README.md`、`docs/`、`web/ASSETS.md`、`web/asset-provenance.json` | `gameId=iron-colossus`、存储键和 runtime manifest 标识是既有部署/缓存兼容协议，不代表产品品牌且不得在无迁移方案时改名；Primal Rampage 运行素材权利证据未在仓库验证；仓库没有 60 FPS 宣传视频制品。不得通过删除水印或来源声明代替授权和原创替换 |
+| 文档、品牌与视频 | Primal Rampage 已作为交付品牌统一；README、架构、运行手册、资产权属分类和精确哈希审批失败关闭门禁存在 | `README.md`、`docs/`、`web/ASSETS.md`、`web/asset-provenance.json` | `gameId=iron-colossus`、存储键和 runtime manifest 标识是既有部署/缓存兼容协议，不代表产品品牌且不得在无迁移方案时改名；Primal Rampage 运行素材权利证据未在仓库验证；销售演示视频作为仓库外制品单独验收，不进入源码或 Web runtime 发布包。不得通过删除水印或来源声明代替授权和原创替换 |
 
 ## 本轮落地的高优先级补强
 
@@ -111,7 +111,7 @@
   不能用副本接口冒充这些能力或跨区 DR。
 - 为定时 RDS 冷归档、恢复验证、CloudFront 预热、辖区 Geo restriction 和 Route 53 路由保存平台接口
   与目标环境证据。
-- 制作独立、签名并清单化的 60 FPS 宣传视频制品；营销视频不混入 Web runtime 发布包。
+- 销售演示视频须在仓库外单独保存、验收和交付；不得混入 Web runtime 发布包，也不得展示凭据、连接串或原始业务标识。
 
 ## 明确替代的建议
 
@@ -147,7 +147,7 @@ Terraform/AWS workflow/Cluster/Observability/Supply Chain/Web/本地生产静态
 ## 本次本地验证快照
 
 - Web：TypeScript 类型检查、production build、bundle/许可/来源/streaming manifest 契约全部通过；
-  串行 Vitest 为 `141/141` 文件、`1915/1915` 测试，另有真实 `/casino/primal/` 子路径构建断言。13 个
+  串行 Vitest 为 `145/145` 文件、`1977/1977` 测试，另有真实 `/casino/primal/` 子路径构建断言。13 个
   生产 JavaScript 分块均低于 500,000 bytes，
   静态分块图无循环。真实 Chrome 在精确 CSP/Trusted Types 下完成 exchange、Spin、权威结果表现、
   余额更新和 ACK；`cspViolationCount=0`、WebGL 就绪、ACK/Spin/exchange 均精确一次。
@@ -159,8 +159,8 @@ Terraform/AWS workflow/Cluster/Observability/Supply Chain/Web/本地生产静态
   Terraform 静态合同通过，204 个危险变体全部被拒绝；21 组/933 项仅名称加固清单及跳过项审计通过。
 - Vector 低流量归档：当前固定 0.57 镜像的隔离行为回归覆盖“A 阶段中断并证明磁盘持久化、B 阶段
   receiver-ready 后使用全新 sender/data_dir、每阶段各一条业务探针、10 秒四字段心跳、各自 25 秒内
-  精确一次且无原始 metric”；本地完整部署仍须在最终提交
-  上重跑。本机验收已把 25 秒精确落盘与最长 35 秒 sent counter 新鲜度观测分离；外部 archive 实际
+  精确一次且无原始 metric”。本地完整部署须从干净的最终 `main` 或受保护 Tag 构建，并以在线
+  `release-manifest.json` 的完整 revision 回读作为独立证据。本机验收已把 25 秒精确落盘与最长 35 秒 sent counter 新鲜度观测分离；外部 archive 实际
   容量与合规结果不由该隔离测试替代。
 - 本次正式收口按要求没有重新启动 `verify-hardening-stability-50`；此前中止的部分轮次和旧源码上的
   定向循环都不作为当前最终源码的“50/50”证据。当前结论来自上述一次完整回归、独立对抗复核和

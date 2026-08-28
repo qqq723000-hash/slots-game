@@ -31,7 +31,7 @@
 
 ## Balance / Bet / Win
 
-- PC：当前外部参考版本实机与已验收本地对照在 1280×720 使用 16px 可见 footer、12.8px `ROBOTO_CONDENSED_REGULAR`；provider、Balance/Bet/Win 与游戏名必须共用同一 16px 投影。
+- PC：当前外部参考版本实机与已验收本地对照在 1280×720 使用 16px 可见 footer、12.8px `ROBOTO_CONDENSED_REGULAR`；个人独立开发标识、Balance/Bet/Win 与游戏名必须共用同一 16px 投影。
 - 手机和平板：使用已归档移动基线默认 `ROBOTO_CONDENSED_BOLD`，字号由响应式布局变量决定，不写死为桌面值。
 - 金额使用会话绑定的 currency 与 currencyExponent；不得使用浮点数，也不得默认为两位小数。
 - 不添加来源外的千位分隔符；PC 不添加移动端 Balance/Bet 背板。
