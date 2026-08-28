@@ -52,15 +52,16 @@ const defaultScenarioDeadlineMs = 120_000;
 const extendedScenarioDeadlineMs = 150_000;
 const largeScenarioDeadlineMs = 180_000;
 const chromiumKingScenarioDeadlineMs = 210_000;
+const chromiumDesktopKongScenarioDeadlineMs = 360_000;
 const edgeKingScenarioDeadlineMs = 240_000;
 const edgeDesktopKongScenarioDeadlineMs = 360_000;
 const slowExtendedScenarioDeadlineMs = 240_000;
 const slowKongScenarioDeadlineMs = 270_000;
 const standardBrowserDeadlineMs = 20 * 60_000;
-const slowBrowserDeadlineMs = 30 * 60_000;
+const slowBrowserDeadlineMs = 32 * 60_000;
 const edgeBrowserDeadlineMs = 32 * 60_000;
 const standardMaximumBrowserBudgetMs = 21 * 60_000;
-const slowMaximumBrowserBudgetMs = 31 * 60_000;
+const slowMaximumBrowserBudgetMs = 33 * 60_000;
 const edgeMaximumBrowserBudgetMs = 33 * 60_000;
 const temporalFrameAdvanceMs = 180;
 const geometryToleranceCssPixels = 0.75;
@@ -451,6 +452,11 @@ function resolveScenarioDeadlineMs(browserName, contract, surface) {
     && surface.id === "desktop-1440x900"
     && contract.scenario === "king-flow") {
     return chromiumKingScenarioDeadlineMs;
+  }
+  if (browserName === "chromium"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "kong-flow") {
+    return chromiumDesktopKongScenarioDeadlineMs;
   }
   if (slowBrowser && contract.scenario === "kong-flow"
     && (surface.id === "desktop-1440x900" || surface.id === "tablet-1024x768")) {

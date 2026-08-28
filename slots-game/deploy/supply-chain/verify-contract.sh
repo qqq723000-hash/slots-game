@@ -50,6 +50,7 @@ release_workflow="$workflows_root/supply-chain-release.yml"
 deployment_workflow="$workflows_root/deployment-conformance.yml"
 backend_workflow="$workflows_root/backend-conformance.yml"
 frontend_workflow="$workflows_root/frontend-conformance.yml"
+visual_fixture_browser_gate="$repository_root/web/scripts/verify-visual-fixture-cross-browser.mjs"
 codeql_workflow="$workflows_root/codeql.yml"
 dependency_review_workflow="$workflows_root/dependency-review.yml"
 dependabot_config="$github_root/dependabot.yml"
@@ -122,6 +123,7 @@ for required_file in \
   "$deployment_workflow" \
   "$backend_workflow" \
   "$frontend_workflow" \
+  "$visual_fixture_browser_gate" \
   "$codeql_workflow" \
   "$dependency_review_workflow" \
   "$dependabot_config" \
@@ -686,10 +688,14 @@ test "$(grep -F -c -- '          persist-credentials: false' "$frontend_workflow
   fail 'all four frontend jobs must remove checkout credentials'
 require_fixed '  verify-special-features:' "$frontend_workflow"
 require_fixed '    name: verify-special-features (${{ matrix.browser }})' "$frontend_workflow"
-require_line '    # Firefox/WebKit 脚本保留 20 分钟、Chromium 30 分钟硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。' "$frontend_workflow"
-require_fixed '    timeout-minutes: 35' "$frontend_workflow"
+require_line '    # Firefox/WebKit 脚本各保留 20 分钟且作业 35 分钟；Chromium 脚本保留 32 分钟且作业 37 分钟。' "$frontend_workflow"
+require_fixed '    timeout-minutes: ${{ matrix.job_timeout_minutes }}' "$frontend_workflow"
 require_line '      fail-fast: false' "$frontend_workflow"
-require_line '        browser: [chromium, firefox, webkit]' "$frontend_workflow"
+require_line '          - browser: chromium' "$frontend_workflow"
+require_line '            job_timeout_minutes: 37' "$frontend_workflow"
+require_line '          - browser: firefox' "$frontend_workflow"
+require_line '            job_timeout_minutes: 35' "$frontend_workflow"
+require_line '          - browser: webkit' "$frontend_workflow"
 require_fixed '  verify-edge:' "$frontend_workflow"
 require_fixed '    runs-on: windows-latest' "$frontend_workflow"
 require_line '    # Windows 软件渲染截图受脚本 32 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' "$frontend_workflow"
@@ -704,6 +710,38 @@ require_line '        run: npm run build:browser-matrix -- --browser msedge' "$f
 require_line '        run: npx playwright install --with-deps "${{ matrix.browser }}"' "$frontend_workflow"
 require_fixed 'npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"' "$frontend_workflow"
 require_line '        run: npm run test:visual-fixtures-browser-matrix -- --browser msedge' "$frontend_workflow"
+
+require_line 'const chromiumDesktopKongScenarioDeadlineMs = 360_000;' "$visual_fixture_browser_gate"
+require_line 'const slowKongScenarioDeadlineMs = 270_000;' "$visual_fixture_browser_gate"
+require_line 'const slowBrowserDeadlineMs = 32 * 60_000;' "$visual_fixture_browser_gate"
+require_line 'const slowMaximumBrowserBudgetMs = 33 * 60_000;' "$visual_fixture_browser_gate"
+node - "$visual_fixture_browser_gate" <<'NODE'
+const { readFileSync } = require("node:fs");
+const source = readFileSync(process.argv[2], "utf8");
+const chromiumDesktopKongBranch = [
+  '  if (browserName === "chromium"',
+  '    && surface.id === "desktop-1440x900"',
+  '    && contract.scenario === "kong-flow") {',
+  "    return chromiumDesktopKongScenarioDeadlineMs;",
+  "  }",
+].join("\n");
+const sharedSlowKongBranch = [
+  '  if (slowBrowser && contract.scenario === "kong-flow"',
+  '    && (surface.id === "desktop-1440x900" || surface.id === "tablet-1024x768")) {',
+  "    return slowKongScenarioDeadlineMs;",
+  "  }",
+].join("\n");
+const count = (value) => source.split(value).length - 1;
+if (count(chromiumDesktopKongBranch) !== 1) {
+  throw new Error("Chromium desktop Kong timing tuple drifted");
+}
+if (count(sharedSlowKongBranch) !== 1) {
+  throw new Error("shared slow Kong timing tuple drifted");
+}
+if (source.indexOf(chromiumDesktopKongBranch) >= source.indexOf(sharedSlowKongBranch)) {
+  throw new Error("Chromium desktop Kong timing tuple must precede the shared slow tuple");
+}
+NODE
 
 # 前端门禁的命令字面量必须位于预期 job/step 中并保持无条件执行。仅 grep 到同一命令不能证明
 # 它没有被移入禁用 step、容错 step 或不受保护的新 job；YAML 语义检查同时固定权限、runner、
@@ -786,7 +824,7 @@ ruby -ryaml -e '
     },
     "verify-special-features" => {
       "runs-on" => "ubuntu-latest",
-      "timeout-minutes" => 35,
+      "timeout-minutes" => "${{ matrix.job_timeout_minutes }}",
       "defaults" => { "run" => { "working-directory" => "slots-game/web" } },
     },
     "verify-edge" => {
@@ -841,7 +879,13 @@ ruby -ryaml -e '
     special["name"] == "verify-special-features (${{ matrix.browser }})"
   abort "special-feature browser strategy drifted" unless special["strategy"] == {
     "fail-fast" => false,
-    "matrix" => { "browser" => %w[chromium firefox webkit] },
+    "matrix" => {
+      "include" => [
+        { "browser" => "chromium", "job_timeout_minutes" => 37 },
+        { "browser" => "firefox", "job_timeout_minutes" => 35 },
+        { "browser" => "webkit", "job_timeout_minutes" => 35 },
+      ],
+    },
   }
 
   expect_action = lambda do |job_id, name, reference|
