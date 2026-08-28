@@ -34,13 +34,15 @@ import {
   primaryActionLeaseFromSnapshot,
   primaryActionLeaseKey,
   primaryActionLeaseSelector,
+  primaryActionTrustedPointerGuardDecision,
+  primaryActionTrustedPointerTarget,
 } from "./visual-fixture-primary-action.mjs";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
 const startupTimeoutMs = 45_000;
 const primaryActionTimeoutMs = 15_000;
-const primaryActionAttemptTimeoutMs = 2_000;
+const fixtureCheckpointReleaseTimeoutMs = 5_000;
 const screenshotTimeoutMs = 90_000;
 const defaultScenarioDeadlineMs = 120_000;
 const extendedScenarioDeadlineMs = 150_000;
@@ -58,6 +60,7 @@ const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
 const evidenceScope = "presentation-only-no-rgs-settlement";
 const minimumRenderedPngBytes = 5_000;
+const freeSpinsSummaryFixtureCheckpoint = "free-spins-summary.input-ready";
 const browserTargets = Object.freeze([
   "chrome111",
   "edge111",
@@ -208,6 +211,8 @@ const featureScenarios = Object.freeze([
         roi: "king-free-spin-summary",
         region: Object.freeze({ x: 0.25, y: 0.14, width: 0.5, height: 0.64 }),
         visibleElement: Object.freeze({ role: "spin", action: "continue", mode: "continue" }),
+        captureBeforeInput: Object.freeze({ action: "continue", mode: "continue" }),
+        fixtureCheckpointHold: freeSpinsSummaryFixtureCheckpoint,
       }),
     ]),
   }),
@@ -251,6 +256,8 @@ const featureScenarios = Object.freeze([
         roi: "kong-free-spin-summary",
         region: Object.freeze({ x: 0.25, y: 0.14, width: 0.5, height: 0.64 }),
         visibleElement: Object.freeze({ role: "spin", action: "continue", mode: "continue" }),
+        captureBeforeInput: Object.freeze({ action: "continue", mode: "continue" }),
+        fixtureCheckpointHold: freeSpinsSummaryFixtureCheckpoint,
       }),
     ]),
   }),
@@ -288,6 +295,8 @@ const featureScenarios = Object.freeze([
         roi: "free-spin-cap-summary",
         region: Object.freeze({ x: 0.25, y: 0.14, width: 0.5, height: 0.64 }),
         visibleElement: Object.freeze({ role: "spin", action: "continue", mode: "continue" }),
+        captureBeforeInput: Object.freeze({ action: "continue", mode: "continue" }),
+        fixtureCheckpointHold: freeSpinsSummaryFixtureCheckpoint,
         requireTemporalChange: true,
       }),
     ]),
@@ -786,6 +795,11 @@ async function runScenario(
     pageParameters.set("channel", surface.channel);
     pageParameters.set("layout", surface.channel);
   }
+  if (contract.renderCheckpoints.some(
+    (checkpoint) => checkpoint.fixtureCheckpointHold === freeSpinsSummaryFixtureCheckpoint,
+  )) {
+    pageParameters.set("freeSpinsSummaryHold", "1");
+  }
   const pageUrl = `${originValue}/visual-fixtures.html?${pageParameters}`;
   await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: startupTimeoutMs });
     try {
@@ -836,8 +850,11 @@ async function runScenario(
       controlledClockCapture,
     );
 
-    const spin = page.locator('[data-role="spin"]');
-    await spin.click({ timeout: startupTimeoutMs });
+    const initialActionSnapshot = await readScenarioSnapshot(page);
+    const initialActionLease = primaryActionLeaseFromSnapshot(initialActionSnapshot);
+    if (!await clickCurrentPrimaryAction(page, initialActionLease)) {
+      throw new Error(`${browserName}/${contract.scenario} 的初始 Spin 输入租约已过期`);
+    }
     const observed = {
       stages: new Set(),
       events: new Set(),
@@ -1079,6 +1096,7 @@ async function captureNewRenderCheckpoints(
     if (!baseline) throw new Error(`${contract.scenario}/${key} 缺少初始像素基线`);
     const temporalCapture = checkpoint.requireTemporalChange === true;
     let captureClockPaused = false;
+    let captureError = null;
     try {
       if (controlledClockCapture) {
         // 以页面自己的受控时间为基准，仅预留一次短协议往返。繁忙 runner 仍可能让
@@ -1194,10 +1212,46 @@ async function captureNewRenderCheckpoints(
         visibleAreaRatio: current.visibleAreaRatio,
         viewport: Object.freeze({ height: current.viewportHeight, width: current.viewportWidth }),
       }));
+    } catch (error) {
+      captureError = error;
+      throw error;
     } finally {
-      if (captureClockPaused) await page.clock.resume();
+      let cleanupError = null;
+      if (checkpoint.fixtureCheckpointHold !== undefined) {
+        try {
+          await releaseFixtureCheckpointHold(page, checkpoint.fixtureCheckpointHold);
+        } catch (error) {
+          cleanupError ??= error;
+        }
+      }
+      try {
+        if (captureClockPaused) await page.clock.resume();
+      } catch (error) {
+        cleanupError ??= error;
+      }
+      // Cleanup must never replace the pixel/timing failure which caused this path.
+      if (captureError === null && cleanupError !== null) throw cleanupError;
     }
   }
+}
+
+async function releaseFixtureCheckpointHold(page, expectedCheckpoint) {
+  const state = await page.evaluate((checkpoint) => ({
+    activeCheckpoint: document.body.dataset.fixtureCheckpoint ?? null,
+    releaseButtonCount: document.querySelectorAll(
+      '[data-role="fixture-checkpoint-release"]',
+    ).length,
+    expectedCheckpoint: checkpoint,
+  }), expectedCheckpoint);
+  if (state.activeCheckpoint !== expectedCheckpoint || state.releaseButtonCount !== 1) {
+    throw new Error(`截图夹具未持有预期 checkpoint：${JSON.stringify(state)}`);
+  }
+  await page.keyboard.press("F8");
+  await page.waitForFunction(
+    (checkpoint) => document.body.dataset.fixtureCheckpoint !== checkpoint,
+    expectedCheckpoint,
+    { polling: 16, timeout: fixtureCheckpointReleaseTimeoutMs },
+  );
 }
 
 async function pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard) {
@@ -1771,13 +1825,187 @@ function requireNoRuntimeFailures(runtimeErrors, browserName, scenario) {
 }
 
 async function clickCurrentPrimaryAction(page, expectedLease) {
-  const spin = page.locator(primaryActionLeaseSelector(expectedLease));
   return clickWithPrimaryActionLease({
-    attemptClick: async (timeout) => spin.click({ timeout }),
-    attemptTimeoutMs: primaryActionAttemptTimeoutMs,
+    attemptClick: async (remainingMs) => clickCurrentPrimaryActionWithTrustedPointer(
+      page,
+      expectedLease,
+      remainingMs,
+    ),
     expectedLease,
     readSnapshot: async () => readScenarioSnapshot(page),
     totalTimeoutMs: primaryActionTimeoutMs,
+    waitForNextObservation: async (delayMs) => page.waitForTimeout(delayMs),
+  });
+}
+
+async function clickCurrentPrimaryActionWithTrustedPointer(page, expectedLease, totalTimeoutMs) {
+  const startedAt = Date.now();
+  let lastUnsafeTargetError = null;
+  while (Date.now() - startedAt < totalTimeoutMs) {
+    const armed = await armPrimaryActionTrustedPointerGuard(
+      page,
+      primaryActionLeaseSelector(expectedLease),
+      expectedLease,
+    );
+    if (armed.evidence.leaseMatched !== true) return false;
+
+    let pointerTarget;
+    try {
+      pointerTarget = primaryActionTrustedPointerTarget(armed.evidence);
+    } catch (error) {
+      lastUnsafeTargetError = error;
+      if (armed.armed) await takePrimaryActionTrustedPointerGuardResult(page);
+      const remainingMs = totalTimeoutMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) throw error;
+      await page.waitForTimeout(Math.min(16, remainingMs));
+      continue;
+    }
+
+    let guardResult = null;
+    let pointerError = null;
+    try {
+      // Mouse input has no locator actionability or scroll phase. Keep this as one
+      // awaited protocol operation; the scenario deadline owns context cancellation.
+      await page.mouse.click(pointerTarget.x, pointerTarget.y);
+    } catch (error) {
+      pointerError = error;
+      throw error;
+    } finally {
+      if (armed.armed) {
+        try {
+          guardResult = await takePrimaryActionTrustedPointerGuardResult(page);
+        } catch (cleanupError) {
+          if (pointerError === null) throw cleanupError;
+        }
+      }
+    }
+    return primaryActionTrustedPointerGuardDecision(guardResult) === "accepted";
+  }
+  throw lastUnsafeTargetError
+    ?? new Error(`主控件 trusted pointer 在 ${totalTimeoutMs}ms 内未获得安全目标`);
+}
+
+async function armPrimaryActionTrustedPointerGuard(page, selector, expectedLease) {
+  return page.evaluate(({ actionLease, actionSelector }) => {
+    const guardKey = "__slotsVisualFixturePrimaryActionGuard";
+    const previousGuard = globalThis[guardKey];
+    if (previousGuard !== undefined) {
+      document.removeEventListener("click", previousGuard.listener, true);
+      delete globalThis[guardKey];
+      throw new Error("主控件 trusted pointer 租约守卫发生重入");
+    }
+
+    const captureLease = () => {
+      const spins = [...document.querySelectorAll('[data-role="spin"]')];
+      const spin = spins.length === 1 ? spins[0] : null;
+      const feature = document.querySelector('[data-role="feature"]');
+      return {
+        sequence: document.body.dataset.fixtureSequence ?? null,
+        stage: document.body.dataset.fixtureStage ?? null,
+        milestone: document.body.dataset.fixtureMilestone ?? null,
+        milestoneCount: Number.parseInt(
+          document.body.dataset.fixtureMilestoneCount ?? "0",
+          10,
+        ),
+        event: document.body.dataset.fixtureEvent ?? null,
+        featureMode: feature?.getAttribute("data-mode") ?? null,
+        spinAction: spin?.getAttribute("data-action") ?? null,
+        spinMode: spin?.getAttribute("data-mode") ?? null,
+        spinDisabled: !(spin instanceof HTMLButtonElement) || spin.disabled,
+      };
+    };
+    const leaseMatches = () => {
+      const current = captureLease();
+      return current.spinDisabled === false
+        && Object.keys(actionLease).every(
+          (field) => Object.is(actionLease[field] ?? null, current[field] ?? null),
+        );
+    };
+
+    const matches = [...document.querySelectorAll(actionSelector)];
+    const spinCount = document.querySelectorAll('[data-role="spin"]').length;
+    const target = matches.length === 1 && matches[0] instanceof HTMLButtonElement
+      ? matches[0]
+      : null;
+    const leaseMatched = leaseMatches();
+    const rectangle = target?.getBoundingClientRect() ?? null;
+    const style = target ? getComputedStyle(target) : null;
+    const intersectionWidth = rectangle
+      ? Math.max(0, Math.min(rectangle.right, innerWidth) - Math.max(rectangle.left, 0))
+      : 0;
+    const intersectionHeight = rectangle
+      ? Math.max(0, Math.min(rectangle.bottom, innerHeight) - Math.max(rectangle.top, 0))
+      : 0;
+    const centerX = rectangle ? rectangle.left + rectangle.width / 2 : Number.NaN;
+    const centerY = rectangle ? rectangle.top + rectangle.height / 2 : Number.NaN;
+    const topmost = Number.isFinite(centerX)
+      && Number.isFinite(centerY)
+      && centerX >= 0
+      && centerX <= innerWidth
+      && centerY >= 0
+      && centerY <= innerHeight
+      ? document.elementFromPoint(centerX, centerY)
+      : null;
+    const evidence = {
+      centerHitTarget: target !== null
+        && topmost !== null
+        && (topmost === target || target.contains(topmost)),
+      connected: target?.isConnected ?? false,
+      disabled: target?.disabled ?? null,
+      display: style?.display ?? null,
+      hidden: target?.hidden ?? null,
+      leaseMatched,
+      matchCount: matches.length,
+      opacity: Number.parseFloat(style?.opacity ?? "NaN"),
+      pointerEvents: style?.pointerEvents ?? null,
+      rectangle: rectangle ? {
+        height: rectangle.height,
+        left: rectangle.left,
+        top: rectangle.top,
+        width: rectangle.width,
+      } : null,
+      visibility: style?.visibility ?? null,
+      spinCount,
+      visibleAreaRatio: rectangle && rectangle.width > 0 && rectangle.height > 0
+        ? (intersectionWidth * intersectionHeight) / (rectangle.width * rectangle.height)
+        : 0,
+      viewport: { height: innerHeight, width: innerWidth },
+    };
+    if (!target || !leaseMatched) return { armed: false, evidence };
+
+    const guard = { listener: null, result: null };
+    const listener = (event) => {
+      const currentSpins = [...document.querySelectorAll('[data-role="spin"]')];
+      const targetMatched = currentSpins.length === 1
+        && currentSpins[0] === target
+        && event.composedPath().includes(target);
+      const result = {
+        isTrusted: event.isTrusted,
+        leaseMatched: leaseMatches(),
+        observed: true,
+        targetMatched,
+      };
+      guard.result = result;
+      if (!result.isTrusted || !result.leaseMatched || !result.targetMatched) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    };
+    guard.listener = listener;
+    globalThis[guardKey] = guard;
+    document.addEventListener("click", listener, { capture: true, once: true });
+    return { armed: true, evidence };
+  }, { actionLease: expectedLease, actionSelector: selector });
+}
+
+async function takePrimaryActionTrustedPointerGuardResult(page) {
+  return page.evaluate(() => {
+    const guardKey = "__slotsVisualFixturePrimaryActionGuard";
+    const guard = globalThis[guardKey];
+    if (guard === undefined) return null;
+    document.removeEventListener("click", guard.listener, true);
+    delete globalThis[guardKey];
+    return guard.result;
   });
 }
 

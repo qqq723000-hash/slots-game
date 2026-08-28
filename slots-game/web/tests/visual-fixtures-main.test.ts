@@ -22,6 +22,7 @@ import {
   createVisualFixtureCheckpointHold,
   createVisualFixtureTelemetryProjectionState,
   isCapSummaryInputCheckpointCapture,
+  isFreeSpinsSummaryInputCheckpointHold,
   isNoSummaryTerminalCheckpointCapture,
   isNormalWinContinueClickTrigger,
   isPass45ForbiddenPresentationMilestone,
@@ -762,11 +763,50 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).toContain('`${checkpoint.gate}.input-ready`');
   });
 
-  it("mounts one invisible actionable click release only for exact capture=1", () => {
+  it("holds only the three opted-in final free-spins summary gates", () => {
+    const kingSummary = {
+      type: "bounded-gate-input-ready" as const,
+      gate: "free-spins-summary" as const,
+      sequence: 9,
+    };
+    const kongSummary = { ...kingSummary, sequence: 10 };
+    expect(isFreeSpinsSummaryInputCheckpointHold("king-flow", "1", kingSummary)).toBe(true);
+    expect(isFreeSpinsSummaryInputCheckpointHold("kong-flow", "1", kongSummary)).toBe(true);
+    expect(isFreeSpinsSummaryInputCheckpointHold("cap-summary", "1", kingSummary)).toBe(true);
+
+    expect(isFreeSpinsSummaryInputCheckpointHold("king-flow", null, kingSummary)).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold("king-flow", "true", kingSummary)).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold("king-flow", "1", kongSummary)).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold("kong-flow", "1", kingSummary)).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold(
+      "cap-summary",
+      "1",
+      { ...kingSummary, sequence: 8 },
+    )).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold(
+      "cap-summary",
+      "1",
+      { ...kingSummary, gate: "free-spin-cap" },
+    )).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold("wheel-mini-flow", "1", kingSummary))
+      .toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold(
+      "king-flow",
+      "1",
+      { type: "vault-awards-complete", count: 1 },
+    )).toBe(false);
+
+    expect(fixtureMain).toContain('searchParams.get("freeSpinsSummaryHold")');
+    expect(fixtureMain).toContain("isFreeSpinsSummaryInputCheckpointHold");
+    expect(fixtureMain).toContain('capture === "1" || freeSpinsSummaryHold === "1"');
+    expect(fixtureMain).toContain("? 60_000");
+  });
+
+  it("mounts one invisible release control only for exact capture or summary-hold opt-in", () => {
     const allowListGuard = fixtureMain.indexOf("isVisualFixtureScenario(scenario)");
     const buttonCreation = fixtureMain.indexOf('document.createElement("button")');
     expect(buttonCreation).toBeGreaterThan(allowListGuard);
-    expect(fixtureMain).toContain('if (capture === "1")');
+    expect(fixtureMain).toContain('if (capture === "1" || freeSpinsSummaryHold === "1")');
     expect(fixtureMain.match(/document\.createElement\("button"\)/g)).toHaveLength(1);
     expect(fixtureMain).toContain('button.dataset.role = "fixture-checkpoint-release"');
     expect(fixtureMain).toContain('button.setAttribute("aria-label", "Release visual fixture checkpoint")');

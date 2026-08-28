@@ -41,6 +41,7 @@ import {
   createVisualFixtureCheckpointHold,
   createVisualFixtureTelemetryProjectionState,
   isCapSummaryInputCheckpointCapture,
+  isFreeSpinsSummaryInputCheckpointHold,
   isNoSummaryTerminalCheckpointCapture,
   isNormalWinContinueClickTrigger,
   isPass48RageAuraCapture,
@@ -171,6 +172,7 @@ const root = document.querySelector<HTMLElement>("#app");
 const searchParams = new URL(window.location.href).searchParams;
 const scenario = searchParams.get("scenario") ?? "";
 const capture = searchParams.get("capture");
+const freeSpinsSummaryHold = searchParams.get("freeSpinsSummaryHold");
 const checkpointQuery = searchParams.get("checkpoint");
 const run = searchParams.get("run");
 const PASS48_RAGE_AURA_SCENARIO = "base-rage-level-two-persistent-aura";
@@ -349,7 +351,7 @@ if (!isVisualFixtureScenario(scenario)) {
   const releaseCheckpointFromButton = (): void => {
     checkpointHold?.release();
   };
-  if (capture === "1") {
+  if (capture === "1" || freeSpinsSummaryHold === "1") {
     document.querySelector('[data-role="fixture-checkpoint-release"]')?.remove();
     const button = document.createElement("button");
     button.type = "button";
@@ -1149,11 +1151,19 @@ if (!isVisualFixtureScenario(scenario)) {
           checkpoint,
         ) ? checkpoint.type : null;
       } else if (!checkpointName && checkpoint.type === "bounded-gate-input-ready") {
-        checkpointName = isCapSummaryInputCheckpointCapture(
+        const capSummaryInputCapture = isCapSummaryInputCheckpointCapture(
           scenario,
           capture,
           checkpoint,
-        ) ? `${checkpoint.gate}.input-ready` : null;
+        );
+        const durableFreeSpinsSummaryHold = isFreeSpinsSummaryInputCheckpointHold(
+          scenario,
+          freeSpinsSummaryHold,
+          checkpoint,
+        );
+        checkpointName = capSummaryInputCapture || durableFreeSpinsSummaryHold
+          ? `${checkpoint.gate}.input-ready`
+          : null;
       } else if (!checkpointName
         && checkpoint.type === "presentation-trace"
         && isWinEffectsMatrixTraceCheckpoint(scenario, capture, checkpoint.trace)) {
@@ -1223,6 +1233,12 @@ if (!isVisualFixtureScenario(scenario)) {
           || scenario === "base-two-rage-no-wheel"
           || scenario === RECOVERED_LEVEL_UP_VISUAL_FIXTURE_SCENARIO
           || scenario === "base-one-rage-trigger-transform"
+          || (checkpoint.type === "bounded-gate-input-ready"
+            && isFreeSpinsSummaryInputCheckpointHold(
+              scenario,
+              freeSpinsSummaryHold,
+              checkpoint,
+            ))
           ? 60_000
           : 15_000,
       );

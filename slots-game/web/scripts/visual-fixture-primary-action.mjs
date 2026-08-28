@@ -46,57 +46,103 @@ export function primaryActionLeaseMatchesSnapshot(expectedLease, snapshot) {
   );
 }
 
-export function isPlaywrightLocatorClickTimeout(error, timeoutMs) {
-  if (error?.name !== "TimeoutError" || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-    return false;
+export function primaryActionTrustedPointerTarget(evidence) {
+  const rectangle = evidence?.rectangle;
+  const viewport = evidence?.viewport;
+  const centerX = rectangle?.left + rectangle?.width / 2;
+  const centerY = rectangle?.top + rectangle?.height / 2;
+  const safe = evidence?.matchCount === 1
+    && evidence?.spinCount === 1
+    && evidence?.leaseMatched === true
+    && evidence?.connected === true
+    && evidence?.disabled === false
+    && evidence?.hidden === false
+    && evidence?.display !== "none"
+    && evidence?.visibility !== "hidden"
+    && evidence?.visibility !== "collapse"
+    && Number.isFinite(evidence?.opacity)
+    && evidence.opacity > 0
+    && evidence?.pointerEvents !== "none"
+    && Number.isFinite(rectangle?.left)
+    && Number.isFinite(rectangle?.top)
+    && Number.isFinite(rectangle?.width)
+    && Number.isFinite(rectangle?.height)
+    && rectangle.width > 0
+    && rectangle.height > 0
+    && Number.isFinite(viewport?.width)
+    && Number.isFinite(viewport?.height)
+    && viewport.width > 0
+    && viewport.height > 0
+    && Number.isFinite(evidence?.visibleAreaRatio)
+    && evidence.visibleAreaRatio >= 0.995
+    && Number.isFinite(centerX)
+    && Number.isFinite(centerY)
+    && centerX >= 0
+    && centerX <= viewport.width
+    && centerY >= 0
+    && centerY <= viewport.height
+    && evidence?.centerHitTarget === true;
+  if (!safe) {
+    throw new Error(`主控件 trusted pointer 目标不可安全点击：${JSON.stringify(evidence)}`);
   }
-  const [firstLine = ""] = String(error.message ?? "").split(/\r?\n/, 1);
-  return firstLine.trim() === `locator.click: Timeout ${timeoutMs}ms exceeded.`;
+  return Object.freeze({ x: centerX, y: centerY });
+}
+
+export function primaryActionTrustedPointerGuardDecision(result) {
+  if (result?.observed !== true) {
+    throw new Error(`主控件 trusted pointer 事件未被租约守卫观察：${JSON.stringify(result)}`);
+  }
+  if (result.isTrusted !== true) {
+    throw new Error(`主控件 trusted pointer 事件证据无效：${JSON.stringify(result)}`);
+  }
+  if (result.targetMatched !== true) {
+    throw new Error(`主控件 trusted pointer 事件证据无效：${JSON.stringify(result)}`);
+  }
+  if (result.leaseMatched !== true) return "stale";
+  return "accepted";
 }
 
 export async function clickWithPrimaryActionLease({
   attemptClick,
-  attemptTimeoutMs,
   expectedLease,
   now = Date.now,
   readSnapshot,
   totalTimeoutMs,
+  waitForNextObservation,
 }) {
   if (typeof attemptClick !== "function"
     || typeof readSnapshot !== "function"
     || typeof now !== "function"
-    || !Number.isSafeInteger(attemptTimeoutMs)
-    || attemptTimeoutMs <= 0
+    || typeof waitForNextObservation !== "function"
     || !Number.isSafeInteger(totalTimeoutMs)
-    || totalTimeoutMs <= attemptTimeoutMs) {
+    || totalTimeoutMs <= 0) {
     throw new Error("主控件输入租约参数无效");
   }
 
   const startedAt = now();
-  const maximumAttempts = Math.ceil(totalTimeoutMs / attemptTimeoutMs);
-  let attemptCount = 0;
-  let lastTimeoutError = null;
-  while (true) {
-    const beforeAttempt = await readSnapshot();
-    if (!primaryActionLeaseMatchesSnapshot(expectedLease, beforeAttempt)) return false;
+  const beforeEvent = await readSnapshot();
+  if (!primaryActionLeaseMatchesSnapshot(expectedLease, beforeEvent)) return false;
+  const beforeEventRemainingMs = totalTimeoutMs - (now() - startedAt);
+  if (beforeEventRemainingMs <= 0) {
+    throw new Error(`主控件输入租约在 ${totalTimeoutMs}ms 内未获得 trusted pointer 时间`);
+  }
 
+  // The callback must install an event-time lease guard before emitting its
+  // trusted pointer. A stale guard returns false only after blocking the event.
+  const eventAccepted = await attemptClick(beforeEventRemainingMs);
+  if (eventAccepted === false) return false;
+  if (eventAccepted !== true) {
+    throw new Error("主控件 trusted pointer 回执无效");
+  }
+
+  while (true) {
+    const afterEvent = await readSnapshot();
+    if (!primaryActionLeaseMatchesSnapshot(expectedLease, afterEvent)) return true;
     const remainingMs = totalTimeoutMs - (now() - startedAt);
     if (remainingMs <= 0) {
-      if (lastTimeoutError) throw lastTimeoutError;
-      throw new Error(`主控件输入租约在 ${totalTimeoutMs}ms 内未获得点击尝试时间`);
+      throw new Error(`主控件 trusted pointer 在 ${totalTimeoutMs}ms 内未消费精确输入租约`);
     }
-    const boundedAttemptTimeoutMs = Math.max(1, Math.min(attemptTimeoutMs, remainingMs));
-    attemptCount += 1;
-    try {
-      await attemptClick(boundedAttemptTimeoutMs);
-      return true;
-    } catch (error) {
-      if (!isPlaywrightLocatorClickTimeout(error, boundedAttemptTimeoutMs)) throw error;
-      lastTimeoutError = error;
-      const afterAttempt = await readSnapshot();
-      if (!primaryActionLeaseMatchesSnapshot(expectedLease, afterAttempt)) return false;
-      if (now() - startedAt >= totalTimeoutMs || attemptCount >= maximumAttempts) throw error;
-    }
+    await waitForNextObservation(Math.min(16, remainingMs));
   }
 }
 

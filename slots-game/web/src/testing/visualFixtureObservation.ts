@@ -3490,6 +3490,24 @@ export function isCapSummaryInputCheckpointCapture(
     : checkpoint.gate === "free-spins-summary" && checkpoint.sequence === 9;
 }
 
+/**
+ * Cross-browser pixel evidence may opt into a fixture-only hold at the final
+ * free-spins summary input gate. Scenario and sequence checks prevent this
+ * diagnostic seam from pausing any other presentation path.
+ */
+export function isFreeSpinsSummaryInputCheckpointHold(
+  scenario: string,
+  optIn: string | null,
+  checkpoint: AppPresentationCheckpoint,
+): boolean {
+  if (optIn !== "1"
+    || checkpoint.type !== "bounded-gate-input-ready"
+    || checkpoint.gate !== "free-spins-summary") return false;
+  if (scenario === "king-flow") return checkpoint.sequence === 9;
+  if (scenario === "kong-flow") return checkpoint.sequence === 10;
+  return scenario === "cap-summary" && checkpoint.sequence === 9;
+}
+
 /** 精确确定的无摘要终端保持；其他所有检查点均无法打开。 */
 export function isNoSummaryTerminalCheckpointCapture(
   scenario: string,

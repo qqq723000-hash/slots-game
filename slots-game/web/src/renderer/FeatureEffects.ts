@@ -1366,6 +1366,7 @@ export type FreeSpinSummaryCloseReason = "continue" | "timeout" | "cancelled";
 interface ActiveFreeSpinSummaryContinue {
   state: "waiting" | "continued" | "expired" | "cancelled";
   closeNotified: boolean;
+  inputCheckpointPending: boolean;
   finish(): void;
 }
 
@@ -2217,6 +2218,9 @@ export class FeatureEffects {
   requestFreeSpinSummaryContinue(): boolean {
     const interaction = this.activeFreeSpinSummaryContinue;
     if (!interaction || interaction.state !== "waiting" || this.destroyed) return false;
+    // 可选的夹具 checkpoint 让可见 CONTINUE 保持在准确截图姿势。旧的可信点击可能在
+    // 同一 DOM 控件切换租约后才到达；该手势仍归摘要门所有，但不得越过未释放的栅栏。
+    if (interaction.inputCheckpointPending) return true;
     interaction.state = "continued";
     interaction.finish();
     this.notifyFreeSpinSummaryClose(interaction, "continue");
@@ -3628,6 +3632,7 @@ export class FeatureEffects {
       const interaction: ActiveFreeSpinSummaryContinue = {
         state: "waiting",
         closeNotified: false,
+        inputCheckpointPending: true,
         finish: () => undefined,
       };
       summaryInteraction = interaction;
@@ -3642,7 +3647,14 @@ export class FeatureEffects {
           interaction.finish = finish;
           this.activeFreeSpinSummaryContinue = interaction;
           this.hooks.onFreeSpinSummaryReady?.();
-          return this.requestFreeSpinSummaryInputReadyCheckpoint();
+          const checkpoint = this.requestFreeSpinSummaryInputReadyCheckpoint();
+          if (!checkpoint) {
+            interaction.inputCheckpointPending = false;
+            return;
+          }
+          return checkpoint.finally(() => {
+            interaction.inputCheckpointPending = false;
+          });
         },
       );
       const currentState = (): ActiveFreeSpinSummaryContinue["state"] => interaction.state;

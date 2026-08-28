@@ -20,11 +20,12 @@ import {
 } from "../scripts/visual-fixture-checkpoint.mjs";
 import {
   clickWithPrimaryActionLease,
-  isPlaywrightLocatorClickTimeout,
   primaryActionLeaseFromSnapshot,
   primaryActionLeaseKey,
   primaryActionLeaseMatchesSnapshot,
   primaryActionLeaseSelector,
+  primaryActionTrustedPointerGuardDecision,
+  primaryActionTrustedPointerTarget,
 } from "../scripts/visual-fixture-primary-action.mjs";
 import fixtureBrowserGate from "../scripts/verify-visual-fixture-cross-browser.mjs?raw";
 import fixtureMain from "../src/testing/visualFixturesMain.ts?raw";
@@ -306,6 +307,55 @@ describe("non-production special-feature browser fixture contract", () => {
       'captureBeforeInput: Object.freeze({ action: "wheel-spin", mode: "ready" })',
     );
     expect(fixtureBrowserGate).toContain("validateRenderCheckpointInputLeases(featureScenarios)");
+  });
+
+  it("holds and releases only final free-spins summary pixel evidence", () => {
+    const checkpoint = {
+      source: "milestone",
+      value: "free-spins.summary-input-ready",
+      captureBeforeInput: { action: "continue", mode: "continue" },
+      visibleElement: { role: "spin", action: "continue", mode: "continue" },
+    };
+    const snapshot = {
+      milestone: "free-spins.exit-started",
+      milestones: ["free-spins.summary-input-ready", "free-spins.exit-started"],
+      spinAction: "continue",
+      spinMode: "continue",
+    };
+    expect(checkpointInputLeaseMatchesCurrentControl(snapshot, checkpoint)).toBe(true);
+    expect(renderCheckpointSignalMatches(snapshot, checkpoint)).toBe(true);
+    expect(renderCheckpointSignalMatches({ ...snapshot, spinAction: "spin" }, checkpoint))
+      .toBe(false);
+    expect(() => validateRenderCheckpointInputLeases([{
+      scenario: "king-flow",
+      renderCheckpoints: [checkpoint],
+    }])).not.toThrow();
+
+    expect(fixtureBrowserGate.match(
+      /captureBeforeInput: Object\.freeze\(\{ action: "continue", mode: "continue" \}\)/g,
+    )).toHaveLength(3);
+    expect(fixtureBrowserGate.match(
+      /fixtureCheckpointHold: freeSpinsSummaryFixtureCheckpoint/g,
+    )).toHaveLength(3);
+    expect(fixtureBrowserGate).toContain('pageParameters.set("freeSpinsSummaryHold", "1")');
+    expect(fixtureBrowserGate).toContain("async function releaseFixtureCheckpointHold(");
+    const releaseHelperStart = fixtureBrowserGate.indexOf(
+      "async function releaseFixtureCheckpointHold(",
+    );
+    const releaseHelperEnd = fixtureBrowserGate.indexOf(
+      "async function pauseCaptureClock(",
+      releaseHelperStart,
+    );
+    const releaseHelper = fixtureBrowserGate.slice(releaseHelperStart, releaseHelperEnd);
+    expect(releaseHelper).toContain("state.activeCheckpoint !== expectedCheckpoint");
+    expect(releaseHelper).toContain("state.releaseButtonCount !== 1");
+    expect(releaseHelper).toContain('await page.keyboard.press("F8")');
+    expect(releaseHelper).not.toContain("locator(");
+    expect(releaseHelper).not.toContain(".click(");
+    expect(releaseHelper).not.toContain("force:");
+    expect(releaseHelper).not.toContain("dispatchEvent");
+    expect(fixtureBrowserGate).toContain("let captureError = null");
+    expect(fixtureBrowserGate).toContain("if (captureError === null && cleanupError !== null)");
   });
 
   it("binds every rendered milestone to one stable current epoch", () => {
@@ -604,18 +654,31 @@ describe("non-production special-feature browser fixture contract", () => {
     const scenarioStart = fixtureBrowserGate.indexOf("async function runScenario");
     const scenarioEnd = fixtureBrowserGate.indexOf("function renderCheckpointKey", scenarioStart);
     const scenarioContract = fixtureBrowserGate.slice(scenarioStart, scenarioEnd);
-    expect(clickContract).toContain("page.locator(primaryActionLeaseSelector(expectedLease))");
     expect(fixtureBrowserGate).toContain("const primaryActionTimeoutMs = 15_000");
-    expect(fixtureBrowserGate).toContain("const primaryActionAttemptTimeoutMs = 2_000");
     expect(clickContract).toContain("clickWithPrimaryActionLease({");
-    expect(clickContract).toContain("attemptClick: async (timeout) => spin.click({ timeout })");
-    expect(clickContract).toContain("attemptTimeoutMs: primaryActionAttemptTimeoutMs");
+    expect(clickContract).toContain("primaryActionLeaseSelector(expectedLease)");
+    expect(clickContract).toContain("getBoundingClientRect()");
+    expect(clickContract).toContain("document.elementFromPoint(centerX, centerY)");
+    expect(clickContract).toContain("matches.length === 1");
+    expect(clickContract).toContain("event.isTrusted");
+    expect(clickContract).toContain("event.stopImmediatePropagation()");
+    expect(clickContract).toContain("await page.mouse.click(pointerTarget.x, pointerTarget.y)");
+    expect(clickContract).toContain("primaryActionTrustedPointerGuardDecision(guardResult)");
+    expect(clickContract).toContain("lastUnsafeTargetError");
+    expect(clickContract).toContain("page.waitForTimeout(Math.min(16, remainingMs))");
     expect(clickContract).toContain("totalTimeoutMs: primaryActionTimeoutMs");
+    expect(clickContract).toContain("waitForNextObservation:");
     expect(clickContract).not.toContain("force: true");
     expect(clickContract).not.toContain("element.click()");
+    expect(clickContract).not.toContain("scrollIntoView");
     expect(clickContract).not.toContain("dispatchEvent");
+    expect(clickContract).not.toContain("runPrimaryActionProtocolWithinDeadline");
+    expect(clickContract).not.toContain("Promise.race");
     expect(fixtureBrowserGate).not.toContain("真实主控件");
     expect(scenarioContract).toContain("const pendingRenderCheckpoint = contract.renderCheckpoints.find");
+    expect(scenarioContract).toContain("const initialActionSnapshot = await readScenarioSnapshot(page)");
+    expect(scenarioContract).toContain("clickCurrentPrimaryAction(page, initialActionLease)");
+    expect(scenarioContract).not.toContain("spin.click(");
     expect(scenarioContract).toContain("renderCheckpointSignalMatches(snapshot, checkpoint)");
     expect(scenarioContract).toContain("const pendingInputLeaseCheckpoint = contract.renderCheckpoints.find");
     expect(scenarioContract).toContain("checkpointInputLeaseMatchesCurrentControl(snapshot, checkpoint)");
@@ -628,7 +691,7 @@ describe("non-production special-feature browser fixture contract", () => {
       .toBeLessThan(scenarioContract.indexOf("const shouldContinue"));
   });
 
-  it("retries only the same enabled primary-action lease within one total deadline", async () => {
+  it("emits one guarded trusted pointer and observes exact lease consumption", async () => {
     const stableSnapshot = {
       sequence: "3",
       stage: "reels.settled",
@@ -669,85 +732,141 @@ describe("non-production special-feature browser fixture contract", () => {
       spinDisabled: true,
     })).toBe(false);
 
-    const timeoutError = (timeout) => Object.assign(
-      new Error(`locator.click: Timeout ${timeout}ms exceeded.\nCall log:\n - element is not enabled`),
-      { name: "TimeoutError" },
-    );
-    expect(isPlaywrightLocatorClickTimeout(timeoutError(2_000), 2_000)).toBe(true);
-    expect(isPlaywrightLocatorClickTimeout(new Error(
-      "locator.click: Timeout 2000ms exceeded.\nCall log:\n - element is not enabled",
-    ), 2_000)).toBe(false);
-    expect(isPlaywrightLocatorClickTimeout(timeoutError(2_001), 2_000)).toBe(false);
+    const safePointerEvidence = {
+      centerHitTarget: true,
+      connected: true,
+      disabled: false,
+      display: "block",
+      hidden: false,
+      leaseMatched: true,
+      matchCount: 1,
+      opacity: 1,
+      pointerEvents: "auto",
+      rectangle: { height: 80, left: 120, top: 220, width: 100 },
+      spinCount: 1,
+      visibility: "visible",
+      visibleAreaRatio: 1,
+      viewport: { height: 720, width: 1280 },
+    };
+    expect(primaryActionTrustedPointerTarget(safePointerEvidence)).toEqual({ x: 170, y: 260 });
+    expect(() => primaryActionTrustedPointerTarget({
+      ...safePointerEvidence,
+      matchCount: 2,
+    })).toThrow("trusted pointer 目标不可安全点击");
+    expect(() => primaryActionTrustedPointerTarget({
+      ...safePointerEvidence,
+      spinCount: 2,
+    })).toThrow("trusted pointer 目标不可安全点击");
+    expect(() => primaryActionTrustedPointerTarget({
+      ...safePointerEvidence,
+      centerHitTarget: false,
+    })).toThrow("trusted pointer 目标不可安全点击");
+    expect(() => primaryActionTrustedPointerTarget({
+      ...safePointerEvidence,
+      visibleAreaRatio: 0.994,
+    })).toThrow("trusted pointer 目标不可安全点击");
+
+    expect(primaryActionTrustedPointerGuardDecision({
+      observed: true,
+      isTrusted: true,
+      leaseMatched: true,
+      targetMatched: true,
+    })).toBe("accepted");
+    expect(primaryActionTrustedPointerGuardDecision({
+      observed: true,
+      isTrusted: true,
+      leaseMatched: false,
+      targetMatched: true,
+    })).toBe("stale");
+    expect(() => primaryActionTrustedPointerGuardDecision(null))
+      .toThrow("事件未被租约守卫观察");
+    expect(() => primaryActionTrustedPointerGuardDecision({
+      observed: true,
+      isTrusted: false,
+      leaseMatched: true,
+      targetMatched: true,
+    })).toThrow("事件证据无效");
+    expect(() => primaryActionTrustedPointerGuardDecision({
+      observed: true,
+      isTrusted: true,
+      leaseMatched: false,
+      targetMatched: false,
+    })).toThrow("事件证据无效");
 
     let elapsedMs = 0;
     let attempts = 0;
-    const retried = await clickWithPrimaryActionLease({
-      attemptClick: async (timeout) => {
+    let observations = 0;
+    const changedSnapshot = { ...stableSnapshot, milestoneCount: 9 };
+    const observedSnapshots = [stableSnapshot, stableSnapshot, changedSnapshot];
+    const consumed = await clickWithPrimaryActionLease({
+      attemptClick: async () => {
         attempts += 1;
-        if (attempts === 1) {
-          elapsedMs += timeout;
-          throw timeoutError(timeout);
-        }
+        return true;
       },
-      attemptTimeoutMs: 2_000,
       expectedLease,
       now: () => elapsedMs,
-      readSnapshot: async () => stableSnapshot,
+      readSnapshot: async () => {
+        observations += 1;
+        return observedSnapshots.shift() ?? changedSnapshot;
+      },
       totalTimeoutMs: 15_000,
+      waitForNextObservation: async (delayMs) => { elapsedMs += delayMs; },
     });
-    expect(retried).toBe(true);
-    expect(attempts).toBe(2);
+    expect(consumed).toBe(true);
+    expect(attempts).toBe(1);
+    expect(observations).toBe(3);
 
     elapsedMs = 0;
     attempts = 0;
-    const changedSnapshots = [
-      stableSnapshot,
-      { ...stableSnapshot, milestoneCount: 9 },
-    ];
     const stale = await clickWithPrimaryActionLease({
-      attemptClick: async (timeout) => {
+      attemptClick: async () => {
         attempts += 1;
-        elapsedMs += timeout;
-        throw timeoutError(timeout);
+        return true;
       },
-      attemptTimeoutMs: 2_000,
       expectedLease,
       now: () => elapsedMs,
-      readSnapshot: async () => changedSnapshots.shift() ?? stableSnapshot,
+      readSnapshot: async () => changedSnapshot,
       totalTimeoutMs: 15_000,
+      waitForNextObservation: async (delayMs) => { elapsedMs += delayMs; },
     });
     expect(stale).toBe(false);
-    expect(attempts).toBe(1);
+    expect(attempts).toBe(0);
 
-    elapsedMs = 0;
-    await expect(clickWithPrimaryActionLease({
-      attemptClick: async (timeout) => {
-        elapsedMs += timeout;
-        throw timeoutError(timeout);
-      },
-      attemptTimeoutMs: 2_000,
+    const blockedStaleEvent = await clickWithPrimaryActionLease({
+      attemptClick: async () => false,
       expectedLease,
-      now: () => elapsedMs,
       readSnapshot: async () => stableSnapshot,
-      totalTimeoutMs: 5_000,
-    })).rejects.toThrow("locator.click: Timeout 1000ms exceeded.");
+      totalTimeoutMs: 15_000,
+      waitForNextObservation: async () => undefined,
+    });
+    expect(blockedStaleEvent).toBe(false);
 
     const unknownError = new Error("primary action was occluded");
     await expect(clickWithPrimaryActionLease({
       attemptClick: async () => { throw unknownError; },
-      attemptTimeoutMs: 2_000,
       expectedLease,
       readSnapshot: async () => stableSnapshot,
       totalTimeoutMs: 15_000,
+      waitForNextObservation: async () => undefined,
     })).rejects.toBe(unknownError);
     const readError = new Error("snapshot read failed");
     await expect(clickWithPrimaryActionLease({
-      attemptClick: async () => undefined,
-      attemptTimeoutMs: 2_000,
+      attemptClick: async () => true,
       expectedLease,
       readSnapshot: async () => { throw readError; },
       totalTimeoutMs: 15_000,
+      waitForNextObservation: async () => undefined,
     })).rejects.toBe(readError);
+
+    elapsedMs = 0;
+    await expect(clickWithPrimaryActionLease({
+      attemptClick: async () => true,
+      expectedLease,
+      now: () => elapsedMs,
+      readSnapshot: async () => stableSnapshot,
+      totalTimeoutMs: 32,
+      waitForNextObservation: async (delayMs) => { elapsedMs += delayMs; },
+    })).rejects.toThrow("trusted pointer 在 32ms 内未消费精确输入租约");
   });
 
   it("binds checkpoint epochs to screenshot bytes before slow pixel analysis", () => {
