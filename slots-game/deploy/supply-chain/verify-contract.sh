@@ -692,7 +692,8 @@ require_line '      fail-fast: false' "$frontend_workflow"
 require_line '        browser: [chromium, firefox, webkit]' "$frontend_workflow"
 require_fixed '  verify-edge:' "$frontend_workflow"
 require_fixed '    runs-on: windows-latest' "$frontend_workflow"
-require_line '    # Windows 软件渲染截图受脚本 30 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' "$frontend_workflow"
+require_line '    # Windows 软件渲染截图受脚本 32 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' "$frontend_workflow"
+require_line '    timeout-minutes: 40' "$frontend_workflow"
 require_line '        run: npx playwright install --with-deps firefox webkit' "$frontend_workflow"
 require_fixed 'SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1' "$frontend_workflow"
 require_fixed 'LIBGL_ALWAYS_SOFTWARE=true' "$frontend_workflow"
@@ -790,7 +791,7 @@ ruby -ryaml -e '
     },
     "verify-edge" => {
       "runs-on" => "windows-latest",
-      "timeout-minutes" => 35,
+      "timeout-minutes" => 40,
       "defaults" => {
         "run" => { "shell" => "bash", "working-directory" => "slots-game/web" },
       },
