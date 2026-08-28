@@ -736,6 +736,10 @@ replace_once '    timeout-minutes: 25' '    timeout-minutes: 18' "$fixture/.gith
 expect_rejected 'special-feature browser matrix lost its setup and cleanup budget'
 
 reset_fixture
+replace_once '    timeout-minutes: 30' '    timeout-minutes: 25' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'Edge browser matrix lost its build and cleanup budget'
+
+reset_fixture
 replace_once '  npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"' \
   '  true # special-feature non-Firefox matrix bypassed' \
   "$fixture/.github/workflows/frontend-conformance.yml"

@@ -789,7 +789,7 @@ ruby -ryaml -e '
     },
     "verify-edge" => {
       "runs-on" => "windows-latest",
-      "timeout-minutes" => 25,
+      "timeout-minutes" => 30,
       "defaults" => {
         "run" => { "shell" => "bash", "working-directory" => "slots-game/web" },
       },

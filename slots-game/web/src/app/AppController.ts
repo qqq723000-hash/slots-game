@@ -81,7 +81,6 @@ import {
   type RageCascadeCellOrderSource,
   type VaultUnlockPresentationMilestone,
   type VaultUnlockPresentationPhase,
-  type WheelPresentationTimelineScale,
 } from "../renderer/FeatureEffects";
 import {
   ATTRACT_GRID_LOCKED_VAULT_CELLS,
@@ -429,8 +428,6 @@ export interface AppControllerDependencies {
   readonly characterCollectRandomSource?: CharacterCollectRandomSource;
   /** 确定性视觉夹具使用的纯装饰 Rage 遍历排列。 */
   readonly rageCascadeCellOrderSource?: RageCascadeCellOrderSource;
-  /** 仅供非生产浏览器夹具延长真实 Wheel 动画；生产入口保持默认时间线。 */
-  readonly wheelPresentationTimelineScale?: WheelPresentationTimelineScale;
   /** 仅夹具使用的预览绕过；生产环境仍遵从玩家偏好。 */
   readonly skipFeaturePreview?: boolean;
   /** 只启用精确的 capture=1 Base Vault 截图时钟。 */
@@ -819,7 +816,6 @@ export class AppController {
       const rendererOptions = {
         characterCollectRandomSource: dependencies.characterCollectRandomSource,
         rageCascadeCellOrderSource: dependencies.rageCascadeCellOrderSource,
-        wheelPresentationTimelineScale: dependencies.wheelPresentationTimelineScale,
         initialSize: {
           width: initialLayout.viewportRegion.width,
           height: initialLayout.viewportRegion.height,
@@ -900,7 +896,6 @@ export class AppController {
     this.renderer = preparedView?.renderer ?? new PixiRenderer(shell.canvasHost, {
       characterCollectRandomSource: dependencies.characterCollectRandomSource,
       rageCascadeCellOrderSource: dependencies.rageCascadeCellOrderSource,
-      wheelPresentationTimelineScale: dependencies.wheelPresentationTimelineScale,
     });
     this.renderer.attachFeaturePreviewCanvasHost(this.ui.getFeaturePreviewCanvasHost());
     this.audio = dependencies.audioManager ?? new AudioManager({ assetChannel });

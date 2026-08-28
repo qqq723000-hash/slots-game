@@ -1431,9 +1431,6 @@ if (!isVisualFixtureScenario(scenario)) {
           && capture === "1"
           ? () => PASS47_RAGE_CASCADE_CELL_ORDER
           : undefined,
-        // Edge 的截图调用可能跨过短暂 checkpoint；仅此非生产场景把真实动画放慢 2 倍，
-        // 继续要求连续帧发生变化，不冻结像素，也不改变 Wheel 结果或生产时间线。
-        wheelPresentationTimelineScale: scenario === "wheel-mini-flow" ? 2 : undefined,
       }, {
         signal: assemblyController.signal,
       });

@@ -84,7 +84,7 @@ export function validateVisualFixtureTimingBudget({
   maximumBrowserScenarioBudgetMs,
   primaryActionTimeoutMs,
   scenarioCount,
-  scenarioDeadlineMs,
+  scenarioDeadlineMsByRun,
 }) {
   for (const [name, value] of Object.entries({
     browserDeadlineMs,
@@ -92,17 +92,25 @@ export function validateVisualFixtureTimingBudget({
     maximumBrowserScenarioBudgetMs,
     primaryActionTimeoutMs,
     scenarioCount,
-    scenarioDeadlineMs,
   })) {
     if (!Number.isSafeInteger(value) || value <= 0) {
       throw new Error(`${name} 必须为正安全整数`);
     }
   }
-  if (maximumBrowserScenarioBudgetMs !== scenarioCount * scenarioDeadlineMs) {
-    throw new Error("特殊玩法最坏场景预算必须等于场景数乘以单场景硬截止");
+  if (!Array.isArray(scenarioDeadlineMsByRun)
+    || scenarioDeadlineMsByRun.length !== scenarioCount
+    || scenarioDeadlineMsByRun.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
+    throw new Error("特殊玩法逐场景硬截止必须与场景数一致且均为正安全整数");
   }
-  if (primaryActionTimeoutMs >= scenarioDeadlineMs) {
-    throw new Error("特殊玩法主控件动作预算必须小于单场景硬截止");
+  const calculatedScenarioBudgetMs = scenarioDeadlineMsByRun.reduce(
+    (total, value) => total + value,
+    0,
+  );
+  if (maximumBrowserScenarioBudgetMs !== calculatedScenarioBudgetMs) {
+    throw new Error("特殊玩法最坏场景预算必须等于逐场景硬截止之和");
+  }
+  if (scenarioDeadlineMsByRun.some((value) => primaryActionTimeoutMs >= value)) {
+    throw new Error("特殊玩法主控件动作预算必须小于每个场景硬截止");
   }
   if (maximumBrowserScenarioBudgetMs >= maximumBrowserBudgetMs) {
     throw new Error("特殊玩法单浏览器最坏场景预算必须小于总预算");

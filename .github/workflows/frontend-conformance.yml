@@ -149,7 +149,8 @@ jobs:
 
   verify-edge:
     runs-on: windows-latest
-    timeout-minutes: 25
+    # Windows 软件渲染截图仍受脚本 18 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash

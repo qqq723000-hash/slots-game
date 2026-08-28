@@ -418,22 +418,6 @@ export function featureEffectDuration(kind: FeatureEffectKind, reducedMotion: bo
   return FEATURE_EFFECT_DURATION_MS[kind][reducedMotion ? 1 : 0];
 }
 
-/**
- * 仅供非生产浏览器夹具延长真实 Wheel 时间线，以便慢速截图仍能采集两个不同动画帧。
- * 生产入口不传该接缝，始终保持 `1`；它不冻结画面，也不改变权威结果或落点。
- */
-export type WheelPresentationTimelineScale = 1 | 2;
-
-export function resolveWheelPresentationTimelineScale(
-  reducedMotion: boolean,
-  fixtureTimelineScale: WheelPresentationTimelineScale = 1,
-): number {
-  const motionPreferenceScale = reducedMotion
-    ? featureEffectDuration("wheel", true) / PRIMAL_WHEEL_BOUNDED_PRESENTATION_MS
-    : 1;
-  return motionPreferenceScale * fixtureTimelineScale;
-}
-
 export const RAGE_COLLECT_SYMBOL_MS = PRIMAL_SYMBOL_ANIMATION_MS[7].collect;
 export const RAGE_COLLECT_HIDE_MS = PRIMAL_SYMBOL_ANIMATION_MS[7].hide;
 /** Spine 以延迟=0 对 `hide` 进行排队，因此默认的 150ms 混合重叠收集。 */
@@ -1745,7 +1729,6 @@ export class FeatureEffects {
     private readonly visualTelemetry: VisualTelemetryReporter | null = null,
     private readonly rageCascadeCellOrderSource: RageCascadeCellOrderSource
       = defaultRageCascadeCellOrderSource,
-    private readonly wheelPresentationTimelineScale: WheelPresentationTimelineScale = 1,
   ) {
     this.reelAlphaLayers = new ReelAlphaLayers(this.reels);
     this.hostLayer.addChild(this.view);
@@ -3908,10 +3891,9 @@ export class FeatureEffects {
     let spinTimeline: PrimalWheelRuntimeTimeline | null = null;
     let outroOwnsScene = false;
     let sceneCleaned = false;
-    const timelineScale = resolveWheelPresentationTimelineScale(
-      reducedMotion,
-      this.wheelPresentationTimelineScale,
-    );
+    const timelineScale = reducedMotion
+      ? featureEffectDuration("wheel", true) / PRIMAL_WHEEL_BOUNDED_PRESENTATION_MS
+      : 1;
     const safeTimelineScale = Math.max(0.000_001, timelineScale);
     let continueResolved = false;
     let continuePresentation!: () => void;

@@ -73,22 +73,12 @@ import {
   primalWheelRuntimeTimeline,
   primalWheelSpinFrame,
   projectWheelHyperspinControl,
-  resolveWheelPresentationTimelineScale,
   resolvePrimalWheelSegment,
   sampleWheelStopOffset,
   type FeatureEffectKind,
 } from "../src/renderer/FeatureEffects";
 
 describe("feature effect planning", () => {
-  it("keeps production Wheel timing unchanged and exposes only the explicit 2x fixture seam", () => {
-    expect(resolveWheelPresentationTimelineScale(false)).toBe(1);
-    expect(resolveWheelPresentationTimelineScale(false, 2)).toBe(2);
-    const reducedScale = featureEffectDuration("wheel", true)
-      / PRIMAL_WHEEL_BOUNDED_PRESENTATION_MS;
-    expect(resolveWheelPresentationTimelineScale(true)).toBeCloseTo(reducedScale, 12);
-    expect(resolveWheelPresentationTimelineScale(true, 2)).toBeCloseTo(reducedScale * 2, 12);
-  });
-
   it("keeps the official Wheel and popup title on independent pixel-fit transforms", () => {
     expect(AUTHORED_WHEEL_LAYOUT).toEqual({
       x: 640,

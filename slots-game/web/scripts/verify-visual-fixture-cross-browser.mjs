@@ -23,9 +23,11 @@ const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
 const startupTimeoutMs = 45_000;
 const primaryActionTimeoutMs = 15_000;
-const scenarioDeadlineMs = 120_000;
+const defaultScenarioDeadlineMs = 120_000;
+const extendedScenarioDeadlineMs = 150_000;
 const browserDeadlineMs = 18 * 60_000;
 const maximumBrowserBudgetMs = 20 * 60_000;
+const temporalFrameAdvanceMs = 180;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
 const evidenceScope = "presentation-only-no-rgs-settlement";
@@ -302,14 +304,20 @@ const scenarioRuns = Object.freeze([
   Object.freeze({ contract: requireFeatureScenario("king"), surface: phonePortraitSurface }),
   Object.freeze({ contract: requireFeatureScenario("kong"), surface: tabletLandscapeSurface }),
 ]);
-const maximumBrowserScenarioBudgetMs = scenarioRuns.length * scenarioDeadlineMs;
+const scenarioDeadlineMsByRun = Object.freeze(scenarioRuns.map(
+  ({ contract, surface }) => resolveScenarioDeadlineMs(contract, surface),
+));
+const maximumBrowserScenarioBudgetMs = scenarioDeadlineMsByRun.reduce(
+  (total, value) => total + value,
+  0,
+);
 validateVisualFixtureTimingBudget({
   browserDeadlineMs,
   maximumBrowserBudgetMs,
   maximumBrowserScenarioBudgetMs,
   primaryActionTimeoutMs,
   scenarioCount: scenarioRuns.length,
-  scenarioDeadlineMs,
+  scenarioDeadlineMsByRun,
 });
 
 const selectedBrowsers = parseSelectedBrowsers(process.argv.slice(2));
@@ -358,6 +366,12 @@ function requireFeatureScenario(capability) {
   const contract = featureScenarios.find((candidate) => candidate.capability === capability);
   if (!contract) throw new Error(`缺少 ${capability} 特殊玩法场景合同`);
   return contract;
+}
+
+function resolveScenarioDeadlineMs(contract, surface) {
+  const extendedDesktopScenario = surface.id === "desktop-1440x900"
+    && (contract.scenario === "wheel-mini-flow" || contract.scenario === "king-flow");
+  return extendedDesktopScenario ? extendedScenarioDeadlineMs : defaultScenarioDeadlineMs;
 }
 
 /**
@@ -598,6 +612,7 @@ async function verifyBrowser(browserName, originValue) {
 }
 
 async function verifyScenario(browser, browserName, originValue, contract, surface) {
+  const scenarioDeadlineMs = resolveScenarioDeadlineMs(contract, surface);
   let context = null;
   let contextClosePromise = null;
   let deadlineExpired = false;
@@ -663,6 +678,11 @@ async function runScenario(
   registerContext(context);
   await context.addInitScript({ content: CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE });
   const page = await context.newPage();
+  if (contract.renderCheckpoints.some((checkpoint) => checkpoint.requireTemporalChange === true)) {
+    // 安装时钟后仍让页面自然运行；只在真实截图取证窗口内暂停。这样慢速软件渲染器
+    // 无法让短暂表现阶段在 PNG 编码期间逃逸，同时 Node 墙钟截止仍然独立生效。
+    await page.clock.install();
+  }
   const runtimeErrors = [];
   page.on("pageerror", (error) => {
     const message = String(error?.message ?? "unknown page error");
@@ -896,10 +916,16 @@ function sameRenderCheckpointEpoch(expected, actual) {
 
 async function captureRenderBaselines(page, contract) {
   const baselines = new Map();
+  const capturesByRegion = new Map();
   for (const checkpoint of contract.renderCheckpoints) {
     const key = renderCheckpointKey(checkpoint);
-    const capture = await captureVisibleFrameRegion(page, checkpoint.region);
-    requireRenderedFrameRegion(capture, "baseline", contract.scenario);
+    const regionKey = JSON.stringify(checkpoint.region);
+    let capture = capturesByRegion.get(regionKey);
+    if (!capture) {
+      capture = await captureVisibleFrameRegion(page, checkpoint.region);
+      requireRenderedFrameRegion(capture, "baseline", contract.scenario);
+      capturesByRegion.set(regionKey, capture);
+    }
     baselines.set(key, capture);
   }
   return baselines;
@@ -919,89 +945,129 @@ async function captureNewRenderCheckpoints(
     if (captured.has(key) || epoch === null) continue;
     const baseline = baselines.get(key);
     if (!baseline) throw new Error(`${contract.scenario}/${key} 缺少初始像素基线`);
-
-    const current = await captureVisibleFrameRegion(
-      page,
-      checkpoint.region,
-      baseline.png,
-      checkpoint.visibleElement,
-      true,
+    const temporalCapture = checkpoint.requireTemporalChange === true;
+    const controlledClockCapture = contract.renderCheckpoints.some(
+      (candidate) => candidate.requireTemporalChange === true,
     );
-    const afterCurrentCapture = current.scenarioSnapshotAfterScreenshot;
-    if (afterCurrentCapture === null) {
-      throw new Error(`${contract.scenario}/${key} 缺少截图时刻的 checkpoint 快照`);
-    }
-    const afterCurrentEpoch = renderCheckpointEpoch(afterCurrentCapture, checkpoint);
-    if (!sameRenderCheckpointEpoch(epoch, afterCurrentEpoch)) {
-      throw new Error(
-        `${browserName}/${contract.scenario}/${key} 截图期间 checkpoint epoch 漂移：`
-        + `${JSON.stringify({ before: epoch, after: afterCurrentEpoch })}`,
-      );
-    }
-    requireRenderedFrameRegion(current, browserName, `${contract.scenario}/${key}`);
-    requireVisibleCheckpointElement(current, checkpoint, browserName, `${contract.scenario}/${key}`);
-    if (current.changedPixelRatio < 0.003 || current.sha256 === baseline.sha256) {
-      throw new Error(
-        `${browserName}/${contract.scenario}/${key} 的可见渲染区域未相对初始帧发生有效变化：`
-        + `${JSON.stringify(renderCaptureEvidence(current))}`,
-      );
-    }
+    let captureClockPaused = false;
+    try {
+      if (controlledClockCapture) {
+        // 使用控制端墙钟并预留一次协议往返；读取页面时间再加 1ms 会在繁忙 runner
+        // 上于下一条命令到达前变成过去值。1s 仍远小于所有受控 normal-motion epoch。
+        await page.clock.pauseAt(Date.now() + 1_000);
+        captureClockPaused = true;
+        const pausedSnapshot = await readScenarioSnapshot(page);
+        const pausedEpoch = renderCheckpointEpoch(pausedSnapshot, checkpoint);
+        if (!sameRenderCheckpointEpoch(epoch, pausedEpoch)) {
+          throw new Error(
+            `${browserName}/${contract.scenario}/${key} 暂停取证时 checkpoint epoch 漂移：`
+            + `${JSON.stringify({ before: epoch, after: pausedEpoch })}`,
+          );
+        }
+      }
 
-    let temporalChangedPixelRatio = null;
-    if (checkpoint.requireTemporalChange === true) {
-      await page.waitForTimeout(180);
-      const later = await captureVisibleFrameRegion(
+      const current = await captureVisibleFrameRegion(
         page,
         checkpoint.region,
-        current.png,
+        baseline.png,
         checkpoint.visibleElement,
         true,
+        controlledClockCapture ? "clock-paused" : "live",
       );
-      const afterLaterCapture = later.scenarioSnapshotAfterScreenshot;
-      if (afterLaterCapture === null) {
-        throw new Error(`${contract.scenario}/${key} 缺少连续帧时刻的 checkpoint 快照`);
+      const afterCurrentCapture = current.scenarioSnapshotAfterScreenshot;
+      if (afterCurrentCapture === null) {
+        throw new Error(`${contract.scenario}/${key} 缺少截图时刻的 checkpoint 快照`);
       }
-      const afterLaterEpoch = renderCheckpointEpoch(afterLaterCapture, checkpoint);
-      if (!sameRenderCheckpointEpoch(epoch, afterLaterEpoch)) {
+      const afterCurrentEpoch = renderCheckpointEpoch(afterCurrentCapture, checkpoint);
+      if (!sameRenderCheckpointEpoch(epoch, afterCurrentEpoch)) {
         throw new Error(
-          `${browserName}/${contract.scenario}/${key} 连续帧期间 checkpoint epoch 漂移：`
-          + `${JSON.stringify({ before: epoch, after: afterLaterEpoch })}`,
+          `${browserName}/${contract.scenario}/${key} 截图期间 checkpoint epoch 漂移：`
+          + `${JSON.stringify({ before: epoch, after: afterCurrentEpoch })}`,
         );
       }
-      requireRenderedFrameRegion(later, browserName, `${contract.scenario}/${key}/later`);
+      requireRenderedFrameRegion(current, browserName, `${contract.scenario}/${key}`);
       requireVisibleCheckpointElement(
-        later,
+        current,
         checkpoint,
         browserName,
-        `${contract.scenario}/${key}/later`,
+        `${contract.scenario}/${key}`,
       );
-      temporalChangedPixelRatio = later.changedPixelRatio;
-      if (later.sha256 === current.sha256 || temporalChangedPixelRatio < 0.001) {
+      if (current.changedPixelRatio < 0.003 || current.sha256 === baseline.sha256) {
         throw new Error(
-          `${browserName}/${contract.scenario}/${key} 未观察到 normal-motion 连续帧变化`,
+          `${browserName}/${contract.scenario}/${key} 的可见渲染区域未相对初始帧发生有效变化：`
+          + `${JSON.stringify(renderCaptureEvidence(current))}`,
         );
       }
-    }
 
-    captured.set(key, Object.freeze({
-      checkpoint: key,
-      epoch,
-      requiredVisualId: checkpoint.requiredVisualId,
-      roi: checkpoint.roi,
-      changedPixelRatio: current.changedPixelRatio,
-      colorBucketCount: current.colorBucketCount,
-      luminanceVariance: current.luminanceVariance,
-      nonBlackPixelRatio: current.nonBlackPixelRatio,
-      pngBytes: current.png.length,
-      pngHeight: current.pngHeight,
-      pngSha256: current.sha256,
-      pngWidth: current.pngWidth,
-      temporalChangedPixelRatio,
-      surface: current.surfaceProfile,
-      visibleElement: current.visibleElement,
-      visibleAreaRatio: current.visibleAreaRatio,
-      viewport: Object.freeze({ height: current.viewportHeight, width: current.viewportWidth }),
-    }));
+      let temporalChangedPixelRatio = null;
+      if (temporalCapture) {
+        // 在同一暂停时钟中准确推进真实 RAF/Pixi 时间，随后再次冻结。两张截图均由
+        // 浏览器生成，且仍须保持同一视觉操作、同一控件状态和有效像素变化。
+        await page.clock.runFor(temporalFrameAdvanceMs);
+        const advancedSnapshot = await readScenarioSnapshot(page);
+        const advancedEpoch = renderCheckpointEpoch(advancedSnapshot, checkpoint);
+        if (!sameRenderCheckpointEpoch(epoch, advancedEpoch)) {
+          throw new Error(
+            `${browserName}/${contract.scenario}/${key} 连续帧推进后 checkpoint epoch 漂移：`
+            + `${JSON.stringify({ before: epoch, after: advancedEpoch })}`,
+          );
+        }
+        const later = await captureVisibleFrameRegion(
+          page,
+          checkpoint.region,
+          current.png,
+          checkpoint.visibleElement,
+          true,
+          "clock-paused",
+        );
+        const afterLaterCapture = later.scenarioSnapshotAfterScreenshot;
+        if (afterLaterCapture === null) {
+          throw new Error(`${contract.scenario}/${key} 缺少连续帧时刻的 checkpoint 快照`);
+        }
+        const afterLaterEpoch = renderCheckpointEpoch(afterLaterCapture, checkpoint);
+        if (!sameRenderCheckpointEpoch(epoch, afterLaterEpoch)) {
+          throw new Error(
+            `${browserName}/${contract.scenario}/${key} 连续帧期间 checkpoint epoch 漂移：`
+            + `${JSON.stringify({ before: epoch, after: afterLaterEpoch })}`,
+          );
+        }
+        requireRenderedFrameRegion(later, browserName, `${contract.scenario}/${key}/later`);
+        requireVisibleCheckpointElement(
+          later,
+          checkpoint,
+          browserName,
+          `${contract.scenario}/${key}/later`,
+        );
+        temporalChangedPixelRatio = later.changedPixelRatio;
+        if (later.sha256 === current.sha256 || temporalChangedPixelRatio < 0.001) {
+          throw new Error(
+            `${browserName}/${contract.scenario}/${key} 未观察到 normal-motion 连续帧变化`,
+          );
+        }
+      }
+
+      captured.set(key, Object.freeze({
+        checkpoint: key,
+        epoch,
+        requiredVisualId: checkpoint.requiredVisualId,
+        roi: checkpoint.roi,
+        changedPixelRatio: current.changedPixelRatio,
+        colorBucketCount: current.colorBucketCount,
+        luminanceVariance: current.luminanceVariance,
+        nonBlackPixelRatio: current.nonBlackPixelRatio,
+        pngBytes: current.png.length,
+        pngHeight: current.pngHeight,
+        pngSha256: current.sha256,
+        pngWidth: current.pngWidth,
+        temporalChangedPixelRatio,
+        surface: current.surfaceProfile,
+        visibleElement: current.visibleElement,
+        visibleAreaRatio: current.visibleAreaRatio,
+        viewport: Object.freeze({ height: current.viewportHeight, width: current.viewportWidth }),
+      }));
+    } finally {
+      if (captureClockPaused) await page.clock.resume();
+    }
   }
 }
 
@@ -1011,6 +1077,7 @@ async function captureVisibleFrameRegion(
   baselinePng = null,
   visibleElementContract = null,
   captureScenarioSnapshot = false,
+  frameSettleMode = "live",
 ) {
   const frame = page.locator('[data-role="frame"]');
   const geometry = await frame.evaluate((element, input) => {
@@ -1097,9 +1164,13 @@ async function captureVisibleFrameRegion(
     };
   }, { region: normalizedRegion, visibleElement: visibleElementContract });
   if (!geometry) throw new Error("特殊玩法表现帧不存在");
-  await page.evaluate(() => new Promise((resolvePromise) => {
-    requestAnimationFrame(() => requestAnimationFrame(resolvePromise));
-  }));
+  if (frameSettleMode === "live") {
+    await page.evaluate(() => new Promise((resolvePromise) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolvePromise));
+    }));
+  } else if (frameSettleMode !== "clock-paused") {
+    throw new Error("特殊玩法截图帧栅栏模式无效");
+  }
   const png = await page.screenshot({
     animations: "allow",
     caret: "hide",
