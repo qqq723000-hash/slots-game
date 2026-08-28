@@ -5,7 +5,7 @@
 
 ## 未发布
 
-## 1.3.0 - 2026-08-28
+## 1.3.0 - 2026-08-29
 
 - 将 52 份项目自有说明统一为个人独立开发者的商用级源码交付口径，把生产、运营、平台、安全、
   审计、法务、合规与审批明确为采用方需要在外部环境落实的职责，不再暗示已有内部组织或线上承诺；
@@ -21,10 +21,18 @@
   外部预检缺失、被阻断或桥接结构漂移时立即焚毁原始值并固定失败，避免 Firefox 网络控制台回显凭据；
 - 将 Big Win、Primal Wheel、King、Kong 与 Free Spins 的桌面流程，以及 King 手机和 Kong 平板布局
   纳入 Chromium、Firefox、WebKit 与 Edge 分离的特殊玩法门禁；截图证据绑定同一流程 epoch 和底边几何。
+- 将特殊玩法的真实回调投影为有界事件历史并保留首次失败来源；修复 Firefox 截图时钟恢复竞态、
+  Edge 计时漂移及 Chromium 桌面 Kong 软件渲染预算，继续强制终态生命周期、资源释放和底边几何归零；
 - 将浏览器端供应商式署名替换为代码原生的个人独立开发标识，移除相关位图及生产清单引用，同时保留
   Primal Rampage 游戏标题与游戏内 Spine logo；全仓身份门禁覆盖普通文本与二进制文件名，阻止旧标识回退；
 - 将桌面与移动端 M4A 音频重封装为 WebKit 可渐进解码的 fast-start 容器，并以音频描述、实际字节和
-  流式清单三方一致性门禁锁定资源；应用销毁后再发布 retained/active/canvas/spin 零残留诊断证据。
+  流式清单三方一致性门禁锁定资源；应用销毁后再发布 retained/active/canvas/spin 零残留诊断证据；
+- 将本机生产候选的 Web `release-manifest.json` 与 Compose/OCI 镜像绑定同一 canonical version 和
+  完整 Git revision；revision override 只能逐字节断言 `HEAD^{commit}`，Git 失败、多值输出、dirty
+  工作区、ignored 构建输入、Vite `.env*`、npm project/user/global 配置与未批准构建环境均失败关闭，
+  两份进程内空 `0600` npm 临时配置在每次调用前后复核并清理；在 Web/Compose/最终提交
+  边界重复复核；宿主与不可变候选镜像的静态根逐文件复算、Nginx 配置逐字节重渲染核对，资源审批
+  prepare/commit 再以 canonical releaseId 拒绝同资产身份漂移。
 
 ## 1.2.3 - 2026-08-28
 
@@ -41,8 +49,6 @@
 
 ## 1.2.2 - 2026-08-27
 
-- 完整移除 GitHub Pages、公开静态试玩入口、源码、构建脚本与宣传说明，并增加供应链负向门禁，
-  防止这些已退出产品范围的表面重新进入仓库；
 - 修复 Vite 子路径部署中的流式特殊玩法资源、favicon 和 GPU 预热路径契约，补充覆盖 CSS、字体与
   Feature Preview 的真实 `/casino/primal/` 构建验证；同时修正 PAYTABLE 金额辅助文本在无投注状态下
   残留旧值的问题；
@@ -76,11 +82,6 @@
 - 收紧 CI 证据上传白名单并补仓库治理负向契约，阻止原始日志、凭据、本机状态或任意目录通过
   通配符进入构建制品。真实 GitHub Environment、分支/Tag 保护、Release 发布与安全功能启用状态
   仍须由仓库管理员在托管平台回读验收；
-- 新增与正式 RGS 入口分离的 GitHub Pages 静态试玩：23 轮公开固定序列覆盖普通赢额、Rage、
-  Primal Wheel、Kong Quest、King Spin 与 Vault，使用 `XTS` 测试币种，并常驻标识无真钱、
-  无钱包、无经济价值及“不代表概率/RTP”；产物模块图与负向扫描拒绝 RGS 启动交接及内部测试场景；
-- Pages 部署使用固定 SHA 的 Action、最小权限 job、正向文件白名单、完整树哈希、SVG 主动内容扫描、
-  `PUBLIC-INTERNET` 外部逐文件授权及独立 `github-pages` Environment；缺少权属或审批时保持未部署。
 
 ## 1.1.0 - 2026-08-26（历史源码候选，元数据不一致，已由 1.2.0 取代）
 

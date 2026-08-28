@@ -1,5 +1,6 @@
 import "../style.css";
 import { AppController, type AppPresentationObserver } from "../app/AppController";
+import { PLAYER_ERROR_DIAGNOSTIC_EVENT } from "../app/playerFacingError";
 import type { FeatureState } from "../app/state/types";
 import { AudioManager, type AudioBackend } from "../audio/AudioManager";
 import type { GameGateway } from "../protocol/GameGateway";
@@ -27,6 +28,7 @@ import {
   clearPass53CharacterWinCapture,
   clearPass54WheelCharacterCapture,
   clearPass55WheelChestCapture,
+  clearVisualFixtureFailure,
   applyVisualFixtureFeatureEvent,
   applyPass47PresentationMilestone,
   applyPass47VisualTelemetryEvent,
@@ -35,15 +37,18 @@ import {
   applyVisualFixtureTelemetryEvent,
   applyVisualFixtureTrace,
   clearVisualFixtureCompletion,
+  clearVisualFixtureFeatureEventProjection,
   clearVisualFixturePresentationBranches,
   clearVisualFixtureTrace,
   clearVisualFixtureVault,
   createVisualFixtureCheckpointHold,
+  createVisualFixtureFeatureEventProjection,
   createVisualFixtureTelemetryProjectionState,
   isCapSummaryInputCheckpointCapture,
   isFreeSpinsSummaryInputCheckpointHold,
   isNoSummaryTerminalCheckpointCapture,
   isNormalWinContinueClickTrigger,
+  isVisualFixtureCaptureClockPastTargetRejection,
   isPass48RageAuraCapture,
   isPass49RecoveredLevelUpCapture,
   isPass50CharacterIntroCapture,
@@ -56,6 +61,8 @@ import {
   isWinEffectsMatrixTraceCheckpoint,
   matchVisualFixtureSemanticCheckpoint,
   publishVisualFixtureTelemetryCounts,
+  publishVisualFixtureFeatureEventProjection,
+  publishVisualFixtureFailure,
   publishReelCabinetCompositionDiagnostics,
   publishBaseVaultUnlockCheckpoint,
   publishPass48RageAuraCheckpoint,
@@ -72,10 +79,12 @@ import {
   pass55WheelChestCaptureEnvironmentViolation,
   pass55WheelChestCheckpointElapsedMs,
   resolveVisualFixtureSemanticCheckpoint,
+  projectVisualFixtureFeatureEvent,
   shouldProjectVisualFixtureTelemetryEvent,
   validatePass45SemanticCheckpoint,
   validatePass47SemanticCheckpoint,
   validatePass49RecoveredSemanticCheckpoint,
+  visualFixturePlayerErrorCodeFromDetail,
   type Pass49RecoveredCaptureDiagnostics,
   type Pass49RecoveredGatewayFacts,
   type Pass50CharacterIntroCaptureDiagnostics,
@@ -86,6 +95,7 @@ import {
   PASS50_CHARACTER_INTRO_LOOP_ENTERED_CHECKPOINT,
   type Pass48RageAuraCheckpoint,
   type VisualFixtureCheckpointHold,
+  type VisualFixtureFailureSource,
 } from "./visualFixtureObservation";
 
 function observeFixtureFeatureStates(
@@ -200,11 +210,13 @@ if (requestedCheckpoint) {
 }
 
 if (!root) {
+  publishVisualFixtureFailure(body.dataset, "fixture-contract", null, null);
   body.dataset.fixtureStatus = "failed";
   throw new Error("Visual fixture root is missing");
 }
 
 if (!isVisualFixtureScenario(scenario)) {
+  publishVisualFixtureFailure(body.dataset, "fixture-contract", null, null);
   body.dataset.fixtureStatus = "failed";
   root.textContent = "Unknown or missing visual fixture scenario.";
 } else {
@@ -294,9 +306,11 @@ if (!isVisualFixtureScenario(scenario)) {
   let pass54WheelCharacterPublished = false;
   let pass55WheelChestPublished = false;
   const presentationMilestones: string[] = [];
+  let featureEventProjection = createVisualFixtureFeatureEventProjection();
   const visualTelemetryState = createVisualFixtureTelemetryProjectionState(
     VISUAL_TELEMETRY_ENTRY_REQUIRED_IDS,
   );
+  publishVisualFixtureFeatureEventProjection(body.dataset, featureEventProjection);
   publishVisualFixtureTelemetryCounts(body.dataset, visualTelemetryState);
 
   const pass49GatewayFacts = (): Pass49RecoveredGatewayFacts => {
@@ -385,10 +399,17 @@ if (!isVisualFixtureScenario(scenario)) {
     checkpointReleaseButton = button;
   }
 
-  const fail = (): void => {
-    if (destroyed || failureLocked) return;
+  const fail = (source: VisualFixtureFailureSource = "fixture-contract"): boolean => {
+    if (destroyed || failureLocked) return false;
     failureLocked = true;
+    publishVisualFixtureFailure(
+      body.dataset,
+      source,
+      featureEventProjection.event,
+      body.dataset.fixtureSequence,
+    );
     body.dataset.fixtureStatus = "failed";
+    return true;
   };
 
   if (pass52VaultUnlockCapture) {
@@ -952,8 +973,22 @@ if (!isVisualFixtureScenario(scenario)) {
     });
   };
 
+  const handlePlayerErrorDiagnostic = (event: Event): void => {
+    // 先取得首失败锁，再触碰可执行的 CustomEvent.detail getter；即使 getter 重入
+    // console/error 观察面，也不能覆盖来源或把迟到 code 附到其他首失败上。
+    if (!fail("player-error")) return;
+    const playerErrorCode = visualFixturePlayerErrorCodeFromDetail(
+      event instanceof CustomEvent ? event.detail : null,
+    );
+    if (destroyed) return;
+    if (playerErrorCode !== null) {
+      body.dataset.fixturePlayerErrorCode = playerErrorCode;
+    }
+  };
+  window.addEventListener(PLAYER_ERROR_DIAGNOSTIC_EVENT, handlePlayerErrorDiagnostic);
+
   const toastObserver = new MutationObserver(() => {
-    if (root.querySelector('[data-role="toast"][data-visible="true"]')) fail();
+    if (root.querySelector('[data-role="toast"][data-visible="true"]')) fail("toast");
   });
   toastObserver.observe(root, {
     attributes: true,
@@ -962,15 +997,23 @@ if (!isVisualFixtureScenario(scenario)) {
     subtree: true,
   });
 
-  const handleWindowError = (): void => fail();
-  const handleUnhandledRejection = (): void => fail();
+  const handleWindowError = (event: Event): void => {
+    fail(event.target instanceof Element ? "resource-error" : "window-error");
+  };
+  const handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
+    // Firefox 也会把 Playwright 可恢复的截图时钟协议竞态发布为未处理页面拒绝。保持事件未处理，
+    // 使门禁仍能记录 pageerror，并且仅在精确协议拒绝与稳定暂停时钟共同证明恢复时才消化它。
+    if (body.dataset.fixtureCaptureClockGuard === "active"
+      && isVisualFixtureCaptureClockPastTargetRejection(event.reason)) return;
+    fail("unhandled-rejection");
+  };
   // 捕获资源元素故障以及普通窗口错误。
   window.addEventListener("error", handleWindowError, true);
   window.addEventListener("unhandledrejection", handleUnhandledRejection);
 
   const originalConsoleError = console.error;
   const fixtureConsoleError: typeof console.error = (...data) => {
-    fail();
+    fail("console-error");
     originalConsoleError.apply(console, data);
   };
   console.error = fixtureConsoleError;
@@ -1001,13 +1044,27 @@ if (!isVisualFixtureScenario(scenario)) {
         failPass50CharacterIntro("character-intro-feature-event-observed");
         return;
       }
-      if (eventType) body.dataset.fixtureEvent = eventType;
-      else delete body.dataset.fixtureEvent;
+      const nextFeatureEventProjection = projectVisualFixtureFeatureEvent(
+        featureEventProjection,
+        eventType,
+        event,
+      );
+      if (!nextFeatureEventProjection) {
+        body.dataset.fixtureTraceViolation = "feature-event-history-projection";
+        fail();
+        return;
+      }
+      featureEventProjection = nextFeatureEventProjection;
+      publishVisualFixtureFeatureEventProjection(body.dataset, featureEventProjection);
       if (applyVisualFixtureFeatureEvent(body.dataset, eventType, event, scenario)) fail();
     },
     onLaunchPhase: (phase): void => {
       if (destroyed) return;
-      if (phase === "failed") fail();
+      if (phase === "failed") {
+        // completeLaunchFailure 会在同一任务中紧接着发布安全玩家错误事件。把默认合同失败
+        // 留到微任务末端：存在该事件时它拥有首次来源；不存在时仍由默认失败闭合。
+        queueMicrotask(() => fail());
+      }
       else if (phase === "ready" && visualTelemetryState.missingRequiredVisualIds.size > 0) fail();
       else if (phase === "ready" && !failureLocked) {
         // 此回调在 INTRO_COMPLETE 之后但在控制器释放缓冲的恢复结果之前运行。此处仅冻结随机 Base 空闲调度程序，
@@ -1271,6 +1328,7 @@ if (!isVisualFixtureScenario(scenario)) {
       characterCaptureTimer = null;
     }
     toastObserver.disconnect();
+    window.removeEventListener(PLAYER_ERROR_DIAGNOSTIC_EVENT, handlePlayerErrorDiagnostic);
     window.removeEventListener("error", handleWindowError, true);
     window.removeEventListener("unhandledrejection", handleUnhandledRejection);
     window.removeEventListener("pagehide", destroy);
@@ -1290,7 +1348,8 @@ if (!isVisualFixtureScenario(scenario)) {
     const activeVisualProjectionCountAfterDestroy =
       visualTelemetryState.activeVisualOperations.size;
     app = null;
-    delete body.dataset.fixtureEvent;
+    featureEventProjection = createVisualFixtureFeatureEventProjection();
+    clearVisualFixtureFeatureEventProjection(body.dataset);
     delete body.dataset.fixtureMilestone;
     delete body.dataset.fixtureMilestones;
     delete body.dataset.fixtureMilestoneCount;
@@ -1363,6 +1422,7 @@ if (!isVisualFixtureScenario(scenario)) {
     clearVisualFixtureVault(body.dataset);
     clearVisualFixtureCompletion(body.dataset);
     clearVisualFixturePresentationBranches(body.dataset);
+    clearVisualFixtureFailure(body.dataset);
     body.dataset.fixtureDestroyAppDisposed = String(appWasActive);
     body.dataset.fixtureDestroyCanvasCount = String(root.querySelectorAll("canvas").length);
     body.dataset.fixtureDestroyRetainedPayloadBytes = String(retainedPayloadBytesAfterDestroy);

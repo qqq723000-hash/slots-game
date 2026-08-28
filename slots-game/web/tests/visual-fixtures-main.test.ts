@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PLAYER_FACING_ERROR_CODES } from "../src/app/playerFacingError";
 import {
   VisualTelemetryReporter,
   type VisualTelemetryEvent,
@@ -16,25 +17,36 @@ import {
   applyVisualFixtureTelemetryEvent,
   applyVisualFixtureTrace,
   clearVisualFixtureCompletion,
+  clearVisualFixtureFeatureEventProjection,
+  clearVisualFixtureFailure,
   clearVisualFixturePresentationBranches,
   clearVisualFixtureTrace,
   clearVisualFixtureVault,
   createVisualFixtureCheckpointHold,
+  createVisualFixtureFeatureEventProjection,
   createVisualFixtureTelemetryProjectionState,
   isCapSummaryInputCheckpointCapture,
   isFreeSpinsSummaryInputCheckpointHold,
   isNoSummaryTerminalCheckpointCapture,
   isNormalWinContinueClickTrigger,
+  isVisualFixtureCaptureClockPastTargetRejection,
+  isVisualFixturePlayerErrorCode,
   isPass45ForbiddenPresentationMilestone,
   isPass45ForbiddenVisualTelemetryEvent,
   isVisualFixtureCheckpointCapture,
   isWinEffectsMatrixTraceCheckpoint,
   matchVisualFixtureSemanticCheckpoint,
   resolveVisualFixtureSemanticCheckpoint,
+  projectVisualFixtureFeatureEvent,
+  publishVisualFixtureFeatureEventProjection,
+  publishVisualFixtureFailure,
   shouldProjectVisualFixtureTelemetryEvent,
   validatePass45SemanticCheckpoint,
+  visualFixturePlayerErrorCodeFromDetail,
   VISUAL_FIXTURE_RELEASE_KEY,
   type VisualFixtureDataset,
+  VISUAL_FIXTURE_EVENT_HISTORY_LIMIT,
+  VISUAL_FIXTURE_FAILURE_SOURCES,
 } from "../src/testing/visualFixtureObservation";
 
 describe("visual fixture entry source contract", () => {
@@ -114,6 +126,58 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).toContain("applyVisualFixturePresentationBranch(body.dataset, branch)");
   });
 
+  it("keeps actual feature-event history durable, bounded, and independent from current", () => {
+    const wheel = { type: "wheel.started" as const };
+    const vault = {
+      type: "vault.upgraded" as const,
+      reel: 1,
+      row: 2,
+      fromMultiplier: 2,
+      toMultiplier: 3,
+      prize: "x3",
+      step: 1,
+    };
+    const initial = createVisualFixtureFeatureEventProjection();
+    const first = projectVisualFixtureFeatureEvent(initial, wheel.type, wheel);
+    const second = first && projectVisualFixtureFeatureEvent(first, vault.type, vault);
+    const cleared = second && projectVisualFixtureFeatureEvent(second, null);
+
+    expect(first).toMatchObject({ event: "wheel.started", eventCount: 1 });
+    expect(second).toMatchObject({ event: "vault.upgraded", eventCount: 2 });
+    expect(cleared).toEqual({
+      event: null,
+      events: ["wheel.started", "vault.upgraded"],
+      eventCount: 2,
+    });
+
+    const dataset: VisualFixtureDataset = {};
+    publishVisualFixtureFeatureEventProjection(dataset, cleared!);
+    expect(dataset).toMatchObject({
+      fixtureEvents: "wheel.started,vault.upgraded",
+      fixtureEventCount: "2",
+    });
+    expect(dataset.fixtureEvent).toBeUndefined();
+    clearVisualFixtureFeatureEventProjection(dataset);
+    expect(dataset).toEqual({});
+
+    const full = Object.freeze({
+      event: "wheel.started" as const,
+      events: Object.freeze(Array.from(
+        { length: VISUAL_FIXTURE_EVENT_HISTORY_LIMIT },
+        () => "wheel.started" as const,
+      )),
+      eventCount: VISUAL_FIXTURE_EVENT_HISTORY_LIMIT,
+    });
+    expect(projectVisualFixtureFeatureEvent(full, vault.type, vault)).toBeNull();
+    expect(projectVisualFixtureFeatureEvent({ ...full, eventCount: 1 }, null)).toBeNull();
+    expect(projectVisualFixtureFeatureEvent(initial, wheel.type, null)).toBeNull();
+    expect(projectVisualFixtureFeatureEvent({
+      event: null,
+      events: null,
+      eventCount: 0,
+    } as unknown as Readonly<typeof initial>, null)).toBeNull();
+  });
+
   it("queues one real primary-control Continue click after the merge-start callback", () => {
     expect(fixtureMain).toContain("isNormalWinContinueClickTrigger");
     expect(fixtureMain).toContain("queueMicrotask(() =>");
@@ -131,6 +195,178 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).toContain('window.addEventListener("unhandledrejection", handleUnhandledRejection)');
     expect(fixtureMain).toContain("console.error = fixtureConsoleError");
     expect(fixtureMain).toContain("failureLocked = true");
+    expect(fixtureMain).toContain(
+      'source: VisualFixtureFailureSource = "fixture-contract"',
+    );
+    expect(fixtureMain).toContain('fail("toast")');
+    expect(fixtureMain).toContain(
+      'event.target instanceof Element ? "resource-error" : "window-error"',
+    );
+    expect(fixtureMain).toContain('fail("console-error")');
+    const rejectionHandlerStart = fixtureMain.indexOf("const handleUnhandledRejection");
+    const rejectionHandlerEnd = fixtureMain.indexOf(
+      "window.addEventListener(\"error\"",
+      rejectionHandlerStart,
+    );
+    const rejectionHandler = fixtureMain.slice(rejectionHandlerStart, rejectionHandlerEnd);
+    expect(rejectionHandler).toContain('fixtureCaptureClockGuard === "active"');
+    expect(rejectionHandler).toContain(
+      "isVisualFixtureCaptureClockPastTargetRejection(event.reason)",
+    );
+    expect(rejectionHandler).toContain('fail("unhandled-rejection")');
+    expect(rejectionHandler).not.toContain("preventDefault");
+  });
+
+  it("freezes one allow-listed failure provenance and clears it at destroy", () => {
+    expect(VISUAL_FIXTURE_FAILURE_SOURCES).toEqual([
+      "fixture-contract",
+      "toast",
+      "player-error",
+      "resource-error",
+      "window-error",
+      "unhandled-rejection",
+      "console-error",
+    ]);
+    for (const code of Object.values(PLAYER_FACING_ERROR_CODES)) {
+      expect(isVisualFixturePlayerErrorCode(code)).toBe(true);
+    }
+    expect(isVisualFixturePlayerErrorCode("PRESENTATION_UNAVAILABLE?token=secret"))
+      .toBe(false);
+    expect(isVisualFixturePlayerErrorCode({ code: "PRESENTATION_UNAVAILABLE" }))
+      .toBe(false);
+
+    const dataset: VisualFixtureDataset = {};
+    publishVisualFixtureFailure(dataset, "resource-error", "grid.expanded", "2");
+    publishVisualFixtureFailure(dataset, "console-error", "wheel.started", "3");
+    expect(dataset).toEqual({
+      fixtureFailureEvent: "grid.expanded",
+      fixtureFailureSequence: "2",
+      fixtureFailureSource: "resource-error",
+    });
+    dataset.fixturePlayerErrorCode = "PRESENTATION_UNAVAILABLE";
+    clearVisualFixtureFailure(dataset);
+    expect(dataset).toEqual({});
+
+    const unsafeSequence: VisualFixtureDataset = {};
+    publishVisualFixtureFailure(
+      unsafeSequence,
+      "window-error",
+      null,
+      "9007199254740992",
+    );
+    expect(unsafeSequence).toEqual({ fixtureFailureSource: "window-error" });
+  });
+
+  it("reads an allow-listed player-error code exactly once", () => {
+    let codeReads = 0;
+    const dataset: VisualFixtureDataset = {};
+    publishVisualFixtureFailure(dataset, "player-error", "grid.expanded", "2");
+    const changingDetail = {
+      get code(): string {
+        codeReads += 1;
+        publishVisualFixtureFailure(dataset, "console-error", "wheel.started", "3");
+        return codeReads === 1
+          ? PLAYER_FACING_ERROR_CODES.PRESENTATION_UNAVAILABLE
+          : "https://example.invalid/?token=secret";
+      },
+    };
+    expect(visualFixturePlayerErrorCodeFromDetail(changingDetail))
+      .toBe(PLAYER_FACING_ERROR_CODES.PRESENTATION_UNAVAILABLE);
+    expect(codeReads).toBe(1);
+    expect(dataset).toEqual({
+      fixtureFailureEvent: "grid.expanded",
+      fixtureFailureSequence: "2",
+      fixtureFailureSource: "player-error",
+    });
+    expect(visualFixturePlayerErrorCodeFromDetail(Object.defineProperty({}, "code", {
+      get(): never {
+        throw new Error("secret");
+      },
+    }))).toBeNull();
+  });
+
+  it("records only a safe player-error code before the first failure", () => {
+    const listenerStart = fixtureMain.indexOf("const handlePlayerErrorDiagnostic");
+    const listenerEnd = fixtureMain.indexOf("const toastObserver", listenerStart);
+    expect(listenerStart).toBeGreaterThan(-1);
+    expect(listenerEnd).toBeGreaterThan(listenerStart);
+    const listener = fixtureMain.slice(listenerStart, listenerEnd);
+    expect(listener).toContain("PLAYER_ERROR_DIAGNOSTIC_EVENT");
+    expect(listener).toContain("visualFixturePlayerErrorCodeFromDetail(");
+    expect(listener).toContain("body.dataset.fixturePlayerErrorCode = playerErrorCode");
+    expect(listener).toContain('if (!fail("player-error")) return');
+    expect(listener.indexOf('if (!fail("player-error")) return'))
+      .toBeLessThan(listener.indexOf("visualFixturePlayerErrorCodeFromDetail("));
+    expect(listener.lastIndexOf("if (destroyed) return"))
+      .toBeGreaterThan(listener.indexOf("visualFixturePlayerErrorCodeFromDetail("));
+    expect(listener).not.toContain("correlationId");
+    expect(listener).not.toContain("message");
+    expect(listener).not.toContain("stack");
+    expect(listener).not.toContain("url");
+    expect(fixtureMain).toContain(
+      "window.removeEventListener(PLAYER_ERROR_DIAGNOSTIC_EVENT, handlePlayerErrorDiagnostic)",
+    );
+    expect(fixtureMain).toContain("clearVisualFixtureFailure(body.dataset)");
+  });
+
+  it("lets a same-task player diagnostic win launch-failure provenance", () => {
+    const observerStart = fixtureMain.indexOf("onLaunchPhase: (phase)");
+    const observerEnd = fixtureMain.indexOf("onRoundPresentationState", observerStart);
+    expect(observerStart).toBeGreaterThan(-1);
+    expect(observerEnd).toBeGreaterThan(observerStart);
+    expect(observerStart).toBeGreaterThanOrEqual(0);
+    expect(observerEnd).toBeGreaterThan(observerStart);
+    const observer = fixtureMain.slice(observerStart, observerEnd);
+    expect(observer).toContain('if (phase === "failed")');
+    expect(observer).toContain("queueMicrotask(() => fail())");
+    expect(observer).not.toContain('queueMicrotask(() => fail("player-error"))');
+  });
+
+  it("defers only the exact Playwright capture-clock past-target rejection to the browser gate", () => {
+    const firefoxClockError = new Error("Cannot fast-forward to the past");
+    firefoxClockError.stack = [
+      "_innerFastForwardTo@debugger eval code:202:13",
+      "pauseAt@debugger eval code:133:16",
+      "async*@debugger eval code line 311 > eval:1:33",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(firefoxClockError)).toBe(true);
+
+    const applicationError = new Error("Cannot fast-forward to the past");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(applicationError)).toBe(false);
+    const applicationStack = new Error("Cannot fast-forward to the past");
+    applicationStack.stack = [
+      "_innerFastForwardTo@app.js:1:1",
+      "pauseAt@app.js:2:2",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(applicationStack)).toBe(false);
+    const reversedClockStack = new Error("Cannot fast-forward to the past");
+    reversedClockStack.stack = [
+      "pauseAt@debugger eval code:133:16",
+      "_innerFastForwardTo@debugger eval code:202:13",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(reversedClockStack)).toBe(false);
+    const blankLineClockStack = new Error("Cannot fast-forward to the past");
+    blankLineClockStack.stack = [
+      "_innerFastForwardTo@debugger eval code:202:13",
+      "  ",
+      "pauseAt@debugger eval code:133:16",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(blankLineClockStack)).toBe(false);
+    const sourceSuffixClockStack = new Error("Cannot fast-forward to the past");
+    sourceSuffixClockStack.stack = [
+      "_innerFastForwardTo@debugger eval codeevil:202:13",
+      "pauseAt@debugger eval codeevil:133:16",
+    ].join("\n");
+    expect(isVisualFixtureCaptureClockPastTargetRejection(sourceSuffixClockStack)).toBe(false);
+    const incompleteClockStack = new Error("Cannot fast-forward to the past");
+    incompleteClockStack.stack = "_innerFastForwardTo@debugger eval code:202:13";
+    expect(isVisualFixtureCaptureClockPastTargetRejection(incompleteClockStack)).toBe(false);
+    const wrongMessage = new Error("Cannot fast-forward to the past from application");
+    wrongMessage.stack = firefoxClockError.stack;
+    expect(isVisualFixtureCaptureClockPastTargetRejection(wrongMessage)).toBe(false);
+    expect(isVisualFixtureCaptureClockPastTargetRejection(
+      "Cannot fast-forward to the past",
+    )).toBe(false);
   });
 
   it("projects strict visual telemetry without serializing result data", () => {

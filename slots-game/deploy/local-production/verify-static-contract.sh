@@ -16,6 +16,12 @@ prepare_state_file="$script_dir/prepare-state.mjs"
 prepare_state_test="$script_dir/prepare-state.test.mjs"
 image_version_resolver_file="$script_dir/resolve-image-version.mjs"
 image_version_resolver_test="$script_dir/resolve-image-version.test.mjs"
+source_identity_resolver_file="$script_dir/resolve-source-identity.mjs"
+source_identity_resolver_test="$script_dir/resolve-source-identity.test.mjs"
+web_build_runner_file="$script_dir/run-web-build.mjs"
+web_build_runner_test="$script_dir/run-web-build.test.mjs"
+release_identity_verifier_file="$script_dir/verify-release-identity.mjs"
+release_identity_verifier_test="$script_dir/verify-release-identity.test.mjs"
 deployment_transaction_test="$script_dir/deployment-transaction.test.sh"
 verify_file="$script_dir/verify.sh"
 operator_log_probe_verifier_file="$script_dir/verify-operator-log-probe.mjs"
@@ -86,7 +92,28 @@ require_exact_line '      LOCAL_OPERATOR_IDLE_DISCONNECT: 20m' "$compose_file" '
 require_exact_line '      RGS_SESSION_IDLE_DISCONNECT_MIN: 1m' "$compose_file" '本地 RGS 缺少空闲断开下限。'
 require_exact_line '      RGS_SESSION_IDLE_DISCONNECT_MAX: 24h' "$compose_file" '本地 RGS 缺少空闲断开上限。'
 require_exact_line '    VITE_OPERATOR_RETURN_URL: /operator/' "$compose_file" '本地 Web Compose 缺少同源 operator 返回地址。'
-require_exact_line '  VITE_OPERATOR_RETURN_URL=/operator/ \' "$bootstrap_file" '本地 Web 构建未注入 operator 返回地址。'
+require_exact_line '    VITE_OPERATOR_RETURN_URL: "/operator/",' "$web_build_runner_file" '本地 Web 构建未注入 operator 返回地址。'
+require_exact_line 'if [ "${NODE_OPTIONS+x}" = x ]; then' "$bootstrap_file" \
+  'bootstrap.sh 必须在任何 Docker/Node 调用前拒绝 NODE_OPTIONS。'
+node_options_guard_line="$(grep -nF 'if [ "${NODE_OPTIONS+x}" = x ]; then' "$bootstrap_file" | cut -d: -f1)"
+docker_requirement_line="$(grep -nF 'require_docker' "$bootstrap_file" | head -n 1 | cut -d: -f1)"
+test -n "$node_options_guard_line" && test -n "$docker_requirement_line" \
+  && test "$node_options_guard_line" -lt "$docker_requirement_line" || {
+  printf '%s\n' 'NODE_OPTIONS 门禁必须早于 bootstrap 的第一个外部运行时调用。' >&2
+  exit 1
+}
+if NODE_OPTIONS='' "$bootstrap_file" >/dev/null 2>&1; then
+  printf '%s\n' 'bootstrap.sh 接受了显式 NODE_OPTIONS。' >&2
+  exit 1
+fi
+for web_release_identity in \
+  '    WEB_RELEASE_REQUIRE_IDENTITY: "1",' \
+  '    WEB_RELEASE_REVISION: identity.revision,' \
+  '    WEB_RELEASE_VERSION: identity.version,'
+do
+  require_exact_line "$web_release_identity" "$web_build_runner_file" \
+    '隔离 Web 构建必须注入与 OCI 相同的完整发布身份。'
+done
 require_exact_line 'ARG VITE_OPERATOR_RETURN_URL' "$script_dir/Dockerfile.web" '本地 Web 镜像未锁定 operator 返回地址构建参数。'
 require_exact_line 'RUN --network=none test "${VITE_OPERATOR_RETURN_URL}" = /operator/ && \' "$script_dir/Dockerfile.web" '本地 Web 镜像未验证 operator 返回地址。'
 test -f "$browser_probe_file"
@@ -101,6 +128,12 @@ test -f "$deployment_transaction_test"
 test -f "$prepare_state_test"
 test -f "$image_version_resolver_file"
 test -f "$image_version_resolver_test"
+test -f "$source_identity_resolver_file"
+test -f "$source_identity_resolver_test"
+test -f "$web_build_runner_file"
+test -f "$web_build_runner_test"
+test -f "$release_identity_verifier_file"
+test -f "$release_identity_verifier_test"
 node --check "$browser_probe_file"
 node --check "$browser_verifier_file"
 node --check "$operator_log_probe_verifier_file"
@@ -108,8 +141,14 @@ node --check "$asset_approval_generator_file"
 node --check "$asset_approval_rotator_file"
 node --check "$prepare_state_file"
 node --check "$image_version_resolver_file"
+node --check "$source_identity_resolver_file"
+node --check "$web_build_runner_file"
+node --check "$release_identity_verifier_file"
 node --test "$browser_probe_test"
 node --test "$asset_approval_rotator_test"
+node --test "$source_identity_resolver_test"
+node --test "$web_build_runner_test"
+node --test "$release_identity_verifier_test"
 node --test "$prepare_state_test"
 node --test "$image_version_resolver_test"
 sh "$deployment_transaction_test"
@@ -374,12 +413,80 @@ test "$(grep -Ec '(^|[[:space:]])image_version=' "$bootstrap_file")" -eq 1 || {
   exit 1
 }
 version_contract_line="$(grep -nF 'image_version="$(node "$local_production_directory/resolve-image-version.mjs" "$repository_root")"' "$bootstrap_file" | cut -d: -f1)"
+revision_contract_line="$(grep -nF 'image_revision="$(node "$local_production_directory/resolve-source-identity.mjs" "$repository_root")"' "$bootstrap_file" | cut -d: -f1)"
 state_creation_line="$(grep -nF 'mkdir -p "$state_root" "$state_root/backups" "$state_root/artifacts" "$state_root/rendered"' "$bootstrap_file" | cut -d: -f1)"
-test -n "$version_contract_line" && test -n "$state_creation_line" \
-  && test "$version_contract_line" -lt "$state_creation_line" || {
-  printf '%s\n' 'bootstrap.sh 必须在创建或修改仓库外状态前验证发布版本。' >&2
+web_build_line="$(grep -nF 'node "$local_production_directory/run-web-build.mjs" \' "$bootstrap_file" | cut -d: -f1)"
+test -n "$version_contract_line" && test -n "$revision_contract_line" \
+  && test -n "$state_creation_line" && test -n "$web_build_line" \
+  && test "$version_contract_line" -lt "$state_creation_line" \
+  && test "$revision_contract_line" -lt "$state_creation_line" \
+  && test "$revision_contract_line" -lt "$web_build_line" || {
+  printf '%s\n' 'bootstrap.sh 必须在修改状态或构建 Web 前固定 canonical 版本与 revision。' >&2
   exit 1
 }
+require_exact_line \
+  'image_revision="$(node "$local_production_directory/resolve-source-identity.mjs" "$repository_root")"' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须通过已测试解析器取得唯一 canonical revision。'
+test "$(grep -Fxc 'verify_source_identity' "$bootstrap_file")" -eq 5 || {
+  printf '%s\n' 'bootstrap.sh 必须在 Web、Compose、不可逆提交和最终选择器边界复核源码身份。' >&2
+  exit 1
+}
+for source_identity_contract in \
+  '    ["rev-parse", "--verify", "HEAD^{commit}"],' \
+  '    ["status", "--porcelain=v1", "--untracked-files=normal", "--", "."],' \
+  '      ":(exclude)web/release-nginx.conf",' \
+  '      && environment[REVISION_OVERRIDE] !== firstHead.revision) {' \
+  '  if (status !== "") fail("project worktree must be clean");' \
+  '    name.slice(0, 4).toLowerCase() === ".env"'
+do
+  require_exact_line "$source_identity_contract" "$source_identity_resolver_file" \
+    '源码身份解析器缺少 HEAD、clean、override 或 .env* 失败关闭合同。'
+done
+require_exact_line \
+  '  if (entries.some((entry) => entry.name.toLowerCase() === ".npmrc")) {' \
+  "$source_identity_resolver_file" \
+  '本机 Web 构建必须拒绝隐式 npm project 配置。'
+require_exact_line \
+  '  assertNoIgnoredBuildInputs(resolvedProjectRoot, runner);' \
+  "$source_identity_resolver_file" \
+  '每个源码身份 checkpoint 都必须拒绝 ignored Docker/Vite 构建输入。'
+test "$(grep -Fc 'assertNoIgnoredBuildInputs(resolvedProjectRoot, gitRunner);' \
+    "$web_build_runner_file")" -eq 3 || {
+  printf '%s\n' '隔离 Web 构建必须在安装前、安装后和构建后复核 ignored 构建输入。' >&2
+  exit 1
+}
+if grep -F '|| true' "$source_identity_resolver_file" >/dev/null \
+  || grep -F 'process.env,' "$web_build_runner_file" >/dev/null \
+  || grep -F '...process.env' "$web_build_runner_file" >/dev/null; then
+  printf '%s\n' '源码身份和 Web 构建不得吞掉 Git 失败或继承未审核环境。' >&2
+  exit 1
+fi
+for isolated_npm_configuration_contract in \
+  '  const directory = mkdtempSync(resolve(tmpdir(), "slots-local-production-npm-"));' \
+  '      writeFileSync(path, "", { encoding: "utf8", flag: "wx", mode: 0o600 });' \
+  '      `--userconfig=${configuration.userConfig}`,' \
+  '      `--globalconfig=${configuration.globalConfig}`,' \
+  '    if (!removeTemporaryNpmConfigurations(configuration, true)) {'
+do
+  require_exact_line "$isolated_npm_configuration_contract" "$web_build_runner_file" \
+    '隔离 Web 构建必须使用两个进程内创建的空 0600 npm 配置并在 finally 清理。'
+done
+if grep -F -- '--userconfig=/dev/null' "$web_build_runner_file" >/dev/null \
+  || grep -F -- '--globalconfig=/dev/null' "$web_build_runner_file" >/dev/null \
+  || grep -F 'nodeRoot, "etc", "npmrc"' "$web_build_runner_file" >/dev/null; then
+  printf '%s\n' '隔离 Web 构建不得读取可变的用户或 Node 安装目录 npm 配置。' >&2
+  exit 1
+fi
+if grep -Eq '^[[:space:]]*(NODE_OPTIONS|VITE_UNREVIEWED|npm_config_registry):' \
+    "$web_build_runner_file"; then
+  printf '%s\n' '隔离 Web 构建源码不得加入未批准的构建环境。' >&2
+  exit 1
+fi
+require_exact_line \
+      '      { requireRevision: true },' \
+  "$asset_approval_rotator_file" \
+  '本机资源审批必须拒绝缺少完整 revision 的发布清单。'
 if ! grep -F 'const expected=`slots-nginx-proxy:${process.argv[1]}`;' "$bootstrap_file" >/dev/null \
   || ! grep -F 'for (const serviceName of ["ingress", "alert-proxy"]) {' "$bootstrap_file" >/dev/null; then
   printf '%s\n' 'bootstrap.sh 必须在构建前证明入口与告警代理绑定同一候选 tag。' >&2
@@ -417,7 +524,15 @@ require_exact_line \
   'asset_prepare_status="$(node "$local_production_directory/rotate-asset-approval.mjs" \' \
   "$bootstrap_file" \
   'bootstrap.sh 必须在定义提交前准备隔离的资源审批候选。'
-test "$(grep -Fxc '  "$repository_root/web/dist/release-manifest.json" \' "$bootstrap_file")" -eq 2 || {
+require_exact_line \
+  'release_static_root="$repository_root/web/dist"' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须只固定一次宿主静态根路径。'
+require_exact_line \
+  'release_manifest_path="$release_static_root/release-manifest.json"' \
+  "$bootstrap_file" \
+  'bootstrap.sh 必须从已验证静态根取得审批清单。'
+test "$(grep -Fxc '  "$release_manifest_path" \' "$bootstrap_file")" -eq 2 || {
   printf '%s\n' '资源审批准备与提交必须绑定同一当前发布清单。' >&2
   exit 1
 }
@@ -429,6 +544,64 @@ require_exact_line \
   '  "$state_root/backups" \' \
   "$bootstrap_file" \
   '本机资源审批轮换必须保留可恢复备份。'
+for release_identity_binding in \
+  'test "$#" -eq 6 && test "$1" = prepared || {' \
+  'prepared_asset_release_id="$6"' \
+  'test "$prepared_asset_release_id" = "$asset_release_id" || {' \
+  '  "$prepared_asset_release_id"'
+do
+  require_exact_line "$release_identity_binding" "$bootstrap_file" \
+    'bootstrap.sh 必须严格解析、核对并传递 prepare 的 canonical releaseId。'
+done
+require_exact_line 'verify_host_release_payload() {' "$bootstrap_file" \
+  'bootstrap.sh 必须复用宿主静态 payload 逐文件校验。'
+test "$(grep -Fxc 'verify_host_release_payload' "$bootstrap_file")" -eq 4 || {
+  printf '%s\n' 'bootstrap.sh 必须在 prepare、Compose、不可逆提交和最终选择器前复核完整 Web payload。' >&2
+  exit 1
+}
+for rotation_identity_contract in \
+  '      { requireRevision: true },' \
+  '    releaseId: manifest.releaseId,' \
+  '  if (releaseId !== expectedReleaseId) {' \
+  '    fail("release manifest identity changed after candidate validation");'
+do
+  require_exact_line "$rotation_identity_contract" "$asset_approval_rotator_file" \
+    '资源审批 prepare/commit 缺少完整 revision 或 canonical releaseId 事务绑定。'
+done
+require_exact_line \
+  '  const verified = verifyReleaseManifest(manifest, { requireRevision: true });' \
+  "$release_identity_verifier_file" \
+  '发布身份校验器必须拒绝匿名 revision。'
+require_exact_line \
+  '  if (verified.version !== expectedVersion || verified.revision !== expectedRevision) {' \
+  "$release_identity_verifier_file" \
+  '发布身份校验器必须精确比较 version 与 revision。'
+require_exact_line \
+  '  const manifest = await verifyWebStaticRoot(staticRoot);' \
+  "$release_identity_verifier_file" \
+  '发布身份校验器必须逐文件验证静态 payload。'
+grep -F 'candidate_web_image_id="$(docker image inspect --format '\''{{.Id}}'\'' "slots-web:$candidate_image_tag")"' \
+    "$bootstrap_file" >/dev/null \
+  && grep -F 'docker cp "$candidate_web_container_id:/usr/share/nginx/html/." "$candidate_web_static_root"' \
+    "$bootstrap_file" >/dev/null \
+  && grep -F '  "$candidate_web_static_root" \' "$bootstrap_file" >/dev/null \
+  && grep -F 'docker cp "$candidate_web_container_id:/etc/nginx/conf.d/default.conf" \' \
+    "$bootstrap_file" >/dev/null \
+  && grep -F 'cmp "$candidate_web_extract_root/expected-release-nginx.conf" \' \
+    "$bootstrap_file" >/dev/null || {
+  printf '%s\n' 'bootstrap.sh 必须按不可变 image ID 提取并逐文件验证候选 Web payload。' >&2
+  exit 1
+}
+for candidate_web_signal_trap in \
+  "trap 'handle_candidate_web_signal 129' HUP" \
+  "trap 'handle_candidate_web_signal 130' INT" \
+  "trap 'handle_candidate_web_signal 143' TERM"
+do
+  require_exact_line "$candidate_web_signal_trap" "$bootstrap_file" \
+    '候选 Web 提取收到终止信号后必须清理并以对应状态退出。'
+done
+require_exact_line '  trap - EXIT HUP INT TERM' "$bootstrap_file" \
+  '候选 Web 信号处理必须在退出前解除重复清理 trap。'
 asset_prepare_line="$(grep -nF 'asset_prepare_status="$(node "$local_production_directory/rotate-asset-approval.mjs" \' "$bootstrap_file" | cut -d: -f1)"
 build_line="$(grep -nF 'compose build --provenance=mode=max rgs-migrator rgs-server local-operator web ingress' "$bootstrap_file" | cut -d: -f1)"
 status_line="$(grep -nF 'go run ./cmd/local-production-bootstrap definition-rotation-status "$secrets_root"' "$bootstrap_file" | cut -d: -f1)"
@@ -470,6 +643,18 @@ grep -F "csp_verifier=\"\$repository_root/deploy/web/content-security-policy.mjs
   printf '%s\n' '本机动态验收必须复用 Web 精确 CSP 语义校验器。' >&2
   exit 1
 }
+require_exact_line \
+  'release_manifest_verifier="$repository_root/web/scripts/release-manifest.mjs"' \
+  "$verify_file" \
+  '本机动态验收必须复用发布清单语义校验器。'
+require_exact_line \
+  'const manifest=verifyReleaseManifest(JSON.parse(readFileSync(0, "utf8")), { requireRevision: true });' \
+  "$verify_file" \
+  '本机动态验收必须拒绝缺少完整 revision 的线上发布清单。'
+require_exact_line \
+  'if (manifest.version !== process.argv[2] || manifest.revision !== process.argv[3]) {' \
+  "$verify_file" \
+  '本机动态验收必须精确比较清单与 OCI/Compose 的版本和 revision。'
 test "$(grep -Fxc 'verify_web_content_security_policy() {' "$verify_file")" -eq 1 || {
   printf '%s\n' '本机动态验收必须只定义一次 CSP 响应检查。' >&2
   exit 1

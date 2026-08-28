@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   createReleaseManifest,
   normalizePublicReleaseIdentity,
+  UNAVAILABLE_RELEASE_REVISION,
   verifyReleaseManifest,
 } from "../scripts/release-manifest.mjs";
 
@@ -75,6 +76,11 @@ describe("确定性发布清单", () => {
     expect(() => normalizePublicReleaseIdentity({
       version: identity.version,
       revision: "abcdef0",
+      requireRevision: true,
+    })).toThrow("complete lowercase Git commit");
+    expect(() => normalizePublicReleaseIdentity({
+      version: identity.version,
+      revision: UNAVAILABLE_RELEASE_REVISION,
       requireRevision: true,
     })).toThrow("complete lowercase Git commit");
   });

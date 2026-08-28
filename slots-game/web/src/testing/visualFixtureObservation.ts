@@ -4,6 +4,10 @@ import type {
   AppPresentationTrace,
   RoundPresentationState,
 } from "../app/AppController";
+import {
+  PLAYER_FACING_ERROR_CODES,
+  type PlayerFacingErrorCode,
+} from "../app/playerFacingError";
 import type { FeatureEvent, FeatureState } from "../app/state/types";
 import type { ReelCabinetCompositionDiagnostics } from "../reels/ReelSetView";
 import type { ReelVaultCaptureDiagnostics } from "../reels/ReelView";
@@ -16,6 +20,163 @@ import type { WinCelebrationResidentFacts } from "../renderer/WinCelebration";
 import type { VisualTelemetryEvent } from "../renderer/VisualTelemetry";
 
 export type VisualFixtureDataset = Record<string, string | undefined>;
+
+export const VISUAL_FIXTURE_FAILURE_SOURCES = Object.freeze([
+  "fixture-contract",
+  "toast",
+  "player-error",
+  "resource-error",
+  "window-error",
+  "unhandled-rejection",
+  "console-error",
+] as const);
+
+export type VisualFixtureFailureSource = typeof VISUAL_FIXTURE_FAILURE_SOURCES[number];
+
+const VISUAL_FIXTURE_PLAYER_ERROR_CODES = new Set<string>(
+  Object.values(PLAYER_FACING_ERROR_CODES),
+);
+const VISUAL_FIXTURE_FAILURE_SEQUENCE_PATTERN = /^(?:0|[1-9][0-9]*)$/;
+
+export function isVisualFixturePlayerErrorCode(
+  value: unknown,
+): value is PlayerFacingErrorCode {
+  return typeof value === "string" && VISUAL_FIXTURE_PLAYER_ERROR_CODES.has(value);
+}
+
+export function visualFixturePlayerErrorCodeFromDetail(
+  detail: unknown,
+): PlayerFacingErrorCode | null {
+  if (detail === null || typeof detail !== "object") return null;
+  let code: unknown;
+  try {
+    code = (detail as { readonly code?: unknown }).code;
+  } catch {
+    return null;
+  }
+  return isVisualFixturePlayerErrorCode(code) ? code : null;
+}
+
+/**
+ * 只冻结第一条夹具失败事实。事件与序列来自已经校验的内部投影；原始异常、URL、
+ * correlationId、消息和堆栈永远不会进入该诊断表面。
+ */
+export function publishVisualFixtureFailure(
+  dataset: VisualFixtureDataset,
+  source: VisualFixtureFailureSource,
+  currentEvent: FeatureEvent["type"] | null,
+  sequence: string | null | undefined,
+): void {
+  if (dataset.fixtureFailureSource !== undefined) return;
+  dataset.fixtureFailureSource = source;
+  if (currentEvent !== null && isFixtureEventType(currentEvent)) {
+    dataset.fixtureFailureEvent = currentEvent;
+  }
+  if (typeof sequence === "string"
+    && VISUAL_FIXTURE_FAILURE_SEQUENCE_PATTERN.test(sequence)
+    && Number.isSafeInteger(Number(sequence))) {
+    dataset.fixtureFailureSequence = sequence;
+  }
+}
+
+export function clearVisualFixtureFailure(dataset: VisualFixtureDataset): void {
+  delete dataset.fixtureFailureSource;
+  delete dataset.fixturePlayerErrorCode;
+  delete dataset.fixtureFailureEvent;
+  delete dataset.fixtureFailureSequence;
+}
+
+export const VISUAL_FIXTURE_EVENT_HISTORY_LIMIT = 256;
+
+export interface VisualFixtureFeatureEventProjection {
+  readonly event: FeatureEvent["type"] | null;
+  readonly events: readonly FeatureEvent["type"][];
+  readonly eventCount: number;
+}
+
+function isFixtureEventType(value: unknown): value is FeatureEvent["type"] {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 64
+    && /^[a-z0-9_.-]+$/.test(value);
+}
+
+function isHealthyFeatureEventProjection(
+  state: unknown,
+): state is Readonly<VisualFixtureFeatureEventProjection> {
+  if (!state || typeof state !== "object") return false;
+  const candidate = state as Partial<VisualFixtureFeatureEventProjection>;
+  if (!Array.isArray(candidate.events)
+    || !Number.isSafeInteger(candidate.eventCount)
+    || (candidate.eventCount ?? -1) < 0
+    || (candidate.eventCount ?? Number.POSITIVE_INFINITY)
+      > VISUAL_FIXTURE_EVENT_HISTORY_LIMIT
+    || candidate.events.length !== candidate.eventCount
+    || !candidate.events.every(isFixtureEventType)) return false;
+  return candidate.event === null
+    || (isFixtureEventType(candidate.event)
+      && candidate.events.at(-1) === candidate.event);
+}
+
+export function createVisualFixtureFeatureEventProjection(
+): Readonly<VisualFixtureFeatureEventProjection> {
+  return Object.freeze({
+    event: null,
+    events: Object.freeze([]),
+    eventCount: 0,
+  });
+}
+
+/**
+ * 只记录观察者实际收到的事件类型；不从静态网关场景推导证据，也不保留事件载荷。
+ * null 仅表示当前表现结束，因此只清 current；历史达到上限或结构损坏时返回 null，
+ * 让调用方失败关闭夹具，而不是悄悄截断可能缺失的浏览器证据。
+ */
+export function projectVisualFixtureFeatureEvent(
+  state: Readonly<VisualFixtureFeatureEventProjection>,
+  type: FeatureEvent["type"] | null,
+  event?: Readonly<FeatureEvent> | null,
+): Readonly<VisualFixtureFeatureEventProjection> | null {
+  if (!isHealthyFeatureEventProjection(state)) return null;
+
+  if (type === null) {
+    if (event != null) return null;
+    return Object.freeze({
+      event: null,
+      events: Object.freeze([...state.events]),
+      eventCount: state.eventCount,
+    });
+  }
+  if (!isFixtureEventType(type)
+    || !event
+    || event.type !== type
+    || state.eventCount >= VISUAL_FIXTURE_EVENT_HISTORY_LIMIT) return null;
+
+  const events = Object.freeze([...state.events, type]);
+  return Object.freeze({
+    event: type,
+    events,
+    eventCount: events.length,
+  });
+}
+
+export function publishVisualFixtureFeatureEventProjection(
+  dataset: VisualFixtureDataset,
+  state: Readonly<VisualFixtureFeatureEventProjection>,
+): void {
+  if (state.event === null) delete dataset.fixtureEvent;
+  else dataset.fixtureEvent = state.event;
+  dataset.fixtureEvents = state.events.join(",");
+  dataset.fixtureEventCount = String(state.eventCount);
+}
+
+export function clearVisualFixtureFeatureEventProjection(
+  dataset: VisualFixtureDataset,
+): void {
+  delete dataset.fixtureEvent;
+  delete dataset.fixtureEvents;
+  delete dataset.fixtureEventCount;
+}
 
 export interface VisualFixtureTelemetryProjectionState {
   readonly loadedVisualIds: Set<string>;
@@ -3068,6 +3229,23 @@ export function applyVisualFixtureTrace(
 
   dataset.fixtureStage = trace.type;
   return false;
+}
+
+const PLAYWRIGHT_CAPTURE_CLOCK_PAST_TARGET_MESSAGE = "Cannot fast-forward to the past";
+const PLAYWRIGHT_FIREFOX_CAPTURE_CLOCK_STACK =
+  /(?:^|\n)[ \t]*(?:ClockController\.)?_innerFastForwardTo@debugger eval code(?=[: \t\r\n]|$)[^\r\n]*\r?\n[ \t]*(?:ClockController\.)?pauseAt@debugger eval code(?=[: \t\r\n]|$)/;
+
+/**
+ * Playwright Firefox 会把已恢复的 `clock.pauseAt` 过期目标竞态同时发布为协议拒绝和页面
+ * `unhandledrejection`。浏览器门禁仍负责协议/时钟验证与 pageerror 记账；此分类器只避免
+ * 夹具的通用拒绝钩子抢先把已经验证可恢复的截图锁为失败。
+ */
+export function isVisualFixtureCaptureClockPastTargetRejection(reason: unknown): boolean {
+  if (!(reason instanceof Error)
+    || reason.name !== "Error"
+    || reason.message !== PLAYWRIGHT_CAPTURE_CLOCK_PAST_TARGET_MESSAGE
+    || typeof reason.stack !== "string") return false;
+  return PLAYWRIGHT_FIREFOX_CAPTURE_CLOCK_STACK.test(reason.stack);
 }
 
 /** 首先清除过时的事实，并仅公开允许列出的功能投影。 */

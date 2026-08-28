@@ -19,10 +19,10 @@ import {
   validateVisualFixtureTimingBudget,
 } from "./browser-rendering-contract.mjs";
 import {
+  captureClockPauseAttempt,
+  captureClockPauseWithAttempts,
   captureClockPastTargetMessage,
-  captureClockPauseAttempts,
-  captureClockPauseLeadMs,
-  isRecoverableCaptureClockPastTarget,
+  clearCaptureClockPageGuardAfterPause,
 } from "./visual-fixture-clock.mjs";
 import {
   checkpointInputLeaseMatchesCurrentControl,
@@ -37,10 +37,14 @@ import {
   primaryActionTrustedPointerGuardDecision,
   primaryActionTrustedPointerTarget,
 } from "./visual-fixture-primary-action.mjs";
+import {
+  visualFixtureEventHistorySnapshotViolation,
+} from "./visual-fixture-event-history.mjs";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
 const startupTimeoutMs = 45_000;
+const fixtureFailureRuntimeDrainMs = 100;
 const primaryActionTimeoutMs = 15_000;
 const fixtureCheckpointReleaseTimeoutMs = 5_000;
 const screenshotTimeoutMs = 90_000;
@@ -48,13 +52,17 @@ const defaultScenarioDeadlineMs = 120_000;
 const extendedScenarioDeadlineMs = 150_000;
 const largeScenarioDeadlineMs = 180_000;
 const chromiumKingScenarioDeadlineMs = 210_000;
+const chromiumDesktopKongScenarioDeadlineMs = 360_000;
 const edgeKingScenarioDeadlineMs = 240_000;
+const edgeDesktopKongScenarioDeadlineMs = 360_000;
 const slowExtendedScenarioDeadlineMs = 240_000;
 const slowKongScenarioDeadlineMs = 270_000;
 const standardBrowserDeadlineMs = 20 * 60_000;
-const slowBrowserDeadlineMs = 30 * 60_000;
+const slowBrowserDeadlineMs = 32 * 60_000;
+const edgeBrowserDeadlineMs = 32 * 60_000;
 const standardMaximumBrowserBudgetMs = 21 * 60_000;
-const slowMaximumBrowserBudgetMs = 31 * 60_000;
+const slowMaximumBrowserBudgetMs = 33 * 60_000;
+const edgeMaximumBrowserBudgetMs = 33 * 60_000;
 const temporalFrameAdvanceMs = 180;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
@@ -351,12 +359,17 @@ const browserTimingBudgets = Object.freeze(Object.fromEntries(supportedBrowsers.
       0,
     );
     const slowBrowser = browserName === "chromium" || browserName === "msedge";
-    const browserDeadlineMs = slowBrowser
-      ? slowBrowserDeadlineMs
-      : standardBrowserDeadlineMs;
-    const maximumBrowserBudgetMs = slowBrowser
-      ? slowMaximumBrowserBudgetMs
-      : standardMaximumBrowserBudgetMs;
+    const edgeBrowser = browserName === "msedge";
+    const browserDeadlineMs = edgeBrowser
+      ? edgeBrowserDeadlineMs
+      : slowBrowser
+        ? slowBrowserDeadlineMs
+        : standardBrowserDeadlineMs;
+    const maximumBrowserBudgetMs = edgeBrowser
+      ? edgeMaximumBrowserBudgetMs
+      : slowBrowser
+        ? slowMaximumBrowserBudgetMs
+        : standardMaximumBrowserBudgetMs;
     validateVisualFixtureTimingBudget({
       browserDeadlineMs,
       maximumBrowserBudgetMs,
@@ -430,10 +443,20 @@ function resolveScenarioDeadlineMs(browserName, contract, surface) {
     && contract.scenario === "king-flow") {
     return edgeKingScenarioDeadlineMs;
   }
+  if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "kong-flow") {
+    return edgeDesktopKongScenarioDeadlineMs;
+  }
   if (browserName === "chromium"
     && surface.id === "desktop-1440x900"
     && contract.scenario === "king-flow") {
     return chromiumKingScenarioDeadlineMs;
+  }
+  if (browserName === "chromium"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "kong-flow") {
+    return chromiumDesktopKongScenarioDeadlineMs;
   }
   if (slowBrowser && contract.scenario === "kong-flow"
     && (surface.id === "desktop-1440x900" || surface.id === "tablet-1024x768")) {
@@ -851,6 +874,12 @@ async function runScenario(
     );
 
     const initialActionSnapshot = await readScenarioSnapshot(page);
+    await requireHealthySnapshot(
+      initialActionSnapshot,
+      runtimeErrors,
+      browserName,
+      contract.scenario,
+    );
     const initialActionLease = primaryActionLeaseFromSnapshot(initialActionSnapshot);
     if (!await clickCurrentPrimaryAction(page, initialActionLease)) {
       throw new Error(`${browserName}/${contract.scenario} 的初始 Spin 输入租约已过期`);
@@ -868,8 +897,8 @@ async function runScenario(
 
     while (true) {
       const snapshot = await readScenarioSnapshot(page);
+      await requireHealthySnapshot(snapshot, runtimeErrors, browserName, contract.scenario);
       observeSnapshot(observed, snapshot);
-      requireHealthySnapshot(snapshot, runtimeErrors, browserName, contract.scenario);
       await captureNewRenderCheckpoints(
         page,
         contract,
@@ -939,8 +968,8 @@ async function runScenario(
       contract.scenario,
     );
     finalSnapshot = terminalQuiescence.snapshot;
+    await requireHealthySnapshot(finalSnapshot, runtimeErrors, browserName, contract.scenario);
     observeSnapshot(observed, finalSnapshot);
-    requireHealthySnapshot(finalSnapshot, runtimeErrors, browserName, contract.scenario);
     await captureNewRenderCheckpoints(
       page,
       contract,
@@ -1255,47 +1284,37 @@ async function releaseFixtureCheckpointHold(page, expectedCheckpoint) {
 }
 
 async function pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard) {
-  let lastPastTargetError = null;
-  for (let attempt = 0; attempt < captureClockPauseAttempts; attempt += 1) {
-    const pageTimeMs = await page.evaluate(() => Date.now());
-    const pauseTargetMs = pageTimeMs + captureClockPauseLeadMs;
-    beginCaptureClockConsoleGuard(captureClockConsoleGuard);
-    let pauseError = null;
-    try {
-      await page.clock.pauseAt(pauseTargetMs);
-    } catch (error) {
-      pauseError = error;
-    }
-    let pausedPageTimeMs = null;
-    let clockStateReadError = null;
-    try {
-      // 读取暂停态页面时间同时冲刷流水线，确保同步产生的 pageerror/console 已进入 guard。
-      pausedPageTimeMs = await page.evaluate(() => Date.now());
-    } catch (error) {
-      clockStateReadError = error;
-    }
-    const isPastTarget = clockStateReadError === null
-      && isRecoverableCaptureClockPastTarget(pauseError, pausedPageTimeMs, pauseTargetMs);
-    settleCaptureClockConsoleGuard(
-      captureClockConsoleGuard,
-      runtimeErrors,
-      isPastTarget,
-    );
-    if (clockStateReadError !== null) {
-      await page.clock.resume();
-      throw clockStateReadError;
-    }
-    if (pauseError === null) return;
-
-    // pauseAt 的 past-target 分支会先暂停再抛错；必须恢复后才能从新的页面时间重试。
-    await page.clock.resume();
-    if (!isPastTarget) throw pauseError;
-    lastPastTargetError = pauseError;
+  await page.evaluate(() => {
+    document.body.dataset.fixtureCaptureClockGuard = "active";
+  });
+  let pauseError = null;
+  try {
+    await captureClockPauseWithAttempts(() => captureClockPauseAttempt({
+      beginConsoleGuard: () => beginCaptureClockConsoleGuard(captureClockConsoleGuard),
+      pauseAt: (pauseTargetMs) => page.clock.pauseAt(pauseTargetMs),
+      readPageTime: () => page.evaluate(() => Date.now()),
+      resume: () => page.clock.resume(),
+      settleConsoleGuard: (consumeExpectedPastTarget) => settleCaptureClockConsoleGuard(
+        captureClockConsoleGuard,
+        runtimeErrors,
+        consumeExpectedPastTarget,
+      ),
+      waitForVerification: (delayMs) => new Promise((resolvePromise) => {
+        setTimeout(resolvePromise, delayMs);
+      }),
+    }));
+  } catch (error) {
+    pauseError = error;
+    throw error;
+  } finally {
+    await clearCaptureClockPageGuardAfterPause({
+      clearPageGuard: () => page.evaluate(() => {
+        delete document.body.dataset.fixtureCaptureClockGuard;
+      }),
+      pauseError,
+      resume: () => page.clock.resume(),
+    });
   }
-  throw new Error(
-    `特殊玩法截图时钟连续 ${captureClockPauseAttempts} 次无法在当前页面时刻暂停`,
-    { cause: lastPastTargetError },
-  );
 }
 
 function recordFixtureRuntimeError(runtimeErrors, captureClockConsoleGuard, message) {
@@ -1323,7 +1342,8 @@ function settleCaptureClockConsoleGuard(
 ) {
   const bufferedMessages = captureClockConsoleGuard.bufferedMessages.splice(0);
   captureClockConsoleGuard.active = false;
-  // 只消化与本次已捕获 pauseAt 异常对应的一条精确诊断；重复或无对应异常均继续失败。
+  // 只消化至多一条与本次已捕获 pauseAt 异常配对的精确诊断；部分引擎不会另发
+  // 页面诊断，因此零条也有效，但重复诊断或未分类诊断仍继续失败。
   const unconsumedMessages = consumeExpectedPastTarget
     ? bufferedMessages.slice(1)
     : bufferedMessages;
@@ -1637,11 +1657,15 @@ async function readStartupDiagnostics(page) {
     audioCovered: document.body.dataset.fixtureAudioCovered ?? null,
     bodyText: document.body.textContent?.trim().slice(0, 256) ?? null,
     evidenceScope: document.body.dataset.fixtureEvidenceScope ?? null,
+    failureEvent: document.body.dataset.fixtureFailureEvent ?? null,
+    failureSequence: document.body.dataset.fixtureFailureSequence ?? null,
+    failureSource: document.body.dataset.fixtureFailureSource ?? null,
     cspViolations: globalThis.__slotsContentSecurityPolicyProbe?.violations ?? null,
     fixtureStatus: document.body.dataset.fixtureStatus ?? null,
     fixtureStartupError: document.body.dataset.fixtureStartupError ?? null,
     launch: document.querySelector('[data-role="overlay"]')?.getAttribute("data-launch") ?? null,
     missingRequired: document.body.dataset.fixtureVisualMissingRequired ?? null,
+    playerErrorCode: document.body.dataset.fixturePlayerErrorCode ?? null,
     readyState: document.readyState,
     traceViolation: document.body.dataset.fixtureTraceViolation ?? null,
     visualFailureCode: document.body.dataset.fixtureVisualFailureCode ?? null,
@@ -1666,17 +1690,32 @@ function captureScenarioSnapshotInPage({ terminalOnly }) {
 
   const spin = document.querySelector('[data-role="spin"]');
   const feature = document.querySelector('[data-role="feature"]');
+  const eventCountText = document.body.dataset.fixtureEventCount;
+  const eventCount = eventCountText !== undefined
+    && /^(?:0|[1-9][0-9]*)$/.test(eventCountText)
+    ? Number(eventCountText)
+    : null;
   return {
     capCloseCount: Number.parseInt(document.body.dataset.fixtureCapCloseCount ?? "0", 10),
     completeCount: Number.parseInt(document.body.dataset.fixtureCompleteCount ?? "0", 10),
     cspViolations: globalThis.__slotsContentSecurityPolicyProbe?.violations ?? null,
     event: document.body.dataset.fixtureEvent ?? null,
+    eventCount,
+    events: document.body.dataset.fixtureEvents === undefined
+      ? null
+      : document.body.dataset.fixtureEvents === ""
+        ? []
+        : document.body.dataset.fixtureEvents.split(","),
     evidenceScope: document.body.dataset.fixtureEvidenceScope ?? null,
+    failureEvent: document.body.dataset.fixtureFailureEvent ?? null,
+    failureSequence: document.body.dataset.fixtureFailureSequence ?? null,
+    failureSource: document.body.dataset.fixtureFailureSource ?? null,
     featureMode: feature?.getAttribute("data-mode") ?? null,
     fixtureStatus: document.body.dataset.fixtureStatus ?? null,
     milestoneCount: Number.parseInt(document.body.dataset.fixtureMilestoneCount ?? "0", 10),
     milestone: document.body.dataset.fixtureMilestone ?? null,
     milestones: document.body.dataset.fixtureMilestones?.split(",").filter(Boolean) ?? [],
+    playerErrorCode: document.body.dataset.fixturePlayerErrorCode ?? null,
     roundState: document.body.dataset.fixtureRoundState ?? null,
     sequence: document.body.dataset.fixtureSequence ?? null,
     spinAction: spin?.getAttribute("data-action") ?? null,
@@ -1777,6 +1816,15 @@ async function destroyFixtureDocument(page, browserName, scenario) {
     ),
     liveCanvasCount: document.querySelectorAll('[data-role="canvas"] canvas').length,
     liveSpinCount: document.querySelectorAll('[data-role="spin"]').length,
+    eventProjectionCleared:
+      document.body.dataset.fixtureEvent === undefined
+      && document.body.dataset.fixtureEvents === undefined
+      && document.body.dataset.fixtureEventCount === undefined,
+    failureProjectionCleared:
+      document.body.dataset.fixtureFailureSource === undefined
+      && document.body.dataset.fixturePlayerErrorCode === undefined
+      && document.body.dataset.fixtureFailureEvent === undefined
+      && document.body.dataset.fixtureFailureSequence === undefined,
   }));
   if (evidence.status !== "destroyed"
     || evidence.appDisposed !== true
@@ -1786,7 +1834,9 @@ async function destroyFixtureDocument(page, browserName, scenario) {
     || evidence.canvasCount !== 0
     || evidence.spinCount !== 0
     || evidence.liveCanvasCount !== 0
-    || evidence.liveSpinCount !== 0) {
+    || evidence.liveSpinCount !== 0
+    || evidence.eventProjectionCleared !== true
+    || evidence.failureProjectionCleared !== true) {
     throw new Error(
       `${browserName}/${scenario} 同文档主动销毁未释放全部夹具资源：${JSON.stringify(evidence)}`,
     );
@@ -1796,14 +1846,30 @@ async function destroyFixtureDocument(page, browserName, scenario) {
 
 function observeSnapshot(observed, snapshot) {
   if (snapshot.stage) observed.stages.add(snapshot.stage);
-  if (snapshot.event) observed.events.add(snapshot.event);
+  // 轮询可能跨过瞬时 current；始终累计夹具实际发布的完整历史，而不是静态网关预期。
+  for (const event of snapshot.events) observed.events.add(event);
   if (snapshot.featureMode) observed.featureModes.add(snapshot.featureMode);
   for (const milestone of snapshot.milestones) observed.milestones.add(milestone);
 }
 
-function requireHealthySnapshot(snapshot, runtimeErrors, browserName, scenario) {
-  requireNoRuntimeFailures(runtimeErrors, browserName, scenario);
-  if (snapshot.evidenceScope !== evidenceScope
+async function requireHealthySnapshot(snapshot, runtimeErrors, browserName, scenario) {
+  if (snapshot.fixtureStatus === "failed") {
+    // 页面失败标记可能先于 CDP/BiDi 的 console/pageerror 通知抵达 Node。仅用 Node 墙钟
+    // 留出单次 100ms 预算的诊断排空窗口；不主动操作受控页面时钟、重试场景或放宽失败。
+    // 页面可自然继续，但下方报告始终使用等待前已经冻结的首次失败快照。
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, fixtureFailureRuntimeDrainMs);
+    });
+  }
+  requireNoRuntimeFailures(
+    runtimeErrors,
+    browserName,
+    scenario,
+    snapshot.fixtureStatus === "failed" ? snapshot : null,
+  );
+  const eventHistoryViolation = visualFixtureEventHistorySnapshotViolation(snapshot);
+  if (eventHistoryViolation !== null
+    || snapshot.evidenceScope !== evidenceScope
     || !Array.isArray(snapshot.cspViolations)
     || snapshot.cspViolations.length !== 0
     || snapshot.fixtureStatus === "failed"
@@ -1812,14 +1878,26 @@ function requireHealthySnapshot(snapshot, runtimeErrors, browserName, scenario) 
     || snapshot.activeVisualOperations.length !== snapshot.visualActiveCount
     || snapshot.visualFailureCount !== 0
     || snapshot.visualMissingRequired !== "") {
-    throw new Error(`${browserName}/${scenario} 的表现夹具失败：${JSON.stringify(snapshot)}`);
+    throw new Error(
+      `${browserName}/${scenario} 的表现夹具失败`
+      + `${eventHistoryViolation ? `（${eventHistoryViolation}）` : ""}：${JSON.stringify(snapshot)}`,
+    );
   }
 }
 
-function requireNoRuntimeFailures(runtimeErrors, browserName, scenario) {
+function requireNoRuntimeFailures(
+  runtimeErrors,
+  browserName,
+  scenario,
+  fixtureFailureSnapshot = null,
+) {
   if (runtimeErrors.length > 0) {
+    const fixtureFailureEvidence = fixtureFailureSnapshot === null
+      ? ""
+      : `；首次夹具失败快照：${JSON.stringify(fixtureFailureSnapshot)}`;
     throw new Error(
-      `${browserName}/${scenario} 发生浏览器运行错误：${JSON.stringify(runtimeErrors.slice(0, 8))}`,
+      `${browserName}/${scenario} 发生浏览器运行错误：`
+      + `${JSON.stringify(runtimeErrors.slice(0, 8))}${fixtureFailureEvidence}`,
     );
   }
 }

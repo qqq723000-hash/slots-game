@@ -105,12 +105,18 @@ jobs:
   verify-special-features:
     name: verify-special-features (${{ matrix.browser }})
     runs-on: ubuntu-latest
-    # Firefox/WebKit 脚本保留 20 分钟、Chromium 30 分钟硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。
-    timeout-minutes: 35
+    # Firefox/WebKit 脚本各保留 20 分钟且作业 35 分钟；Chromium 脚本保留 32 分钟且作业 37 分钟。
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox, webkit]
+        include:
+          - browser: chromium
+            job_timeout_minutes: 37
+          - browser: firefox
+            job_timeout_minutes: 35
+          - browser: webkit
+            job_timeout_minutes: 35
     defaults:
       run:
         working-directory: slots-game/web
@@ -149,8 +155,8 @@ jobs:
 
   verify-edge:
     runs-on: windows-latest
-    # Windows 软件渲染截图受脚本 30 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。
-    timeout-minutes: 35
+    # Windows 软件渲染截图受脚本 32 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。
+    timeout-minutes: 40
     defaults:
       run:
         shell: bash

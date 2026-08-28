@@ -41,6 +41,8 @@ reset_fixture() {
   cp "$repository_root/web/package.json" "$fixture/web/package.json"
   cp "$repository_root/web/scripts/finalize-production-assets.mjs" \
     "$fixture/web/scripts/finalize-production-assets.mjs"
+  cp "$repository_root/web/scripts/verify-visual-fixture-cross-browser.mjs" \
+    "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
   cp "$repository_root/docs/aws-production-deployment.md" "$fixture/docs/aws-production-deployment.md"
   cp "$repository_root/docs/backend-release-gates.md" "$fixture/docs/backend-release-gates.md"
   cp -R "$repository_root/deploy/supply-chain" "$fixture/deploy/supply-chain"
@@ -728,19 +730,71 @@ replace_once '  verify-special-features:' '  verify-special-features-disabled:' 
 expect_rejected 'frontend CI removed the isolated special-feature browser matrix job'
 
 reset_fixture
-replace_once '        browser: [chromium, firefox, webkit]' '        browser: [chromium]' "$fixture/.github/workflows/frontend-conformance.yml"
-expect_rejected 'special-feature browser matrix dropped Firefox and WebKit'
+replace_once '          - browser: firefox' '          - browser: chromium' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'special-feature browser matrix dropped a required browser'
 
 reset_fixture
-replace_once '    timeout-minutes: 35' '    timeout-minutes: 30' "$fixture/.github/workflows/frontend-conformance.yml"
+replace_once '            job_timeout_minutes: 37' '            job_timeout_minutes: 32' "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'special-feature browser matrix lost its setup and cleanup budget'
 
 reset_fixture
-replace_last_exact_line '    timeout-minutes: 35' '    timeout-minutes: 30' "$fixture/.github/workflows/frontend-conformance.yml"
+replace_once '    # Firefox/WebKit 脚本各保留 20 分钟且作业 35 分钟；Chromium 脚本保留 32 分钟且作业 37 分钟。' \
+  '    # Firefox/WebKit 脚本各保留 20 分钟且作业 35 分钟；Chromium 脚本保留 20 分钟且作业 37 分钟。' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'Chromium browser matrix timing contract drifted from the reviewed script budget'
+
+reset_fixture
+replace_once 'const chromiumDesktopKongScenarioDeadlineMs = 360_000;' \
+  'const chromiumDesktopKongScenarioDeadlineMs = 270_000;' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Chromium desktop Kong scenario deadline regressed'
+
+reset_fixture
+replace_literal_once \
+  'if (browserName === "chromium"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "kong-flow")' \
+  'if (browserName === "webkit"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "kong-flow")' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Chromium desktop Kong timing tuple changed browser'
+
+reset_fixture
+replace_literal_once \
+  'if (browserName === "chromium"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "kong-flow")' \
+  'if (browserName === "chromium"
+    && surface.id === "tablet-1024x768"
+    && contract.scenario === "kong-flow")' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Chromium desktop Kong timing tuple changed surface'
+
+reset_fixture
+replace_once 'const slowKongScenarioDeadlineMs = 270_000;' \
+  'const slowKongScenarioDeadlineMs = 360_000;' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'shared tablet Kong deadline expanded without evidence'
+
+reset_fixture
+replace_once 'const slowBrowserDeadlineMs = 32 * 60_000;' \
+  'const slowBrowserDeadlineMs = 30 * 60_000;' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Chromium browser deadline lost startup and cleanup headroom'
+
+reset_fixture
+replace_once 'const slowMaximumBrowserBudgetMs = 33 * 60_000;' \
+  'const slowMaximumBrowserBudgetMs = 31 * 60_000;' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Chromium maximum browser budget regressed'
+
+reset_fixture
+replace_once '    timeout-minutes: 40' '    timeout-minutes: 33' "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'Edge browser matrix lost its build and cleanup budget'
 
 reset_fixture
-replace_once '    # Windows 软件渲染截图受脚本 30 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
+replace_once '    # Windows 软件渲染截图受脚本 32 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
   '    # Windows 软件渲染截图受脚本 20 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
   "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'Edge browser matrix timing contract drifted from the reviewed script budget'
