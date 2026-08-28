@@ -430,6 +430,11 @@ export interface AppControllerDependencies {
   readonly rageCascadeCellOrderSource?: RageCascadeCellOrderSource;
   /** 仅夹具使用的预览绕过；生产环境仍遵从玩家偏好。 */
   readonly skipFeaturePreview?: boolean;
+  /**
+   * 仅确定性视觉夹具使用：将“单轮表现尾段”与“就绪状态待机重播”分开验证。
+   * 生产入口不注入此值，待机重播默认保持启用。
+   */
+  readonly suppressPostWinIdleRepeat?: boolean;
   /** 只启用精确的 capture=1 Base Vault 截图时钟。 */
   readonly vaultUnlockCaptureEnabled?: boolean;
   /**
@@ -659,6 +664,7 @@ export class AppController {
   private readonly onOperatorSessionRequired?: OperatorSessionRequestHandler;
   private readonly onPlayerErrorDiagnostic?: PlayerErrorDiagnosticHandler;
   private readonly skipFeaturePreview: boolean;
+  private readonly suppressPostWinIdleRepeat: boolean;
   private readonly vaultUnlockCaptureEnabled: boolean;
   private readonly activeObservedFeatureEvents: Readonly<FeatureEvent>[] = [];
   private readonly stops: StopSequencer;
@@ -1076,6 +1082,7 @@ export class AppController {
       () => ({ sequence: this.activePresentationSequence ?? undefined }),
     );
     this.skipFeaturePreview = dependencies.skipFeaturePreview ?? false;
+    this.suppressPostWinIdleRepeat = dependencies.suppressPostWinIdleRepeat === true;
     if (this.presentationObserver?.onPresentationCheckpoint) {
       this.renderer.setFeaturePresentationInputCheckpointListener((gate) => (
         this.requestFeaturePresentationInputCheckpoint(gate)
@@ -3949,6 +3956,7 @@ export class AppController {
     fastPlay: boolean,
   ): void {
     this.clearPostWinIdleRepeatTimer();
+    if (this.suppressPostWinIdleRepeat) return;
     const paidWins = result.wins.filter((win) => BigInt(win.amountMinor) > 0n);
     const returnedBaseWin = previousFeatureState.mode === "BASE"
       && result.featureState.mode === "BASE"
