@@ -1328,10 +1328,10 @@ describe("captured desktop HUD geometry", () => {
     const statusMarkup = source.match(
       /<section\s+class="status-panel"[\s\S]*?<\/section>/,
     )?.[0] ?? "";
-    expect(statusMarkup.match(/status-panel__provider/g)).toHaveLength(1);
-    expect(statusMarkup).toContain('data-static-image="statusbar-provider"');
-    expect(source).toContain('"statusbar-provider": STATUSBAR_GM_GO');
-    expect(statusMarkup).toContain('alt="G\'m GO"');
+    expect(statusMarkup.match(/status-panel__identity/g)).toHaveLength(1);
+    expect(statusMarkup).toContain('aria-label="Independent developer"');
+    expect(statusMarkup).toContain(">INDIE</span>");
+    expect(statusMarkup).not.toContain("data-static-image");
     expect(statusMarkup).toContain('data-game-name-visible="false"');
     expect(statusMarkup).toContain('class="status-panel__game">Primal Rampage</span>');
     expect(source.match(/class="utility-button__hit-area"/g)).toHaveLength(5);

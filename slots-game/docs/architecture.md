@@ -1,6 +1,11 @@
 # 生产架构
 
-AWS 是本仓库唯一正式生产主线。正式云架构、部署和运行责任分别以
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+AWS 是本项目定义的唯一目标生产参考架构。目标云架构、部署和运行责任分别以
 [AWS 正式生产架构](aws-production-architecture.md)、
 [AWS 正式生产部署](aws-production-deployment.md)和
 [AWS 正式生产运维](aws-production-operations.md)为准。
@@ -9,7 +14,7 @@ AWS 是本仓库唯一正式生产主线。正式云架构、部署和运行责�
 因、传统方案对比与后续边界见[前后端核心架构评估](core-architecture-assessment.md)。
 
 本文保留应用级不变量、macOS Compose 本地集成验收细节和可移植 Kubernetes Chart 契约，便于开发
-排障与跨环境评审。下面的 Compose 树不是公司生产拓扑；“公司集群”章节描述的是通用应用交付
+排障与跨环境评审。下面的 Compose 树不是采用方生产拓扑；“采用方生产集群”章节描述的是通用应用交付
 能力，不代表 AWS 账号、VPC、EKS、RDS、CloudFront、WAF 或监控平台已经创建。
 
 ## 系统边界
@@ -211,14 +216,14 @@ service-volume-init（成功退出）
 
 下面的树与 `deploy/cluster-production/chart` 一一对应，并作为 AWS EKS 应用层的可移植基础。AWS
 正式落地还必须叠加 [AWS 正式生产架构](aws-production-architecture.md) 的边缘、S3/CloudFront、
-身份、RDS、监控和灾备能力。标为“公司平台外部能力”的节点是部署前置
+身份、RDS、监控和灾备能力。标为“采用方平台外部能力”的节点是部署前置
 条件，Chart 只引用或记录它们，不会伪造 WAF 粗粒度保护、外部 Valkey/数据库、钱包、审计、密钥同步、
 Prometheus Operator 或 Web 蓝绿控制器已经落地。集群 Chart 不部署 `local-operator`、本机
 PostgreSQL 或本机 Compose 观测栈。
 
 ```text
-公司 Kubernetes 生产集群（Kubernetes >= 1.30，当前签名制品仅 linux/amd64）
-├── 公司平台外部能力（不由本 Chart 创建）
+采用方 Kubernetes 生产集群（Kubernetes >= 1.30，当前签名制品仅 linux/amd64）
+├── 采用方平台外部能力（不由本 Chart 创建）
 │   ├── DNS、证书系统与 Ingress Controller
 │   ├── API Gateway / WAF
 │   │   └── 未认证攻击面、IP/路径和粗粒度容量保护，不承担已验证身份精确限流
@@ -253,7 +258,7 @@ PostgreSQL 或本机 Compose 观测栈。
 │   │   ├── liveness：私有 operations 8081/healthz，无 Bearer 且仅证明进程存活
 │   │   ├── preStop 5 秒摘流 + 应用 shutdown 30 秒 + 至少 5 秒调度余量
 │   │   ├── 不启动钱包恢复、Outbox 投递或 nonce/launch 清理循环
-│   │   ├── logPipelineProvider 标签记录公司节点日志责任方
+│   │   ├── logPipelineProvider 标签记录采用方节点日志责任方
 │   │   └── 非 root 65532、只读根、RuntimeDefault seccomp、ALL capability drop
 │   ├── RGS API 公共 ClusterIP Service
 │   └── RGS API operations ClusterIP Service:8081
@@ -283,13 +288,13 @@ PostgreSQL 或本机 Compose 观测栈。
 │   └── Web ClusterIP Service
 │
 ├── 监控树
-│   ├── 两个 ServiceMonitor（由 Chart 创建，CRD/控制器由公司平台提供）
+│   ├── 两个 ServiceMonitor（由 Chart 创建，CRD/控制器由采用方平台提供）
 │   │   ├── selector 分别精确匹配 API 与 Worker operations Service
 │   │   ├── jobLabel 分别读取 slots-game.io/metrics-job=slots-rgs 与 slots-rgs-worker
 │   │   ├── /metrics、HTTP 私网、Bearer SecretKeySelector
 │   │   └── 只引用 operationsBearer Secret，不读取钱包/签名/数据库材料
-│   ├── PrometheusRule（由 Chart 创建，CRD/求值器/Alertmanager 由公司平台提供）
-│   │   ├── ruleLabels 必须匹配公司 Prometheus 规则发现策略
+│   ├── PrometheusRule（由 Chart 创建，CRD/求值器/Alertmanager 由采用方平台提供）
+│   │   ├── ruleLabels 必须匹配采用方 Prometheus 规则发现策略
 │   │   ├── 固定 API/Worker job + 当前 namespace，避免跨角色或跨环境串告警
 │   │   └── API/Worker 目标与就绪、5xx、容量/HPA、共享准入、认证重放、钱包结果/时延/停滞、恢复 backlog/年龄/循环及快照新鲜度、人工复核、完整性、outbox、DB 池二十七条规则
 │   └── Prometheus Pod → NetworkPolicy 允许 → operations Service:8081 → Alertmanager 外部路由

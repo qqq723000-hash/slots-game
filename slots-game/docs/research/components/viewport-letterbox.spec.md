@@ -1,5 +1,10 @@
 # ViewportLetterbox Specification
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 ## Overview
 
 - Target files: `web/src/renderer/ResponsiveLayout.ts`, `web/src/style.css`, application shell and browser contracts.
@@ -67,7 +72,7 @@ top = (viewportHeight - designHeight * scale) / 2
 ## Responsive profile selection
 
 - `surfaceProfile` labels still distinguish phone/tablet reference coverage, but never choose the design dimensions.
-- Official content layouts remain `pt`, `iPad_pt` and `ls`; they select authored minBounds within the continuous gameplay region.
+- Captured content layouts remain `pt`, `iPad_pt` and `ls`; they select authored minBounds within the continuous gameplay region.
 - Explicit `?layout=desktop|mobile` wins. Explicit `?channel=desktop` also keeps desktop layout on touch-capable PCs. Otherwise coarse/compact touch input selects mobile, fine-pointer desktop devices remain desktop, and small phone geometry is the final fallback.
 
 ## Failure-closed tests

@@ -36,9 +36,11 @@ reset_fixture() {
   rm -rf "$fixture"
   mkdir -p "$fixture/deploy/cluster-production" "$fixture/deploy/observability" \
     "$fixture/deploy/web" "$fixture/deploy/local-production" "$fixture/.github/ISSUE_TEMPLATE" \
-    "$fixture/web" "$fixture/docs"
+    "$fixture/web/scripts" "$fixture/docs"
   cp "$repository_root/Makefile" "$fixture/Makefile"
   cp "$repository_root/web/package.json" "$fixture/web/package.json"
+  cp "$repository_root/web/scripts/finalize-production-assets.mjs" \
+    "$fixture/web/scripts/finalize-production-assets.mjs"
   cp "$repository_root/docs/aws-production-deployment.md" "$fixture/docs/aws-production-deployment.md"
   cp "$repository_root/docs/backend-release-gates.md" "$fixture/docs/backend-release-gates.md"
   cp -R "$repository_root/deploy/supply-chain" "$fixture/deploy/supply-chain"
@@ -203,9 +205,23 @@ printf '%s\n' 'export {};' > "$fixture/web/src/demo/reintroduced.ts"
 expect_rejected 'removed public demo source tree reappeared'
 
 reset_fixture
-insert_after_once '    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && node scripts/verify-production-javascript-bundles.mjs",' \
+insert_after_once '    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && npm run build:browser-preflight-check && node scripts/verify-production-javascript-bundles.mjs",' \
   '    "build:demo": "vite build",' "$fixture/web/package.json"
 expect_rejected 'removed public demo package entrypoint reappeared'
+
+reset_fixture
+replace_once 'npm run build:browser-preflight-check' \
+  'true # browser preflight artifact gate removed' "$fixture/web/package.json"
+expect_rejected 'browser preflight artifact gate was removed from the production build'
+
+reset_fixture
+replace_once '    "build:browser-preflight-check": "node scripts/verify-browser-preflight-build.mjs",' \
+  '    "build:browser-preflight-check": "true",' "$fixture/web/package.json"
+expect_rejected 'browser preflight verifier command was bypassed'
+
+reset_fixture
+replace_once '    "browser-preflight.js",' '' "$fixture/web/scripts/finalize-production-assets.mjs"
+expect_rejected 'browser preflight was removed from the production release whitelist'
 
 reset_fixture
 replace_once 'https://github.com/qqq723000-hash/slots-game/security/advisories/new' \
@@ -708,6 +724,65 @@ replace_once '          persist-credentials: false' '          persist-credentia
 expect_rejected 'frontend CI retained checkout credentials while running repository code'
 
 reset_fixture
+replace_once '  verify-special-features:' '  verify-special-features-disabled:' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'frontend CI removed the isolated special-feature browser matrix job'
+
+reset_fixture
+replace_once '        browser: [chromium, firefox, webkit]' '        browser: [chromium]' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'special-feature browser matrix dropped Firefox and WebKit'
+
+reset_fixture
+replace_once '    timeout-minutes: 35' '    timeout-minutes: 30' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'special-feature browser matrix lost its setup and cleanup budget'
+
+reset_fixture
+replace_last_exact_line '    timeout-minutes: 35' '    timeout-minutes: 30' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'Edge browser matrix lost its build and cleanup budget'
+
+reset_fixture
+replace_once '    # Windows 软件渲染截图受脚本 30 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
+  '    # Windows 软件渲染截图受脚本 20 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'Edge browser matrix timing contract drifted from the reviewed script budget'
+
+reset_fixture
+replace_once '  npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"' \
+  '  true # special-feature non-Firefox matrix bypassed' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'special-feature browser matrix command was bypassed'
+
+reset_fixture
+replace_once '          GALLIUM_DRIVER=llvmpipe \' '          GALLIUM_DRIVER=softpipe \' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'production Firefox matrix stopped requiring reviewed Mesa llvmpipe'
+
+reset_fixture
+replace_once '            SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1 \' \
+  '            SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=0 \' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'special-feature Firefox matrix disabled the Xvfb software WebGL contract'
+
+reset_fixture
+insert_after_once '  verify-special-features:' '    if: false' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'special-feature browser matrix job was disabled with if:false'
+
+reset_fixture
+insert_after_once '      - name: Verify non-production special-feature fixtures' \
+  '        if: ${{ false }}' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'special-feature browser matrix step was disabled with an if:false expression'
+
+reset_fixture
+insert_after_once '  verify-frontend:' '    continue-on-error: true' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'primary frontend conformance job became non-blocking'
+
+reset_fixture
+insert_after_once '      - name: Verify production transaction in Microsoft Edge' \
+  '        continue-on-error: true' "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'Microsoft Edge transaction step became non-blocking'
+
+reset_fixture
 replace_once 'concurrency:' 'backend-concurrency-disabled:' "$fixture/.github/workflows/backend-conformance.yml"
 expect_rejected 'backend conformance omitted stale-run cancellation'
 
@@ -942,12 +1017,20 @@ replace_once 'verify: verify-supply-chain-contract verify-backend-licenses verif
 expect_rejected 'release verify closure omitted race tests'
 
 reset_fixture
-replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' 'verify-supply-chain-contract: verify-hardening-stability-contract' "$fixture/Makefile"
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' 'verify-supply-chain-contract: verify-hardening-stability-contract verify-personal-project-docs' "$fixture/Makefile"
 expect_rejected 'ordinary supply-chain CI skipped the hardening checklist gate'
 
 reset_fixture
-replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' 'verify-supply-chain-contract: verify-hardening-checklist' "$fixture/Makefile"
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' 'verify-supply-chain-contract: verify-hardening-checklist verify-personal-project-docs' "$fixture/Makefile"
 expect_rejected 'ordinary supply-chain CI skipped the hardening stability contract gate'
+
+reset_fixture
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' "$fixture/Makefile"
+expect_rejected 'ordinary supply-chain CI skipped the personal-independent documentation gate'
+
+reset_fixture
+replace_once 'node scripts/verify-personal-project-docs.mjs' 'true # personal-independent documentation verification removed' "$fixture/Makefile"
+expect_rejected 'ordinary supply-chain CI removed the personal-independent documentation verifier'
 
 reset_fixture
 replace_once '        run: ./deploy/supply-chain/scan.sh source "$SUPPLY_CHAIN_REPORT_DIR/source"' '        run: true # source security scan removed' "$fixture/.github/workflows/supply-chain-release.yml"

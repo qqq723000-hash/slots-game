@@ -5,6 +5,8 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { verifyAudioSpriteDescriptorBindings } from "./audio-sprite-descriptor-contract.mjs";
+
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(SCRIPT_DIRECTORY, "..");
 const PUBLIC_ROOT = join(WEB_ROOT, "public");
@@ -13,6 +15,13 @@ const RUNTIME_MANIFEST_PATH = join(RUNTIME_ROOT, "runtime-manifest.json");
 const OUTPUTS = Object.freeze({
   desktop: join(RUNTIME_ROOT, "streaming-packages.desktop.json"),
   mobile: join(RUNTIME_ROOT, "streaming-packages.mobile.json"),
+});
+const FORBIDDEN_PUBLIC_MANIFEST_BRAND = /playngonetwork|play(?:\s|['’])*n\s*go|playngo|containerlauncher|\bg\s*['’]?\s*m(?:[\s_-]+)go\b/iu;
+const EXPECTED_PROVENANCE = Object.freeze({
+  package: "iron-colossus-runtime-2026.08",
+  repositoryEvidence: "UNVERIFIED_IN_REPOSITORY",
+  releaseDisposition: "EXTERNAL_APPROVAL_REQUIRED",
+  sourceLocator: "not-published-and-not-resolvable",
 });
 
 /**
@@ -65,7 +74,9 @@ for (const option of argv) {
 }
 
 const runtimeBytes = await readFile(RUNTIME_MANIFEST_PATH);
+rejectPublicManifestBrandResidue(runtimeBytes.toString("utf8"), RUNTIME_MANIFEST_PATH);
 const runtimeManifest = JSON.parse(runtimeBytes.toString("utf8"));
+validateRuntimeManifestProvenance(runtimeManifest);
 const wheelReferenceEntries = Object.freeze(await Promise.all(
   WHEEL_REFERENCE_FILES.map(async (entry) => {
     const bytes = await readFile(publicPath(entry.publicUrl));
@@ -80,7 +91,7 @@ const authorityDigest = createHash("sha256")
   .update(runtimeBytes)
   .update(JSON.stringify(wheelReferenceEntries))
   .digest("hex");
-const version = `${requiredString(runtimeManifest?.source?.package, "source.package")}+${authorityDigest.slice(0, 16)}`;
+const version = `${requiredString(runtimeManifest?.provenance?.package, "provenance.package")}+${authorityDigest.slice(0, 16)}`;
 
 const manifests = Object.freeze({
   desktop: buildChannelManifest("desktop", runtimeManifest, version),
@@ -91,8 +102,14 @@ for (const channel of ["desktop", "mobile"]) {
   const manifest = manifests[channel];
   validateGeneratedManifest(manifest, channel, runtimeManifest);
   await verifyLocalResources(manifest);
+  await verifyAudioSpriteDescriptorBindings({
+    audio: channel === "desktop" ? runtimeManifest.audio : runtimeManifest.mobile.audio,
+    channel,
+    publicRoot: PUBLIC_ROOT,
+  });
   await verifyAtlasBindings(manifest, channel, runtimeManifest);
   const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  rejectPublicManifestBrandResidue(serialized, OUTPUTS[channel]);
   if (argv.has("--check")) {
     const checkedIn = await readFile(OUTPUTS[channel], "utf8").catch(() => null);
     if (checkedIn !== serialized) {
@@ -251,6 +268,46 @@ function buildChannelManifest(channel, authority, packageVersion) {
     assetSet: `${requiredString(authority.assetSet, "assetSet")}:${channel}`,
     packages,
   };
+}
+
+function validateRuntimeManifestProvenance(manifest) {
+  const provenance = manifest?.provenance;
+  if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) {
+    throw new Error("runtime provenance must be an object");
+  }
+  const actualKeys = Object.keys(provenance).sort();
+  const expectedKeys = Object.keys(EXPECTED_PROVENANCE).sort();
+  if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys)
+    || expectedKeys.some((key) => provenance[key] !== EXPECTED_PROVENANCE[key])) {
+    throw new Error("runtime provenance must remain neutral, non-resolvable, and fail-closed");
+  }
+  if (manifest?.mobile?.exclusions !== undefined) {
+    throw new Error("non-runtime mobile source exclusions must not be published");
+  }
+  if (manifest?.mobile?.sourceInventory !== undefined) {
+    throw new Error("non-runtime mobile source inventory must not be published");
+  }
+  rejectSourceMetadata(manifest, "runtime-manifest");
+}
+
+function rejectSourceMetadata(value, path) {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => rejectSourceMetadata(entry, `${path}[${index}]`));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  if (Object.hasOwn(value, "source")) {
+    throw new Error(`${path}.source is non-runtime provenance metadata`);
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    rejectSourceMetadata(entry, `${path}.${key}`);
+  }
+}
+
+function rejectPublicManifestBrandResidue(serialized, path) {
+  if (FORBIDDEN_PUBLIC_MANIFEST_BRAND.test(serialized)) {
+    throw new Error(`${path} contains forbidden public brand residue`);
+  }
 }
 
 function assetPackage(id, stage, resources, packageVersion, dependsOn = []) {

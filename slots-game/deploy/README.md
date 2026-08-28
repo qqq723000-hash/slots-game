@@ -1,6 +1,11 @@
 # 部署入口
 
-AWS 是唯一正式生产主线。本目录交付应用容器、Helm Chart、本机集成夹具、可观测性契约和
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+AWS 是本项目定义的唯一目标生产参考架构。本目录交付应用容器、Helm Chart、本机集成夹具、可观测性契约和
 供应链门禁；它不虚构已经创建的云账号、VPC、EKS、RDS、S3、CloudFront、WAF、IAM 或监控
 平台，也不保存任何正式 Secret。
 
@@ -30,7 +35,7 @@ AWS 是唯一正式生产主线。本目录交付应用容器、Helm Chart、本
   存活，后两者使用文件 Bearer。公网入口只能发布业务端口，三个运维路径均返回 404。
 - 数据库、钱包、审计接收端、密钥系统、集中日志、告警路由和恢复能力必须由正式平台
   实例化并验收。仓库已以 API + Valkey 实现已验证身份的跨副本新意图准入，并用 Terraform 自管 API
-  Regional WAF；企业平台提供静态 CloudFront global WAF、DNS/ACM 与可选 Shield Advanced。两类
+  Regional WAF；采用方平台提供静态 CloudFront global WAF、DNS/ACM 与可选 Shield Advanced。两类
   WAF/网关都只负责未认证攻击面和粗粒度容量保护。缺少任何必需依赖或实时验收时应用拒绝接流。
 - Helm migrator hook 的安装、升级和失败保留语义不得由直接 `kubectl apply` 绕过。
 - 本机 Compose、CI fixture、示例 values 和示例运营商配置均不得作为正式生产发布证据。

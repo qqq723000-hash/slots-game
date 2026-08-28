@@ -417,7 +417,7 @@ describe("fluid mobile DOM layout", () => {
       /\.status-panel\[data-money-density="extreme"\] \.status-metric strong\s*\{[^}]*overflow:\s*visible;[^}]*text-overflow:\s*clip;/s,
     );
     expect(contract).toMatch(
-      /\.status-panel\[data-money-density="extreme"\] \.status-panel__provider,[\s\S]*?display:\s*none;/,
+      /\.status-panel\[data-money-density="extreme"\] \.status-panel__identity,[\s\S]*?display:\s*none;/,
     );
     expect(contract).toMatch(
       /\.round-state\[data-variant="win-counting"\]\s*\{[^}]*bottom:\s*var\(--mobile-round-bottom\);/s,

@@ -12,7 +12,10 @@ const scriptPath = fileURLToPath(import.meta.url);
 const webRoot = resolve(dirname(scriptPath), "..");
 const publicRoot = resolve(webRoot, "public");
 const provenancePath = resolve(webRoot, "asset-provenance.json");
-const ALLOWED_UNPROTECTED_PUBLIC_FILES = new Set(["THIRD_PARTY_NOTICES.txt"]);
+const ALLOWED_UNPROTECTED_PUBLIC_FILES = new Set([
+  "THIRD_PARTY_NOTICES.txt",
+  "browser-preflight.js",
+]);
 const ALLOWED_EVIDENCE = new Set(["OWNER_ASSERTED_FIRST_PARTY", "UNVERIFIED_IN_REPOSITORY"]);
 const ACTIVE_SVG_PATTERN = /<\s*(?:script|foreignObject)\b|<!\s*(?:DOCTYPE|ENTITY)\b|\son[a-z][a-z0-9:_-]*\s*=|(?:href|xlink:href)\s*=\s*["']\s*(?:https?:|\/\/|data:|javascript:)|url\(\s*["']?\s*(?:https?:|\/\/|data:|javascript:)|@import\b/i;
 

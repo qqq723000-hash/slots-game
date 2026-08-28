@@ -678,12 +678,258 @@ test "$(grep -F -c -- '          lfs: true' "$backend_workflow" || true)" -eq 1 
   fail 'backend workflow must materialize LFS source exactly once'
 test "$(grep -F -c -- '          persist-credentials: false' "$backend_workflow" || true)" -eq 1 ||
   fail 'backend workflow must remove checkout credentials'
-test "$(grep -F -c -- "uses: actions/checkout@$checkout_sha # v7.0.1" "$frontend_workflow" || true)" -eq 2 ||
-  fail 'both frontend jobs must use the reviewed checkout'
-test "$(grep -F -c -- '          lfs: true' "$frontend_workflow" || true)" -eq 2 ||
-  fail 'both frontend jobs must materialize LFS source'
-test "$(grep -F -c -- '          persist-credentials: false' "$frontend_workflow" || true)" -eq 2 ||
-  fail 'both frontend jobs must remove checkout credentials'
+test "$(grep -F -c -- "uses: actions/checkout@$checkout_sha # v7.0.1" "$frontend_workflow" || true)" -eq 4 ||
+  fail 'all four frontend jobs must use the reviewed checkout'
+test "$(grep -F -c -- '          lfs: true' "$frontend_workflow" || true)" -eq 4 ||
+  fail 'all four frontend jobs must materialize LFS source'
+test "$(grep -F -c -- '          persist-credentials: false' "$frontend_workflow" || true)" -eq 4 ||
+  fail 'all four frontend jobs must remove checkout credentials'
+require_fixed '  verify-special-features:' "$frontend_workflow"
+require_fixed '    name: verify-special-features (${{ matrix.browser }})' "$frontend_workflow"
+require_line '    # Firefox/WebKit 脚本保留 20 分钟、Chromium 30 分钟硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。' "$frontend_workflow"
+require_fixed '    timeout-minutes: 35' "$frontend_workflow"
+require_line '      fail-fast: false' "$frontend_workflow"
+require_line '        browser: [chromium, firefox, webkit]' "$frontend_workflow"
+require_fixed '  verify-edge:' "$frontend_workflow"
+require_fixed '    runs-on: windows-latest' "$frontend_workflow"
+require_line '    # Windows 软件渲染截图受脚本 30 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' "$frontend_workflow"
+require_line '        run: npx playwright install --with-deps firefox webkit' "$frontend_workflow"
+require_fixed 'SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1' "$frontend_workflow"
+require_fixed 'LIBGL_ALWAYS_SOFTWARE=true' "$frontend_workflow"
+require_fixed 'GALLIUM_DRIVER=llvmpipe' "$frontend_workflow"
+require_fixed 'xvfb-run --auto-servernum' "$frontend_workflow"
+require_fixed 'npm run build:browser-matrix' "$frontend_workflow"
+require_line '        run: npm run build:browser-matrix -- --browser msedge' "$frontend_workflow"
+require_line '        run: npx playwright install --with-deps "${{ matrix.browser }}"' "$frontend_workflow"
+require_fixed 'npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"' "$frontend_workflow"
+require_line '        run: npm run test:visual-fixtures-browser-matrix -- --browser msedge' "$frontend_workflow"
+
+# 前端门禁的命令字面量必须位于预期 job/step 中并保持无条件执行。仅 grep 到同一命令不能证明
+# 它没有被移入禁用 step、容错 step 或不受保护的新 job；YAML 语义检查同时固定权限、runner、
+# 超时、矩阵、工作目录、步骤顺序和经复核的 Action 身份。
+ruby -ryaml -e '
+  workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+  abort "frontend workflow root must be a mapping" unless workflow.is_a?(Hash)
+  abort "frontend workflow permissions drifted" unless
+    workflow["permissions"] == { "contents" => "read" }
+
+  jobs = workflow["jobs"]
+  abort "frontend jobs must be a mapping" unless jobs.is_a?(Hash)
+  expected_job_ids = %w[
+    verify-frontend
+    verify-special-features
+    verify-edge
+    verify-web-static-image
+  ]
+  abort "frontend job set drifted" unless jobs.keys.sort == expected_job_ids.sort
+
+  checkout_ref = "actions/checkout@#{ARGV.fetch(1)}"
+  setup_go_ref = "actions/setup-go@#{ARGV.fetch(2)}"
+  setup_node_ref = "actions/setup-node@#{ARGV.fetch(3)}"
+
+  reject_bypass = lambda do |mapping, label|
+    abort "#{label} must not declare if" if mapping.key?("if")
+    abort "#{label} must not declare continue-on-error" if mapping.key?("continue-on-error")
+  end
+
+  expected_steps = {
+    "verify-frontend" => [
+      "Check out repository",
+      "Set up Go for cross-runtime RGS E2E",
+      "Set up Node.js",
+      "Install locked dependencies",
+      "Audit complete locked dependency tree",
+      "Audit production dependencies",
+      "Verify streaming package manifests",
+      "Type-check frontend",
+      "Run frontend tests",
+      "Build production frontend",
+      "Verify production transaction in real Chrome",
+      "Install Firefox and WebKit engines",
+      "Verify production transaction across browser engines",
+      "Rebuild and verify deterministic release bytes",
+    ],
+    "verify-special-features" => [
+      "Check out repository",
+      "Set up Node.js",
+      "Install locked dependencies",
+      "Install selected browser engine",
+      "Verify non-production special-feature fixtures",
+    ],
+    "verify-edge" => [
+      "Check out repository",
+      "Set up Node.js",
+      "Install locked dependencies",
+      "Build production frontend",
+      "Verify production transaction in Microsoft Edge",
+      "Verify non-production special-feature fixtures in Microsoft Edge",
+    ],
+    "verify-web-static-image" => [
+      "Check out repository",
+      "Verify release supply-chain contract",
+      "Verify daemon-independent web container contract",
+      "Build unprivileged CI-only static image",
+      "Build CI-only release configuration conformance artifact",
+      "Verify CI-only release configuration boundary",
+      "Reject production web image without approval secret",
+      "Verify CI-only static image ownership and content boundary",
+      "Probe CI-only static health, cache, range and security response contracts",
+    ],
+  }
+
+  job_specs = {
+    "verify-frontend" => {
+      "runs-on" => "ubuntu-latest",
+      "timeout-minutes" => 30,
+      "defaults" => { "run" => { "working-directory" => "slots-game/web" } },
+    },
+    "verify-special-features" => {
+      "runs-on" => "ubuntu-latest",
+      "timeout-minutes" => 35,
+      "defaults" => { "run" => { "working-directory" => "slots-game/web" } },
+    },
+    "verify-edge" => {
+      "runs-on" => "windows-latest",
+      "timeout-minutes" => 35,
+      "defaults" => {
+        "run" => { "shell" => "bash", "working-directory" => "slots-game/web" },
+      },
+    },
+    "verify-web-static-image" => {
+      "runs-on" => "ubuntu-latest",
+      "timeout-minutes" => 20,
+      "defaults" => nil,
+    },
+  }
+
+  step_by_name = {}
+  expected_job_ids.each do |job_id|
+    job = jobs[job_id]
+    abort "frontend job #{job_id} must be a mapping" unless job.is_a?(Hash)
+    reject_bypass.call(job, "frontend job #{job_id}")
+    abort "frontend job #{job_id} must inherit the read-only workflow permissions" if
+      job.key?("permissions")
+
+    spec = job_specs.fetch(job_id)
+    abort "frontend job #{job_id} runner drifted" unless job["runs-on"] == spec["runs-on"]
+    abort "frontend job #{job_id} timeout drifted" unless
+      job["timeout-minutes"] == spec["timeout-minutes"]
+    if spec["defaults"].nil?
+      abort "frontend job #{job_id} gained unreviewed defaults" if job.key?("defaults")
+    else
+      abort "frontend job #{job_id} defaults drifted" unless job["defaults"] == spec["defaults"]
+    end
+
+    steps = job["steps"]
+    abort "frontend job #{job_id} steps must be an array" unless steps.is_a?(Array)
+    abort "frontend job #{job_id} step order or membership drifted" unless
+      steps.map { |step| step.is_a?(Hash) ? step["name"] : nil } == expected_steps.fetch(job_id)
+    steps.each do |step|
+      label = "frontend job #{job_id} step #{step.fetch("name")}"
+      reject_bypass.call(step, label)
+      abort "#{label} must not override the reviewed shell" if step.key?("shell")
+      if job_id != "verify-web-static-image" && step.key?("working-directory")
+        abort "#{label} must inherit the reviewed Web working directory"
+      end
+      step_by_name[[job_id, step.fetch("name")]] = step
+    end
+  end
+
+  special = jobs.fetch("verify-special-features")
+  abort "special-feature job display name drifted" unless
+    special["name"] == "verify-special-features (${{ matrix.browser }})"
+  abort "special-feature browser strategy drifted" unless special["strategy"] == {
+    "fail-fast" => false,
+    "matrix" => { "browser" => %w[chromium firefox webkit] },
+  }
+
+  expect_action = lambda do |job_id, name, reference|
+    step = step_by_name.fetch([job_id, name])
+    abort "#{job_id}/#{name} Action drifted" unless
+      step["uses"] == reference && !step.key?("run")
+  end
+  expected_job_ids.each do |job_id|
+    expect_action.call(job_id, "Check out repository", checkout_ref)
+    checkout = step_by_name.fetch([job_id, "Check out repository"])
+    abort "#{job_id} checkout inputs drifted" unless checkout["with"] == {
+      "lfs" => true,
+      "persist-credentials" => false,
+    }
+  end
+  expect_action.call("verify-frontend", "Set up Go for cross-runtime RGS E2E", setup_go_ref)
+  %w[verify-frontend verify-special-features verify-edge].each do |job_id|
+    expect_action.call(job_id, "Set up Node.js", setup_node_ref)
+  end
+
+  line_continuation = 92.chr
+  production_browser_matrix_run = [
+    "SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1 #{line_continuation}",
+    "LIBGL_ALWAYS_SOFTWARE=true #{line_continuation}",
+    "GALLIUM_DRIVER=llvmpipe #{line_continuation}",
+    "xvfb-run --auto-servernum --server-args=\"-screen 0 1920x1080x24 -nolisten tcp +extension GLX +extension RENDER -noreset\" #{line_continuation}",
+    "  npm run build:browser-matrix",
+  ].join("\n") + "\n"
+  special_feature_matrix_run = [
+    %q(if [[ "${{ matrix.browser }}" == "firefox" ]]; then),
+    "  SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1 #{line_continuation}",
+    "  LIBGL_ALWAYS_SOFTWARE=true #{line_continuation}",
+    "  GALLIUM_DRIVER=llvmpipe #{line_continuation}",
+    "  xvfb-run --auto-servernum --server-args=\"-screen 0 1920x1080x24 -nolisten tcp +extension GLX +extension RENDER -noreset\" #{line_continuation}",
+    "    npm run test:visual-fixtures-browser-matrix -- --browser firefox",
+    "else",
+    %q(  npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"),
+    "fi",
+  ].join("\n") + "\n"
+
+  expected_runs = {
+    ["verify-frontend", "Install locked dependencies"] => "npm ci",
+    ["verify-frontend", "Audit complete locked dependency tree"] =>
+      "npm audit --audit-level=high",
+    ["verify-frontend", "Audit production dependencies"] =>
+      "npm audit --omit=dev --audit-level=high",
+    ["verify-frontend", "Verify streaming package manifests"] =>
+      "npm run assets:check-streaming-packages",
+    ["verify-frontend", "Type-check frontend"] => "npm run typecheck",
+    ["verify-frontend", "Run frontend tests"] =>
+      "npm test -- --run --fileParallelism=false",
+    ["verify-frontend", "Build production frontend"] => "npm run build",
+    ["verify-frontend", "Verify production transaction in real Chrome"] =>
+      "npm run build:browser-smoke",
+    ["verify-frontend", "Install Firefox and WebKit engines"] =>
+      "npx playwright install --with-deps firefox webkit",
+    ["verify-frontend", "Verify production transaction across browser engines"] =>
+      production_browser_matrix_run,
+    ["verify-frontend", "Rebuild and verify deterministic release bytes"] =>
+      "npm run build:determinism-check",
+    ["verify-special-features", "Install locked dependencies"] => "npm ci",
+    ["verify-special-features", "Install selected browser engine"] =>
+      %q(npx playwright install --with-deps "${{ matrix.browser }}"),
+    ["verify-special-features", "Verify non-production special-feature fixtures"] =>
+      special_feature_matrix_run,
+    ["verify-edge", "Install locked dependencies"] => "npm ci",
+    ["verify-edge", "Build production frontend"] => "npm run build",
+    ["verify-edge", "Verify production transaction in Microsoft Edge"] =>
+      "npm run build:browser-matrix -- --browser msedge",
+    ["verify-edge", "Verify non-production special-feature fixtures in Microsoft Edge"] =>
+      "npm run test:visual-fixtures-browser-matrix -- --browser msedge",
+    ["verify-web-static-image", "Verify release supply-chain contract"] =>
+      "make verify-supply-chain-contract",
+    ["verify-web-static-image", "Verify daemon-independent web container contract"] =>
+      "./deploy/web/verify-static-contract.sh",
+    ["verify-web-static-image", "Build unprivileged CI-only static image"] =>
+      "DOCKER_BUILDKIT=1 docker build --file deploy/web/Dockerfile --target static-conformance --tag slots-web-static-conformance:ci-only .",
+  }
+  expected_runs.each do |identity, command|
+    step = step_by_name.fetch(identity)
+    abort "#{identity.join("/")} command drifted" unless
+      step["run"] == command && !step.key?("uses")
+    if identity.first == "verify-web-static-image"
+      abort "#{identity.join("/")} working directory drifted" unless
+        step["working-directory"] == "slots-game"
+    end
+  end
+' "$frontend_workflow" "$checkout_sha" "$setup_go_sha" "$setup_node_sha" ||
+  fail 'frontend workflow YAML semantic contract failed'
 require_fixed 'shellcheck -S warning -x -P . -P "$(dirname "$script")" "$script"' "$deployment_workflow"
 require_fixed "done < <(git ls-files -- '*.sh')" "$deployment_workflow"
 reject_fixed 'npm run build:demo' "$frontend_workflow"
@@ -1336,12 +1582,15 @@ reject_fixed 'pull_request_target:' "$source_workflow"
 reject_fixed 'pull_request_target:' "$release_workflow"
 
 make_tab=$(printf '\t')
-require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' "$makefile"
+require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' "$makefile"
 require_line "${make_tab}node --test deploy/supply-chain/verify-release-version.test.mjs" "$makefile"
 require_line "${make_tab}node deploy/supply-chain/verify-release-version.mjs" "$makefile"
 require_line 'verify-hardening-checklist:' "$makefile"
 require_line "${make_tab}node --test scripts/verify-hardening-checklist.test.mjs" "$makefile"
 require_line "${make_tab}node scripts/verify-hardening-checklist.mjs" "$makefile"
+require_line 'verify-personal-project-docs:' "$makefile"
+require_line "${make_tab}node --test scripts/verify-personal-project-docs.test.mjs" "$makefile"
+require_line "${make_tab}node scripts/verify-personal-project-docs.mjs" "$makefile"
 require_line "${make_tab}./deploy/supply-chain/verify-contract.sh" "$makefile"
 require_line "${make_tab}./deploy/supply-chain/test-contract.sh" "$makefile"
 
@@ -1354,7 +1603,9 @@ require_line "${make_tab}cd server && go vet ./..." "$makefile"
 require_line "${make_tab}cd server && go build ./..." "$makefile"
 require_line 'BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid' "$makefile"
 require_line "${make_tab}cd web && \$(BROWSER_SMOKE_ENV) npm run build" "$makefile"
-require_line '    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && node scripts/verify-production-javascript-bundles.mjs",' "$web_package_json"
+require_line '    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && npm run build:browser-preflight-check && node scripts/verify-production-javascript-bundles.mjs",' "$web_package_json"
+require_line '    "build:browser-preflight-check": "node scripts/verify-browser-preflight-build.mjs",' "$web_package_json"
+require_fixed '"browser-preflight.js",' "$repository_root/web/scripts/finalize-production-assets.mjs"
 ruby -rjson -e '
   scripts = JSON.parse(File.read(ARGV.fetch(0))).fetch("scripts")
   forbidden = %w[

@@ -473,7 +473,7 @@ abort "入口来源必须只访问业务 8080 与私有健康检查 8081" unless
 
 deployments.each do |deployment|
   labels = deployment.dig("spec", "template", "metadata", "labels")
-  abort "Pod 缺少公司日志管道审计标签" unless labels["slots-game.io/log-pipeline-provider"] == "company-node-log-pipeline"
+  abort "Pod 缺少外部日志管道审计标签" unless labels["slots-game.io/log-pipeline-provider"] == "company-node-log-pipeline"
 end
 web = deployments.find do |deployment|
   deployment.dig("metadata", "labels", "app.kubernetes.io/component") == "web"

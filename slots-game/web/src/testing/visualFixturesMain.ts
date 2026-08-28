@@ -1,7 +1,9 @@
 import "../style.css";
 import { AppController, type AppPresentationObserver } from "../app/AppController";
 import type { FeatureState } from "../app/state/types";
+import { AudioManager, type AudioBackend } from "../audio/AudioManager";
 import type { GameGateway } from "../protocol/GameGateway";
+import { configurePixiTextMetricsReadbackCanvas } from "../renderer/configurePixiTextMetricsReadbackCanvas";
 import {
   VISUAL_TELEMETRY_ENTRY_REQUIRED_IDS,
   type VisualTelemetryEvent,
@@ -15,6 +17,7 @@ import {
   RECOVERED_LEVEL_UP_VISUAL_FIXTURE_SCENARIO,
   type RecoveredVisualFixtureGateway,
 } from "./RecoveredVisualFixtureGateway";
+import { configurePixiContentSecurityPolicy } from "../startup/configurePixiContentSecurityPolicy";
 import {
   applyPass49RecoveredAcknowledgement,
   baseVaultUnlockCaptureEnvironmentViolation,
@@ -38,6 +41,7 @@ import {
   createVisualFixtureCheckpointHold,
   createVisualFixtureTelemetryProjectionState,
   isCapSummaryInputCheckpointCapture,
+  isFreeSpinsSummaryInputCheckpointHold,
   isNoSummaryTerminalCheckpointCapture,
   isNormalWinContinueClickTrigger,
   isPass48RageAuraCapture,
@@ -68,6 +72,7 @@ import {
   pass55WheelChestCaptureEnvironmentViolation,
   pass55WheelChestCheckpointElapsedMs,
   resolveVisualFixtureSemanticCheckpoint,
+  shouldProjectVisualFixtureTelemetryEvent,
   validatePass45SemanticCheckpoint,
   validatePass47SemanticCheckpoint,
   validatePass49RecoveredSemanticCheckpoint,
@@ -134,11 +139,40 @@ function observeFixtureFeatureStates(
   return observed;
 }
 
+/**
+ * 视觉夹具只验证可见表现与玩家输入门。它明确不覆盖音频解码或声画同步，
+ * 因而使用无 I/O 的非权威音频负责人，避免把浏览器音频编解码器能力误记为视觉玩法失败。
+ */
+function createPresentationOnlyFixtureAudioManager(): AudioManager {
+  const backend: AudioBackend = {
+    available: true,
+    state: "running",
+    prime: () => Promise.resolve(),
+    primeForLaunch: () => Promise.resolve(),
+    unlock: () => Promise.resolve(true),
+    setMuted: () => undefined,
+    playOneShot: () => undefined,
+    stopOneShot: () => undefined,
+    startLoop: () => undefined,
+    stopLoop: () => undefined,
+    suspend: () => Promise.resolve(),
+    destroy: () => undefined,
+  };
+  return new AudioManager({
+    backend,
+    storage: null,
+    visibilitySource: null,
+    focusSource: null,
+    initialMuted: true,
+  });
+}
+
 const body = document.body;
 const root = document.querySelector<HTMLElement>("#app");
 const searchParams = new URL(window.location.href).searchParams;
 const scenario = searchParams.get("scenario") ?? "";
 const capture = searchParams.get("capture");
+const freeSpinsSummaryHold = searchParams.get("freeSpinsSummaryHold");
 const checkpointQuery = searchParams.get("checkpoint");
 const run = searchParams.get("run");
 const PASS48_RAGE_AURA_SCENARIO = "base-rage-level-two-persistent-aura";
@@ -153,7 +187,12 @@ const checkpointCapture = isVisualFixtureCheckpointCapture(
   scenario,
   capture,
 );
+configurePixiContentSecurityPolicy();
+configurePixiTextMetricsReadbackCanvas();
+body.dataset.pixiCspMode = "static-uniform-sync";
 body.dataset.visualFixture = scenario;
+body.dataset.fixtureEvidenceScope = "presentation-only-no-rgs-settlement";
+body.dataset.fixtureAudioCovered = "false";
 body.dataset.fixtureStatus = "booting";
 body.dataset.fixtureRoundState = "idle";
 if (requestedCheckpoint) {
@@ -172,6 +211,7 @@ if (!isVisualFixtureScenario(scenario)) {
   let app: AppController | null = null;
   const assemblyController = new AbortController();
   let destroyed = false;
+  let tearingDown = false;
   let failureLocked = false;
   let normalWinContinueClickQueued = false;
   let checkpointHold: VisualFixtureCheckpointHold | null = null;
@@ -311,7 +351,7 @@ if (!isVisualFixtureScenario(scenario)) {
   const releaseCheckpointFromButton = (): void => {
     checkpointHold?.release();
   };
-  if (capture === "1") {
+  if (capture === "1" || freeSpinsSummaryHold === "1") {
     document.querySelector('[data-role="fixture-checkpoint-release"]')?.remove();
     const button = document.createElement("button");
     button.type = "button";
@@ -937,8 +977,9 @@ if (!isVisualFixtureScenario(scenario)) {
 
   const presentationObserver: AppPresentationObserver = {
     onVisualTelemetry: (event: Readonly<VisualTelemetryEvent>): void => {
-      if (destroyed) return;
+      if (!shouldProjectVisualFixtureTelemetryEvent(destroyed, tearingDown, event)) return;
       applyVisualFixtureTelemetryEvent(body.dataset, visualTelemetryState, event);
+      if (destroyed) return;
       if (applyPass47VisualTelemetryEvent(body.dataset, scenario, event)) {
         fail();
         return;
@@ -1110,11 +1151,19 @@ if (!isVisualFixtureScenario(scenario)) {
           checkpoint,
         ) ? checkpoint.type : null;
       } else if (!checkpointName && checkpoint.type === "bounded-gate-input-ready") {
-        checkpointName = isCapSummaryInputCheckpointCapture(
+        const capSummaryInputCapture = isCapSummaryInputCheckpointCapture(
           scenario,
           capture,
           checkpoint,
-        ) ? `${checkpoint.gate}.input-ready` : null;
+        );
+        const durableFreeSpinsSummaryHold = isFreeSpinsSummaryInputCheckpointHold(
+          scenario,
+          freeSpinsSummaryHold,
+          checkpoint,
+        );
+        checkpointName = capSummaryInputCapture || durableFreeSpinsSummaryHold
+          ? `${checkpoint.gate}.input-ready`
+          : null;
       } else if (!checkpointName
         && checkpoint.type === "presentation-trace"
         && isWinEffectsMatrixTraceCheckpoint(scenario, capture, checkpoint.trace)) {
@@ -1184,6 +1233,12 @@ if (!isVisualFixtureScenario(scenario)) {
           || scenario === "base-two-rage-no-wheel"
           || scenario === RECOVERED_LEVEL_UP_VISUAL_FIXTURE_SCENARIO
           || scenario === "base-one-rage-trigger-transform"
+          || (checkpoint.type === "bounded-gate-input-ready"
+            && isFreeSpinsSummaryInputCheckpointHold(
+              scenario,
+              freeSpinsSummaryHold,
+              checkpoint,
+            ))
           ? 60_000
           : 15_000,
       );
@@ -1196,6 +1251,8 @@ if (!isVisualFixtureScenario(scenario)) {
 
   const destroy = (): void => {
     if (destroyed) return;
+    const appWasActive = app !== null;
+    const activeApp = app;
     destroyed = true;
     assemblyController.abort(new Error("Visual fixture was disposed"));
     checkpointHold?.release();
@@ -1218,8 +1275,21 @@ if (!isVisualFixtureScenario(scenario)) {
     window.removeEventListener("unhandledrejection", handleUnhandledRejection);
     window.removeEventListener("pagehide", destroy);
     if (console.error === fixtureConsoleError) console.error = originalConsoleError;
-    app?.setCharacterIntroCapturePaused(false);
-    app?.destroy();
+    activeApp?.setCharacterIntroCapturePaused(false);
+    tearingDown = true;
+    try {
+      activeApp?.destroy();
+    } finally {
+      tearingDown = false;
+    }
+    const destroyedStreamingAssets = activeApp?.getDestroyedStreamingAssetDiagnostics() ?? null;
+    const retainedPayloadBytesAfterDestroy =
+      destroyedStreamingAssets?.retainedPayloadBytes ?? -1;
+    const activeVisualCountAfterDestroy =
+      activeApp?.getDestroyedVisualTelemetryActiveCount() ?? -1;
+    const activeVisualProjectionCountAfterDestroy =
+      visualTelemetryState.activeVisualOperations.size;
+    app = null;
     delete body.dataset.fixtureEvent;
     delete body.dataset.fixtureMilestone;
     delete body.dataset.fixtureMilestones;
@@ -1231,6 +1301,8 @@ if (!isVisualFixtureScenario(scenario)) {
     delete body.dataset.fixtureVisualOperation;
     delete body.dataset.fixtureVisualLoadedCount;
     delete body.dataset.fixtureVisualActiveCount;
+    delete body.dataset.fixtureVisualActiveIds;
+    delete body.dataset.fixtureVisualActiveOperations;
     delete body.dataset.fixtureVisualFailureCount;
     delete body.dataset.fixtureVisualFailureCode;
     delete body.dataset.fixtureVisualFailureKind;
@@ -1291,6 +1363,16 @@ if (!isVisualFixtureScenario(scenario)) {
     clearVisualFixtureVault(body.dataset);
     clearVisualFixtureCompletion(body.dataset);
     clearVisualFixturePresentationBranches(body.dataset);
+    body.dataset.fixtureDestroyAppDisposed = String(appWasActive);
+    body.dataset.fixtureDestroyCanvasCount = String(root.querySelectorAll("canvas").length);
+    body.dataset.fixtureDestroyRetainedPayloadBytes = String(retainedPayloadBytesAfterDestroy);
+    body.dataset.fixtureDestroySpinCount = String(
+      root.querySelectorAll('[data-role="spin"]').length,
+    );
+    body.dataset.fixtureDestroyVisualActiveCount = String(activeVisualCountAfterDestroy);
+    body.dataset.fixtureDestroyVisualProjectionActiveCount = String(
+      activeVisualProjectionCountAfterDestroy,
+    );
     body.dataset.fixtureStatus = "destroyed";
   };
 
@@ -1353,6 +1435,7 @@ if (!isVisualFixtureScenario(scenario)) {
       app = await AppController.create(root, {
         gateway,
         presentationObserver,
+        audioManager: createPresentationOnlyFixtureAudioManager(),
         skipFeaturePreview: true,
         vaultUnlockCaptureEnabled: pass52VaultUnlockCaptureEnabled,
         characterCollectRandomSource: scenario === "base-single-rage-no-wheel"
@@ -1492,6 +1575,9 @@ if (!isVisualFixtureScenario(scenario)) {
       perspectiveDiagnosticsTimer = window.setInterval(publishPerspectiveDiagnostics, 250);
     } catch (error) {
       if (destroyed || assemblyController.signal.aborted) return;
+      body.dataset.fixtureStartupError = error instanceof Error
+        ? `${error.name}:${error.message}`.slice(0, 512)
+        : "Unknown visual fixture startup error";
       fail();
       root.textContent = "Visual fixture failed to start.";
       originalConsoleError.call(console, error);

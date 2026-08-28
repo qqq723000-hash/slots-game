@@ -1,5 +1,5 @@
 variable "contract_version" {
-  description = "企业落地区接口版本"
+  description = "外部运行环境接口版本"
   type        = string
   default     = "1.0.0"
 }
@@ -507,7 +507,7 @@ variable "regional_acm_certificate_arn" {
 }
 
 variable "alb_access_log_bucket_name" {
-  description = "企业落地区批准的 ALB access log S3 bucket 名称；legacy ALB 日志使用 SSE-S3"
+  description = "采用方批准的 ALB access log S3 bucket 名称；legacy ALB 日志使用 SSE-S3"
   type        = string
 
   validation {
@@ -550,7 +550,7 @@ variable "cloudfront_waf_rate_rule_rollout" {
 }
 
 variable "cloudfront_waf_managed_rule_rollout" {
-  description = "CloudFront global WAF managed rules 的 Count→Block 企业交接状态"
+  description = "CloudFront global WAF managed rules 的 Count→Block 采用方交接状态"
   type = object({
     action             = string
     evidence_reference = string

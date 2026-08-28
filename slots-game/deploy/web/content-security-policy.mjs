@@ -3,9 +3,15 @@
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
+export const LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE =
+  "'sha256-vUs+nbdxmdqOL3f/mZqTupLfHkYf373z+iYtj/+kHtM='";
+
 const BASE_POLICY_SPECIFICATION = Object.freeze([
   Object.freeze(["default-src", Object.freeze(["'self'"])]),
-  Object.freeze(["script-src", Object.freeze(["'self'"])]),
+  Object.freeze(["script-src", Object.freeze([
+    "'self'",
+    LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE,
+  ])]),
   Object.freeze(["style-src", Object.freeze(["'self'", "'unsafe-inline'"])]),
   Object.freeze(["img-src", Object.freeze(["'self'", "data:", "blob:"])]),
   Object.freeze(["font-src", Object.freeze(["'self'"])]),

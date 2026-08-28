@@ -1,8 +1,13 @@
 # AWS 正式交付契约
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 本目录把通用 Helm Chart 收敛为 AWS 正式环境的可执行发布边界，它不提交 Secret。应用专属的
 VPC、EKS、RDS、Valkey、ECR、Secrets Manager 元数据、S3、CloudFront、KMS、IAM、AMP、CloudWatch、
-API regional WAF 和备份资源由 `infra/terraform` 创建；企业平台仓库提供账号、部署身份、state、
+API regional WAF 和备份资源由 `infra/terraform` 创建；采用方平台仓库提供账号、部署身份、state、
 DNS/证书、CloudFront global WAF 与组织级安全能力。
 
 ```text
@@ -57,7 +62,7 @@ AWS 正式交付
 
 ## 必须保持的边界
 
-ALB access log bucket 与环境 prefix 是企业落地区受保护输入，必须由 delivery 精确传递到 Ingress 和实际
+ALB access log bucket 与环境 prefix 是采用方 AWS 基础环境的受保护输入，必须由 delivery 精确传递到 Ingress 和实际
 ALB 属性；legacy ALB access logs 使用 AWS 支持的 SSE-S3 边界，本仓库不会错误要求该日志目标使用 KMS。
 
 1. `web.enabled=false`。Web 制品发布到私有 S3，CloudFront 只能通过 OAC 读取，并由 release ID

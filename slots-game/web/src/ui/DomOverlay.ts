@@ -788,9 +788,6 @@ const PRIMAL_REFERENCE_ROOT = publicAssetUrl("assets/primal-reference");
 const PRIMAL_PAYTABLE_ATLAS = publicAssetUrl(
   "assets/primal-runtime/mobile/interface/paytable/paytable_mobile_texture0_level2.avif",
 );
-const POWERED_BY_GM_GO = publicAssetUrl("assets/brand/powered-by-gm-go.png");
-const STATUSBAR_GM_GO = publicAssetUrl("assets/brand/statusbar-gm-go.png");
-
 interface OfficialHelpBox {
   readonly left: number;
   readonly top: number;
@@ -1367,8 +1364,8 @@ export function officialHelpProjectionGeometry(
 }
 
 /**
- * 原版 PC UI 归一到本项目 1280×720 舞台的验收几何。信息行来自 1600×900
- * 捕获的 0.8 投影；状态栏以原版 1280×720 live 底部裁片为准。
+ * PC UI 归一到本项目 1280×720 舞台的验收几何。信息行来自 1600×900
+ * 参考基线的 0.8 投影；状态栏以 1280×720 验收底部裁片为准。
  */
 export const PRIMAL_DESKTOP_UI_GEOMETRY = Object.freeze({
   stageScale: 0.8,
@@ -1409,8 +1406,6 @@ const JACKPOT_TIERS = [
 ] as const;
 
 const STATIC_IMAGE_SOURCES = Object.freeze({
-  "powered-by": POWERED_BY_GM_GO,
-  "statusbar-provider": STATUSBAR_GM_GO,
   "preview-logo": `${PRIMAL_REFERENCE_ROOT}/primal-rampage-logo.png`,
   "preview-wheel": `${PRIMAL_REFERENCE_ROOT}/10026.png`,
   "preview-reels": `${PRIMAL_REFERENCE_ROOT}/10025.png`,
@@ -2039,9 +2034,9 @@ export class DomOverlay {
     mountReviewedDomOverlayShell(host, `
       <div class="launch-loading" data-role="launch-loading" aria-live="polite">
         <div class="launch-loading__mark" aria-hidden="true">
-          <img data-static-image="powered-by" alt="" />
+          <span class="launch-loading__monogram">PR</span>
         </div>
-        <span class="launch-loading__brand">Powered by G'm GO</span>
+        <span class="launch-loading__brand">Independent developer</span>
         <span class="launch-loading__status" data-role="loading-status">Loading game resources</span>
         <div
           class="launch-loading__track"
@@ -2115,13 +2110,7 @@ export class DomOverlay {
             aria-label="Mute sound"
             aria-pressed="false"
           ><img data-static-image="sound-control" alt="" aria-hidden="true" /></button>
-          <img
-            class="launcher-powered-by"
-            data-static-image="powered-by"
-            alt="Powered by G'm GO"
-            role="img"
-            aria-label="Powered by G'm GO"
-          />
+          <p class="launcher-independent">Independent developer build</p>
         </div>
       </section>
 
@@ -2401,7 +2390,7 @@ export class DomOverlay {
           outline-offset: 2px;
         }
         .autoplay-modal .autoplay-stop-toggle:disabled,
-        .autoplay-modal .autoplay-stop-condition:has(input:disabled) {
+        .autoplay-modal .autoplay-stop-condition.is-disabled {
           cursor: not-allowed;
           opacity: 0.48;
         }
@@ -2557,12 +2546,7 @@ export class DomOverlay {
         data-game-name-visible="false"
         aria-label="Round values"
       >
-        <img
-          class="status-panel__provider"
-          data-static-image="statusbar-provider"
-          alt="G'm GO"
-          draggable="false"
-        />
+        <span class="status-panel__identity" aria-label="Independent developer">INDIE</span>
         <div class="status-metric status-metric--balance">
           <span class="status-metric__label">Balance:&#32;</span>
           <strong data-role="balance">—</strong>
@@ -4232,7 +4216,10 @@ export class DomOverlay {
       ? `Autoplay active · ${this.autoplayRemaining} spins remaining`
       : `${this.autoplayCount} spins selected`;
     this.autoplayStopToggle.disabled = active;
-    for (const input of this.autoplayStopInputs) input.disabled = active;
+    for (const input of this.autoplayStopInputs) {
+      input.disabled = active;
+      input.closest(".autoplay-stop-condition")?.classList.toggle("is-disabled", active);
+    }
     for (const option of this.autoplayOptions.querySelectorAll<HTMLButtonElement>("[data-autoplay-count]")) {
       option.disabled = active;
     }

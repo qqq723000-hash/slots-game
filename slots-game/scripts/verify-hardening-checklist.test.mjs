@@ -6,6 +6,7 @@ import {
   HARDENING_CHECKLIST_TITLE,
   validateHardeningChecklist,
 } from "./verify-hardening-checklist.mjs";
+import { PERSONAL_PROJECT_NOTICE } from "./verify-personal-project-docs.mjs";
 
 function fixture(itemsPerSection = 1) {
   const lines = [HARDENING_CHECKLIST_TITLE, ""];
@@ -23,6 +24,16 @@ test("accepts the exact ordered section topology and names-only entries", () => 
   const source = fixture(2);
   assert.deepEqual(
     validateHardeningChecklist(source, { minimumItems: HARDENING_CHECKLIST_SECTIONS.length * 2 }),
+    { sections: HARDENING_CHECKLIST_SECTIONS.length, items: HARDENING_CHECKLIST_SECTIONS.length * 2 },
+  );
+  const withPersonalProjectNotice = source.replace(
+    `${HARDENING_CHECKLIST_TITLE}\n\n`,
+    `${HARDENING_CHECKLIST_TITLE}\n\n${PERSONAL_PROJECT_NOTICE}\n\n`,
+  );
+  assert.deepEqual(
+    validateHardeningChecklist(withPersonalProjectNotice, {
+      minimumItems: HARDENING_CHECKLIST_SECTIONS.length * 2,
+    }),
     { sections: HARDENING_CHECKLIST_SECTIONS.length, items: HARDENING_CHECKLIST_SECTIONS.length * 2 },
   );
 });

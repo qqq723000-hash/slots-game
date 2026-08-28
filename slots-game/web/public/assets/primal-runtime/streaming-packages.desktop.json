@@ -4,7 +4,7 @@
   "packages": [
     {
       "id": "desktop-startup-shell",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "startup-shell",
       "resources": [
         {
@@ -19,13 +19,6 @@
           "url": "/assets/primal-runtime/interface/fps_ui_texture0_level1.avif",
           "bytes": 4551,
           "sha256": "5b747c648976e16234b84784ae48cde337ed336b605e843af0f45a819033fe0c",
-          "decoder": "binary"
-        },
-        {
-          "id": "desktop:shell:shared:powered-by-playngo",
-          "url": "/assets/primal-runtime/interface/powered-by-playngo.png",
-          "bytes": 13543,
-          "sha256": "7a532e8cd7c23f44e54497b3d4dada97f0ad282a524df80b76d83bf107acf5db",
           "decoder": "binary"
         },
         {
@@ -67,7 +60,7 @@
     },
     {
       "id": "desktop-spine-fps-shared",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "startup-shell",
       "resources": [
         {
@@ -95,7 +88,7 @@
     },
     {
       "id": "desktop-spine-fps-base",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "startup-shell",
       "dependsOn": [
         "desktop-spine-fps-shared"
@@ -112,7 +105,7 @@
     },
     {
       "id": "desktop-spine-background-shared",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "base-critical",
       "resources": [
         {
@@ -140,7 +133,7 @@
     },
     {
       "id": "desktop-spine-background-base",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "base-critical",
       "dependsOn": [
         "desktop-spine-background-shared"
@@ -164,7 +157,7 @@
     },
     {
       "id": "desktop-spine-symbols-shared",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "base-critical",
       "resources": [
         {
@@ -199,7 +192,7 @@
     },
     {
       "id": "desktop-spine-symbols-base",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "base-critical",
       "dependsOn": [
         "desktop-spine-symbols-shared"
@@ -300,7 +293,7 @@
     },
     {
       "id": "desktop-spine-ui-shared",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "base-critical",
       "resources": [
         {
@@ -328,7 +321,7 @@
     },
     {
       "id": "desktop-spine-ui-base",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "base-critical",
       "dependsOn": [
         "desktop-spine-ui-shared"
@@ -387,7 +380,7 @@
     },
     {
       "id": "desktop-interaction-visuals",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "interaction-ready",
       "dependsOn": [
         "desktop-spine-ui-shared"
@@ -425,7 +418,7 @@
     },
     {
       "id": "desktop-feature-wheel",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "feature-on-demand",
       "dependsOn": [
         "desktop-spine-ui-shared",
@@ -492,7 +485,7 @@
     },
     {
       "id": "desktop-feature-free-spins",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "feature-on-demand",
       "dependsOn": [
         "desktop-spine-ui-shared",
@@ -538,7 +531,7 @@
     },
     {
       "id": "desktop-feature-big-win",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "feature-on-demand",
       "dependsOn": [
         "desktop-spine-ui-shared"
@@ -576,7 +569,7 @@
     },
     {
       "id": "desktop-interaction-audio",
-      "version": "iron-colossus-runtime-2026.08+d7774c2910eee4e5",
+      "version": "iron-colossus-runtime-2026.08+8fc88ac6e0bdf514",
       "stage": "interaction-ready",
       "resources": [
         {
@@ -611,56 +604,56 @@
           "id": "desktop:audio:sounds-desktop-0",
           "url": "/assets/primal-runtime/audio/sounds_desktop_0.json",
           "bytes": 1531,
-          "sha256": "258ddce3ba7267a270bc7b8762f4cf5d88ffa79b48c0989d31ff370577f2c712",
+          "sha256": "3f18fa2c5e5f775a0ba1f1554f3281a858daca629c08643c05d0e518cf16572a",
           "decoder": "json"
         },
         {
           "id": "desktop:audio:sounds-desktop-1",
           "url": "/assets/primal-runtime/audio/sounds_desktop_1.json",
           "bytes": 5380,
-          "sha256": "f3d93e67238c509470672d6258e65bed62ef3be2871f1facea9d8be0ddd95bf4",
+          "sha256": "67f6ad8d76e7e40741f15d6ae1fa037b1bdef66059272bd81067bc2413b2e1f8",
           "decoder": "json"
         },
         {
           "id": "desktop:audio:sounds-desktop-2",
           "url": "/assets/primal-runtime/audio/sounds_desktop_2.json",
           "bytes": 2014,
-          "sha256": "cfb928f40dec1b71b9157e6cef752051247419e94d217347d6b85226df45ab6a",
+          "sha256": "38802572c341dc074330b5f7bcd6e3a65ee56109b63beec4fa97346421396d84",
           "decoder": "json"
         },
         {
           "id": "desktop:audio:snd-delayed-desktop-0",
           "url": "/assets/primal-runtime/audio/snd_delayed_desktop_0.json",
           "bytes": 2269,
-          "sha256": "6b3dbf937ff98a391badb9d658ac7aae7d6232b58401fa6066be66fb0a9b541d",
+          "sha256": "771905807ecbdab323087c9053df9310f2bdd6c09bb478163b9e4b6f13be93d6",
           "decoder": "json"
         },
         {
           "id": "desktop:audio:sounds-0",
           "url": "/assets/primal-runtime/audio/sounds_desktop_0.m4a",
-          "bytes": 2764387,
-          "sha256": "8ffe927ae1aa4e54cfcc09bdb23d603ceee593094a879ee0883576845864e999",
+          "bytes": 2771322,
+          "sha256": "df637af8ce1f29d26397c2231b514cbf024508ac239bf0c27f614f70da938814",
           "decoder": "binary"
         },
         {
           "id": "desktop:audio:sounds-1",
           "url": "/assets/primal-runtime/audio/sounds_desktop_1.m4a",
-          "bytes": 2290735,
-          "sha256": "027cc655c2bb52b188a25cec0c166c4a39ae18a6542bd469343c347a5ac80140",
+          "bytes": 2297670,
+          "sha256": "d7017e7580a0e9c3a736c3065dcf67e3eafd9e8d07eef9a631b93a05b67e15e2",
           "decoder": "binary"
         },
         {
           "id": "desktop:audio:sounds-2",
           "url": "/assets/primal-runtime/audio/sounds_desktop_2.m4a",
-          "bytes": 1225925,
-          "sha256": "46c2478619cae2f349f9807643178d8298d134d7b25fd0eb1a89ffab31f2a459",
+          "bytes": 1229748,
+          "sha256": "1ac8efb9ed96f1642fffcfdd3d6ec9ff5c4f6541fd1f3091318f78d902470a27",
           "decoder": "binary"
         },
         {
           "id": "desktop:audio:snd-delayed-0",
           "url": "/assets/primal-runtime/audio/snd_delayed_desktop_0.m4a",
-          "bytes": 316676,
-          "sha256": "4e4f0823adf37f304dad941ce3b0c34b4cf8e1f9e1d6aa85000928c5e1528080",
+          "bytes": 318515,
+          "sha256": "c886dd2ff652096ad3834e7dacb798d93f44f823d19475629b3f8be83c63957f",
           "decoder": "binary"
         },
         {

@@ -1,12 +1,17 @@
 # AWS 正式生产部署
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 状态：正式环境实施与验收手册
 
 前置阅读：[AWS 正式生产架构](aws-production-architecture.md)、
 [DDoS 威胁模型与边缘门禁](ddos-threat-model.md)
 
-本文描述如何把本仓库交付到公司 AWS 正式环境。仓库已包含 `infra/terraform` 应用专属 IaC，
-但源码存在不代表目标账号已经创建资源；开发者电脑也不得保存正式凭据。企业落地区先提供账号、
+本文描述如何把本仓库交付到采用方 AWS 目标环境。仓库已包含 `infra/terraform` 应用专属 IaC，
+但源码存在不代表目标账号已经创建资源；开发者电脑也不得保存正式凭据。采用方 AWS 基础环境先提供账号、
 state/部署身份、DNS/证书、CloudFront global WAF 和组织级安全边界，再由受保护流水线评审并应用
 本仓库 IaC（包括 API regional WAF）、不可变
 制品与 Helm，最后以真实云资源和验收证据确认交付。
@@ -26,7 +31,7 @@ state/部署身份、DNS/证书、CloudFront global WAF 和组织级安全边界
 
 ## 2. 必填部署输入
 
-平台团队应把下列非秘密标识写入变更单或环境配置仓库；秘密值只保存在 Secrets Manager。
+采用方平台责任角色应把下列非秘密标识写入变更单或环境配置仓库；秘密值只保存在 Secrets Manager。
 
 | 类别 | 必填输入 | 验证要求 |
 | --- | --- | --- |
@@ -65,7 +70,7 @@ configuration，但不把应用发布 SHA 当作 evidence SHA，也不把历史�
 
 ### 3.1 账号、审计与身份
 
-由企业落地区基础设施即代码先创建：
+采用方先通过 AWS 基础环境的基础设施即代码创建：
 
 - 正式工作负载账号、日志归档账号和安全/备份账号；
 - 组织 CloudTrail、AWS Config、GuardDuty/Security Hub/Inspector 接入与集中日志；
@@ -87,7 +92,7 @@ EKS API endpoint 开放到 `0.0.0.0/0`，也不得把长期 kubeconfig 保存为
 plan，不能在部署阶段重新计划。源码或本地 `validate` 通过不等于目标账号已创建资源。
 
 在 3 个可用区创建公有边缘、私有应用和隔离数据子网。正式 EKS 节点与 RDS 不分配公网地址；EKS
-API endpoint 使用私有访问，或使用私有访问加受限公司出口 CIDR。按实际调用路径建立 ECR、S3、
+API endpoint 使用私有访问，或使用私有访问加受限采用方出口 CIDR。按实际调用路径建立 ECR、S3、
 STS/EKS 身份、Secrets Manager、KMS、CloudWatch 等 VPC endpoint。
 
 若正式钱包/审计必须经公网访问，应在每个活动可用区提供 NAT Gateway，或使用经过单区故障验证的
@@ -106,7 +111,7 @@ RGS 节点路径访问指定端口。钱包或审计地址动态变化时，先�
 
 - 跨 3 个可用区的数据面，每区有 RGS 基线副本和一次滚动 surge 的余量；
 - AWS Load Balancer Controller、CoreDNS、Metrics Server 和支持 NetworkPolicy 的 CNI；
-- 公司批准的 Secrets Manager → 原生 Kubernetes Secret 同步控制器；
+- 采用方批准的 Secrets Manager → 原生 Kubernetes Secret 同步控制器；
 - Prometheus Operator 的 `ServiceMonitor`/`PrometheusRule` CRD；
 - Prometheus Agent 或 ADOT、CloudWatch Observability EKS add-on；
 - Pod Identity agent 和每个控制器/工作负载的独立 IAM role；
@@ -118,7 +123,7 @@ Secret 同步、日志、指标和负载均衡控制器分别使用自己的最�
 
 ### 3.4 正式运营商控制面
 
-正式管理员入口不是静态 Web，也不是 `local-operator`。运营商集成团队必须提供服务端控制面：
+正式管理员入口不是静态 Web，也不是 `local-operator`。采用方指定的外部运营集成责任角色必须提供服务端控制面：
 
 ```text
 运营管理员
@@ -136,7 +141,7 @@ SSO 会话、越权、重放、nonce、签名、一次性消费、审计和撤�
 
 ## 4. ECR 与供应链
 
-为 `rgs-runtime` 和 `rgs-migrator` 建立独立或有明确路径边界的 ECR repository。只有公司决定保留
+为 `rgs-runtime` 和 `rgs-migrator` 建立独立或有明确路径边界的 ECR repository。只有采用方决定保留
 非 AWS 集群/容器回退制品时，才需要可移植 Web 容器 repository；AWS 正式 Web 仍以 S3 release
 为准。
 
@@ -216,7 +221,7 @@ ServiceMonitor Bearer、文件权限和轮换行为。发布编排必须等待�
 - 轮换通过创建新版本名称、更新 values 和协调滚动完成，不原地覆盖。
 
 ALB 与 CloudFront 的公开证书由 ACM 管理。数据库、钱包和审计的私有 CA 作为精确 trust bundle
-注入，不得把公司所有内部根或 CA 私钥挂入 Pod。
+注入，不得把采用方所有内部根或 CA 私钥挂入 Pod。
 
 ## 7. Web 发布到 S3 与 CloudFront
 
@@ -414,7 +419,7 @@ Helm 成功不等于排空完成：发布系统必须保存渲染 diff，并等�
 
 建议的正式流量阶段如下，每阶段都有明确观察窗口和停止条件：
 
-1. `0%`：只允许合成探针和公司验收身份；验证迁移、Secret、监控、日志与网络策略。
+1. `0%`：只允许合成探针和采用方验收身份；验证迁移、Secret、监控、日志与网络策略。
 2. 内部白名单：执行真实启动、旋转、展示 ACK、钱包未知结果、审计积压和 Pod 驱逐。
 3. WAF 观测：managed、aggregate header 和 per-IP rate 保持 Count，覆盖正常高峰、运营商出口、
    移动 NAT/CGNAT 与营销画像；审查误杀、合法流量存活率、规则版本和源站余量。
@@ -469,7 +474,7 @@ Helm 成功不等于排空完成：发布系统必须保存渲染 diff，并等�
 - RGS/migrator OCI digest、Web OCI digest/release ID、资源清单、SBOM、provenance、签名；
 - Web `CONFIGURATION_SHA256`、规范化素材审批元数据摘要/有效期、CloudFront CSP SHA-256 与 policy ID/ETag；
 - 游戏定义版本/哈希、定义审批、运营商/钱包一致性引用；
-- 本仓库应用 IaC 与企业落地区 IaC commit、保存 plan/apply 记录、Helm values 非秘密摘要、rendered manifest 与 diff；
+- 本仓库应用 IaC 与采用方 AWS 基础环境 IaC commit、保存 plan/apply 记录、Helm values 非秘密摘要、rendered manifest 与 diff；
 - Secret version ARN 和证书 ARN，仅保存标识，不保存值；
 - 迁移报告、部署事件、放量曲线、告警/日志/故障演练结果；
 - 回退决定点、数据库恢复点和发布后观察结论。

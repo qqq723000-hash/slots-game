@@ -707,7 +707,7 @@ export class ReelView extends Container {
     const exploded = symbol.playExplosionAnimation();
     let rageShown = true;
     if (transformsToRage) {
-      // 原版的每个卷轴都有一个可移动的覆盖层。因此，该卷轴上后来转换的行会移动/重新启动同一视图。
+      // 每个卷轴都有一个可移动的覆盖层。因此，该卷轴上后来转换的行会移动/重新启动同一视图。
       this.rageCascadeOverlay.position.set(
         this.symbolOffsetX,
         this.layoutTopOffset + row * this.layoutCellHeight,

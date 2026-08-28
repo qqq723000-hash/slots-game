@@ -185,7 +185,7 @@ export function enforceAnticipationAdditiveSlots(view: Spine | null): number {
     const attachment = slot.getAttachment() as null | {
       region?: null | { name?: string };
     };
-    // Play'n GO 的图集导出器对区域路径中的素材进行编码。此序列的二进制槽元数据为 NORMAL，
+    // 资产图集通过区域路径编码叠加材质。此序列的二进制槽元数据为 NORMAL，
     // 因此仅检查 slot.data.blendMode 会将不透明的 RGB 页面公开为黑色矩形。
     const atlasBlend = attachment?.region?.name?.startsWith("add/")
       ? BLEND_MODES.ADD

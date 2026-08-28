@@ -96,6 +96,26 @@ function cadenceSnapshot(timestamps: readonly number[]): Record<string, unknown>
 }
 
 describe("production browser transaction fixture", () => {
+  it("can bind the same strict transaction to an approved presentation definition", () => {
+    const approved = {
+      gameId: "iron-colossus",
+      definitionVersion: "approved-browser-matrix-v1",
+      definitionHash: "9".repeat(64),
+    };
+    const fixture = createControlledRgsTransactionFixture({ ...baseOptions, ...approved });
+    const response = fixture.responseForPausedRequest(paused(
+      "https://rgs.ci.invalid/client/v1/sessions/exchange",
+      "POST",
+      {
+        launchCode: baseOptions.launchCode,
+        operatorId: baseOptions.operatorId,
+        sessionId: baseOptions.sessionId,
+      },
+    ));
+    expect((decodedBody(response).data as { session: Record<string, unknown> }).session)
+      .toMatchObject(approved);
+  });
+
   it("requires the exact exchange, spin and result acknowledgement order", () => {
     const fixture = createControlledRgsTransactionFixture(baseOptions);
     const root = "https://rgs.ci.invalid/client/v1";

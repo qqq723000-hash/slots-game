@@ -1,6 +1,11 @@
-# 公司集群生产部署
+# 采用方目标集群部署
 
-本目录交付可审计的 Kubernetes/Helm 生产部署源码，只包含 RGS API、RGS Worker、静态 Web、一次性数据库迁移器及它们的最小运行配置。它不会部署 `local-operator`、本机 PostgreSQL、演示钱包或本机观测组件；数据库、钱包、审计接收端、入口网关、密钥系统和监控系统都必须由公司平台提供。
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+本目录交付可审计的 Kubernetes/Helm 生产部署源码，只包含 RGS API、RGS Worker、静态 Web、一次性数据库迁移器及它们的最小运行配置。它不会部署 `local-operator`、本机 PostgreSQL、演示钱包或本机观测组件；数据库、钱包、审计接收端、入口网关、密钥系统和监控系统都必须由采用方平台提供。
 
 ## 横向扩展结论
 
@@ -59,9 +64,9 @@ Chart 默认提供：
 6. 支持 `networking.k8s.io/v1` Ingress、TLS Secret、强制 HTTP 到 HTTPS 跳转，以及 WAF/连接/IP
    粗粒度容量保护的入口网关；入口网关不代替已验证身份的精确共享准入。
 7. 外部高可用 PostgreSQL、TLS/ACL Valkey、外部钱包和外部幂等审计接收端；四类目标的稳定出口
-   CIDR 必须已由网络团队确认。
+   CIDR 必须已由采用方网络责任角色确认。
 8. 外部密钥系统同步出的原生 Kubernetes Secret。Chart 不生成或回显秘密；共享准入的活动 ACL username 通过 `SecretKeyRef` 注入，password、HMAC 与根证书由同摘要、非 root 的初始化工具复制到 Memory `emptyDir` 并收窄为 `0400`，RGS 主进程只读取收窄后的绝对路径。
-9. 公司节点级日志管道：采集容器 stdout/stderr、在节点侧脱敏、有界缓冲、集中归档，并对丢弃、积压和归档失败告警。Chart 不部署本机 Vector，也不会伪造这项平台能力。
+9. 采用方节点级日志管道：采集容器 stdout/stderr、在节点侧脱敏、有界缓冲、集中归档，并对丢弃、积压和归档失败告警。Chart 不部署本机 Vector，也不会伪造这项平台能力。
 
 ## 镜像构建契约
 
@@ -93,7 +98,7 @@ docker buildx build --platform linux/amd64 \
 
 Web 必须用 [`deploy/web/Dockerfile`](../web/Dockerfile) 的 `runtime` target 构建，并传入与 `ingress.apiHost`、`ingress.webHost` 完全相同的公开 origin 及外部素材批准 Secret。Chart 无法在运行时改写已经编译进 Web 的 RGS URL 或 CSP；把错误域名的镜像交给 Chart 会被视为发布物错误，而不是运行时配置问题。
 
-当前 Web 的 JS/CSS 构建产物使用内容哈希，但 `public` 中仍有稳定路径素材。普通 RollingUpdate 会让新旧 Pod 在同一 Service 后短时共存，浏览器可能跨版本取得这些稳定路径，因此 Web 升级还必须由平台蓝绿发布或带 release ID 前缀的版本隔离 CDN 承担；在所有稳定路径完成内容寻址前，不得把原生滚动参数当成 Web 无串版证明。`externalControls.webVersionIsolationProvider` 是必填机器门禁，并会写入 Web Deployment、Pod 与 Ingress 审计标签；它必须填写经过发布评审的真实蓝绿/CDN 提供方，不能使用占位值。RGS Deployment 也只有在数据库模式与数学定义完全相同时才能正常滚动，Web Deployment 中保留的滚动参数只用于具备上述版本隔离能力的平台。若公司发布平台尚未提供版本隔离，本项是上线阻断，不得以手工观察替代。
+当前 Web 的 JS/CSS 构建产物使用内容哈希，但 `public` 中仍有稳定路径素材。普通 RollingUpdate 会让新旧 Pod 在同一 Service 后短时共存，浏览器可能跨版本取得这些稳定路径，因此 Web 升级还必须由平台蓝绿发布或带 release ID 前缀的版本隔离 CDN 承担；在所有稳定路径完成内容寻址前，不得把原生滚动参数当成 Web 无串版证明。`externalControls.webVersionIsolationProvider` 是必填机器门禁，并会写入 Web Deployment、Pod 与 Ingress 审计标签；它必须填写经过发布评审的真实蓝绿/CDN 提供方，不能使用占位值。RGS Deployment 也只有在数据库模式与数学定义完全相同时才能正常滚动，Web Deployment 中保留的滚动参数只用于具备上述版本隔离能力的平台。若采用方发布平台尚未提供版本隔离，本项是上线阻断，不得以手工观察替代。
 
 镜像推送后，把注册表返回的 manifest digest 写入 `values`。禁止使用示例中的重复数字摘要部署真实环境。
 
@@ -109,17 +114,17 @@ Web 必须用 [`deploy/web/Dockerfile`](../web/Dockerfile) 的 `runtime` target 
 | `externalSecrets.sharedAdmission.name` | 只包含 Valkey ACL password、用于键摘要的 32 字节 base64 HMAC 密钥和精确根 CA；由 `/secret-materializer` 复制到内存卷后，主进程仅从 `0400` 绝对路径读取。不得放入 URL、环境变量或 Worker。 |
 | `externalSecrets.apiRuntimeAssets.name` | API 使用的定义、批准、公钥、operators v2 文档、launch HMAC、组合系统信任包，以及 API 所需的钱包/运营商密钥。 |
 | `externalSecrets.workerRuntimeAssets.name` | Worker 使用的定义、批准、公钥、钱包请求/响应密钥、outbox HMAC/Bearer/根 CA 与组合系统信任包；禁止包含 launch HMAC、访问令牌签发私钥、运营请求验证材料或运营响应签名私钥。 |
-| `ingress.apiTLSSecretName` / `webTLSSecretName` | 由 cert-manager 或公司证书系统管理的两个独立 TLS Secret。 |
+| `ingress.apiTLSSecretName` / `webTLSSecretName` | 由 cert-manager 或采用方证书系统管理的两个独立 TLS Secret。 |
 
 六个 Secret 名称必须互不相同：runtime 数据库、迁移数据库、operations Bearer、共享准入凭据、API 运行资产、Worker 运行资产。两个运行资产对象的 `keys` 把固定 Secret key 映射为固定容器路径；各自的 `additionalItems` 是唯一允许投影 operators v2 引用文件的白名单。`path` 可以使用 `keys/name.pem`，但禁止绝对路径、隐藏段和 `..`。API 最小集合包含访问令牌签名、运营请求验证、运营响应签名和钱包请求/响应材料；Worker 只保留钱包请求签名与钱包响应验证材料。Worker 运行时不加载 launch HMAC、访问令牌签发私钥、运营请求验证材料或运营响应签名私钥，即使误投影也不应把它们视为 Worker 可用能力。
 
-`trust-bundle.pem` 必须是公司审核的组合 CA bundle，既包含系统公开根，也包含钱包私有 PKI 根。RGS 通过 `SSL_CERT_FILE` 使用它。审计接收端另用 `outbox-root-ca.pem` 精确建池；若开启 `audit.mtls.enabled`，还必须在同一 Secret 提供独立客户端证书和私钥。
+`trust-bundle.pem` 必须是采用方审核的组合 CA bundle，既包含系统公开根，也包含钱包私有 PKI 根。RGS 通过 `SSL_CERT_FILE` 使用它。审计接收端另用 `outbox-root-ca.pem` 精确建池；若开启 `audit.mtls.enabled`，还必须在同一 Secret 提供独立客户端证书和私钥。
 
 Secret 内容更新不会自动让已经启动的进程热加载。轮换时创建新版本 Secret、更新 values 中的名称并滚动发布；不要原地覆盖同名 Secret。旧验证公钥必须按协议重叠窗口保留，确认所有副本和外部方完成切换后再删除。
 
 ## 网络与容量规划
 
-标准 Kubernetes NetworkPolicy 不能可靠按 DNS 名称限制外部流量，因此本 Chart 要求分别填写 PostgreSQL、钱包、共享 Valkey 和审计接收端的 IPv4 CIDR；启用 tracing 时 collector 也必须填写独立 CIDR。每项只接受 `/24` 至 `/32` 并拒绝 `0.0.0.0/0`；核心经济依赖始终拒绝空数组，tracing 仅在关闭且 endpoint 同为空时允许空数组。collector endpoint 的显式端口必须与出口端口一致。若供应商地址动态变化，应先通过公司 egress gateway 固定出口目标，再把 gateway 的专用网段写入 values；不要临时放宽到全网。
+标准 Kubernetes NetworkPolicy 不能可靠按 DNS 名称限制外部流量，因此本 Chart 要求分别填写 PostgreSQL、钱包、共享 Valkey 和审计接收端的 IPv4 CIDR；启用 tracing 时 collector 也必须填写独立 CIDR。每项只接受 `/24` 至 `/32` 并拒绝 `0.0.0.0/0`；核心经济依赖始终拒绝空数组，tracing 仅在关闭且 endpoint 同为空时允许空数组。collector endpoint 的显式端口必须与出口端口一致。若供应商地址动态变化，应先通过采用方 egress gateway 固定出口目标，再把 gateway 的专用网段写入 values；不要临时放宽到全网。
 
 `networkPolicy.ingressController` 和 `monitoring` 同时使用 namespaceSelector 与 podSelector，两者是 AND 关系。必须使用平台真实、不可由业务 namespace 自行伪造的标签。入口来源只可访问业务 8080 和 `ingress.apiHealthCheckPort=8081`；后者只承载私有 `/healthz`，不得为此把 operations Service 加入公网 Ingress。DNS selector 也必须匹配集群实际 CoreDNS 标签。
 
@@ -131,14 +136,14 @@ Secret 内容更新不会自动让已经启动的进程热加载。轮换时创�
 
 ## 日志与告警责任
 
-RGS 使用结构化 JSON 写 stdout/stderr；Web 由容器入口输出访问与错误日志。集群生产不部署本机 Vector，日志可靠性由公司节点级管道负责。`externalControls.logPipelineProvider` 必须填写已审批的真实提供方，并写入 RGS/Web Deployment 与 Pod 标签。平台验收必须证明敏感字段脱敏、磁盘/内存缓冲有界、背压时有明确丢弃策略、集中归档保留期，以及采集停止、积压、丢弃和归档失败告警；只看到日志搜索页面不等于这条链路已闭环。
+RGS 使用结构化 JSON 写 stdout/stderr；Web 由容器入口输出访问与错误日志。集群生产不部署本机 Vector，日志可靠性由采用方节点级管道负责。`externalControls.logPipelineProvider` 必须填写已审批的真实提供方，并写入 RGS/Web Deployment 与 Pod 标签。平台验收必须证明敏感字段脱敏、磁盘/内存缓冲有界、背压时有明确丢弃策略、集中归档保留期，以及采集停止、积压、丢弃和归档失败告警；只看到日志搜索页面不等于这条链路已闭环。
 
 `rgs.runtime.successAccessLogSamplePerMillion` 只控制成功的普通 HTTP 访问记录，默认 `10000` 即 1%；
 4xx WARN、5xx ERROR、资金审计和安全指标不受采样影响。采样前后总量由
 `rgs_access_logs_{emitted,dropped}_total` 观测，任何下游采集器都不得再次概率丢弃 WARN/ERROR 或
 经济与安全事件。
 
-Chart 内置三十一条 `PrometheusRule`，覆盖 API/Worker 指标目标消失或下线、两类角色未就绪、5xx 比例、进程并发容量拒绝、新经济意图数据库保留容量拒绝、加密 CPU 闸门拒绝、HPA 无法计算扩缩容、普通共享准入故障、经济预算持续拒绝/准入后端错误、认证随机数重放、重复安全日志持续被有界抑制、钱包未知结果/隔离拒绝/持续熔断/持续待定/响应认证失败/P99 高延迟/执行停滞、钱包恢复积压/最老到期年龄/循环与快照新鲜度、轮次人工审查、完整性隔离、审计 Outbox 延迟/租约冲突和数据库池饱和/等待。认证前不存在可信的“恢复 path”，所以所有公网验签共享同一匿名 CPU 上限，Chart 不注入 method/path recovery reserve，也不伪造恢复专属验签告警；恢复风险由已认证 status/ACK 成功率、数据库新意图保留、钱包 lookup 和 recovery backlog 联合判断。认证随机数重放对外仍统一返回通用 401；无标签 `rgs_auth_replays_total` 始终完整计数，不记录随机数、运营商、密钥、玩家、会话或请求标识。重复的物理 `security_event=nonce_replay` WARN 使用独立固定预算和非阻塞写入 bulkhead 有界输出；被省略的重复记录累加到无标签 `rgs_security_logs_dropped_total`，持续五分钟耗尽预算由 `SlotsRGSSecurityLogDropsSustained` 告警。恢复 backlog/age 是每个 Worker 错峰读取的同一数据库全局有界快照：查询按 partial index 最多读取 501 个持久调度行，`501` 是“至少 501”的饱和下界而非精确总数，最老逾期年龄仍对应全局最早持久调度行；会话失配也保留在 backlog 中交由领取完整性校验/隔离，不能被观测静默过滤。PromQL 只允许对同实例时间戳小于六十秒的新鲜样本取 `max`，不得按 Pod 求和或让陈旧高值制造假告警。循环新鲜度与快照新鲜度分开告警，避免数据库观测失败被误报为资金恢复 pass 失败，也避免陈旧 backlog 假绿。HPA 规则依赖平台固定交付的 metrics-server 与 kube-state-metrics；任一 API/Worker `ScalingActive` 丢失都会告警。规则通过两个 operations Service 分别固定 `slots-rgs` 与 `slots-rgs-worker` job；`monitoring.ruleLabels` 必须匹配公司 Prometheus 的规则选择器。阈值是仓库评审过的最低门禁，平台可以在上层增加更严格规则，但不得删除、静默改写或让该 `PrometheusRule` 未被任何 Prometheus 实例加载。上线证据必须包含规则发现状态、一次受控告警演练及 Alertmanager 最终路由，不得只证明 `/metrics` 可抓取。
+Chart 内置三十一条 `PrometheusRule`，覆盖 API/Worker 指标目标消失或下线、两类角色未就绪、5xx 比例、进程并发容量拒绝、新经济意图数据库保留容量拒绝、加密 CPU 闸门拒绝、HPA 无法计算扩缩容、普通共享准入故障、经济预算持续拒绝/准入后端错误、认证随机数重放、重复安全日志持续被有界抑制、钱包未知结果/隔离拒绝/持续熔断/持续待定/响应认证失败/P99 高延迟/执行停滞、钱包恢复积压/最老到期年龄/循环与快照新鲜度、轮次人工审查、完整性隔离、审计 Outbox 延迟/租约冲突和数据库池饱和/等待。认证前不存在可信的“恢复 path”，所以所有公网验签共享同一匿名 CPU 上限，Chart 不注入 method/path recovery reserve，也不伪造恢复专属验签告警；恢复风险由已认证 status/ACK 成功率、数据库新意图保留、钱包 lookup 和 recovery backlog 联合判断。认证随机数重放对外仍统一返回通用 401；无标签 `rgs_auth_replays_total` 始终完整计数，不记录随机数、运营商、密钥、玩家、会话或请求标识。重复的物理 `security_event=nonce_replay` WARN 使用独立固定预算和非阻塞写入 bulkhead 有界输出；被省略的重复记录累加到无标签 `rgs_security_logs_dropped_total`，持续五分钟耗尽预算由 `SlotsRGSSecurityLogDropsSustained` 告警。恢复 backlog/age 是每个 Worker 错峰读取的同一数据库全局有界快照：查询按 partial index 最多读取 501 个持久调度行，`501` 是“至少 501”的饱和下界而非精确总数，最老逾期年龄仍对应全局最早持久调度行；会话失配也保留在 backlog 中交由领取完整性校验/隔离，不能被观测静默过滤。PromQL 只允许对同实例时间戳小于六十秒的新鲜样本取 `max`，不得按 Pod 求和或让陈旧高值制造假告警。循环新鲜度与快照新鲜度分开告警，避免数据库观测失败被误报为资金恢复 pass 失败，也避免陈旧 backlog 假绿。HPA 规则依赖平台固定交付的 metrics-server 与 kube-state-metrics；任一 API/Worker `ScalingActive` 丢失都会告警。规则通过两个 operations Service 分别固定 `slots-rgs` 与 `slots-rgs-worker` job；`monitoring.ruleLabels` 必须匹配采用方 Prometheus 的规则选择器。阈值是仓库评审过的最低门禁，平台可以在上层增加更严格规则，但不得删除、静默改写或让该 `PrometheusRule` 未被任何 Prometheus 实例加载。上线证据必须包含规则发现状态、一次受控告警演练及 Alertmanager 最终路由，不得只证明 `/metrics` 可抓取。
 
 数据库连接上限至少按下面的发布峰值公式审核：
 
@@ -167,7 +172,7 @@ API 默认还配置 `rgs.runtime.databaseCriticalReserveConnections: 5`。每个
 Prometheus Adapter、External Metrics API 映射或其失效回退演练，因此渲染契约会拒绝把 I/O 指标
 伪装成 HPA 已交付能力，并固定 API 至少三个、Worker 至少两个暖副本。钱包 P99/停滞、恢复 backlog/
 最老到期年龄、数据库保留容量拒绝和 pool wait 告警用于人工/平台容量响应，不会直接驱动 HPA。
-若公司平台以后接入经过验证的自定义指标源，可以在同一次受保护平台变更中增加 API inflight/时延
+若采用方平台以后接入经过验证的自定义指标源，可以在同一次受保护平台变更中增加 API inflight/时延
 以及 Worker pending/outbox backlog 指标，并同步交付查询、权限、指标缺失回退和扩缩容演练证据。
 压测后应同步调整 Pod 资源、每 Pod 并发、数据库池、钱包限额、Valkey 共享准入与入口粗粒度容量保护；
 任何一项不能扩容时，应降低相应 HPA 的 `maxReplicas`。
@@ -247,7 +252,7 @@ make verify-cluster-image-contract
 - API/Worker Pod template 的数学定义 annotation 与 values 三元组一致，两类进程均已用同一三元组逐项验证实际加载的签名定义。
 - API 与 Web Ingress 只提供 TLS，operations Service 没有 Ingress 或外部 LoadBalancer。
 - 未认证访问 `/readyz`、`/metrics` 返回 401；Prometheus ServiceMonitor 能以 Secret Bearer 抓取全部 RGS Pod。
-- Prometheus 已发现内置规则组，受控断开一个测试目标会触发 `SlotsRGSTargetUnavailable` 并到达公司 Alertmanager 最终接收端。
+- Prometheus 已发现内置规则组，受控断开一个测试目标会触发 `SlotsRGSTargetUnavailable` 并到达采用方 Alertmanager 最终接收端。
 - 节点日志管道能采集 RGS JSON 日志，脱敏抽查、缓冲上限、归档检索和管道失败告警均有证据。
 - API Pod 只能连通 DNS、批准的 PostgreSQL、钱包和 Valkey，不可访问审计；Worker Pod 只能连通
   DNS、PostgreSQL、钱包和审计，不可访问 Valkey；Web Pod 无主动出口。

@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test, { after } from "node:test";
 
-import { createReleaseContentSecurityPolicy } from "./content-security-policy.mjs";
+import {
+  createReleaseContentSecurityPolicy,
+  LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE,
+} from "./content-security-policy.mjs";
 import { renderReleaseNginxConfig } from "./render-release-nginx.mjs";
 
 const baseConfig = await readFile(new URL("./nginx.conf", import.meta.url), "utf8");
@@ -19,7 +22,10 @@ test("renders exact operator frame and RGS connect origins without X-Frame-Optio
   });
   assert.match(rendered, /connect-src 'self' https:\/\/rgs\.example;/);
   assert.match(rendered, /frame-ancestors https:\/\/operator\.example/);
-  assert.match(rendered, /script-src 'self';/);
+  assert.match(rendered, new RegExp(
+    `script-src 'self' ${LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")};`,
+    "u",
+  ));
   assert.match(rendered, /form-action 'none';/);
   assert.match(rendered, /trusted-types slots-game-static-html;/);
   assert.match(rendered, /require-trusted-types-for 'script';/);

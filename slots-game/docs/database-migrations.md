@@ -1,5 +1,10 @@
 # PostgreSQL 迁移与运行角色契约
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 模式变更与请求服务使用两个独立部署身份。`rgs-server` 进程绝不执行迁移或修复授权；
 PostgreSQL 是模式和权限的唯一权威来源。
 
@@ -63,7 +68,7 @@ migrator `verify` 以及运行时 `SchemaCheck`/readiness 都会从 PostgreSQL �
 回填后设为 `NOT NULL`，因此迁移先落库时，尚未排空的旧 writer 省略新列的 `INSERT` 仍能完成；旧
 writer 的 deadline 默认使用数据库当前时间并立即超时，只有新的已签名 relaunch 才能建立未来
 deadline。数据库 CHECK 永久保证 `idle_disconnect_at <= expires_at`，reader 不会静默修正漂移。
-这些默认值只是 expand 阶段的失败关闭写兼容，不代表允许旧、新运行时混跑，也不表示原游戏公开了
+这些默认值只是 expand 阶段的失败关闭写兼容，不代表允许旧、新运行时混跑，也不表示外部参考版本公开了
 一个可确认的分钟数。
 
 同一版本还把浏览器 bearer 从 `RGS-ACCESS-v2` 升到绑定 transport generation 的

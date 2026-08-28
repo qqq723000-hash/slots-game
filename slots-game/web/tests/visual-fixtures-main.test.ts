@@ -22,6 +22,7 @@ import {
   createVisualFixtureCheckpointHold,
   createVisualFixtureTelemetryProjectionState,
   isCapSummaryInputCheckpointCapture,
+  isFreeSpinsSummaryInputCheckpointHold,
   isNoSummaryTerminalCheckpointCapture,
   isNormalWinContinueClickTrigger,
   isPass45ForbiddenPresentationMilestone,
@@ -30,6 +31,7 @@ import {
   isWinEffectsMatrixTraceCheckpoint,
   matchVisualFixtureSemanticCheckpoint,
   resolveVisualFixtureSemanticCheckpoint,
+  shouldProjectVisualFixtureTelemetryEvent,
   validatePass45SemanticCheckpoint,
   VISUAL_FIXTURE_RELEASE_KEY,
   type VisualFixtureDataset,
@@ -41,6 +43,7 @@ describe("visual fixture entry source contract", () => {
       .toBeLessThan(fixtureMain.indexOf("await AppController.create"));
     expect(fixtureMain).toContain('body.dataset.fixtureStatus = "booting"');
     expect(fixtureMain).toContain('body.dataset.fixtureStatus = "failed"');
+    expect(fixtureMain).toContain("body.dataset.fixtureStartupError = error instanceof Error");
   });
 
   it("bypasses preview through dependency injection without mutating player storage", () => {
@@ -50,6 +53,7 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).toContain("? () => 0");
     expect(fixtureMain).not.toContain("localStorage");
     expect(fixtureMain).not.toContain("sessionStorage");
+    expect(fixtureMain).not.toContain("wheelPresentationTimelineScale");
   });
 
   it("derives ready and failure from controller lifecycle callbacks", () => {
@@ -147,6 +151,57 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).not.toContain("JSON.stringify(event)");
   });
 
+  it("drains known visual operations only through cancelled teardown completions", () => {
+    const dataset: Record<string, string | undefined> = {};
+    const state = createVisualFixtureTelemetryProjectionState([]);
+    const reporter = new VisualTelemetryReporter();
+    let destroyed = false;
+    let tearingDown = false;
+    reporter.setListener((event: Readonly<VisualTelemetryEvent>) => {
+      if (!shouldProjectVisualFixtureTelemetryEvent(destroyed, tearingDown, event)) return;
+      applyVisualFixtureTelemetryEvent(dataset, state, event);
+    });
+
+    const known = reporter.start({
+      id: "win.normal-record",
+      requirement: "conditional",
+      mode: "authored",
+    });
+    expect(state.activeVisualOperations.has(known.operationId)).toBe(true);
+
+    destroyed = true;
+    tearingDown = true;
+    reporter.cancelAll();
+    expect(state.activeVisualOperations.size).toBe(0);
+
+    const ignoredNatural = reporter.start({
+      id: "win.normal-record",
+      requirement: "conditional",
+      mode: "authored",
+    });
+    reporter.complete(ignoredNatural, "natural");
+    expect(state.activeVisualOperations.size).toBe(0);
+
+    const unknownCancellation = reporter.start({
+      id: "win.normal-record",
+      requirement: "conditional",
+      mode: "authored",
+    });
+    reporter.complete(unknownCancellation, "cancelled");
+    expect(state.activeVisualOperations.size).toBe(0);
+
+    tearingDown = false;
+    expect(shouldProjectVisualFixtureTelemetryEvent(destroyed, tearingDown, {
+      schemaVersion: 1,
+      kind: "complete",
+      operationId: 999,
+      id: "win.normal-record",
+      requirement: "conditional",
+      mode: "authored",
+      outcome: "cancelled",
+    })).toBe(false);
+  });
+
   it("retains the first strict visual failure while later events keep counts live", () => {
     const dataset: Record<string, string | undefined> = {};
     const state = createVisualFixtureTelemetryProjectionState(["launch.intro"]);
@@ -182,6 +237,8 @@ describe("visual fixture entry source contract", () => {
       requirement: "conditional",
       mode: "authored",
     });
+    expect(dataset.fixtureVisualActiveIds).toBe("wheel.spin");
+    expect(dataset.fixtureVisualActiveOperations).toBe(`wheel.spin@${wheel.operationId}`);
     reporter.complete(wheel);
     reporter.failedToStart({
       id: "wheel.summary",
@@ -211,6 +268,8 @@ describe("visual fixture entry source contract", () => {
     expect(dataset.fixtureVisualFailureCount).toBe("2");
     expect(dataset.fixtureVisualLoadedCount).toBe("1");
     expect(dataset.fixtureVisualActiveCount).toBe("0");
+    expect(dataset.fixtureVisualActiveIds).toBe("");
+    expect(dataset.fixtureVisualActiveOperations).toBe("");
     expect(dataset.fixtureVisualMissingRequired).toBe("");
   });
 
@@ -227,8 +286,28 @@ describe("visual fixture entry source contract", () => {
     expect(destroyBody).toContain("clearVisualFixturePresentationBranches(body.dataset)");
     expect(destroyBody).toContain("clearVisualFixtureTrace(body.dataset)");
     expect(destroyBody).toContain("delete body.dataset.fixtureVisualKind");
+    expect(destroyBody).toContain("delete body.dataset.fixtureVisualActiveIds");
+    expect(destroyBody).toContain("delete body.dataset.fixtureVisualActiveOperations");
     expect(destroyBody).toContain("delete body.dataset.fixtureVisualMissingRequired");
-    expect(destroyBody.indexOf("destroyed = true")).toBeLessThan(destroyBody.indexOf("app?.destroy()"));
+    expect(destroyBody).not.toContain("retainedPayloadBytesAtDestroy");
+    expect(destroyBody).not.toContain("activeVisualCountAtDestroy");
+    expect(destroyBody).toContain("getDestroyedStreamingAssetDiagnostics()");
+    expect(destroyBody).toContain("retainedPayloadBytesAfterDestroy");
+    expect(destroyBody).toContain("activeVisualCountAfterDestroy");
+    expect(destroyBody).toContain("activeVisualProjectionCountAfterDestroy");
+    expect(destroyBody).toContain("fixtureDestroyAppDisposed");
+    expect(destroyBody).toContain("fixtureDestroyCanvasCount");
+    expect(destroyBody).toContain("fixtureDestroyRetainedPayloadBytes");
+    expect(destroyBody).toContain("fixtureDestroySpinCount");
+    expect(destroyBody).toContain("fixtureDestroyVisualActiveCount");
+    expect(destroyBody).toContain("fixtureDestroyVisualProjectionActiveCount");
+    expect(destroyBody).toContain("getDestroyedVisualTelemetryActiveCount()");
+    expect(destroyBody).toContain("tearingDown = true");
+    expect(destroyBody).toContain("tearingDown = false");
+    expect(destroyBody.indexOf("destroyed = true"))
+      .toBeLessThan(destroyBody.indexOf("activeApp?.destroy()"));
+    expect(destroyBody.indexOf("activeApp?.destroy()"))
+      .toBeLessThan(destroyBody.indexOf("getDestroyedStreamingAssetDiagnostics()"));
     expect(fixtureMain).toContain("if (destroyed) return");
   });
 
@@ -684,11 +763,50 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).toContain('`${checkpoint.gate}.input-ready`');
   });
 
-  it("mounts one invisible actionable click release only for exact capture=1", () => {
+  it("holds only the three opted-in final free-spins summary gates", () => {
+    const kingSummary = {
+      type: "bounded-gate-input-ready" as const,
+      gate: "free-spins-summary" as const,
+      sequence: 9,
+    };
+    const kongSummary = { ...kingSummary, sequence: 10 };
+    expect(isFreeSpinsSummaryInputCheckpointHold("king-flow", "1", kingSummary)).toBe(true);
+    expect(isFreeSpinsSummaryInputCheckpointHold("kong-flow", "1", kongSummary)).toBe(true);
+    expect(isFreeSpinsSummaryInputCheckpointHold("cap-summary", "1", kingSummary)).toBe(true);
+
+    expect(isFreeSpinsSummaryInputCheckpointHold("king-flow", null, kingSummary)).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold("king-flow", "true", kingSummary)).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold("king-flow", "1", kongSummary)).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold("kong-flow", "1", kingSummary)).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold(
+      "cap-summary",
+      "1",
+      { ...kingSummary, sequence: 8 },
+    )).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold(
+      "cap-summary",
+      "1",
+      { ...kingSummary, gate: "free-spin-cap" },
+    )).toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold("wheel-mini-flow", "1", kingSummary))
+      .toBe(false);
+    expect(isFreeSpinsSummaryInputCheckpointHold(
+      "king-flow",
+      "1",
+      { type: "vault-awards-complete", count: 1 },
+    )).toBe(false);
+
+    expect(fixtureMain).toContain('searchParams.get("freeSpinsSummaryHold")');
+    expect(fixtureMain).toContain("isFreeSpinsSummaryInputCheckpointHold");
+    expect(fixtureMain).toContain('capture === "1" || freeSpinsSummaryHold === "1"');
+    expect(fixtureMain).toContain("? 60_000");
+  });
+
+  it("mounts one invisible release control only for exact capture or summary-hold opt-in", () => {
     const allowListGuard = fixtureMain.indexOf("isVisualFixtureScenario(scenario)");
     const buttonCreation = fixtureMain.indexOf('document.createElement("button")');
     expect(buttonCreation).toBeGreaterThan(allowListGuard);
-    expect(fixtureMain).toContain('if (capture === "1")');
+    expect(fixtureMain).toContain('if (capture === "1" || freeSpinsSummaryHold === "1")');
     expect(fixtureMain.match(/document\.createElement\("button"\)/g)).toHaveLength(1);
     expect(fixtureMain).toContain('button.dataset.role = "fixture-checkpoint-release"');
     expect(fixtureMain).toContain('button.setAttribute("aria-label", "Release visual fixture checkpoint")');

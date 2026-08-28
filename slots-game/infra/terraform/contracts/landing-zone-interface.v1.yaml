@@ -13,7 +13,7 @@ spec:
     - 三个可用区、组织 DNS zone、ACM 证书和网络互联审批
     - CloudFront scope 的 global WAFv2 Web ACL、us-east-1 拒绝日志组及变更审批
     - Route 53 Web/API alias、DNSSEC 与域名注册账户保护的实际配置和演练证据
-    - 如经成本与业务审批启用 Shield Advanced，由企业平台持有订阅、protection 与 DRT 响应边界
+    - 如经成本与业务审批启用 Shield Advanced，由采用方持有订阅、protection 与 DRT 响应边界
     - 组织级 CloudTrail、Config、GuardDuty、Security Hub、日志归档和预算告警
     - 跨账号备份目标策略以及灾备账号 KMS 授权
   consumedByApplicationRepository:
@@ -51,9 +51,9 @@ spec:
     - EKS 节点 CMK 只把使用与持久资源 grant 授予默认 Auto Scaling 服务关联角色
   excludedResponsibilities:
     - AWS Organizations 和账号工厂
-    - 企业身份中心与人员生命周期
+    - 采用方身份中心与人员生命周期
     - 组织级 SCP 和集中取证账号
-    - 企业共享网络和第三方专线
+    - 采用方共享网络和第三方专线
     - Route 53 hosted zone/alias/DNSSEC、注册商锁和权威 DNS 灾备
     - Shield Advanced 订阅、Firewall Manager 组织策略、DRT 授权和攻击成本保护审批
   edgeDdosContracts:

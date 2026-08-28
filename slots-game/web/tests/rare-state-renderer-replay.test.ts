@@ -1298,6 +1298,12 @@ describe("rare-state renderer replay", () => {
 
     expect(milestones).toEqual(["ready"]);
     expect(clock.pendingFrames).toBe(0);
+    // 同一主控件的旧 trusted click 可能在新摘要租约打开后才到达。checkpoint 持有
+    // 期间必须消费但不得关闭摘要，否则跨浏览器像素门会永远错过该姿势。
+    expect(effects.requestFreeSpinSummaryContinue()).toBe(true);
+    await flushAsync();
+    expect(milestones).toEqual(["ready"]);
+    expect(clock.pendingFrames).toBe(0);
     releaseCheckpoint();
     await flushAsync();
     expect(clock.pendingFrames).toBe(1);

@@ -1,6 +1,6 @@
 {
   "name": "primal-rampage-web",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "description": "Primal Rampage production browser client.",
   "private": true,
   "license": "UNLICENSED",
@@ -13,12 +13,14 @@
     "assets:generate-streaming-packages": "node scripts/generate-streaming-package-manifests.mjs",
     "assets:check-streaming-packages": "node scripts/generate-streaming-package-manifests.mjs --check",
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && node scripts/verify-production-javascript-bundles.mjs",
+    "build": "tsc --noEmit && vite build && npm run licenses:check-artifacts && node scripts/finalize-production-assets.mjs && npm run build:browser-preflight-check && node scripts/verify-production-javascript-bundles.mjs",
     "build:determinism-check": "node scripts/verify-deterministic-release-build.mjs",
     "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",
     "build:assets-check": "node scripts/finalize-production-assets.mjs --check",
     "build:bundle-check": "node scripts/verify-production-javascript-bundles.mjs",
     "build:browser-smoke": "node scripts/verify-production-browser-bootstrap.mjs",
+    "build:browser-matrix": "node scripts/verify-production-cross-browser.mjs",
+    "build:browser-preflight-check": "node scripts/verify-browser-preflight-build.mjs",
     "licenses:generate": "node scripts/generate-third-party-notices.mjs --write",
     "licenses:check": "node scripts/generate-third-party-notices.mjs --check",
     "licenses:check-artifacts": "node scripts/generate-third-party-notices.mjs --check-artifacts",
@@ -26,6 +28,7 @@
     "prebuild": "npm run licenses:check && npm run assets:provenance-check",
     "pretest": "npm run licenses:test && npm run licenses:check && npm run assets:provenance-check",
     "test": "vitest",
+    "test:visual-fixtures-browser-matrix": "node scripts/verify-visual-fixture-cross-browser.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -35,6 +38,7 @@
     "pixi.js": "6.5.2"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "es-module-lexer": "2.3.1",
     "typescript": "5.6.3",
     "vite": "8.1.5",

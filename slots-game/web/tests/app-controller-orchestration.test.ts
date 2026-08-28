@@ -27,6 +27,10 @@ import type {
 } from "../src/app/state/types";
 import { GameStateMachine } from "../src/app/state/GameStateMachine";
 import {
+  INTRO_DURATION_MS,
+  REDUCED_INTRO_DURATION_MS,
+} from "../src/startup/introTimeline";
+import {
   PRIMAL_WHEEL_TIMELINE_MS,
   WHEEL_CHARACTER_TIMING_MS,
 } from "../src/renderer/FeatureEffects";
@@ -166,6 +170,9 @@ interface ControllerPrototypeHarness {
   requestFastStop(): void;
   startRoundAudio(unlock: Promise<boolean>, reducedMotion: boolean): void;
   continueFeaturePreview(): void;
+  playLaunchIntroWithinWallDeadline(): Promise<void>;
+  armLaunchIntroWallDeadline(): Promise<void>;
+  clearLaunchIntroWallDeadline(): void;
   presentIntroAudio(cue: { name: string; atMs: number }): void;
   handleSession(session: SessionOpened): void;
   handleStatus(status: "idle" | "connecting" | "online" | "recovering" | "offline"): void;
@@ -183,11 +190,14 @@ interface ControllerPrototypeHarness {
   getWheelChestPoundCaptureEnvironmentDiagnostics(): Readonly<{ fastPlay: boolean }>;
   getCharacterIntroLifecycleCaptureDiagnostics(): unknown;
   getReelCabinetCompositionDiagnostics(): unknown;
+  getDestroyedStreamingAssetDiagnostics(): unknown;
+  getDestroyedVisualTelemetryActiveCount(): unknown;
   destroy(): void;
   pendingWheelAward: WheelAwardedEvent | null;
   spinAudioGeneration: number;
   roundOriginFeatureState: FeatureState | null;
   featurePreviewResolver: (() => void) | null;
+  featurePreviewActive: boolean;
   featurePreviewContinuePending: boolean;
   initialSessionResolver: (() => void) | null;
   activeObservedFeatureEvents: Readonly<FeatureEvent>[];
@@ -200,6 +210,9 @@ interface ControllerPrototypeHarness {
   scatterLandOrdinal: number;
   audio: Record<string, ReturnType<typeof vi.fn>>;
   launchClock: Record<string, ReturnType<typeof vi.fn>>;
+  launchIntroWallDeadlineTimer: ReturnType<typeof setTimeout> | null;
+  launchIntroWallDeadlineResolver: (() => void) | null;
+  launchIntroWallDeadlineGeneration: number;
   activeRoundFeatureAudioState: FeatureAudioState | null;
   freeSpinTimer: ReturnType<typeof setTimeout> | null;
   observeFeatureEvent(event: FeatureEvent, presentation: () => Promise<void>): Promise<void>;
@@ -3668,6 +3681,126 @@ describe("AppController feature orchestration seams", () => {
     expect(followWall).toHaveBeenCalledOnce();
   });
 
+  it("always releases the accepted preview gate when decorative cleanup throws", () => {
+    const controller = prototypeHarness();
+    const resolveGate = vi.fn();
+    const followWall = vi.fn();
+    const setFeaturePreviewPending = vi.fn((pending: boolean) => {
+      if (pending) throw new Error("pending projection failed");
+    });
+    Object.assign(controller, {
+      destroyed: false,
+      featurePreviewActive: true,
+      featurePreviewResolver: resolveGate,
+      featurePreviewContinuePending: false,
+      launch: { hasSession: true },
+      launchClock: { follow: vi.fn(), followWall },
+      audio: {
+        getLaunchPlaybackClock: vi.fn(() => { throw new Error("clock unavailable"); }),
+        unlock: vi.fn(),
+        playSplashContinue: vi.fn(() => { throw new Error("click unavailable"); }),
+      },
+      ui: {
+        setFeaturePreviewPending,
+        setFeaturePreviewVisible: vi.fn(() => { throw new Error("DOM cleanup failed"); }),
+      },
+      renderer: {
+        setFeaturePreviewVisible: vi.fn(() => { throw new Error("canvas cleanup failed"); }),
+      },
+      syncGameMusic: vi.fn(() => { throw new Error("music unavailable"); }),
+    });
+
+    expect(() => controller.continueFeaturePreview()).not.toThrow();
+    expect(controller.featurePreviewResolver).toBeNull();
+    expect(controller.featurePreviewContinuePending).toBe(false);
+    expect(controller.featurePreviewActive).toBe(false);
+    expect(setFeaturePreviewPending).toHaveBeenCalledWith(true);
+    expect(setFeaturePreviewPending).toHaveBeenCalledWith(false);
+    expect(followWall).toHaveBeenCalledOnce();
+    expect(resolveGate).toHaveBeenCalledOnce();
+  });
+
+  it("bounds a frozen reduced-motion intro with an absolute wall-clock deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const skip = vi.fn();
+      const stopGameIntro = vi.fn();
+      const play = vi.fn(() => new Promise<void>(() => undefined));
+      const controller = prototypeHarness();
+      Object.assign(controller, {
+        destroyed: false,
+        sessionTimedOut: false,
+        reducedMotion: true,
+        reducedMotionMedia: null,
+        launch: { phase: "intro" },
+        launchIntroWallDeadlineTimer: null,
+        launchIntroWallDeadlineResolver: null,
+        launchIntroWallDeadlineGeneration: 0,
+        audio: { stopGameIntro },
+        intro: { play, skip },
+      });
+
+      let completed = false;
+      const completion = controller.playLaunchIntroWithinWallDeadline().then(() => {
+        completed = true;
+      });
+      await vi.advanceTimersByTimeAsync(REDUCED_INTRO_DURATION_MS + 2_999);
+      expect(completed).toBe(false);
+      expect(skip).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await completion;
+      expect(completed).toBe(true);
+      expect(stopGameIntro).toHaveBeenCalledWith(200);
+      expect(skip).toHaveBeenCalledOnce();
+
+      skip.mockClear();
+      const cancelledDeadline = controller.armLaunchIntroWallDeadline();
+      controller.clearLaunchIntroWallDeadline();
+      await cancelledDeadline;
+      await vi.advanceTimersByTimeAsync(REDUCED_INTRO_DURATION_MS + 3_000);
+      expect(skip).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the intro deadline aligned with the construction-time motion snapshot", async () => {
+    vi.useFakeTimers();
+    try {
+      const skip = vi.fn();
+      const controller = prototypeHarness();
+      Object.assign(controller, {
+        destroyed: false,
+        sessionTimedOut: false,
+        reducedMotion: false,
+        // IntroDirector 构造完成后，实时偏好发生变化。
+        reducedMotionMedia: { matches: true },
+        launch: { phase: "intro" },
+        launchIntroWallDeadlineTimer: null,
+        launchIntroWallDeadlineResolver: null,
+        launchIntroWallDeadlineGeneration: 0,
+        audio: { stopGameIntro: vi.fn() },
+        intro: { play: vi.fn(() => new Promise<void>(() => undefined)), skip },
+      });
+
+      let completed = false;
+      const completion = controller.playLaunchIntroWithinWallDeadline().then(() => {
+        completed = true;
+      });
+      await vi.advanceTimersByTimeAsync(REDUCED_INTRO_DURATION_MS + 3_000);
+      expect(completed).toBe(false);
+      expect(skip).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(
+        INTRO_DURATION_MS - REDUCED_INTRO_DURATION_MS,
+      );
+      await completion;
+      expect(completed).toBe(true);
+      expect(skip).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not enter intro until the strict audio preload race has resolved", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
     try {
@@ -4091,12 +4224,30 @@ describe("AppController feature orchestration seams", () => {
     const controller = prototypeHarness();
     const preloadAbort = vi.fn(() => { throw new Error("preload abort failed"); });
     const streamingDestroy = vi.fn();
+    const terminalStreamingDiagnostics = Object.freeze({
+      mode: "on-demand",
+      channel: "desktop",
+      manifestUrl: "/assets/primal-runtime/streaming-packages.desktop.json",
+      manifestState: "destroyed",
+      backgroundScheduled: false,
+      backgroundRunning: false,
+      featureStageVerified: false,
+      retainedPayloadBytes: 0,
+      peakOperationPayloadBytes: 2,
+      lastError: null,
+      packages: Object.freeze([]),
+    });
+    const streamingDiagnostics = vi.fn(() => {
+      expect(streamingDestroy).toHaveBeenCalledOnce();
+      return terminalStreamingDiagnostics;
+    });
     const initialSessionResolver = vi.fn();
     const gatewayClose = vi.fn();
     const layoutStop = vi.fn();
     const audioDestroy = vi.fn();
     const uiDestroy = vi.fn();
     const rendererDestroy = vi.fn();
+    const getVisualTelemetryActiveCount = vi.fn(() => 0);
     const removeMotionListener = vi.fn();
     const renderer = {
       cancelSpinPresentation: vi.fn(),
@@ -4109,6 +4260,7 @@ describe("AppController feature orchestration seams", () => {
       setBigWinMilestoneListener: vi.fn(),
       setFeaturePreviewVisible: vi.fn(),
       destroy: rendererDestroy,
+      getVisualTelemetryActiveCount,
     };
     Object.assign(controller, {
       root: { dataset: {} },
@@ -4116,7 +4268,7 @@ describe("AppController feature orchestration seams", () => {
       stopPostWinIdleRepeat: vi.fn(),
       clearInitialRgsSessionTimeout: vi.fn(),
       preload: { abort: preloadAbort },
-      streamingAssets: { destroy: streamingDestroy },
+      streamingAssets: { destroy: streamingDestroy, diagnostics: streamingDiagnostics },
       activeObservedFeatureEvents: [],
       observePresentationMilestone: vi.fn(),
       activePresentationSequence: null,
@@ -4150,6 +4302,7 @@ describe("AppController feature orchestration seams", () => {
     for (const cleanup of [
       preloadAbort,
       streamingDestroy,
+      streamingDiagnostics,
       initialSessionResolver,
       gatewayClose,
       layoutStop,
@@ -4157,10 +4310,14 @@ describe("AppController feature orchestration seams", () => {
       audioDestroy,
       uiDestroy,
       rendererDestroy,
+      getVisualTelemetryActiveCount,
     ]) expect(cleanup).toHaveBeenCalledOnce();
     expect(controller.featurePreviewResolver).toBeNull();
     expect(controller.initialSessionResolver).toBeNull();
     expect(controller.destroyed).toBe(true);
+    expect(controller.getDestroyedStreamingAssetDiagnostics())
+      .toBe(terminalStreamingDiagnostics);
+    expect(controller.getDestroyedVisualTelemetryActiveCount()).toBe(0);
   });
 });
 

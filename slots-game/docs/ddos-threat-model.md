@@ -1,5 +1,10 @@
 # RGS DDoS 威胁模型与验证门禁
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 状态：后端应用层防护以及 AWS/Helm/Terraform 契约与负向夹具已实现本地证据；真实账号中的
 WAF/ALB/CloudFront/Route 53/Shield 状态、公网大流量清洗、EKS 容量和第三方钱包承压仍属于目标环境
 门禁。仓库提供只读实时回读脚本，但当前本地结果不冒充真实 AWS 验证或抗 DDoS 认证。
@@ -261,7 +266,7 @@ npx vitest run tests/rgs-gateway.test.ts \
 
 ### 4.1 AWS DDoS 模拟是独立的合规门禁
 
-“公司书面授权”本身不足以在 AWS 上执行 DDoS 模拟。按照 AWS 当前公开政策，真正的 DDoS
+“采用方书面授权”本身不足以在 AWS 上执行 DDoS 模拟。按照 AWS 当前公开政策，真正的 DDoS
 simulation 必须满足至少以下条件：
 
 1. 由 AWS 预批准的 APN DDoS Test Partner 执行；

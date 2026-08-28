@@ -469,7 +469,7 @@ export function rgsSessionOpened(
 }
 
 /**
- * 原版 FLUSH 的 HTTP 等价物：只读取会话终止状态与服务端时间，绝不携带或更新
+ * 会话 FLUSH 的 HTTP 等价物：只读取会话终止状态与服务端时间，绝不携带或更新
  * 余额、轮次、特性、revision 或 sequence。
  */
 export function decodeRgsSessionStatus(

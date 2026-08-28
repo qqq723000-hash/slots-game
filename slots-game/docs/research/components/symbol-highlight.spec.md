@@ -1,5 +1,10 @@
 # SymbolHighlight Specification
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 ## Overview
 
 - Target files: `web/src/app/AppController.ts`, reel highlight tests and visual fixture coverage.
@@ -14,7 +19,7 @@
 
 ## States and behavior
 
-- Idle: Helmet/Radio/Tank/Jet run their authored NORMAL idle and matching ADD idle together. The ADD layer is the official glow/highlight; do not replace it with an approximate CSS brightness/drop-shadow filter.
+- Idle: Helmet/Radio/Tank/Jet run their authored NORMAL idle and matching ADD idle together. The ADD layer is the captured glow/highlight; do not replace it with an approximate CSS brightness/drop-shadow filter.
 - Normal win: every winning Helmet/Radio/Tank/Jet cell activates authored win + ADD tracks.
 - Big Win: the same winning cells remain highlighted; Big Win overlay does not suppress ADD ownership.
 - Highlight cleanup occurs only after the result presentation completes.

@@ -86,6 +86,10 @@ export function verifyReleaseVersion(projectRoot, { formal = false } = {}) {
   const appVersion = oneMatch(chart, /^appVersion: "([^"]+)"$/gmu, "Chart appVersion");
   if (chartVersion !== version || appVersion !== version) fail("Chart version and appVersion must match VERSION");
 
+  const openapi = readRegular(root, "server/openapi.yaml", 2 * 1024 * 1024);
+  const openapiVersion = oneMatch(openapi, /^  version: ([^\n]+)$/gmu, "OpenAPI info.version");
+  if (openapiVersion !== version) fail("OpenAPI info.version must match VERSION");
+
   for (const readmePath of ["README.md", "web/README.md"]) {
     const readme = readRegular(root, readmePath);
     const documentedVersion = oneMatch(

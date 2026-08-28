@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 import {
   BASE_CONTENT_SECURITY_POLICY,
   CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE,
+  LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE,
   contentSecurityPolicyFromHeaders,
   createReleaseContentSecurityPolicy,
   parseContentSecurityPolicy,
@@ -26,8 +29,26 @@ test("基础与发布策略只接受审核过的完整语义集合", () => {
   assert.match(releasePolicy, /form-action 'none'/u);
   assert.match(releasePolicy, /trusted-types slots-game-static-html/u);
   assert.match(releasePolicy, /require-trusted-types-for 'script'/u);
+  assert.match(releasePolicy, new RegExp(
+    `script-src 'self' ${LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`,
+    "u",
+  ));
   assert.match(releasePolicy, /connect-src 'self' https:\/\/rgs\.example/u);
   assert.match(releasePolicy, /frame-ancestors https:\/\/operator\.example/u);
+});
+
+test("内联启动片段清理器字节与唯一 CSP hash 精确绑定", () => {
+  const indexSource = readFileSync(new URL("../../web/index.html", import.meta.url), "utf8");
+  const match = indexSource.match(
+    /<script id="launch-fragment-scrub">([\s\S]*?)<\/script>/u,
+  );
+  assert.ok(match, "launch fragment scrub must be present");
+  const actual = `'sha256-${createHash("sha256").update(match[1], "utf8").digest("base64")}'`;
+  assert.equal(actual, LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE);
+  assert.deepEqual(
+    parseContentSecurityPolicy(BASE_CONTENT_SECURITY_POLICY).get("script-src"),
+    ["'self'", LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE],
+  );
 });
 
 test("共享浏览器探针记录 CSP 违规且不保留敏感 URL 细节", () => {
@@ -75,6 +96,7 @@ test("语义比较允许指令排序变化但仍返回唯一规范文本", () =>
 
 for (const drift of [
   BASE_CONTENT_SECURITY_POLICY.replace("script-src 'self'", "script-src 'self' 'unsafe-eval'"),
+  BASE_CONTENT_SECURITY_POLICY.replace(LAUNCH_FRAGMENT_SCRUB_CSP_SOURCE, "'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='"),
   BASE_CONTENT_SECURITY_POLICY.replace("connect-src 'self'", "connect-src https:"),
   BASE_CONTENT_SECURITY_POLICY.replace("object-src 'none'", "object-src 'self'"),
   BASE_CONTENT_SECURITY_POLICY.replace("base-uri 'self'", "base-uri *"),

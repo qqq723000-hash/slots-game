@@ -20,6 +20,8 @@ export type VisualFixtureDataset = Record<string, string | undefined>;
 export interface VisualFixtureTelemetryProjectionState {
   readonly loadedVisualIds: Set<string>;
   readonly activeVisualOperations: Set<number>;
+  /** 仅保留表现 ID 与本地 operationId，供截图把像素绑定到仍存活的具体视觉实例。 */
+  readonly activeVisualIdsByOperation: Map<number, string>;
   readonly missingRequiredVisualIds: Set<string>;
   visualFailureCount: number;
   strictFailureLocked: boolean;
@@ -31,6 +33,7 @@ export function createVisualFixtureTelemetryProjectionState(
   return {
     loadedVisualIds: new Set(),
     activeVisualOperations: new Set(),
+    activeVisualIdsByOperation: new Map(),
     missingRequiredVisualIds: new Set(requiredIds),
     visualFailureCount: 0,
     strictFailureLocked: false,
@@ -43,6 +46,13 @@ export function publishVisualFixtureTelemetryCounts(
 ): void {
   dataset.fixtureVisualLoadedCount = String(state.loadedVisualIds.size);
   dataset.fixtureVisualActiveCount = String(state.activeVisualOperations.size);
+  dataset.fixtureVisualActiveIds = [...new Set(state.activeVisualIdsByOperation.values())]
+    .sort()
+    .join(",");
+  dataset.fixtureVisualActiveOperations = [...state.activeVisualIdsByOperation]
+    .sort(([left], [right]) => left - right)
+    .map(([operationId, id]) => `${id}@${operationId}`)
+    .join(",");
   dataset.fixtureVisualFailureCount = String(state.visualFailureCount);
   dataset.fixtureVisualMissingRequired = [...state.missingRequiredVisualIds].join(",");
 }
@@ -86,14 +96,31 @@ export function applyVisualFixtureTelemetryEvent(
     state.missingRequiredVisualIds.delete(event.id);
   } else if (event.kind === "start") {
     state.activeVisualOperations.add(event.operationId);
+    state.activeVisualIdsByOperation.set(event.operationId, event.id);
   } else {
     state.activeVisualOperations.delete(event.operationId);
+    state.activeVisualIdsByOperation.delete(event.operationId);
   }
   if (event.kind === "fail") {
     state.visualFailureCount += 1;
     if (event.requirement === "required") state.missingRequiredVisualIds.add(event.id);
   }
   publishVisualFixtureTelemetryCounts(dataset, state);
+}
+
+/**
+ * 销毁窗口只接收 owner 同步发布的取消完成事件，使投影与真实 reporter 一起归零；
+ * 拆卸期间新建、加载、自然完成或失败的事件都不能重新打开夹具状态。
+ */
+export function shouldProjectVisualFixtureTelemetryEvent(
+  destroyed: boolean,
+  tearingDown: boolean,
+  event: Readonly<VisualTelemetryEvent>,
+): boolean {
+  if (!destroyed) return true;
+  return tearingDown
+    && event.kind === "complete"
+    && event.outcome === "cancelled";
 }
 
 const RESULT_RESET_KEYS = Object.freeze([
@@ -3461,6 +3488,23 @@ export function isCapSummaryInputCheckpointCapture(
   return checkpoint.gate === "free-spin-cap"
     ? checkpoint.sequence === 2
     : checkpoint.gate === "free-spins-summary" && checkpoint.sequence === 9;
+}
+
+/**
+ * 跨浏览器像素取证可在最终免费旋转总结输入门选择启用仅夹具保持；
+ * 场景与序列校验确保该诊断接口不会暂停其他表现路径。
+ */
+export function isFreeSpinsSummaryInputCheckpointHold(
+  scenario: string,
+  optIn: string | null,
+  checkpoint: AppPresentationCheckpoint,
+): boolean {
+  if (optIn !== "1"
+    || checkpoint.type !== "bounded-gate-input-ready"
+    || checkpoint.gate !== "free-spins-summary") return false;
+  if (scenario === "king-flow") return checkpoint.sequence === 9;
+  if (scenario === "kong-flow") return checkpoint.sequence === 10;
+  return scenario === "cap-summary" && checkpoint.sequence === 9;
 }
 
 /** 精确确定的无摘要终端保持；其他所有检查点均无法打开。 */

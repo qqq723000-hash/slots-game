@@ -1,5 +1,10 @@
 # 前后端核心架构评估
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 状态：当前源码架构评估与演进契约
 
 最后更新：2026-08-22
@@ -136,7 +141,7 @@ flowchart LR
 ledger 重提。该循环仍受 `maxPollAttempts` 硬上限约束，耗尽后保留 pending 并阻止新投注，避免为了
 “自动恢复”无限发送经济请求。
 
-**多端布局使用单一根投影。** 桌面保持固定 `1280×720` 设计域，并按原版 `1200×900` authored
+**多端布局使用单一根投影。** 桌面保持固定 `1280×720` 设计域，并按冻结参考版本 `1200×900` authored
 composition 一次等比投影：常见 PC 高度贴满，窄视口对称裁切左右翼并发布 `visibleInsetX`。移动端按
 当前物理长宽比连续生成逻辑设计域，把极端范围钳制在 `9:22..22:9`，再使用
 `min(viewportWidth/designWidth, viewportHeight/designHeight)` 等比居中。`ResizeObserver`、window resize 和 `visualViewport.resize` 合并到 animation frame；DevTools
@@ -156,7 +161,7 @@ composition 一次等比投影：常见 PC 高度贴满，窄视口对称裁切�
 | --- | --- | --- | --- |
 | `AppController` 编排职责过多 | 需要跨网关、状态机、音频、转轴、UI 和恢复维持精确顺序，功能长期累积在协调器 | 一处 feature 改动影响断线、自动旋转和销毁路径 | 提取 `RoundOrchestrator`、`FeaturePresentationCoordinator`、`AudioCoordinator`；Controller 只装配与转发 |
 | `RgsGateway` 同时负责 transport、codec、token、round recovery 与 ACK | 安全校验需要共享绑定，最初集中实现更容易闭合不变量 | 重试策略修改可能误伤 token/ACK，测试组合增长 | 分成纯 `RgsTransport`、严格 codec、`RoundRecoveryLedger`、`ResultDeliveryAck`，共享不可变 session binding |
-| DOM 与 Pixi 双层布局 | 官方画面既有 Canvas 动画又有可访问 DOM 控件 | 任一消费者自行算尺寸会产生漂移、点击错位 | 保持 `ResponsiveLayoutSnapshot` 为唯一几何输入，禁止子模块读取 `innerWidth` 自行缩放 |
+| DOM 与 Pixi 双层布局 | 参考画面既有 Canvas 动画又有可访问 DOM 控件 | 任一消费者自行算尺寸会产生漂移、点击错位 | 保持 `ResponsiveLayoutSnapshot` 为唯一几何输入，禁止子模块读取 `innerWidth` 自行缩放 |
 | 单一 CSS 文件承载多端和帮助页 | 像素还原需要大量捕获规则，级联方便但所有权不清 | 全局 selector 覆盖字体/层级，媒体规则互相污染 | 按 shell/base-game/feature/help/mobile 分 layer，并为关键字体、z-index 和容器变量建立契约测试 |
 | 通道判定仍含输入能力启发式 | 浏览器没有可靠的“手机/平板”布尔值，触控笔记本和 DevTools 模拟会冲突 | 边缘设备可能选择非预期构图 | 保留显式宿主 override，持续运行真实设备/浏览器矩阵；不回退到固定设备白名单 |
 | 恢复耗尽会硬阻塞界面 | 资金不确定时继续投注比暂时不可用更危险 | 用户需要运营支持才能解除长时间 pending | 提供可审计支持入口与轮次引用；不得用清空本地状态或换 round 绕过 |
@@ -172,7 +177,7 @@ composition 一次等比投影：常见 PC 高度贴满，窄视口对称裁切�
 | Redis 锁/缓存作为幂等权威 | 快、实现常见 | TTL、淘汰、故障转移或双写窗口会丢失资金证据；cache miss 不能证明未执行 | PostgreSQL 唯一约束、结果和命令为权威，Valkey 只准入 |
 | 失败后无限 apply 重试 | 短暂故障后可能自行恢复 | 发送后断线可能已扣款；无限重试导致重复效应和雪崩 | `UNKNOWN` 先 lookup，写尝试有硬预算和人工审核 |
 | 数据库 + 消息系统双写 | 下游实时 | 任一侧成功、另一侧失败，无法证明事件与业务提交一致 | 同事务 Outbox，事务外至少一次投递 |
-| 直接使用分布式 2PC | 理论上统一提交 | 外部大平台钱包通常不加入本方事务协调器；阻塞、恢复和组织边界不可控 | 版本化幂等命令、状态查询和对账收敛 |
+| 直接使用分布式 2PC | 理论上统一提交 | 外部大平台钱包通常不加入应用事务协调器；阻塞、恢复和组织边界不可控 | 版本化幂等命令、状态查询和对账收敛 |
 | 每接一家钱包复制业务流程 | 首次接入看似快 | 供应商状态码渗入核心，长期出现不同幂等和恢复语义 | 统一 v2 profile/SPI，差异留在 adapter 和 conformance |
 | 一开始拆成大量微服务 | 团队边界清晰时可独立发布 | 在资金状态尚未稳定时增加网络故障、版本矩阵和观测成本 | 先保持领域模块化单制品，API/Worker 按运行角色隔离 |
 

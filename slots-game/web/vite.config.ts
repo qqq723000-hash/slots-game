@@ -1,5 +1,14 @@
 import { defineConfig } from "vitest/config";
 
+// 与公开支持矩阵保持逐字节一致；不要依赖 Vite 大版本会变化的隐式默认值。
+export const PRODUCTION_BROWSER_TARGETS = Object.freeze([
+  "chrome111",
+  "edge111",
+  "firefox114",
+  "safari16.4",
+  "ios16.4",
+]);
+
 function normalizedModuleID(moduleID: string): string {
   return moduleID.replaceAll("\\", "/");
 }
@@ -34,6 +43,8 @@ function boundedProductionChunkName(moduleID: string): string | undefined {
 
 export default defineConfig({
   build: {
+    target: [...PRODUCTION_BROWSER_TARGETS],
+    cssTarget: [...PRODUCTION_BROWSER_TARGETS],
     chunkSizeWarningLimit: 500,
     // 生产包不生成源码映射；既减少发布体积，也避免泄露本机路径和源码上下文。
     sourcemap: false,

@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
+import { PERSONAL_PROJECT_NOTICE } from "./verify-personal-project-docs.mjs";
+
 export const HARDENING_CHECKLIST_TITLE = "# 前后端持续优化加固清单";
 export const HARDENING_CHECKLIST_MINIMUM_ITEMS = 933;
 export const HARDENING_CHECKLIST_SECTIONS = Object.freeze([
@@ -43,7 +45,11 @@ export function validateHardeningChecklist(source, options = {}) {
 
   const requiredSections = options.requiredSections ?? HARDENING_CHECKLIST_SECTIONS;
   const minimumItems = options.minimumItems ?? HARDENING_CHECKLIST_MINIMUM_ITEMS;
-  const lines = source.split("\n");
+  const canonicalPreamble = `${HARDENING_CHECKLIST_TITLE}\n\n${PERSONAL_PROJECT_NOTICE}\n\n`;
+  const checklistSource = source.startsWith(canonicalPreamble)
+    ? `${HARDENING_CHECKLIST_TITLE}\n\n${source.slice(canonicalPreamble.length)}`
+    : source;
+  const lines = checklistSource.split("\n");
   if (lines.at(-1) === "") lines.pop();
   if (lines[0] !== HARDENING_CHECKLIST_TITLE) {
     throw new Error("加固清单标题不符合固定契约");

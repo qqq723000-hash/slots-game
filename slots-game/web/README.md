@@ -1,5 +1,10 @@
 # Primal Rampage 前端
 
+<!-- personal-independent-project -->
+> **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
+> 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
+> 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
 前端是只读的权威结果表现层，使用 TypeScript、PixiJS 6.5.2 和 Spine 4.1。它不选择符号、计算
 输赢、修改余额或推进可赔付特性状态。正式入口只创建 `RgsGateway`，不存在 WebSocket 开发回退。
 
@@ -16,11 +21,15 @@ npm run build
 npm run build:determinism-check
 npm run build:assets-check
 npm run build:bundle-check
+npm run build:browser-smoke
+npm run build:browser-matrix
 ```
 
 `npm run build` 先执行类型检查和 Vite 构建，再将 `dist/` 裁剪到生产白名单，生成含公开
 版本、完整提交摘要、逐文件字节数/SHA-256 及可复算 `releaseId` 的清单，最后拒绝未审查的
 JavaScript bundle。确定性门禁会用相同输入复建并逐字节比较清单。
+JavaScript/CSS 的最低浏览器目标已显式固定；支持版本、跨引擎事务检查和真实设备边界见
+[`../docs/browser-support-matrix.md`](../docs/browser-support-matrix.md)。
 
 ## RGS 配置
 
@@ -32,7 +41,7 @@ VITE_RGS_BET_OPTIONS_MINOR=10,20,50,100,200 \
 VITE_RGS_DEFAULT_BET_MINOR=100 \
 VITE_RGS_HOST_ORIGIN=https://operator.example \
 WEB_RELEASE_REQUIRE_IDENTITY=1 \
-WEB_RELEASE_VERSION=1.2.3 \
+WEB_RELEASE_VERSION=1.3.0 \
 WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
   npm run build
 ```
@@ -64,9 +73,9 @@ WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
 
 ## 加载页与品牌边界
 
-启动页的蓝色径向背景、进度条几何、断点和过渡时序按已冻结的 ContainerLauncher 证据实现；
-底部供应商图形则有意使用项目批准的 G'm GO 素材。后者不是遗漏的视觉还原项，未经可审计授权不得
-为了像素一致而换回 Play'n GO 商标或图形。
+启动页的蓝色径向背景、进度条几何、断点和过渡时序按已冻结的外部加载页基线实现；
+底部供应商图形使用项目批准的本地中性素材。该差异不是遗漏的视觉还原项，未经可审计授权不得
+为了像素一致而引入任何第三方商标或图形。
 
 随包 `THIRD_PARTY_NOTICES.txt` 包含浏览器生产依赖及构建器写入代码的许可原文，其中 Spine
 运行库受 Spine Runtimes License Agreement 约束。随包声明满足代码制品的告知边界，但不替代
