@@ -19,10 +19,9 @@ import {
   validateVisualFixtureTimingBudget,
 } from "./browser-rendering-contract.mjs";
 import {
+  captureClockPauseAttempt,
+  captureClockPauseWithAttempts,
   captureClockPastTargetMessage,
-  captureClockPauseAttempts,
-  captureClockPauseLeadMs,
-  isRecoverableCaptureClockPastTarget,
 } from "./visual-fixture-clock.mjs";
 import {
   checkpointInputLeaseMatchesCurrentControl,
@@ -1264,47 +1263,20 @@ async function releaseFixtureCheckpointHold(page, expectedCheckpoint) {
 }
 
 async function pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard) {
-  let lastPastTargetError = null;
-  for (let attempt = 0; attempt < captureClockPauseAttempts; attempt += 1) {
-    const pageTimeMs = await page.evaluate(() => Date.now());
-    const pauseTargetMs = pageTimeMs + captureClockPauseLeadMs;
-    beginCaptureClockConsoleGuard(captureClockConsoleGuard);
-    let pauseError = null;
-    try {
-      await page.clock.pauseAt(pauseTargetMs);
-    } catch (error) {
-      pauseError = error;
-    }
-    let pausedPageTimeMs = null;
-    let clockStateReadError = null;
-    try {
-      // 读取暂停态页面时间同时冲刷流水线，确保同步产生的 pageerror/console 已进入 guard。
-      pausedPageTimeMs = await page.evaluate(() => Date.now());
-    } catch (error) {
-      clockStateReadError = error;
-    }
-    const isPastTarget = clockStateReadError === null
-      && isRecoverableCaptureClockPastTarget(pauseError, pausedPageTimeMs, pauseTargetMs);
-    settleCaptureClockConsoleGuard(
+  await captureClockPauseWithAttempts(() => captureClockPauseAttempt({
+    beginConsoleGuard: () => beginCaptureClockConsoleGuard(captureClockConsoleGuard),
+    pauseAt: (pauseTargetMs) => page.clock.pauseAt(pauseTargetMs),
+    readPageTime: () => page.evaluate(() => Date.now()),
+    resume: () => page.clock.resume(),
+    settleConsoleGuard: (consumeExpectedPastTarget) => settleCaptureClockConsoleGuard(
       captureClockConsoleGuard,
       runtimeErrors,
-      isPastTarget,
-    );
-    if (clockStateReadError !== null) {
-      await page.clock.resume();
-      throw clockStateReadError;
-    }
-    if (pauseError === null) return;
-
-    // pauseAt 的 past-target 分支会先暂停再抛错；必须恢复后才能从新的页面时间重试。
-    await page.clock.resume();
-    if (!isPastTarget) throw pauseError;
-    lastPastTargetError = pauseError;
-  }
-  throw new Error(
-    `特殊玩法截图时钟连续 ${captureClockPauseAttempts} 次无法在当前页面时刻暂停`,
-    { cause: lastPastTargetError },
-  );
+      consumeExpectedPastTarget,
+    ),
+    waitForVerification: (delayMs) => new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, delayMs);
+    }),
+  }));
 }
 
 function recordFixtureRuntimeError(runtimeErrors, captureClockConsoleGuard, message) {

@@ -1,5 +1,5 @@
 // @ts-nocheck -- 浏览器门禁合同会直接执行 Node .mjs 运维辅助模块。
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import workflow from "../../../.github/workflows/frontend-conformance.yml?raw";
 import packageJson from "../package.json?raw";
@@ -8,10 +8,14 @@ import {
   validateVisualFixtureTimingBudget,
 } from "../scripts/browser-rendering-contract.mjs";
 import {
+  captureClockPauseAttempt,
+  captureClockPauseWithAttempts,
   captureClockPastTargetMessage,
   captureClockPauseAttempts,
   captureClockPauseLeadMs,
+  captureClockPauseVerificationDelayMs,
   isRecoverableCaptureClockPastTarget,
+  isStableCaptureClockPauseObservation,
 } from "../scripts/visual-fixture-clock.mjs";
 import {
   checkpointInputLeaseMatchesCurrentControl,
@@ -176,6 +180,7 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(baselineContract).toContain("if (captureClockPaused) await page.clock.resume()");
     expect(captureClockPauseLeadMs).toBe(250);
     expect(captureClockPauseAttempts).toBe(4);
+    expect(captureClockPauseVerificationDelayMs).toBe(16);
     expect(captureClockPastTargetMessage).toBe("Cannot fast-forward to the past");
     expect(scenarioContract).toContain("const controlledClockCapture = contract.renderCheckpoints.some(");
     expect(captureContract).toContain("if (controlledClockCapture) {");
@@ -198,18 +203,16 @@ describe("non-production special-feature browser fixture contract", () => {
       pauseStart,
     );
     const pauseContract = fixtureBrowserGate.slice(pauseStart, pauseEnd);
-    expect(pauseContract).toContain("attempt < captureClockPauseAttempts");
-    expect(pauseContract).toContain("const pageTimeMs = await page.evaluate(() => Date.now())");
-    expect(pauseContract).toContain("const pauseTargetMs = pageTimeMs + captureClockPauseLeadMs");
-    expect(pauseContract).toContain("pausedPageTimeMs = await page.evaluate(() => Date.now())");
-    expect(pauseContract).toContain("isRecoverableCaptureClockPastTarget(");
-    expect(pauseContract).toContain("if (clockStateReadError !== null) {");
-    expect(pauseContract).toContain("throw clockStateReadError");
-    expect(pauseContract).not.toContain("page.evaluate(() => undefined).catch");
-    expect(pauseContract).toContain("settleCaptureClockConsoleGuard(");
-    expect(pauseContract.indexOf("settleCaptureClockConsoleGuard("))
-      .toBeLessThan(pauseContract.indexOf("await page.clock.resume()"));
-    expect(pauseContract).toContain("lastPastTargetError = pauseError");
+    expect(pauseContract).toContain("await captureClockPauseWithAttempts(");
+    expect(pauseContract).toContain("captureClockPauseAttempt({");
+    expect(pauseContract).toContain("readPageTime: () => page.evaluate(() => Date.now())");
+    expect(pauseContract).toContain("pauseAt: (pauseTargetMs) => page.clock.pauseAt(pauseTargetMs)");
+    expect(pauseContract).toContain("resume: () => page.clock.resume()");
+    expect(pauseContract).toContain("settleConsoleGuard:");
+    expect(pauseContract).toContain("setTimeout(resolvePromise, delayMs)");
+    expect(pauseContract).not.toContain("page.clock.setSystemTime");
+    expect(pauseContract).not.toContain("page.clock.setFixedTime");
+    expect(pauseContract).not.toContain("page.clock.fastForward");
   });
 
   it("distinguishes a real past target from an application timer with the same error text", () => {
@@ -240,6 +243,198 @@ describe("non-production special-feature browser fixture contract", () => {
       target,
     )).toBe(false);
     expect(isRecoverableCaptureClockPastTarget(directClockError, Number.NaN, target)).toBe(false);
+    expect(isStableCaptureClockPauseObservation(target + 100, target + 100)).toBe(true);
+    expect(isStableCaptureClockPauseObservation(target + 100, target + 101)).toBe(false);
+    expect(isStableCaptureClockPauseObservation(Number.NaN, Number.NaN)).toBe(false);
+  });
+
+  it("deterministically closes every capture-clock pause attempt branch", async () => {
+    const pastTargetError = new Error(
+      `clock.pauseAt: Error: ${captureClockPastTargetMessage}`,
+    );
+    const stableSteps: string[] = [];
+    const stableTimes = [1_000, 1_300, 1_300];
+    const stableResult = await captureClockPauseAttempt({
+      beginConsoleGuard: () => stableSteps.push("guard-begin"),
+      pauseAt: async (target) => {
+        stableSteps.push(`pause:${target}`);
+        throw pastTargetError;
+      },
+      readPageTime: async () => {
+        stableSteps.push("read");
+        return stableTimes.shift();
+      },
+      resume: async () => stableSteps.push("resume"),
+      settleConsoleGuard: (consume) => stableSteps.push(`guard-settle:${consume}`),
+      waitForVerification: async (delay) => stableSteps.push(`wait:${delay}`),
+    });
+    expect(stableResult).toEqual({ paused: true, pastTargetError: null });
+    expect(stableSteps).toEqual([
+      "read",
+      "guard-begin",
+      "pause:1250",
+      "read",
+      "wait:16",
+      "read",
+      "guard-settle:true",
+    ]);
+
+    const normalResume = vi.fn(async () => undefined);
+    const normalTimes = [1_000, 1_250];
+    await expect(captureClockPauseAttempt({
+      beginConsoleGuard: () => undefined,
+      pauseAt: async (target) => expect(target).toBe(1_250),
+      readPageTime: async () => normalTimes.shift(),
+      resume: normalResume,
+      settleConsoleGuard: (consume) => expect(consume).toBe(false),
+      waitForVerification: async () => {
+        throw new Error("正常暂停不得进入二次验证");
+      },
+    })).resolves.toEqual({ paused: true, pastTargetError: null });
+    expect(normalResume).not.toHaveBeenCalled();
+
+    const driftingSteps: string[] = [];
+    const driftingTimes = [1_000, 1_300, 1_301];
+    const driftingResult = await captureClockPauseAttempt({
+      beginConsoleGuard: () => driftingSteps.push("guard-begin"),
+      pauseAt: async () => {
+        driftingSteps.push("pause");
+        throw pastTargetError;
+      },
+      readPageTime: async () => {
+        driftingSteps.push("read");
+        return driftingTimes.shift();
+      },
+      resume: async () => driftingSteps.push("resume"),
+      settleConsoleGuard: (consume) => driftingSteps.push(`guard-settle:${consume}`),
+      waitForVerification: async () => driftingSteps.push("wait"),
+    });
+    expect(driftingResult).toEqual({ paused: false, pastTargetError });
+    expect(driftingSteps.at(-2)).toBe("guard-settle:true");
+    expect(driftingSteps.at(-1)).toBe("resume");
+
+    const unknownPauseError = new Error("unrelated pause failure");
+    const unknownResume = vi.fn(async () => undefined);
+    await expect(captureClockPauseAttempt({
+      beginConsoleGuard: () => undefined,
+      pauseAt: async () => { throw unknownPauseError; },
+      readPageTime: async () => 1_000,
+      resume: unknownResume,
+      settleConsoleGuard: (consume) => expect(consume).toBe(false),
+      waitForVerification: async () => {
+        throw new Error("非 past-target 不得进入二次验证");
+      },
+    })).rejects.toBe(unknownPauseError);
+    expect(unknownResume).toHaveBeenCalledOnce();
+
+    const stateReadError = new Error("paused state read failed");
+    const stateReadResume = vi.fn(async () => undefined);
+    let stateReadCount = 0;
+    await expect(captureClockPauseAttempt({
+      beginConsoleGuard: () => undefined,
+      pauseAt: async () => undefined,
+      readPageTime: async () => {
+        stateReadCount += 1;
+        if (stateReadCount === 1) return 1_000;
+        throw stateReadError;
+      },
+      resume: stateReadResume,
+      settleConsoleGuard: (consume) => expect(consume).toBe(false),
+      waitForVerification: async () => undefined,
+    })).rejects.toBe(stateReadError);
+    expect(stateReadResume).toHaveBeenCalledOnce();
+
+    const initialReadError = new Error("initial time read failed");
+    const initialBegin = vi.fn();
+    const initialPause = vi.fn();
+    const initialResume = vi.fn();
+    await expect(captureClockPauseAttempt({
+      beginConsoleGuard: initialBegin,
+      pauseAt: initialPause,
+      readPageTime: async () => { throw initialReadError; },
+      resume: initialResume,
+      settleConsoleGuard: () => undefined,
+      waitForVerification: async () => undefined,
+    })).rejects.toBe(initialReadError);
+    expect(initialBegin).not.toHaveBeenCalled();
+    expect(initialPause).not.toHaveBeenCalled();
+    expect(initialResume).not.toHaveBeenCalled();
+
+    const verificationReadError = new Error("verification read failed");
+    const verificationResume = vi.fn(async () => undefined);
+    const verificationTimes = [1_000, 1_300];
+    await expect(captureClockPauseAttempt({
+      beginConsoleGuard: () => undefined,
+      pauseAt: async () => { throw pastTargetError; },
+      readPageTime: async () => {
+        const value = verificationTimes.shift();
+        if (value === undefined) throw verificationReadError;
+        return value;
+      },
+      resume: verificationResume,
+      settleConsoleGuard: (consume) => expect(consume).toBe(true),
+      waitForVerification: async () => undefined,
+    })).rejects.toBe(verificationReadError);
+    expect(verificationResume).toHaveBeenCalledOnce();
+
+    const verificationWaitError = new Error("verification wait failed");
+    const verificationWaitResume = vi.fn(async () => undefined);
+    const verificationWaitTimes = [1_000, 1_300];
+    await expect(captureClockPauseAttempt({
+      beginConsoleGuard: () => undefined,
+      pauseAt: async () => { throw pastTargetError; },
+      readPageTime: async () => verificationWaitTimes.shift(),
+      resume: verificationWaitResume,
+      settleConsoleGuard: (consume) => expect(consume).toBe(true),
+      waitForVerification: async () => { throw verificationWaitError; },
+    })).rejects.toBe(verificationWaitError);
+    expect(verificationWaitResume).toHaveBeenCalledOnce();
+
+    const settlementError = new Error("guard settlement failed");
+    const settlementResume = vi.fn(async () => undefined);
+    await expect(captureClockPauseAttempt({
+      beginConsoleGuard: () => undefined,
+      pauseAt: async () => undefined,
+      readPageTime: async () => 1_000,
+      resume: settlementResume,
+      settleConsoleGuard: () => { throw settlementError; },
+      waitForVerification: async () => undefined,
+    })).rejects.toBe(settlementError);
+    expect(settlementResume).toHaveBeenCalledOnce();
+
+    const resumeError = new Error("resume failed");
+    await expect(captureClockPauseAttempt({
+      beginConsoleGuard: () => undefined,
+      pauseAt: async () => { throw unknownPauseError; },
+      readPageTime: async () => 1_000,
+      resume: async () => { throw resumeError; },
+      settleConsoleGuard: () => undefined,
+      waitForVerification: async () => undefined,
+    })).rejects.toMatchObject({
+      name: "AggregateError",
+      errors: [unknownPauseError, resumeError],
+      cause: unknownPauseError,
+    });
+
+    const retryErrors = Array.from(
+      { length: captureClockPauseAttempts },
+      (_, index) => new Error(`past target retry ${index + 1}`),
+    );
+    const retryAttempt = vi.fn(async () => {
+      const pastTargetError = retryErrors[retryAttempt.mock.calls.length - 1];
+      return { paused: false, pastTargetError };
+    });
+    await expect(captureClockPauseWithAttempts(retryAttempt)).rejects.toMatchObject({
+      message: `特殊玩法截图时钟连续 ${captureClockPauseAttempts} 次无法在当前页面时刻暂停`,
+      cause: retryErrors.at(-1),
+    });
+    expect(retryAttempt).toHaveBeenCalledTimes(captureClockPauseAttempts);
+
+    const successfulAttempt = vi.fn()
+      .mockResolvedValueOnce({ paused: false, pastTargetError })
+      .mockResolvedValueOnce({ paused: true, pastTargetError: null });
+    await expect(captureClockPauseWithAttempts(successfulAttempt)).resolves.toBeUndefined();
+    expect(successfulAttempt).toHaveBeenCalledTimes(2);
   });
 
   it("consumes only the one console diagnostic paired with a recovered clock error", () => {

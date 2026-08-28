@@ -1,6 +1,28 @@
 export const captureClockPauseLeadMs = 250;
 export const captureClockPauseAttempts = 4;
+export const captureClockPauseVerificationDelayMs = 16;
 export const captureClockPastTargetMessage = "Cannot fast-forward to the past";
+
+async function resumeCaptureClockAfterFailure(resume, originalError) {
+  try {
+    await resume();
+  } catch (resumeError) {
+    throw new AggregateError(
+      [originalError, resumeError],
+      "截图时钟恢复失败",
+      { cause: originalError },
+    );
+  }
+}
+
+export function isStableCaptureClockPauseObservation(
+  pausedPageTimeMs,
+  verifiedPausedPageTimeMs,
+) {
+  return Number.isFinite(pausedPageTimeMs)
+    && Number.isFinite(verifiedPausedPageTimeMs)
+    && Object.is(pausedPageTimeMs, verifiedPausedPageTimeMs);
+}
 
 export function isRecoverableCaptureClockPastTarget(
   error,
@@ -17,4 +39,95 @@ export function isRecoverableCaptureClockPastTarget(
     && Number.isFinite(pausedPageTimeMs)
     && Number.isFinite(pauseTargetMs)
     && pausedPageTimeMs > pauseTargetMs;
+}
+
+/**
+ * 执行一次可注入、可确定性测试的暂停尝试。past-target 只有在第二次页面时间读数
+ * 证明时钟已经冻结时才算成功；其余暂停后失败路径均先恢复时钟再返回或抛错。
+ */
+export async function captureClockPauseAttempt({
+  beginConsoleGuard,
+  pauseAt,
+  readPageTime,
+  resume,
+  settleConsoleGuard,
+  waitForVerification,
+}) {
+  const pageTimeMs = await readPageTime();
+  const pauseTargetMs = pageTimeMs + captureClockPauseLeadMs;
+  beginConsoleGuard();
+  let pauseError = null;
+  try {
+    await pauseAt(pauseTargetMs);
+  } catch (error) {
+    pauseError = error;
+  }
+
+  let pausedPageTimeMs = null;
+  let clockStateReadError = null;
+  try {
+    pausedPageTimeMs = await readPageTime();
+  } catch (error) {
+    clockStateReadError = error;
+  }
+  const isPastTarget = clockStateReadError === null
+    && isRecoverableCaptureClockPastTarget(pauseError, pausedPageTimeMs, pauseTargetMs);
+
+  let verifiedPausedPageTimeMs = null;
+  let clockPauseVerificationReadError = null;
+  if (isPastTarget) {
+    try {
+      await waitForVerification(captureClockPauseVerificationDelayMs);
+      verifiedPausedPageTimeMs = await readPageTime();
+    } catch (error) {
+      clockPauseVerificationReadError = error;
+    }
+  }
+  let consoleGuardSettlementError = null;
+  try {
+    settleConsoleGuard(isPastTarget);
+  } catch (error) {
+    consoleGuardSettlementError = error;
+  }
+
+  if (consoleGuardSettlementError !== null) {
+    await resumeCaptureClockAfterFailure(resume, consoleGuardSettlementError);
+    throw consoleGuardSettlementError;
+  }
+
+  if (clockStateReadError !== null) {
+    await resumeCaptureClockAfterFailure(resume, clockStateReadError);
+    throw clockStateReadError;
+  }
+  if (pauseError === null) {
+    return Object.freeze({ paused: true, pastTargetError: null });
+  }
+  if (clockPauseVerificationReadError !== null) {
+    await resumeCaptureClockAfterFailure(resume, clockPauseVerificationReadError);
+    throw clockPauseVerificationReadError;
+  }
+  if (isPastTarget && isStableCaptureClockPauseObservation(
+    pausedPageTimeMs,
+    verifiedPausedPageTimeMs,
+  )) {
+    return Object.freeze({ paused: true, pastTargetError: null });
+  }
+
+  await resumeCaptureClockAfterFailure(resume, pauseError);
+  if (!isPastTarget) throw pauseError;
+  return Object.freeze({ paused: false, pastTargetError: pauseError });
+}
+
+/** 有界重试只接受 helper 明确证明的暂停态，并保留最后一次 past-target 原因。 */
+export async function captureClockPauseWithAttempts(attemptPause) {
+  let lastPastTargetError = null;
+  for (let attempt = 0; attempt < captureClockPauseAttempts; attempt += 1) {
+    const result = await attemptPause();
+    if (result.paused) return;
+    lastPastTargetError = result.pastTargetError;
+  }
+  throw new Error(
+    `特殊玩法截图时钟连续 ${captureClockPauseAttempts} 次无法在当前页面时刻暂停`,
+    { cause: lastPastTargetError },
+  );
 }
