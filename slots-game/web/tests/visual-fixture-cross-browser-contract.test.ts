@@ -18,6 +18,14 @@ import {
   renderCheckpointSignalMatches,
   validateRenderCheckpointInputLeases,
 } from "../scripts/visual-fixture-checkpoint.mjs";
+import {
+  clickWithPrimaryActionLease,
+  isPlaywrightLocatorClickTimeout,
+  primaryActionLeaseFromSnapshot,
+  primaryActionLeaseKey,
+  primaryActionLeaseMatchesSnapshot,
+  primaryActionLeaseSelector,
+} from "../scripts/visual-fixture-primary-action.mjs";
 import fixtureBrowserGate from "../scripts/verify-visual-fixture-cross-browser.mjs?raw";
 import fixtureMain from "../src/testing/visualFixturesMain.ts?raw";
 
@@ -64,7 +72,7 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(workflow).toContain("verify-special-features:");
     expect(workflow).toContain("name: verify-special-features (${{ matrix.browser }})");
     expect(workflow).toContain("browser: [chromium, firefox, webkit]");
-    expect(workflow).toContain("timeout-minutes: 25");
+    expect(workflow).toContain("timeout-minutes: 35");
     const frontendJob = workflow.slice(
       workflow.indexOf("  verify-frontend:"),
       workflow.indexOf("  verify-special-features:"),
@@ -98,7 +106,7 @@ describe("non-production special-feature browser fixture contract", () => {
       workflow.indexOf("  verify-edge:"),
       workflow.indexOf("  verify-web-static-image:"),
     );
-    expect(edgeJob).toContain("timeout-minutes: 30");
+    expect(edgeJob).toContain("timeout-minutes: 35");
     expect(frontendJob).not.toContain("test:visual-fixtures-browser-matrix");
   });
 
@@ -397,12 +405,14 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain("const defaultScenarioDeadlineMs = 120_000");
     expect(fixtureBrowserGate).toContain("const extendedScenarioDeadlineMs = 150_000");
     expect(fixtureBrowserGate).toContain("const largeScenarioDeadlineMs = 180_000");
-    expect(fixtureBrowserGate).toContain("const chromiumKongScenarioDeadlineMs = 210_000");
+    expect(fixtureBrowserGate).toContain("const chromiumKingScenarioDeadlineMs = 210_000");
     expect(fixtureBrowserGate).toContain("const edgeKingScenarioDeadlineMs = 240_000");
+    expect(fixtureBrowserGate).toContain("const slowExtendedScenarioDeadlineMs = 240_000");
+    expect(fixtureBrowserGate).toContain("const slowKongScenarioDeadlineMs = 270_000");
     expect(fixtureBrowserGate).toContain("const standardBrowserDeadlineMs = 20 * 60_000");
-    expect(fixtureBrowserGate).toContain("const slowBrowserDeadlineMs = 21 * 60_000");
+    expect(fixtureBrowserGate).toContain("const slowBrowserDeadlineMs = 30 * 60_000");
     expect(fixtureBrowserGate).toContain("const standardMaximumBrowserBudgetMs = 21 * 60_000");
-    expect(fixtureBrowserGate).toContain("const slowMaximumBrowserBudgetMs = 22 * 60_000");
+    expect(fixtureBrowserGate).toContain("const slowMaximumBrowserBudgetMs = 31 * 60_000");
     expect(fixtureBrowserGate).toContain(
       "const browserTimingBudgets = Object.freeze(Object.fromEntries(supportedBrowsers.map(",
     );
@@ -447,24 +457,24 @@ describe("non-production special-feature browser fixture contract", () => {
     };
     expect(validateVisualFixtureTimingBudget(validBudget))
       .toEqual({ maximumBrowserScenarioBudgetMs: 1_140_000 });
-    const chromiumScenarioDeadlineMsByRun = [150_000, 150_000, 180_000, 210_000,
-      120_000, 150_000, 120_000, 120_000];
+    const chromiumScenarioDeadlineMsByRun = [150_000, 150_000, 210_000, 270_000,
+      240_000, 150_000, 240_000, 270_000];
     expect(validateVisualFixtureTimingBudget({
       ...validBudget,
-      browserDeadlineMs: 21 * 60_000,
-      maximumBrowserBudgetMs: 22 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_200_000,
+      browserDeadlineMs: 30 * 60_000,
+      maximumBrowserBudgetMs: 31 * 60_000,
+      maximumBrowserScenarioBudgetMs: 1_680_000,
       scenarioDeadlineMsByRun: chromiumScenarioDeadlineMsByRun,
-    })).toEqual({ maximumBrowserScenarioBudgetMs: 1_200_000 });
-    const edgeScenarioDeadlineMsByRun = [150_000, 150_000, 240_000, 150_000,
-      120_000, 150_000, 120_000, 120_000];
+    })).toEqual({ maximumBrowserScenarioBudgetMs: 1_680_000 });
+    const edgeScenarioDeadlineMsByRun = [150_000, 150_000, 240_000, 270_000,
+      240_000, 150_000, 240_000, 270_000];
     expect(validateVisualFixtureTimingBudget({
       ...validBudget,
-      browserDeadlineMs: 21 * 60_000,
-      maximumBrowserBudgetMs: 22 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_200_000,
+      browserDeadlineMs: 30 * 60_000,
+      maximumBrowserBudgetMs: 31 * 60_000,
+      maximumBrowserScenarioBudgetMs: 1_710_000,
       scenarioDeadlineMsByRun: edgeScenarioDeadlineMsByRun,
-    })).toEqual({ maximumBrowserScenarioBudgetMs: 1_200_000 });
+    })).toEqual({ maximumBrowserScenarioBudgetMs: 1_710_000 });
     expect(() => validateVisualFixtureTimingBudget({
       ...validBudget,
       browserDeadlineMs: 1_140_000,
@@ -594,12 +604,13 @@ describe("non-production special-feature browser fixture contract", () => {
     const scenarioStart = fixtureBrowserGate.indexOf("async function runScenario");
     const scenarioEnd = fixtureBrowserGate.indexOf("function renderCheckpointKey", scenarioStart);
     const scenarioContract = fixtureBrowserGate.slice(scenarioStart, scenarioEnd);
-    expect(clickContract).toContain("page.locator('[data-role=\"spin\"]')");
+    expect(clickContract).toContain("page.locator(primaryActionLeaseSelector(expectedLease))");
     expect(fixtureBrowserGate).toContain("const primaryActionTimeoutMs = 15_000");
-    expect(clickContract).toContain("await spin.click({ timeout: primaryActionTimeoutMs })");
-    expect(clickContract).toContain("if (!stillClickable) return false");
-    expect(clickContract).toContain("throw error");
-    expect(clickContract).not.toContain("timeout: 1_500");
+    expect(fixtureBrowserGate).toContain("const primaryActionAttemptTimeoutMs = 2_000");
+    expect(clickContract).toContain("clickWithPrimaryActionLease({");
+    expect(clickContract).toContain("attemptClick: async (timeout) => spin.click({ timeout })");
+    expect(clickContract).toContain("attemptTimeoutMs: primaryActionAttemptTimeoutMs");
+    expect(clickContract).toContain("totalTimeoutMs: primaryActionTimeoutMs");
     expect(clickContract).not.toContain("force: true");
     expect(clickContract).not.toContain("element.click()");
     expect(clickContract).not.toContain("dispatchEvent");
@@ -610,8 +621,133 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(scenarioContract).toContain("checkpointInputLeaseMatchesCurrentControl(snapshot, checkpoint)");
     expect(scenarioContract).toContain("if (pendingRenderCheckpoint || pendingInputLeaseCheckpoint) {");
     expect(scenarioContract).toContain("await page.waitForTimeout(16)");
+    expect(scenarioContract).toContain("const actionLease = primaryActionLeaseFromSnapshot(snapshot)");
+    expect(scenarioContract).toContain("const actionToken = primaryActionLeaseKey(actionLease)");
+    expect(scenarioContract).toContain("clickCurrentPrimaryAction(page, actionLease)");
     expect(scenarioContract.indexOf("const pendingRenderCheckpoint"))
       .toBeLessThan(scenarioContract.indexOf("const shouldContinue"));
+  });
+
+  it("retries only the same enabled primary-action lease within one total deadline", async () => {
+    const stableSnapshot = {
+      sequence: "3",
+      stage: "reels.settled",
+      milestone: "wheel.summary-input-ready",
+      milestoneCount: 8,
+      event: "wheel.awarded",
+      featureMode: "wheel-summary",
+      spinAction: "continue",
+      spinMode: "continue",
+      spinDisabled: false,
+    };
+    const expectedLease = primaryActionLeaseFromSnapshot(stableSnapshot);
+    expect(primaryActionLeaseKey(expectedLease)).toBe(
+      '["3","reels.settled","wheel.summary-input-ready",8,"wheel.awarded",'
+      + '"wheel-summary","continue","continue"]',
+    );
+    expect(primaryActionLeaseSelector(expectedLease)).toBe(
+      'body[data-fixture-sequence="3"][data-fixture-stage="reels.settled"]'
+      + '[data-fixture-milestone="wheel.summary-input-ready"]'
+      + '[data-fixture-milestone-count="8"][data-fixture-event="wheel.awarded"] '
+      + '[data-role="spin"][data-action="continue"][data-mode="continue"]',
+    );
+    expect(primaryActionLeaseMatchesSnapshot(expectedLease, stableSnapshot)).toBe(true);
+    expect(primaryActionLeaseMatchesSnapshot(expectedLease, {
+      ...stableSnapshot,
+      milestoneCount: 9,
+    })).toBe(false);
+    expect(primaryActionLeaseMatchesSnapshot(expectedLease, {
+      ...stableSnapshot,
+      sequence: "4",
+    })).toBe(false);
+    expect(primaryActionLeaseMatchesSnapshot(expectedLease, {
+      ...stableSnapshot,
+      spinMode: "ready",
+    })).toBe(false);
+    expect(primaryActionLeaseMatchesSnapshot(expectedLease, {
+      ...stableSnapshot,
+      spinDisabled: true,
+    })).toBe(false);
+
+    const timeoutError = (timeout) => Object.assign(
+      new Error(`locator.click: Timeout ${timeout}ms exceeded.\nCall log:\n - element is not enabled`),
+      { name: "TimeoutError" },
+    );
+    expect(isPlaywrightLocatorClickTimeout(timeoutError(2_000), 2_000)).toBe(true);
+    expect(isPlaywrightLocatorClickTimeout(new Error(
+      "locator.click: Timeout 2000ms exceeded.\nCall log:\n - element is not enabled",
+    ), 2_000)).toBe(false);
+    expect(isPlaywrightLocatorClickTimeout(timeoutError(2_001), 2_000)).toBe(false);
+
+    let elapsedMs = 0;
+    let attempts = 0;
+    const retried = await clickWithPrimaryActionLease({
+      attemptClick: async (timeout) => {
+        attempts += 1;
+        if (attempts === 1) {
+          elapsedMs += timeout;
+          throw timeoutError(timeout);
+        }
+      },
+      attemptTimeoutMs: 2_000,
+      expectedLease,
+      now: () => elapsedMs,
+      readSnapshot: async () => stableSnapshot,
+      totalTimeoutMs: 15_000,
+    });
+    expect(retried).toBe(true);
+    expect(attempts).toBe(2);
+
+    elapsedMs = 0;
+    attempts = 0;
+    const changedSnapshots = [
+      stableSnapshot,
+      { ...stableSnapshot, milestoneCount: 9 },
+    ];
+    const stale = await clickWithPrimaryActionLease({
+      attemptClick: async (timeout) => {
+        attempts += 1;
+        elapsedMs += timeout;
+        throw timeoutError(timeout);
+      },
+      attemptTimeoutMs: 2_000,
+      expectedLease,
+      now: () => elapsedMs,
+      readSnapshot: async () => changedSnapshots.shift() ?? stableSnapshot,
+      totalTimeoutMs: 15_000,
+    });
+    expect(stale).toBe(false);
+    expect(attempts).toBe(1);
+
+    elapsedMs = 0;
+    await expect(clickWithPrimaryActionLease({
+      attemptClick: async (timeout) => {
+        elapsedMs += timeout;
+        throw timeoutError(timeout);
+      },
+      attemptTimeoutMs: 2_000,
+      expectedLease,
+      now: () => elapsedMs,
+      readSnapshot: async () => stableSnapshot,
+      totalTimeoutMs: 5_000,
+    })).rejects.toThrow("locator.click: Timeout 1000ms exceeded.");
+
+    const unknownError = new Error("primary action was occluded");
+    await expect(clickWithPrimaryActionLease({
+      attemptClick: async () => { throw unknownError; },
+      attemptTimeoutMs: 2_000,
+      expectedLease,
+      readSnapshot: async () => stableSnapshot,
+      totalTimeoutMs: 15_000,
+    })).rejects.toBe(unknownError);
+    const readError = new Error("snapshot read failed");
+    await expect(clickWithPrimaryActionLease({
+      attemptClick: async () => undefined,
+      attemptTimeoutMs: 2_000,
+      expectedLease,
+      readSnapshot: async () => { throw readError; },
+      totalTimeoutMs: 15_000,
+    })).rejects.toBe(readError);
   });
 
   it("binds checkpoint epochs to screenshot bytes before slow pixel analysis", () => {

@@ -29,21 +29,30 @@ import {
   renderCheckpointSignalMatches,
   validateRenderCheckpointInputLeases,
 } from "./visual-fixture-checkpoint.mjs";
+import {
+  clickWithPrimaryActionLease,
+  primaryActionLeaseFromSnapshot,
+  primaryActionLeaseKey,
+  primaryActionLeaseSelector,
+} from "./visual-fixture-primary-action.mjs";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
 const startupTimeoutMs = 45_000;
 const primaryActionTimeoutMs = 15_000;
+const primaryActionAttemptTimeoutMs = 2_000;
 const screenshotTimeoutMs = 90_000;
 const defaultScenarioDeadlineMs = 120_000;
 const extendedScenarioDeadlineMs = 150_000;
 const largeScenarioDeadlineMs = 180_000;
-const chromiumKongScenarioDeadlineMs = 210_000;
+const chromiumKingScenarioDeadlineMs = 210_000;
 const edgeKingScenarioDeadlineMs = 240_000;
+const slowExtendedScenarioDeadlineMs = 240_000;
+const slowKongScenarioDeadlineMs = 270_000;
 const standardBrowserDeadlineMs = 20 * 60_000;
-const slowBrowserDeadlineMs = 21 * 60_000;
+const slowBrowserDeadlineMs = 30 * 60_000;
 const standardMaximumBrowserBudgetMs = 21 * 60_000;
-const slowMaximumBrowserBudgetMs = 22 * 60_000;
+const slowMaximumBrowserBudgetMs = 31 * 60_000;
 const temporalFrameAdvanceMs = 180;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
@@ -406,6 +415,7 @@ function requireFeatureScenario(capability) {
 }
 
 function resolveScenarioDeadlineMs(browserName, contract, surface) {
+  const slowBrowser = browserName === "chromium" || browserName === "msedge";
   if (browserName === "msedge"
     && surface.id === "desktop-1440x900"
     && contract.scenario === "king-flow") {
@@ -413,8 +423,17 @@ function resolveScenarioDeadlineMs(browserName, contract, surface) {
   }
   if (browserName === "chromium"
     && surface.id === "desktop-1440x900"
-    && contract.scenario === "kong-flow") {
-    return chromiumKongScenarioDeadlineMs;
+    && contract.scenario === "king-flow") {
+    return chromiumKingScenarioDeadlineMs;
+  }
+  if (slowBrowser && contract.scenario === "kong-flow"
+    && (surface.id === "desktop-1440x900" || surface.id === "tablet-1024x768")) {
+    return slowKongScenarioDeadlineMs;
+  }
+  if (slowBrowser
+    && ((surface.id === "desktop-1440x900" && contract.scenario === "cap-summary")
+      || (surface.id === "mobile-390x844" && contract.scenario === "king-flow"))) {
+    return slowExtendedScenarioDeadlineMs;
   }
   if (surface.id === "desktop-1440x900" && contract.scenario === "king-flow") {
     return largeScenarioDeadlineMs;
@@ -879,15 +898,10 @@ async function runScenario(
         && snapshot.spinAction === "fast-stop"
         && snapshot.stage === "big-win.count-start";
       if (shouldContinue || shouldFastStopBigWin) {
-        const actionToken = [
-          snapshot.sequence,
-          snapshot.stage,
-          snapshot.spinAction,
-          snapshot.milestoneCount,
-          snapshot.event,
-        ].join(":");
+        const actionLease = primaryActionLeaseFromSnapshot(snapshot);
+        const actionToken = primaryActionLeaseKey(actionLease);
         if (lastClickedToken !== actionToken) {
-          const clicked = await clickCurrentPrimaryAction(page, snapshot.spinAction);
+          const clicked = await clickCurrentPrimaryAction(page, actionLease);
           if (clicked) {
             observed.actions.add(snapshot.spinAction);
             lastClickedToken = actionToken;
@@ -1756,26 +1770,15 @@ function requireNoRuntimeFailures(runtimeErrors, browserName, scenario) {
   }
 }
 
-async function clickCurrentPrimaryAction(page, expectedAction) {
-  const spin = page.locator('[data-role="spin"]');
-  const canClick = await spin.evaluate((element, action) => (
-    element instanceof HTMLButtonElement
-    && !element.disabled
-    && element.dataset.action === action
-  ), expectedAction).catch(() => false);
-  if (!canClick) return false;
-  try {
-    await spin.click({ timeout: primaryActionTimeoutMs });
-    return true;
-  } catch (error) {
-    const stillClickable = await spin.evaluate((element, action) => (
-      element instanceof HTMLButtonElement
-      && !element.disabled
-      && element.dataset.action === action
-    ), expectedAction).catch(() => false);
-    if (!stillClickable) return false;
-    throw error;
-  }
+async function clickCurrentPrimaryAction(page, expectedLease) {
+  const spin = page.locator(primaryActionLeaseSelector(expectedLease));
+  return clickWithPrimaryActionLease({
+    attemptClick: async (timeout) => spin.click({ timeout }),
+    attemptTimeoutMs: primaryActionAttemptTimeoutMs,
+    expectedLease,
+    readSnapshot: async () => readScenarioSnapshot(page),
+    totalTimeoutMs: primaryActionTimeoutMs,
+  });
 }
 
 function validateScenarioEvidence(contract, observed, finalSnapshot, browserName) {

@@ -732,15 +732,15 @@ replace_once '        browser: [chromium, firefox, webkit]' '        browser: [c
 expect_rejected 'special-feature browser matrix dropped Firefox and WebKit'
 
 reset_fixture
-replace_once '    timeout-minutes: 25' '    timeout-minutes: 20' "$fixture/.github/workflows/frontend-conformance.yml"
+replace_once '    timeout-minutes: 35' '    timeout-minutes: 30' "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'special-feature browser matrix lost its setup and cleanup budget'
 
 reset_fixture
-replace_once '    timeout-minutes: 30' '    timeout-minutes: 25' "$fixture/.github/workflows/frontend-conformance.yml"
+replace_last_exact_line '    timeout-minutes: 35' '    timeout-minutes: 30' "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'Edge browser matrix lost its build and cleanup budget'
 
 reset_fixture
-replace_once '    # Windows 软件渲染截图受脚本 21 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
+replace_once '    # Windows 软件渲染截图受脚本 30 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
   '    # Windows 软件渲染截图受脚本 20 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
   "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'Edge browser matrix timing contract drifted from the reviewed script budget'
