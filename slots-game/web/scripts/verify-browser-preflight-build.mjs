@@ -18,8 +18,7 @@ export function verifyReviewedIndexSource(indexSource) {
   if (typeof indexSource !== "string" || indexSource === "") {
     throw new Error("生产 HTML 必须是非空 UTF-8 文本");
   }
-  const scriptTags = [...indexSource.matchAll(/<script\b[^>]*>[\s\S]*?<\/script\s*>/giu)]
-    .map((match) => match[0]);
+  const scriptTags = collectScriptTagCandidates(indexSource);
   const inlineScrubTag = scriptTags[0] ?? "";
   const preflightTag = scriptTags[1] ?? "";
   const moduleTag = scriptTags[2] ?? "";
@@ -79,6 +78,50 @@ export function verifyReviewedIndexSource(indexSource) {
     moduleUrl,
     preflightUrl,
   });
+}
+
+/**
+ * 不用正则表达式模拟 HTML 解析器。先以大小写无关的字面量找出所有脚本开闭
+ * 记号，再按文档顺序配对并保留完整标签；任何额外属性、空白、大小写或嵌套
+ * 变体都会进入后续规范字节检查并失败关闭。
+ */
+function collectScriptTagCandidates(indexSource) {
+  const normalizedSource = indexSource.toLowerCase();
+  const openingOffsets = collectLiteralOffsets(normalizedSource, "<script");
+  const closingOffsets = collectLiteralOffsets(normalizedSource, "</script");
+  if (openingOffsets.length !== closingOffsets.length) {
+    throw new Error("生产 HTML 的脚本开闭标签数量不一致");
+  }
+
+  const candidates = [];
+  let previousClosingEnd = -1;
+  for (let index = 0; index < openingOffsets.length; index += 1) {
+    const openingStart = openingOffsets[index];
+    const openingEnd = indexSource.indexOf(">", openingStart + "<script".length);
+    const closingStart = closingOffsets[index];
+    const closingEnd = indexSource.indexOf(">", closingStart + "</script".length);
+    const nextOpeningStart = openingOffsets[index + 1] ?? Number.POSITIVE_INFINITY;
+    if (openingStart <= previousClosingEnd
+      || openingEnd < 0
+      || closingStart <= openingEnd
+      || nextOpeningStart < closingStart
+      || closingEnd < 0) {
+      throw new Error("生产 HTML 的脚本标签顺序或边界不规范");
+    }
+    candidates.push(indexSource.slice(openingStart, closingEnd + 1));
+    previousClosingEnd = closingEnd;
+  }
+  return candidates;
+}
+
+function collectLiteralOffsets(source, literal) {
+  const offsets = [];
+  let offset = source.indexOf(literal);
+  while (offset >= 0) {
+    offsets.push(offset);
+    offset = source.indexOf(literal, offset + literal.length);
+  }
+  return offsets;
 }
 
 async function main() {

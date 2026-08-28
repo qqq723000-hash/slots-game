@@ -35,13 +35,13 @@ describe("browser preflight build byte contract", () => {
     );
   });
 
-  it("does not ignore a script candidate with closing-tag whitespace", async () => {
+  it("does not ignore a script candidate with a parser-tolerated closing tag", async () => {
     const indexSource = await readFile(indexUrl, "utf8");
     const canonicalOpeningTag = '<script id="launch-fragment-scrub">';
     expect(indexSource.split(canonicalOpeningTag)).toHaveLength(2);
     const whitespaceClosingCandidate = indexSource.replace(
       canonicalOpeningTag,
-      `<script src="/unexpected.js"></script >\n    ${canonicalOpeningTag}`,
+      `<script src="/unexpected.js"></script\t\n bar>\n    ${canonicalOpeningTag}`,
     );
 
     expect(() => verifyReviewedIndexSource(whitespaceClosingCandidate)).toThrow(
