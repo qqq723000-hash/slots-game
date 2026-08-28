@@ -83,6 +83,7 @@ export function validateVisualFixtureTimingBudget({
   maximumBrowserBudgetMs,
   maximumBrowserScenarioBudgetMs,
   primaryActionTimeoutMs,
+  screenshotTimeoutMs,
   scenarioCount,
   scenarioDeadlineMsByRun,
 }) {
@@ -91,6 +92,7 @@ export function validateVisualFixtureTimingBudget({
     maximumBrowserBudgetMs,
     maximumBrowserScenarioBudgetMs,
     primaryActionTimeoutMs,
+    screenshotTimeoutMs,
     scenarioCount,
   })) {
     if (!Number.isSafeInteger(value) || value <= 0) {
@@ -111,6 +113,9 @@ export function validateVisualFixtureTimingBudget({
   }
   if (scenarioDeadlineMsByRun.some((value) => primaryActionTimeoutMs >= value)) {
     throw new Error("特殊玩法主控件动作预算必须小于每个场景硬截止");
+  }
+  if (scenarioDeadlineMsByRun.some((value) => screenshotTimeoutMs >= value)) {
+    throw new Error("特殊玩法单次截图预算必须小于每个场景硬截止");
   }
   if (maximumBrowserScenarioBudgetMs >= maximumBrowserBudgetMs) {
     throw new Error("特殊玩法单浏览器最坏场景预算必须小于总预算");

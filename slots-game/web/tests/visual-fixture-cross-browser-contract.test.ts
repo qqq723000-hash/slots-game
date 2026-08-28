@@ -13,6 +13,11 @@ import {
   captureClockPauseLeadMs,
   isRecoverableCaptureClockPastTarget,
 } from "../scripts/visual-fixture-clock.mjs";
+import {
+  checkpointInputLeaseMatchesCurrentControl,
+  renderCheckpointSignalMatches,
+  validateRenderCheckpointInputLeases,
+} from "../scripts/visual-fixture-checkpoint.mjs";
 import fixtureBrowserGate from "../scripts/verify-visual-fixture-cross-browser.mjs?raw";
 import fixtureMain from "../src/testing/visualFixturesMain.ts?raw";
 
@@ -241,6 +246,51 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(guardContract).toContain("runtimeErrors.push(...unconsumedMessages)");
   });
 
+  it("leases wheel input until its durable pixel checkpoint has been captured", () => {
+    const checkpoint = {
+      source: "milestone",
+      value: "wheel.input-ready",
+      captureBeforeInput: { action: "wheel-spin", mode: "ready" },
+      visibleElement: { role: "spin", action: "wheel-spin", mode: "ready" },
+    };
+    const snapshot = {
+      milestone: "wheel.bonus-label-ready",
+      milestones: ["wheel.popup-input-ready", "wheel.input-ready", "wheel.bonus-label-ready"],
+      spinAction: "wheel-spin",
+      spinMode: "ready",
+    };
+    expect(checkpointInputLeaseMatchesCurrentControl(snapshot, checkpoint)).toBe(true);
+    expect(renderCheckpointSignalMatches(snapshot, checkpoint)).toBe(true);
+    expect(renderCheckpointSignalMatches({ ...snapshot, milestones: [] }, checkpoint)).toBe(false);
+    expect(renderCheckpointSignalMatches({ ...snapshot, spinAction: "continue" }, checkpoint))
+      .toBe(false);
+    expect(renderCheckpointSignalMatches({ ...snapshot, spinMode: "continue" }, checkpoint))
+      .toBe(false);
+    expect(renderCheckpointSignalMatches(snapshot, {
+      ...checkpoint,
+      captureBeforeInput: undefined,
+    })).toBe(false);
+    expect(() => validateRenderCheckpointInputLeases([{
+      scenario: "wheel-mini-flow",
+      renderCheckpoints: [checkpoint],
+    }])).not.toThrow();
+    expect(() => validateRenderCheckpointInputLeases([{
+      scenario: "wheel-mini-flow",
+      renderCheckpoints: [checkpoint, { ...checkpoint, value: "wheel.other" }],
+    }])).toThrow("重复的截图输入租约");
+    expect(() => validateRenderCheckpointInputLeases([{
+      scenario: "wheel-mini-flow",
+      renderCheckpoints: [{
+        ...checkpoint,
+        visibleElement: { ...checkpoint.visibleElement, mode: "continue" },
+      }],
+    }])).toThrow("与可见控件合同不一致");
+    expect(fixtureBrowserGate).toContain(
+      'captureBeforeInput: Object.freeze({ action: "wheel-spin", mode: "ready" })',
+    );
+    expect(fixtureBrowserGate).toContain("validateRenderCheckpointInputLeases(featureScenarios)");
+  });
+
   it("binds every rendered milestone to one stable current epoch", () => {
     const epochStart = fixtureBrowserGate.indexOf("function renderCheckpointEpoch");
     const captureStart = fixtureBrowserGate.indexOf(
@@ -253,12 +303,12 @@ describe("non-production special-feature browser fixture contract", () => {
     );
     const epochContract = fixtureBrowserGate.slice(epochStart, captureStart);
     const captureContract = fixtureBrowserGate.slice(captureStart, captureEnd);
-    expect(epochContract).toContain("snapshot.milestone === checkpoint.value");
+    expect(epochContract).toContain("renderCheckpointSignalMatches(snapshot, checkpoint)");
     expect(epochContract).toContain("milestoneCount: snapshot.milestoneCount");
     expect(epochContract).toContain("snapshot.activeVisualOperations.filter");
     expect(epochContract).toContain("requiredVisualOperations: requiredVisualOperations.join");
     expect(epochContract).toContain("sequence: snapshot.sequence");
-    expect(epochContract).not.toContain("milestones.includes");
+    expect(epochContract).not.toContain("snapshot.milestones.includes");
     expect(captureContract).toContain("afterCurrentCapture");
     expect(captureContract).toContain("pausedSnapshot");
     expect(captureContract).toContain("advancedSnapshot");
@@ -334,9 +384,10 @@ describe("non-production special-feature browser fixture contract", () => {
   });
 
   it("enforces scenario and browser wall-clock deadlines below the CI budget", () => {
+    expect(fixtureBrowserGate).toContain("const screenshotTimeoutMs = 60_000");
     expect(fixtureBrowserGate).toContain("const defaultScenarioDeadlineMs = 120_000");
     expect(fixtureBrowserGate).toContain("const extendedScenarioDeadlineMs = 150_000");
-    expect(fixtureBrowserGate).toContain("const browserDeadlineMs = 18 * 60_000");
+    expect(fixtureBrowserGate).toContain("const browserDeadlineMs = 19 * 60_000");
     expect(fixtureBrowserGate).toContain("const maximumBrowserBudgetMs = 20 * 60_000");
     expect(fixtureBrowserGate).toContain(
       "const scenarioDeadlineMsByRun = Object.freeze(scenarioRuns.map(",
@@ -344,6 +395,7 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain("resolveScenarioDeadlineMs(contract, surface)");
     expect(fixtureBrowserGate).toContain("const maximumBrowserScenarioBudgetMs = scenarioDeadlineMsByRun.reduce(");
     expect(fixtureBrowserGate).toContain('surface.id === "desktop-1440x900"');
+    expect(fixtureBrowserGate).toContain('contract.scenario === "big-win"');
     expect(fixtureBrowserGate).toContain('contract.scenario === "wheel-mini-flow"');
     expect(fixtureBrowserGate).toContain('contract.scenario === "king-flow"');
     expect(fixtureBrowserGate).toContain("Promise.race([scenarioWork, hardDeadline])");
@@ -359,57 +411,41 @@ describe("non-production special-feature browser fixture contract", () => {
   });
 
   it("keeps slow-runner deadlines bounded and rejects budgets without cleanup headroom", () => {
-    expect(validateVisualFixtureTimingBudget({
-      browserDeadlineMs: 18 * 60_000,
+    const scenarioDeadlineMsByRun = [150_000, 150_000, 150_000, 120_000,
+      120_000, 150_000, 120_000, 120_000];
+    const validBudget = {
+      browserDeadlineMs: 19 * 60_000,
       maximumBrowserBudgetMs: 20 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_020_000,
+      maximumBrowserScenarioBudgetMs: 1_080_000,
       primaryActionTimeoutMs: 5_000,
+      screenshotTimeoutMs: 60_000,
       scenarioCount: 8,
-      scenarioDeadlineMsByRun: [150_000, 150_000, 120_000, 120_000,
-        120_000, 120_000, 120_000, 120_000],
-    })).toEqual({ maximumBrowserScenarioBudgetMs: 1_020_000 });
+      scenarioDeadlineMsByRun,
+    };
+    expect(validateVisualFixtureTimingBudget(validBudget))
+      .toEqual({ maximumBrowserScenarioBudgetMs: 1_080_000 });
     expect(() => validateVisualFixtureTimingBudget({
-      browserDeadlineMs: 1_020_000,
-      maximumBrowserBudgetMs: 20 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_020_000,
-      primaryActionTimeoutMs: 5_000,
-      scenarioCount: 8,
-      scenarioDeadlineMsByRun: [150_000, 150_000, 120_000, 120_000,
-        120_000, 120_000, 120_000, 120_000],
+      ...validBudget,
+      browserDeadlineMs: 1_080_000,
     })).toThrow("必须为浏览器启动与清理保留时间");
     expect(() => validateVisualFixtureTimingBudget({
-      browserDeadlineMs: 18 * 60_000,
-      maximumBrowserBudgetMs: 20 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_020_001,
-      primaryActionTimeoutMs: 5_000,
-      scenarioCount: 8,
-      scenarioDeadlineMsByRun: [150_000, 150_000, 120_000, 120_000,
-        120_000, 120_000, 120_000, 120_000],
+      ...validBudget,
+      maximumBrowserScenarioBudgetMs: 1_080_001,
     })).toThrow("必须等于逐场景硬截止之和");
     expect(() => validateVisualFixtureTimingBudget({
+      ...validBudget,
       browserDeadlineMs: 20 * 60_000,
-      maximumBrowserBudgetMs: 20 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_020_000,
-      primaryActionTimeoutMs: 5_000,
-      scenarioCount: 8,
-      scenarioDeadlineMsByRun: [150_000, 150_000, 120_000, 120_000,
-        120_000, 120_000, 120_000, 120_000],
     })).toThrow("浏览器级墙钟截止必须小于总预算");
     expect(() => validateVisualFixtureTimingBudget({
-      browserDeadlineMs: 18 * 60_000,
-      maximumBrowserBudgetMs: 20 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_020_000,
+      ...validBudget,
       primaryActionTimeoutMs: 120_000,
-      scenarioCount: 8,
-      scenarioDeadlineMsByRun: [150_000, 150_000, 120_000, 120_000,
-        120_000, 120_000, 120_000, 120_000],
     })).toThrow("主控件动作预算必须小于每个场景硬截止");
     expect(() => validateVisualFixtureTimingBudget({
-      browserDeadlineMs: 18 * 60_000,
-      maximumBrowserBudgetMs: 20 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_020_000,
-      primaryActionTimeoutMs: 5_000,
-      scenarioCount: 8,
+      ...validBudget,
+      screenshotTimeoutMs: 120_000,
+    })).toThrow("单次截图预算必须小于每个场景硬截止");
+    expect(() => validateVisualFixtureTimingBudget({
+      ...validBudget,
       scenarioDeadlineMsByRun: [150_000],
     })).toThrow("逐场景硬截止必须与场景数一致");
   });
@@ -529,7 +565,9 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).not.toContain("真实主控件");
     expect(scenarioContract).toContain("const pendingRenderCheckpoint = contract.renderCheckpoints.find");
     expect(scenarioContract).toContain("renderCheckpointSignalMatches(snapshot, checkpoint)");
-    expect(scenarioContract).toContain("if (pendingRenderCheckpoint) {");
+    expect(scenarioContract).toContain("const pendingInputLeaseCheckpoint = contract.renderCheckpoints.find");
+    expect(scenarioContract).toContain("checkpointInputLeaseMatchesCurrentControl(snapshot, checkpoint)");
+    expect(scenarioContract).toContain("if (pendingRenderCheckpoint || pendingInputLeaseCheckpoint) {");
     expect(scenarioContract).toContain("await page.waitForTimeout(16)");
     expect(scenarioContract.indexOf("const pendingRenderCheckpoint"))
       .toBeLessThan(scenarioContract.indexOf("const shouldContinue"));
@@ -546,6 +584,7 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(snapshot).toBeGreaterThan(screenshot);
     expect(analysis).toBeGreaterThan(snapshot);
     expect(captureContract).toContain("scenarioSnapshotAfterScreenshot");
+    expect(captureContract).toContain("timeout: screenshotTimeoutMs");
     expect(fixtureBrowserGate).toContain("current.scenarioSnapshotAfterScreenshot");
     expect(fixtureBrowserGate).toContain("later.scenarioSnapshotAfterScreenshot");
   });

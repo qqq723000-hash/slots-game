@@ -105,7 +105,7 @@ jobs:
   verify-special-features:
     name: verify-special-features (${{ matrix.browser }})
     runs-on: ubuntu-latest
-    # 脚本保留 18 分钟单浏览器硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。
+    # 脚本保留 19 分钟单浏览器硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -149,7 +149,7 @@ jobs:
 
   verify-edge:
     runs-on: windows-latest
-    # Windows 软件渲染截图仍受脚本 18 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。
+    # Windows 软件渲染截图仍受脚本 19 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。
     timeout-minutes: 30
     defaults:
       run:

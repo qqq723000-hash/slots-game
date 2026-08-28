@@ -732,7 +732,7 @@ replace_once '        browser: [chromium, firefox, webkit]' '        browser: [c
 expect_rejected 'special-feature browser matrix dropped Firefox and WebKit'
 
 reset_fixture
-replace_once '    timeout-minutes: 25' '    timeout-minutes: 18' "$fixture/.github/workflows/frontend-conformance.yml"
+replace_once '    timeout-minutes: 25' '    timeout-minutes: 19' "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'special-feature browser matrix lost its setup and cleanup budget'
 
 reset_fixture

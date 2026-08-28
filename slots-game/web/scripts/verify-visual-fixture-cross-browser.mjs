@@ -24,14 +24,20 @@ import {
   captureClockPauseLeadMs,
   isRecoverableCaptureClockPastTarget,
 } from "./visual-fixture-clock.mjs";
+import {
+  checkpointInputLeaseMatchesCurrentControl,
+  renderCheckpointSignalMatches,
+  validateRenderCheckpointInputLeases,
+} from "./visual-fixture-checkpoint.mjs";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
 const startupTimeoutMs = 45_000;
 const primaryActionTimeoutMs = 15_000;
+const screenshotTimeoutMs = 60_000;
 const defaultScenarioDeadlineMs = 120_000;
 const extendedScenarioDeadlineMs = 150_000;
-const browserDeadlineMs = 18 * 60_000;
+const browserDeadlineMs = 19 * 60_000;
 const maximumBrowserBudgetMs = 20 * 60_000;
 const temporalFrameAdvanceMs = 180;
 const geometryToleranceCssPixels = 0.75;
@@ -123,6 +129,7 @@ const featureScenarios = Object.freeze([
         roi: "wheel-ready-panel",
         region: Object.freeze({ x: 0.24, y: 0.1, width: 0.52, height: 0.7 }),
         visibleElement: Object.freeze({ role: "spin", action: "wheel-spin", mode: "ready" }),
+        captureBeforeInput: Object.freeze({ action: "wheel-spin", mode: "ready" }),
       }),
       Object.freeze({
         source: "milestone",
@@ -272,6 +279,7 @@ const featureScenarios = Object.freeze([
     ]),
   }),
 ]);
+validateRenderCheckpointInputLeases(featureScenarios);
 
 // 核心玩法均跑真实 normal-motion；额外保留一条明确标识的 reduced-motion 可访问性证据。
 const reducedMotionEvidenceContract = Object.freeze({
@@ -322,6 +330,7 @@ validateVisualFixtureTimingBudget({
   maximumBrowserBudgetMs,
   maximumBrowserScenarioBudgetMs,
   primaryActionTimeoutMs,
+  screenshotTimeoutMs,
   scenarioCount: scenarioRuns.length,
   scenarioDeadlineMsByRun,
 });
@@ -376,7 +385,9 @@ function requireFeatureScenario(capability) {
 
 function resolveScenarioDeadlineMs(contract, surface) {
   const extendedDesktopScenario = surface.id === "desktop-1440x900"
-    && (contract.scenario === "wheel-mini-flow" || contract.scenario === "king-flow");
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow"
+      || contract.scenario === "king-flow");
   return extendedDesktopScenario ? extendedScenarioDeadlineMs : defaultScenarioDeadlineMs;
 }
 
@@ -798,7 +809,11 @@ async function runScenario(
         !observed.renderCheckpoints.has(renderCheckpointKey(checkpoint))
         && renderCheckpointSignalMatches(snapshot, checkpoint)
       ));
-      if (pendingRenderCheckpoint) {
+      const pendingInputLeaseCheckpoint = contract.renderCheckpoints.find((checkpoint) => (
+        !observed.renderCheckpoints.has(renderCheckpointKey(checkpoint))
+        && checkpointInputLeaseMatchesCurrentControl(snapshot, checkpoint)
+      ));
+      if (pendingRenderCheckpoint || pendingInputLeaseCheckpoint) {
         await page.waitForTimeout(16);
         continue;
       }
@@ -924,14 +939,6 @@ function renderCheckpointEpoch(snapshot, checkpoint) {
     sequence: snapshot.sequence,
     stage: snapshot.stage,
   });
-}
-
-function renderCheckpointSignalMatches(snapshot, checkpoint) {
-  return checkpoint.source === "stage"
-    ? snapshot.stage === checkpoint.value
-    : checkpoint.source === "milestone"
-      ? snapshot.milestone === checkpoint.value
-      : false;
 }
 
 function sameRenderCheckpointEpoch(expected, actual) {
@@ -1284,6 +1291,7 @@ async function captureVisibleFrameRegion(
     caret: "hide",
     clip: geometry.clip,
     scale: "css",
+    timeout: screenshotTimeoutMs,
     type: "png",
   });
   // epoch 必须绑定到浏览器真正生成截图字节的时刻。PNG 解码和逐像素分析可能在慢速
