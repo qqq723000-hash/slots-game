@@ -140,9 +140,12 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain("const capturesByRegion = new Map()");
     expect(fixtureBrowserGate).toContain("const regionKey = JSON.stringify(checkpoint.region)");
     expect(fixtureBrowserGate).toContain("capturesByRegion.set(regionKey, capture)");
+    expect(fixtureBrowserGate).toContain("const captureClockPauseLeadMs = 250");
+    expect(fixtureBrowserGate).toContain("const captureClockPauseAttempts = 4");
     expect(captureContract).toContain("const controlledClockCapture = contract.renderCheckpoints.some(");
     expect(captureContract).toContain("if (controlledClockCapture) {");
-    expect(captureContract).toContain("await page.clock.pauseAt(Date.now() + 1_000)");
+    expect(captureContract).toContain("await pauseCaptureClock(page)");
+    expect(captureContract).not.toContain("page.clock.pauseAt(Date.now()");
     expect(captureContract).toContain('controlledClockCapture ? "clock-paused" : "live"');
     expect(captureContract).toContain("await page.clock.runFor(temporalFrameAdvanceMs)");
     expect(captureContract).toContain('"clock-paused"');
@@ -151,6 +154,20 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(captureContract).not.toContain("page.waitForTimeout(180)");
     expect(fixtureBrowserGate).toContain('frameSettleMode = "live"');
     expect(fixtureBrowserGate).toContain('frameSettleMode !== "clock-paused"');
+
+    const pauseStart = fixtureBrowserGate.indexOf("async function pauseCaptureClock");
+    const pauseEnd = fixtureBrowserGate.indexOf(
+      "async function captureVisibleFrameRegion",
+      pauseStart,
+    );
+    const pauseContract = fixtureBrowserGate.slice(pauseStart, pauseEnd);
+    expect(pauseContract).toContain("attempt < captureClockPauseAttempts");
+    expect(pauseContract).toContain("const pageTimeMs = await page.evaluate(() => Date.now())");
+    expect(pauseContract).toContain("pageTimeMs + captureClockPauseLeadMs");
+    expect(pauseContract).toContain('message.includes("Cannot fast-forward to the past")');
+    expect(pauseContract.indexOf("await page.clock.resume().catch(() => undefined)"))
+      .toBeLessThan(pauseContract.indexOf('message.includes("Cannot fast-forward to the past")'));
+    expect(pauseContract).toContain("lastPastTargetError = error");
   });
 
   it("binds every rendered milestone to one stable current epoch", () => {

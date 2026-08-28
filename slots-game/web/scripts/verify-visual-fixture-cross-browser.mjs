@@ -28,6 +28,8 @@ const extendedScenarioDeadlineMs = 150_000;
 const browserDeadlineMs = 18 * 60_000;
 const maximumBrowserBudgetMs = 20 * 60_000;
 const temporalFrameAdvanceMs = 180;
+const captureClockPauseLeadMs = 250;
+const captureClockPauseAttempts = 4;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
 const evidenceScope = "presentation-only-no-rgs-settlement";
@@ -967,9 +969,9 @@ async function captureNewRenderCheckpoints(
     let captureClockPaused = false;
     try {
       if (controlledClockCapture) {
-        // 使用控制端墙钟并预留一次协议往返；读取页面时间再加 1ms 会在繁忙 runner
-        // 上于下一条命令到达前变成过去值。1s 仍远小于所有受控 normal-motion epoch。
-        await page.clock.pauseAt(Date.now() + 1_000);
+        // 以页面自己的受控时间为基准，仅预留一次短协议往返。繁忙 runner 仍可能让
+        // 目标落入过去；Playwright 此时会留下暂停时钟，因此由有界 helper 恢复后重试。
+        await pauseCaptureClock(page);
         captureClockPaused = true;
         const pausedSnapshot = await readScenarioSnapshot(page);
         const pausedEpoch = renderCheckpointEpoch(pausedSnapshot, checkpoint);
@@ -1084,6 +1086,27 @@ async function captureNewRenderCheckpoints(
       if (captureClockPaused) await page.clock.resume();
     }
   }
+}
+
+async function pauseCaptureClock(page) {
+  let lastPastTargetError = null;
+  for (let attempt = 0; attempt < captureClockPauseAttempts; attempt += 1) {
+    const pageTimeMs = await page.evaluate(() => Date.now());
+    try {
+      await page.clock.pauseAt(pageTimeMs + captureClockPauseLeadMs);
+      return;
+    } catch (error) {
+      // pauseAt 的 past-target 分支会先暂停再抛错；必须恢复后才能从新的页面时间重试。
+      await page.clock.resume().catch(() => undefined);
+      const message = String(error?.message ?? error);
+      if (!message.includes("Cannot fast-forward to the past")) throw error;
+      lastPastTargetError = error;
+    }
+  }
+  throw new Error(
+    `特殊玩法截图时钟连续 ${captureClockPauseAttempts} 次无法在当前页面时刻暂停`,
+    { cause: lastPastTargetError },
+  );
 }
 
 async function captureVisibleFrameRegion(
