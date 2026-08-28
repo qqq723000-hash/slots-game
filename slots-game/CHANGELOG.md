@@ -152,7 +152,7 @@
 - 将正式交付主线改为 AWS，并增加四环境应用 IaC：VPC/EKS、RDS Multi-AZ、ElastiCache Valkey、
   不可变 ECR、Secrets Manager 元数据、私有 S3/OAC/CloudFront、AMP/CloudWatch、备份和归档基线；
   账号工厂、远端 state/部署身份、DNS/ACM、CloudFront global WAF、可选 Shield Advanced/DRT 与
-  组织级安全仍由企业落地区提供，API Regional WAF 则由本仓库应用 IaC 交付；
+  组织级安全仍由采用方外部基础环境提供，API Regional WAF 则由本仓库应用 IaC 交付；
 - 增加基础设施、应用发布和 HMAC 静默证据三个 AWS workflow 源码，使用 OIDC、已保存 Terraform
   plan、版本化 delivery 与失败关闭门禁；这些能力仍须在真实目标账号完成 plan/apply 和验收；
 - conformance workflow 按 workflow/ref 取消陈旧提交；供应链发布按精确镜像仓库/tag 串行且不取消
@@ -209,4 +209,4 @@
 - 普通 RGS 滚动升级只允许数据库模式和数学定义身份完全不变的版本；
 - 数据库模式或数学定义变更必须使用经过评审的协调切换流程；
 - Web 稳定路径资源升级必须由蓝绿发布或带版本前缀的 CDN 隔离，不能依赖新旧 Pod 混部；
-- 本机 `local-operator` 仅用于集成验收，不属于公司集群运行依赖。
+- 本机 `local-operator` 仅用于集成验收，不属于正式集群运行依赖。

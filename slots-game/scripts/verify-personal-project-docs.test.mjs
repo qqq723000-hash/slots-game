@@ -114,11 +114,18 @@ test("rejects wording that implies an existing company or internal delivery team
   }
 });
 
-test("allows only the historical changelog to omit the identity notice", () => {
+test("allows the changelog to omit the notice without bypassing identity or reference rules", () => {
   assert.doesNotThrow(() =>
-    validateDocumentationContent("slots-game/CHANGELOG.md", "# 变更记录\n\n历史公司集群表述。\n", {
+    validateDocumentationContent("slots-game/CHANGELOG.md", "# 变更记录\n\n历史正式集群表述。\n", {
       requireIdentityNotice: false,
     }),
+  );
+  assert.throws(
+    () =>
+      validateDocumentationContent("slots-game/CHANGELOG.md", "# 变更记录\n\n历史公司集群表述。\n", {
+        requireIdentityNotice: false,
+      }),
+    /company-backed delivery wording/u,
   );
   assert.throws(
     () =>
