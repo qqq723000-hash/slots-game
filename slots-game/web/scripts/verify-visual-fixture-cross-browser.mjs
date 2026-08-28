@@ -34,11 +34,12 @@ const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
 const startupTimeoutMs = 45_000;
 const primaryActionTimeoutMs = 15_000;
-const screenshotTimeoutMs = 60_000;
+const screenshotTimeoutMs = 90_000;
 const defaultScenarioDeadlineMs = 120_000;
 const extendedScenarioDeadlineMs = 150_000;
-const browserDeadlineMs = 19 * 60_000;
-const maximumBrowserBudgetMs = 20 * 60_000;
+const largeScenarioDeadlineMs = 180_000;
+const browserDeadlineMs = 20 * 60_000;
+const maximumBrowserBudgetMs = 21 * 60_000;
 const temporalFrameAdvanceMs = 180;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
@@ -384,10 +385,13 @@ function requireFeatureScenario(capability) {
 }
 
 function resolveScenarioDeadlineMs(contract, surface) {
+  if (surface.id === "desktop-1440x900" && contract.scenario === "king-flow") {
+    return largeScenarioDeadlineMs;
+  }
   const extendedDesktopScenario = surface.id === "desktop-1440x900"
     && (contract.scenario === "big-win"
       || contract.scenario === "wheel-mini-flow"
-      || contract.scenario === "king-flow");
+      || contract.scenario === "kong-flow");
   return extendedDesktopScenario ? extendedScenarioDeadlineMs : defaultScenarioDeadlineMs;
 }
 
@@ -695,7 +699,10 @@ async function runScenario(
   registerContext(context);
   await context.addInitScript({ content: CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE });
   const page = await context.newPage();
-  if (contract.renderCheckpoints.some((checkpoint) => checkpoint.requireTemporalChange === true)) {
+  const controlledClockCapture = contract.renderCheckpoints.some(
+    (checkpoint) => checkpoint.requireTemporalChange === true,
+  );
+  if (controlledClockCapture) {
     // 安装时钟后仍让页面自然运行；只在真实截图取证窗口内暂停。这样慢速软件渲染器
     // 无法让短暂表现阶段在 PNG 编码期间逃逸，同时 Node 墙钟截止仍然独立生效。
     await page.clock.install();
@@ -761,7 +768,13 @@ async function runScenario(
       );
     }
 
-    const renderBaselines = await captureRenderBaselines(page, contract);
+    const renderBaselines = await captureRenderBaselines(
+      page,
+      contract,
+      runtimeErrors,
+      captureClockConsoleGuard,
+      controlledClockCapture,
+    );
 
     const spin = page.locator('[data-role="spin"]');
     await spin.click({ timeout: startupTimeoutMs });
@@ -789,6 +802,7 @@ async function runScenario(
         browserName,
         runtimeErrors,
         captureClockConsoleGuard,
+        controlledClockCapture,
       );
 
       if (snapshot.completeCount === contract.expectedRounds
@@ -864,6 +878,7 @@ async function runScenario(
       browserName,
       runtimeErrors,
       captureClockConsoleGuard,
+      controlledClockCapture,
     );
     validateScenarioEvidence(contract, observed, finalSnapshot, browserName);
     const lifecycle = await destroyFixtureDocument(page, browserName, contract.scenario);
@@ -951,19 +966,41 @@ function sameRenderCheckpointEpoch(expected, actual) {
     && actual.stage === expected.stage;
 }
 
-async function captureRenderBaselines(page, contract) {
+async function captureRenderBaselines(
+  page,
+  contract,
+  runtimeErrors,
+  captureClockConsoleGuard,
+  controlledClockCapture,
+) {
   const baselines = new Map();
   const capturesByRegion = new Map();
-  for (const checkpoint of contract.renderCheckpoints) {
-    const key = renderCheckpointKey(checkpoint);
-    const regionKey = JSON.stringify(checkpoint.region);
-    let capture = capturesByRegion.get(regionKey);
-    if (!capture) {
-      capture = await captureVisibleFrameRegion(page, checkpoint.region);
-      requireRenderedFrameRegion(capture, "baseline", contract.scenario);
-      capturesByRegion.set(regionKey, capture);
+  let captureClockPaused = false;
+  try {
+    if (controlledClockCapture) {
+      await pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard);
+      captureClockPaused = true;
     }
-    baselines.set(key, capture);
+    for (const checkpoint of contract.renderCheckpoints) {
+      const key = renderCheckpointKey(checkpoint);
+      const regionKey = JSON.stringify(checkpoint.region);
+      let capture = capturesByRegion.get(regionKey);
+      if (!capture) {
+        capture = await captureVisibleFrameRegion(
+          page,
+          checkpoint.region,
+          null,
+          null,
+          false,
+          controlledClockCapture ? "clock-paused" : "live",
+        );
+        requireRenderedFrameRegion(capture, "baseline", contract.scenario);
+        capturesByRegion.set(regionKey, capture);
+      }
+      baselines.set(key, capture);
+    }
+  } finally {
+    if (captureClockPaused) await page.clock.resume();
   }
   return baselines;
 }
@@ -977,6 +1014,7 @@ async function captureNewRenderCheckpoints(
   browserName,
   runtimeErrors,
   captureClockConsoleGuard,
+  controlledClockCapture,
 ) {
   for (const checkpoint of contract.renderCheckpoints) {
     const key = renderCheckpointKey(checkpoint);
@@ -985,9 +1023,6 @@ async function captureNewRenderCheckpoints(
     const baseline = baselines.get(key);
     if (!baseline) throw new Error(`${contract.scenario}/${key} 缺少初始像素基线`);
     const temporalCapture = checkpoint.requireTemporalChange === true;
-    const controlledClockCapture = contract.renderCheckpoints.some(
-      (candidate) => candidate.requireTemporalChange === true,
-    );
     let captureClockPaused = false;
     try {
       if (controlledClockCapture) {

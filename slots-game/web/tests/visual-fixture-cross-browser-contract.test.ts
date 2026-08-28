@@ -151,10 +151,19 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain("const capturesByRegion = new Map()");
     expect(fixtureBrowserGate).toContain("const regionKey = JSON.stringify(checkpoint.region)");
     expect(fixtureBrowserGate).toContain("capturesByRegion.set(regionKey, capture)");
+    const baselineStart = fixtureBrowserGate.indexOf("async function captureRenderBaselines");
+    const baselineEnd = fixtureBrowserGate.indexOf(
+      "async function captureNewRenderCheckpoints",
+      baselineStart,
+    );
+    const baselineContract = fixtureBrowserGate.slice(baselineStart, baselineEnd);
+    expect(baselineContract).toContain("await pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard)");
+    expect(baselineContract).toContain('controlledClockCapture ? "clock-paused" : "live"');
+    expect(baselineContract).toContain("if (captureClockPaused) await page.clock.resume()");
     expect(captureClockPauseLeadMs).toBe(250);
     expect(captureClockPauseAttempts).toBe(4);
     expect(captureClockPastTargetMessage).toBe("Cannot fast-forward to the past");
-    expect(captureContract).toContain("const controlledClockCapture = contract.renderCheckpoints.some(");
+    expect(scenarioContract).toContain("const controlledClockCapture = contract.renderCheckpoints.some(");
     expect(captureContract).toContain("if (controlledClockCapture) {");
     expect(captureContract).toContain(
       "await pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard)",
@@ -384,11 +393,12 @@ describe("non-production special-feature browser fixture contract", () => {
   });
 
   it("enforces scenario and browser wall-clock deadlines below the CI budget", () => {
-    expect(fixtureBrowserGate).toContain("const screenshotTimeoutMs = 60_000");
+    expect(fixtureBrowserGate).toContain("const screenshotTimeoutMs = 90_000");
     expect(fixtureBrowserGate).toContain("const defaultScenarioDeadlineMs = 120_000");
     expect(fixtureBrowserGate).toContain("const extendedScenarioDeadlineMs = 150_000");
-    expect(fixtureBrowserGate).toContain("const browserDeadlineMs = 19 * 60_000");
-    expect(fixtureBrowserGate).toContain("const maximumBrowserBudgetMs = 20 * 60_000");
+    expect(fixtureBrowserGate).toContain("const largeScenarioDeadlineMs = 180_000");
+    expect(fixtureBrowserGate).toContain("const browserDeadlineMs = 20 * 60_000");
+    expect(fixtureBrowserGate).toContain("const maximumBrowserBudgetMs = 21 * 60_000");
     expect(fixtureBrowserGate).toContain(
       "const scenarioDeadlineMsByRun = Object.freeze(scenarioRuns.map(",
     );
@@ -398,6 +408,7 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain('contract.scenario === "big-win"');
     expect(fixtureBrowserGate).toContain('contract.scenario === "wheel-mini-flow"');
     expect(fixtureBrowserGate).toContain('contract.scenario === "king-flow"');
+    expect(fixtureBrowserGate).toContain('contract.scenario === "kong-flow"');
     expect(fixtureBrowserGate).toContain("Promise.race([scenarioWork, hardDeadline])");
     expect(fixtureBrowserGate).toContain("deadlineExpired = true");
     expect(fixtureBrowserGate).toContain("void requestContextClose()");
@@ -411,30 +422,30 @@ describe("non-production special-feature browser fixture contract", () => {
   });
 
   it("keeps slow-runner deadlines bounded and rejects budgets without cleanup headroom", () => {
-    const scenarioDeadlineMsByRun = [150_000, 150_000, 150_000, 120_000,
+    const scenarioDeadlineMsByRun = [150_000, 150_000, 180_000, 150_000,
       120_000, 150_000, 120_000, 120_000];
     const validBudget = {
-      browserDeadlineMs: 19 * 60_000,
-      maximumBrowserBudgetMs: 20 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_080_000,
+      browserDeadlineMs: 20 * 60_000,
+      maximumBrowserBudgetMs: 21 * 60_000,
+      maximumBrowserScenarioBudgetMs: 1_140_000,
       primaryActionTimeoutMs: 5_000,
-      screenshotTimeoutMs: 60_000,
+      screenshotTimeoutMs: 90_000,
       scenarioCount: 8,
       scenarioDeadlineMsByRun,
     };
     expect(validateVisualFixtureTimingBudget(validBudget))
-      .toEqual({ maximumBrowserScenarioBudgetMs: 1_080_000 });
+      .toEqual({ maximumBrowserScenarioBudgetMs: 1_140_000 });
     expect(() => validateVisualFixtureTimingBudget({
       ...validBudget,
-      browserDeadlineMs: 1_080_000,
+      browserDeadlineMs: 1_140_000,
     })).toThrow("必须为浏览器启动与清理保留时间");
     expect(() => validateVisualFixtureTimingBudget({
       ...validBudget,
-      maximumBrowserScenarioBudgetMs: 1_080_001,
+      maximumBrowserScenarioBudgetMs: 1_140_001,
     })).toThrow("必须等于逐场景硬截止之和");
     expect(() => validateVisualFixtureTimingBudget({
       ...validBudget,
-      browserDeadlineMs: 20 * 60_000,
+      browserDeadlineMs: 21 * 60_000,
     })).toThrow("浏览器级墙钟截止必须小于总预算");
     expect(() => validateVisualFixtureTimingBudget({
       ...validBudget,

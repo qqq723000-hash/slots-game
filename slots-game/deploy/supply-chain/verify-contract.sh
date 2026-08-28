@@ -686,7 +686,7 @@ test "$(grep -F -c -- '          persist-credentials: false' "$frontend_workflow
   fail 'all four frontend jobs must remove checkout credentials'
 require_fixed '  verify-special-features:' "$frontend_workflow"
 require_fixed '    name: verify-special-features (${{ matrix.browser }})' "$frontend_workflow"
-require_line '    # 脚本保留 19 分钟单浏览器硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。' "$frontend_workflow"
+require_line '    # 脚本保留 20 分钟单浏览器硬截止；作业另预留 LFS、npm、浏览器依赖安装与清理预算。' "$frontend_workflow"
 require_fixed '    timeout-minutes: 25' "$frontend_workflow"
 require_line '      fail-fast: false' "$frontend_workflow"
 require_line '        browser: [chromium, firefox, webkit]' "$frontend_workflow"
