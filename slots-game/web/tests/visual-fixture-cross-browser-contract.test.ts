@@ -917,6 +917,8 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain("evidence.liveSpinCount !== 0");
     expect(fixtureBrowserGate).toContain("eventProjectionCleared:");
     expect(fixtureBrowserGate).toContain("evidence.eventProjectionCleared !== true");
+    expect(fixtureBrowserGate).toContain("failureProjectionCleared:");
+    expect(fixtureBrowserGate).toContain("evidence.failureProjectionCleared !== true");
     expect(fixtureMain).toContain("fixtureDestroyRetainedPayloadBytes");
     expect(fixtureMain).toContain("fixtureDestroyVisualActiveCount");
     expect(fixtureMain).toContain("fixtureDestroyVisualProjectionActiveCount");
@@ -928,6 +930,8 @@ describe("non-production special-feature browser fixture contract", () => {
     const clickContract = fixtureBrowserGate.slice(clickStart, clickEnd);
     const scenarioStart = fixtureBrowserGate.indexOf("async function runScenario");
     const scenarioEnd = fixtureBrowserGate.indexOf("function renderCheckpointKey", scenarioStart);
+    expect(scenarioStart).toBeGreaterThan(-1);
+    expect(scenarioEnd).toBeGreaterThan(scenarioStart);
     const scenarioContract = fixtureBrowserGate.slice(scenarioStart, scenarioEnd);
     expect(fixtureBrowserGate).toContain("const primaryActionTimeoutMs = 15_000");
     expect(clickContract).toContain("clickWithPrimaryActionLease({");
@@ -1065,6 +1069,65 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(terminalHealthIndex).toBeGreaterThanOrEqual(0);
     expect(terminalObserveIndex).toBeGreaterThanOrEqual(0);
     expect(terminalHealthIndex).toBeLessThan(terminalObserveIndex);
+  });
+
+  it("reports bounded first-failure provenance and drains late runtime errors on Node wall time", () => {
+    for (const field of [
+      "fixtureFailureSource",
+      "fixturePlayerErrorCode",
+      "fixtureFailureEvent",
+      "fixtureFailureSequence",
+    ]) {
+      expect(fixtureBrowserGate.match(new RegExp(`dataset\\.${field}`, "g"))?.length ?? 0)
+        .toBeGreaterThanOrEqual(2);
+    }
+    expect(fixtureBrowserGate).toContain("failureSource:");
+    expect(fixtureBrowserGate).toContain("playerErrorCode:");
+    expect(fixtureBrowserGate).toContain("failureEvent:");
+    expect(fixtureBrowserGate).toContain("failureSequence:");
+
+    const healthStart = fixtureBrowserGate.indexOf("async function requireHealthySnapshot");
+    const healthEnd = fixtureBrowserGate.indexOf(
+      "function requireNoRuntimeFailures",
+      healthStart,
+    );
+    expect(healthStart).toBeGreaterThan(-1);
+    expect(healthEnd).toBeGreaterThan(healthStart);
+    const healthContract = fixtureBrowserGate.slice(healthStart, healthEnd);
+    expect(fixtureBrowserGate).toContain("const fixtureFailureRuntimeDrainMs = 100");
+    expect(healthContract).toContain('snapshot.fixtureStatus === "failed"');
+    expect(healthContract).toContain("setTimeout(resolvePromise, fixtureFailureRuntimeDrainMs)");
+    expect(healthContract).not.toContain("page.waitForTimeout");
+    expect(healthContract).not.toContain("page.clock");
+    expect(healthContract.indexOf("setTimeout(resolvePromise"))
+      .toBeLessThan(healthContract.indexOf("requireNoRuntimeFailures("));
+    expect(healthContract).toContain(
+      'snapshot.fixtureStatus === "failed" ? snapshot : null',
+    );
+
+    const runtimeFailureStart = fixtureBrowserGate.indexOf(
+      "function requireNoRuntimeFailures",
+    );
+    const runtimeFailureEnd = fixtureBrowserGate.indexOf(
+      "async function clickCurrentPrimaryAction",
+      runtimeFailureStart,
+    );
+    expect(runtimeFailureStart).toBeGreaterThan(-1);
+    expect(runtimeFailureEnd).toBeGreaterThan(runtimeFailureStart);
+    expect(runtimeFailureStart).toBeGreaterThanOrEqual(0);
+    expect(runtimeFailureEnd).toBeGreaterThan(runtimeFailureStart);
+    const runtimeFailureContract = fixtureBrowserGate.slice(
+      runtimeFailureStart,
+      runtimeFailureEnd,
+    );
+    expect(runtimeFailureContract).toContain("fixtureFailureSnapshot = null");
+    expect(runtimeFailureContract).toContain("首次夹具失败快照");
+    expect(runtimeFailureContract).toContain("JSON.stringify(fixtureFailureSnapshot)");
+
+    const scenarioStart = fixtureBrowserGate.indexOf("async function runScenario");
+    const scenarioEnd = fixtureBrowserGate.indexOf("function renderCheckpointKey", scenarioStart);
+    const scenarioContract = fixtureBrowserGate.slice(scenarioStart, scenarioEnd);
+    expect(scenarioContract.match(/await requireHealthySnapshot\(/g)).toHaveLength(3);
   });
 
   it("emits one guarded trusted pointer and observes exact lease consumption", async () => {

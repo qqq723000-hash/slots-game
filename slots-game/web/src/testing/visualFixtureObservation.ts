@@ -4,6 +4,10 @@ import type {
   AppPresentationTrace,
   RoundPresentationState,
 } from "../app/AppController";
+import {
+  PLAYER_FACING_ERROR_CODES,
+  type PlayerFacingErrorCode,
+} from "../app/playerFacingError";
 import type { FeatureEvent, FeatureState } from "../app/state/types";
 import type { ReelCabinetCompositionDiagnostics } from "../reels/ReelSetView";
 import type { ReelVaultCaptureDiagnostics } from "../reels/ReelView";
@@ -16,6 +20,71 @@ import type { WinCelebrationResidentFacts } from "../renderer/WinCelebration";
 import type { VisualTelemetryEvent } from "../renderer/VisualTelemetry";
 
 export type VisualFixtureDataset = Record<string, string | undefined>;
+
+export const VISUAL_FIXTURE_FAILURE_SOURCES = Object.freeze([
+  "fixture-contract",
+  "toast",
+  "player-error",
+  "resource-error",
+  "window-error",
+  "unhandled-rejection",
+  "console-error",
+] as const);
+
+export type VisualFixtureFailureSource = typeof VISUAL_FIXTURE_FAILURE_SOURCES[number];
+
+const VISUAL_FIXTURE_PLAYER_ERROR_CODES = new Set<string>(
+  Object.values(PLAYER_FACING_ERROR_CODES),
+);
+const VISUAL_FIXTURE_FAILURE_SEQUENCE_PATTERN = /^(?:0|[1-9][0-9]*)$/;
+
+export function isVisualFixturePlayerErrorCode(
+  value: unknown,
+): value is PlayerFacingErrorCode {
+  return typeof value === "string" && VISUAL_FIXTURE_PLAYER_ERROR_CODES.has(value);
+}
+
+export function visualFixturePlayerErrorCodeFromDetail(
+  detail: unknown,
+): PlayerFacingErrorCode | null {
+  if (detail === null || typeof detail !== "object") return null;
+  let code: unknown;
+  try {
+    code = (detail as { readonly code?: unknown }).code;
+  } catch {
+    return null;
+  }
+  return isVisualFixturePlayerErrorCode(code) ? code : null;
+}
+
+/**
+ * 只冻结第一条夹具失败事实。事件与序列来自已经校验的内部投影；原始异常、URL、
+ * correlationId、消息和堆栈永远不会进入该诊断表面。
+ */
+export function publishVisualFixtureFailure(
+  dataset: VisualFixtureDataset,
+  source: VisualFixtureFailureSource,
+  currentEvent: FeatureEvent["type"] | null,
+  sequence: string | null | undefined,
+): void {
+  if (dataset.fixtureFailureSource !== undefined) return;
+  dataset.fixtureFailureSource = source;
+  if (currentEvent !== null && isFixtureEventType(currentEvent)) {
+    dataset.fixtureFailureEvent = currentEvent;
+  }
+  if (typeof sequence === "string"
+    && VISUAL_FIXTURE_FAILURE_SEQUENCE_PATTERN.test(sequence)
+    && Number.isSafeInteger(Number(sequence))) {
+    dataset.fixtureFailureSequence = sequence;
+  }
+}
+
+export function clearVisualFixtureFailure(dataset: VisualFixtureDataset): void {
+  delete dataset.fixtureFailureSource;
+  delete dataset.fixturePlayerErrorCode;
+  delete dataset.fixtureFailureEvent;
+  delete dataset.fixtureFailureSequence;
+}
 
 export const VISUAL_FIXTURE_EVENT_HISTORY_LIMIT = 256;
 

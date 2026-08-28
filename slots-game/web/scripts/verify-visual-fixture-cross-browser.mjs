@@ -44,6 +44,7 @@ import {
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
 const startupTimeoutMs = 45_000;
+const fixtureFailureRuntimeDrainMs = 100;
 const primaryActionTimeoutMs = 15_000;
 const fixtureCheckpointReleaseTimeoutMs = 5_000;
 const screenshotTimeoutMs = 90_000;
@@ -867,7 +868,7 @@ async function runScenario(
     );
 
     const initialActionSnapshot = await readScenarioSnapshot(page);
-    requireHealthySnapshot(
+    await requireHealthySnapshot(
       initialActionSnapshot,
       runtimeErrors,
       browserName,
@@ -890,7 +891,7 @@ async function runScenario(
 
     while (true) {
       const snapshot = await readScenarioSnapshot(page);
-      requireHealthySnapshot(snapshot, runtimeErrors, browserName, contract.scenario);
+      await requireHealthySnapshot(snapshot, runtimeErrors, browserName, contract.scenario);
       observeSnapshot(observed, snapshot);
       await captureNewRenderCheckpoints(
         page,
@@ -961,7 +962,7 @@ async function runScenario(
       contract.scenario,
     );
     finalSnapshot = terminalQuiescence.snapshot;
-    requireHealthySnapshot(finalSnapshot, runtimeErrors, browserName, contract.scenario);
+    await requireHealthySnapshot(finalSnapshot, runtimeErrors, browserName, contract.scenario);
     observeSnapshot(observed, finalSnapshot);
     await captureNewRenderCheckpoints(
       page,
@@ -1650,11 +1651,15 @@ async function readStartupDiagnostics(page) {
     audioCovered: document.body.dataset.fixtureAudioCovered ?? null,
     bodyText: document.body.textContent?.trim().slice(0, 256) ?? null,
     evidenceScope: document.body.dataset.fixtureEvidenceScope ?? null,
+    failureEvent: document.body.dataset.fixtureFailureEvent ?? null,
+    failureSequence: document.body.dataset.fixtureFailureSequence ?? null,
+    failureSource: document.body.dataset.fixtureFailureSource ?? null,
     cspViolations: globalThis.__slotsContentSecurityPolicyProbe?.violations ?? null,
     fixtureStatus: document.body.dataset.fixtureStatus ?? null,
     fixtureStartupError: document.body.dataset.fixtureStartupError ?? null,
     launch: document.querySelector('[data-role="overlay"]')?.getAttribute("data-launch") ?? null,
     missingRequired: document.body.dataset.fixtureVisualMissingRequired ?? null,
+    playerErrorCode: document.body.dataset.fixturePlayerErrorCode ?? null,
     readyState: document.readyState,
     traceViolation: document.body.dataset.fixtureTraceViolation ?? null,
     visualFailureCode: document.body.dataset.fixtureVisualFailureCode ?? null,
@@ -1696,11 +1701,15 @@ function captureScenarioSnapshotInPage({ terminalOnly }) {
         ? []
         : document.body.dataset.fixtureEvents.split(","),
     evidenceScope: document.body.dataset.fixtureEvidenceScope ?? null,
+    failureEvent: document.body.dataset.fixtureFailureEvent ?? null,
+    failureSequence: document.body.dataset.fixtureFailureSequence ?? null,
+    failureSource: document.body.dataset.fixtureFailureSource ?? null,
     featureMode: feature?.getAttribute("data-mode") ?? null,
     fixtureStatus: document.body.dataset.fixtureStatus ?? null,
     milestoneCount: Number.parseInt(document.body.dataset.fixtureMilestoneCount ?? "0", 10),
     milestone: document.body.dataset.fixtureMilestone ?? null,
     milestones: document.body.dataset.fixtureMilestones?.split(",").filter(Boolean) ?? [],
+    playerErrorCode: document.body.dataset.fixturePlayerErrorCode ?? null,
     roundState: document.body.dataset.fixtureRoundState ?? null,
     sequence: document.body.dataset.fixtureSequence ?? null,
     spinAction: spin?.getAttribute("data-action") ?? null,
@@ -1805,6 +1814,11 @@ async function destroyFixtureDocument(page, browserName, scenario) {
       document.body.dataset.fixtureEvent === undefined
       && document.body.dataset.fixtureEvents === undefined
       && document.body.dataset.fixtureEventCount === undefined,
+    failureProjectionCleared:
+      document.body.dataset.fixtureFailureSource === undefined
+      && document.body.dataset.fixturePlayerErrorCode === undefined
+      && document.body.dataset.fixtureFailureEvent === undefined
+      && document.body.dataset.fixtureFailureSequence === undefined,
   }));
   if (evidence.status !== "destroyed"
     || evidence.appDisposed !== true
@@ -1815,7 +1829,8 @@ async function destroyFixtureDocument(page, browserName, scenario) {
     || evidence.spinCount !== 0
     || evidence.liveCanvasCount !== 0
     || evidence.liveSpinCount !== 0
-    || evidence.eventProjectionCleared !== true) {
+    || evidence.eventProjectionCleared !== true
+    || evidence.failureProjectionCleared !== true) {
     throw new Error(
       `${browserName}/${scenario} 同文档主动销毁未释放全部夹具资源：${JSON.stringify(evidence)}`,
     );
@@ -1831,8 +1846,21 @@ function observeSnapshot(observed, snapshot) {
   for (const milestone of snapshot.milestones) observed.milestones.add(milestone);
 }
 
-function requireHealthySnapshot(snapshot, runtimeErrors, browserName, scenario) {
-  requireNoRuntimeFailures(runtimeErrors, browserName, scenario);
+async function requireHealthySnapshot(snapshot, runtimeErrors, browserName, scenario) {
+  if (snapshot.fixtureStatus === "failed") {
+    // 页面失败标记可能先于 CDP/BiDi 的 console/pageerror 通知抵达 Node。仅用 Node 墙钟
+    // 留出单次 100ms 预算的诊断排空窗口；不主动操作受控页面时钟、重试场景或放宽失败。
+    // 页面可自然继续，但下方报告始终使用等待前已经冻结的首次失败快照。
+    await new Promise((resolvePromise) => {
+      setTimeout(resolvePromise, fixtureFailureRuntimeDrainMs);
+    });
+  }
+  requireNoRuntimeFailures(
+    runtimeErrors,
+    browserName,
+    scenario,
+    snapshot.fixtureStatus === "failed" ? snapshot : null,
+  );
   const eventHistoryViolation = visualFixtureEventHistorySnapshotViolation(snapshot);
   if (eventHistoryViolation !== null
     || snapshot.evidenceScope !== evidenceScope
@@ -1851,10 +1879,19 @@ function requireHealthySnapshot(snapshot, runtimeErrors, browserName, scenario) 
   }
 }
 
-function requireNoRuntimeFailures(runtimeErrors, browserName, scenario) {
+function requireNoRuntimeFailures(
+  runtimeErrors,
+  browserName,
+  scenario,
+  fixtureFailureSnapshot = null,
+) {
   if (runtimeErrors.length > 0) {
+    const fixtureFailureEvidence = fixtureFailureSnapshot === null
+      ? ""
+      : `；首次夹具失败快照：${JSON.stringify(fixtureFailureSnapshot)}`;
     throw new Error(
-      `${browserName}/${scenario} 发生浏览器运行错误：${JSON.stringify(runtimeErrors.slice(0, 8))}`,
+      `${browserName}/${scenario} 发生浏览器运行错误：`
+      + `${JSON.stringify(runtimeErrors.slice(0, 8))}${fixtureFailureEvidence}`,
     );
   }
 }
