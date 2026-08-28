@@ -191,6 +191,7 @@ interface ControllerPrototypeHarness {
   getCharacterIntroLifecycleCaptureDiagnostics(): unknown;
   getReelCabinetCompositionDiagnostics(): unknown;
   getDestroyedStreamingAssetDiagnostics(): unknown;
+  getDestroyedVisualTelemetryActiveCount(): unknown;
   destroy(): void;
   pendingWheelAward: WheelAwardedEvent | null;
   spinAudioGeneration: number;
@@ -4246,6 +4247,7 @@ describe("AppController feature orchestration seams", () => {
     const audioDestroy = vi.fn();
     const uiDestroy = vi.fn();
     const rendererDestroy = vi.fn();
+    const getVisualTelemetryActiveCount = vi.fn(() => 0);
     const removeMotionListener = vi.fn();
     const renderer = {
       cancelSpinPresentation: vi.fn(),
@@ -4258,6 +4260,7 @@ describe("AppController feature orchestration seams", () => {
       setBigWinMilestoneListener: vi.fn(),
       setFeaturePreviewVisible: vi.fn(),
       destroy: rendererDestroy,
+      getVisualTelemetryActiveCount,
     };
     Object.assign(controller, {
       root: { dataset: {} },
@@ -4307,12 +4310,14 @@ describe("AppController feature orchestration seams", () => {
       audioDestroy,
       uiDestroy,
       rendererDestroy,
+      getVisualTelemetryActiveCount,
     ]) expect(cleanup).toHaveBeenCalledOnce();
     expect(controller.featurePreviewResolver).toBeNull();
     expect(controller.initialSessionResolver).toBeNull();
     expect(controller.destroyed).toBe(true);
     expect(controller.getDestroyedStreamingAssetDiagnostics())
       .toBe(terminalStreamingDiagnostics);
+    expect(controller.getDestroyedVisualTelemetryActiveCount()).toBe(0);
   });
 });
 

@@ -334,10 +334,12 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain('fixtureStatus === "destroyed"');
     expect(fixtureBrowserGate).toContain("evidence.retainedPayloadBytes !== 0");
     expect(fixtureBrowserGate).toContain("evidence.visualActiveCount !== 0");
+    expect(fixtureBrowserGate).toContain("evidence.visualProjectionActiveCount !== 0");
     expect(fixtureBrowserGate).toContain("evidence.liveCanvasCount !== 0");
     expect(fixtureBrowserGate).toContain("evidence.liveSpinCount !== 0");
     expect(fixtureMain).toContain("fixtureDestroyRetainedPayloadBytes");
     expect(fixtureMain).toContain("fixtureDestroyVisualActiveCount");
+    expect(fixtureMain).toContain("fixtureDestroyVisualProjectionActiveCount");
   });
 
   it("advances presentation gates through Playwright user input", () => {

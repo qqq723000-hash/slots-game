@@ -681,6 +681,7 @@ export class AppController {
   private wheelAssetLease: StreamingAssetEventLease | null = null;
   /** 仅供同文档夹具在 destroy 返回后读取；不发布到生产 DOM。 */
   private destroyedStreamingAssetDiagnostics: StreamingAssetRuntimeDiagnostics | null = null;
+  private destroyedVisualTelemetryActiveCount: number | null = null;
   private freeSpinsArtworkReady: Promise<void> | null = null;
   private wheelArtworkReady: Promise<void> | null = null;
   private readonly reducedMotion: boolean;
@@ -1205,6 +1206,11 @@ export class AppController {
     return this.destroyed ? this.destroyedStreamingAssetDiagnostics : null;
   }
 
+  /** 销毁后只读的真实表现 reporter 终态；活动控制器不提供推测值。 */
+  getDestroyedVisualTelemetryActiveCount(): number | null {
+    return this.destroyed ? this.destroyedVisualTelemetryActiveCount : null;
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -1265,6 +1271,9 @@ export class AppController {
     bestEffortAppCleanup(() => this.ui.clearWheelBonusRoundSummary?.());
     bestEffortAppCleanup(() => this.ui.destroy());
     bestEffortAppCleanup(() => this.renderer.destroy());
+    bestEffortAppCleanup(() => {
+      this.destroyedVisualTelemetryActiveCount = this.renderer.getVisualTelemetryActiveCount();
+    });
   }
 
   private async runLaunch(): Promise<void> {

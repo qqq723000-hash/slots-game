@@ -30,6 +30,7 @@ import {
   isWinEffectsMatrixTraceCheckpoint,
   matchVisualFixtureSemanticCheckpoint,
   resolveVisualFixtureSemanticCheckpoint,
+  shouldProjectVisualFixtureTelemetryEvent,
   validatePass45SemanticCheckpoint,
   VISUAL_FIXTURE_RELEASE_KEY,
   type VisualFixtureDataset,
@@ -148,6 +149,57 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).not.toContain("JSON.stringify(event)");
   });
 
+  it("drains known visual operations only through cancelled teardown completions", () => {
+    const dataset: Record<string, string | undefined> = {};
+    const state = createVisualFixtureTelemetryProjectionState([]);
+    const reporter = new VisualTelemetryReporter();
+    let destroyed = false;
+    let tearingDown = false;
+    reporter.setListener((event: Readonly<VisualTelemetryEvent>) => {
+      if (!shouldProjectVisualFixtureTelemetryEvent(destroyed, tearingDown, event)) return;
+      applyVisualFixtureTelemetryEvent(dataset, state, event);
+    });
+
+    const known = reporter.start({
+      id: "win.normal-record",
+      requirement: "conditional",
+      mode: "authored",
+    });
+    expect(state.activeVisualOperations.has(known.operationId)).toBe(true);
+
+    destroyed = true;
+    tearingDown = true;
+    reporter.cancelAll();
+    expect(state.activeVisualOperations.size).toBe(0);
+
+    const ignoredNatural = reporter.start({
+      id: "win.normal-record",
+      requirement: "conditional",
+      mode: "authored",
+    });
+    reporter.complete(ignoredNatural, "natural");
+    expect(state.activeVisualOperations.size).toBe(0);
+
+    const unknownCancellation = reporter.start({
+      id: "win.normal-record",
+      requirement: "conditional",
+      mode: "authored",
+    });
+    reporter.complete(unknownCancellation, "cancelled");
+    expect(state.activeVisualOperations.size).toBe(0);
+
+    tearingDown = false;
+    expect(shouldProjectVisualFixtureTelemetryEvent(destroyed, tearingDown, {
+      schemaVersion: 1,
+      kind: "complete",
+      operationId: 999,
+      id: "win.normal-record",
+      requirement: "conditional",
+      mode: "authored",
+      outcome: "cancelled",
+    })).toBe(false);
+  });
+
   it("retains the first strict visual failure while later events keep counts live", () => {
     const dataset: Record<string, string | undefined> = {};
     const state = createVisualFixtureTelemetryProjectionState(["launch.intro"]);
@@ -240,11 +292,16 @@ describe("visual fixture entry source contract", () => {
     expect(destroyBody).toContain("getDestroyedStreamingAssetDiagnostics()");
     expect(destroyBody).toContain("retainedPayloadBytesAfterDestroy");
     expect(destroyBody).toContain("activeVisualCountAfterDestroy");
+    expect(destroyBody).toContain("activeVisualProjectionCountAfterDestroy");
     expect(destroyBody).toContain("fixtureDestroyAppDisposed");
     expect(destroyBody).toContain("fixtureDestroyCanvasCount");
     expect(destroyBody).toContain("fixtureDestroyRetainedPayloadBytes");
     expect(destroyBody).toContain("fixtureDestroySpinCount");
     expect(destroyBody).toContain("fixtureDestroyVisualActiveCount");
+    expect(destroyBody).toContain("fixtureDestroyVisualProjectionActiveCount");
+    expect(destroyBody).toContain("getDestroyedVisualTelemetryActiveCount()");
+    expect(destroyBody).toContain("tearingDown = true");
+    expect(destroyBody).toContain("tearingDown = false");
     expect(destroyBody.indexOf("destroyed = true"))
       .toBeLessThan(destroyBody.indexOf("activeApp?.destroy()"));
     expect(destroyBody.indexOf("activeApp?.destroy()"))

@@ -71,6 +71,7 @@ import {
   pass55WheelChestCaptureEnvironmentViolation,
   pass55WheelChestCheckpointElapsedMs,
   resolveVisualFixtureSemanticCheckpoint,
+  shouldProjectVisualFixtureTelemetryEvent,
   validatePass45SemanticCheckpoint,
   validatePass47SemanticCheckpoint,
   validatePass49RecoveredSemanticCheckpoint,
@@ -208,6 +209,7 @@ if (!isVisualFixtureScenario(scenario)) {
   let app: AppController | null = null;
   const assemblyController = new AbortController();
   let destroyed = false;
+  let tearingDown = false;
   let failureLocked = false;
   let normalWinContinueClickQueued = false;
   let checkpointHold: VisualFixtureCheckpointHold | null = null;
@@ -973,8 +975,9 @@ if (!isVisualFixtureScenario(scenario)) {
 
   const presentationObserver: AppPresentationObserver = {
     onVisualTelemetry: (event: Readonly<VisualTelemetryEvent>): void => {
-      if (destroyed) return;
+      if (!shouldProjectVisualFixtureTelemetryEvent(destroyed, tearingDown, event)) return;
       applyVisualFixtureTelemetryEvent(body.dataset, visualTelemetryState, event);
+      if (destroyed) return;
       if (applyPass47VisualTelemetryEvent(body.dataset, scenario, event)) {
         fail();
         return;
@@ -1257,11 +1260,19 @@ if (!isVisualFixtureScenario(scenario)) {
     window.removeEventListener("pagehide", destroy);
     if (console.error === fixtureConsoleError) console.error = originalConsoleError;
     activeApp?.setCharacterIntroCapturePaused(false);
-    activeApp?.destroy();
+    tearingDown = true;
+    try {
+      activeApp?.destroy();
+    } finally {
+      tearingDown = false;
+    }
     const destroyedStreamingAssets = activeApp?.getDestroyedStreamingAssetDiagnostics() ?? null;
     const retainedPayloadBytesAfterDestroy =
       destroyedStreamingAssets?.retainedPayloadBytes ?? -1;
-    const activeVisualCountAfterDestroy = visualTelemetryState.activeVisualOperations.size;
+    const activeVisualCountAfterDestroy =
+      activeApp?.getDestroyedVisualTelemetryActiveCount() ?? -1;
+    const activeVisualProjectionCountAfterDestroy =
+      visualTelemetryState.activeVisualOperations.size;
     app = null;
     delete body.dataset.fixtureEvent;
     delete body.dataset.fixtureMilestone;
@@ -1343,6 +1354,9 @@ if (!isVisualFixtureScenario(scenario)) {
       root.querySelectorAll('[data-role="spin"]').length,
     );
     body.dataset.fixtureDestroyVisualActiveCount = String(activeVisualCountAfterDestroy);
+    body.dataset.fixtureDestroyVisualProjectionActiveCount = String(
+      activeVisualProjectionCountAfterDestroy,
+    );
     body.dataset.fixtureStatus = "destroyed";
   };
 

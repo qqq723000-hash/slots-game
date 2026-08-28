@@ -108,6 +108,21 @@ export function applyVisualFixtureTelemetryEvent(
   publishVisualFixtureTelemetryCounts(dataset, state);
 }
 
+/**
+ * 销毁窗口只接收 owner 同步发布的取消完成事件，使投影与真实 reporter 一起归零；
+ * 拆卸期间新建、加载、自然完成或失败的事件都不能重新打开夹具状态。
+ */
+export function shouldProjectVisualFixtureTelemetryEvent(
+  destroyed: boolean,
+  tearingDown: boolean,
+  event: Readonly<VisualTelemetryEvent>,
+): boolean {
+  if (!destroyed) return true;
+  return tearingDown
+    && event.kind === "complete"
+    && event.outcome === "cancelled";
+}
+
 const RESULT_RESET_KEYS = Object.freeze([
   "fixtureCounterState",
   "fixtureRecordIndex",

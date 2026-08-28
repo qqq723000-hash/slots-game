@@ -1396,6 +1396,10 @@ async function destroyFixtureDocument(page, browserName, scenario) {
       document.body.dataset.fixtureDestroyVisualActiveCount ?? "-1",
       10,
     ),
+    visualProjectionActiveCount: Number.parseInt(
+      document.body.dataset.fixtureDestroyVisualProjectionActiveCount ?? "-1",
+      10,
+    ),
     liveCanvasCount: document.querySelectorAll('[data-role="canvas"] canvas').length,
     liveSpinCount: document.querySelectorAll('[data-role="spin"]').length,
   }));
@@ -1403,6 +1407,7 @@ async function destroyFixtureDocument(page, browserName, scenario) {
     || evidence.appDisposed !== true
     || evidence.retainedPayloadBytes !== 0
     || evidence.visualActiveCount !== 0
+    || evidence.visualProjectionActiveCount !== 0
     || evidence.canvasCount !== 0
     || evidence.spinCount !== 0
     || evidence.liveCanvasCount !== 0

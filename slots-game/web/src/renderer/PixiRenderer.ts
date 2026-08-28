@@ -1096,6 +1096,11 @@ export class PixiRenderer {
     this.visualTelemetry?.setListener(listener);
   }
 
+  /** 只读表现 owner 计数，供同文档销毁门禁核对真实 reporter 终态。 */
+  getVisualTelemetryActiveCount(): number {
+    return this.visualTelemetry.activeCount;
+  }
+
   private reportActivatedVisualFailure(
     descriptor: VisualTelemetryDescriptor,
     failure: Parameters<VisualTelemetryReporter["failedToStart"]>[1],
