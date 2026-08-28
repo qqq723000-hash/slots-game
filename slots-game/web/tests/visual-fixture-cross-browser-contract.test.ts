@@ -325,9 +325,25 @@ describe("non-production special-feature browser fixture contract", () => {
 
   it("actively destroys the same document and requires zero retained resources", () => {
     expect(fixtureBrowserGate).toContain("const terminalQuiescence = await waitForTerminalVisualQuiescence");
+    expect(fixtureBrowserGate).toContain("function captureScenarioSnapshotInPage({ terminalOnly })");
     expect(fixtureBrowserGate).toContain("function waitForTerminalVisualQuiescence");
-    expect(fixtureBrowserGate).toContain('fixtureVisualActiveCount === "0"');
+    expect(fixtureBrowserGate).toContain('fixtureVisualActiveCount !== "0"');
     expect(fixtureBrowserGate).toContain("snapshot.activeVisualOperations.length !== 0");
+    const terminalStart = fixtureBrowserGate.indexOf(
+      "async function waitForTerminalVisualQuiescence",
+    );
+    const terminalEnd = fixtureBrowserGate.indexOf(
+      "async function destroyFixtureDocument",
+      terminalStart,
+    );
+    const terminalContract = fixtureBrowserGate.slice(terminalStart, terminalEnd);
+    expect(terminalContract).toContain("terminalSnapshotHandle = await page.waitForFunction(");
+    expect(terminalContract).toContain("captureScenarioSnapshotInPage,");
+    expect(terminalContract).toContain("{ terminalOnly: true },");
+    expect(terminalContract).toContain("{ polling: 16, timeout: startupTimeoutMs },");
+    expect(terminalContract).toContain("snapshot = await terminalSnapshotHandle.jsonValue()");
+    expect(terminalContract).toContain("await terminalSnapshotHandle.dispose()");
+    expect(terminalContract.match(/await readScenarioSnapshot\(page\)/g)).toHaveLength(1);
     expect(fixtureBrowserGate).not.toContain("await page.waitForTimeout(100)");
     expect(fixtureBrowserGate).toContain("const lifecycle = await destroyFixtureDocument");
     expect(fixtureBrowserGate).toContain('window.dispatchEvent(new Event("pagehide"))');

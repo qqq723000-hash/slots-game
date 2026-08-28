@@ -54,6 +54,14 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).not.toContain("sessionStorage");
   });
 
+  it("slows only the non-production Wheel fixture while production keeps its default timeline", () => {
+    const timelineStart = fixtureMain.indexOf("wheelPresentationTimelineScale:");
+    const timelineEnd = fixtureMain.indexOf("}, {", timelineStart);
+    const timelineGuard = fixtureMain.slice(timelineStart, timelineEnd);
+    expect(timelineGuard).toContain('scenario === "wheel-mini-flow" ? 2 : undefined');
+    expect(fixtureMain.match(/wheelPresentationTimelineScale:/g)).toHaveLength(1);
+  });
+
   it("derives ready and failure from controller lifecycle callbacks", () => {
     expect(fixtureMain).toContain("onLaunchPhase");
     expect(fixtureMain).toContain('phase === "ready"');

@@ -1321,57 +1321,78 @@ async function readStartupDiagnostics(page) {
   }));
 }
 
+function captureScenarioSnapshotInPage({ terminalOnly }) {
+  if (
+    terminalOnly
+    && (
+      document.body.dataset.fixtureStatus !== "ready"
+      || document.body.dataset.fixtureRoundState !== "complete"
+      || document.body.dataset.fixtureVisualActiveCount !== "0"
+    )
+  ) {
+    return null;
+  }
+
+  const spin = document.querySelector('[data-role="spin"]');
+  const feature = document.querySelector('[data-role="feature"]');
+  return {
+    capCloseCount: Number.parseInt(document.body.dataset.fixtureCapCloseCount ?? "0", 10),
+    completeCount: Number.parseInt(document.body.dataset.fixtureCompleteCount ?? "0", 10),
+    cspViolations: globalThis.__slotsContentSecurityPolicyProbe?.violations ?? null,
+    event: document.body.dataset.fixtureEvent ?? null,
+    evidenceScope: document.body.dataset.fixtureEvidenceScope ?? null,
+    featureMode: feature?.getAttribute("data-mode") ?? null,
+    fixtureStatus: document.body.dataset.fixtureStatus ?? null,
+    milestoneCount: Number.parseInt(document.body.dataset.fixtureMilestoneCount ?? "0", 10),
+    milestone: document.body.dataset.fixtureMilestone ?? null,
+    milestones: document.body.dataset.fixtureMilestones?.split(",").filter(Boolean) ?? [],
+    roundState: document.body.dataset.fixtureRoundState ?? null,
+    sequence: document.body.dataset.fixtureSequence ?? null,
+    spinAction: spin?.getAttribute("data-action") ?? null,
+    spinDisabled: !(spin instanceof HTMLButtonElement) || spin.disabled,
+    spinMode: spin?.getAttribute("data-mode") ?? null,
+    stage: document.body.dataset.fixtureStage ?? null,
+    summaryCloseCount: Number.parseInt(
+      document.body.dataset.fixtureSummaryCloseCount ?? "0",
+      10,
+    ),
+    traceViolation: document.body.dataset.fixtureTraceViolation ?? null,
+    activeVisualIds:
+      document.body.dataset.fixtureVisualActiveIds?.split(",").filter(Boolean) ?? [],
+    activeVisualOperations:
+      document.body.dataset.fixtureVisualActiveOperations?.split(",").filter(Boolean) ?? [],
+    visualActiveCount: Number.parseInt(
+      document.body.dataset.fixtureVisualActiveCount ?? "-1",
+      10,
+    ),
+    visualFailureCount: Number.parseInt(
+      document.body.dataset.fixtureVisualFailureCount ?? "-1",
+      10,
+    ),
+    visualMissingRequired: document.body.dataset.fixtureVisualMissingRequired ?? null,
+  };
+}
+
 async function readScenarioSnapshot(page) {
-  return page.evaluate(() => {
-    const spin = document.querySelector('[data-role="spin"]');
-    const feature = document.querySelector('[data-role="feature"]');
-    return {
-      capCloseCount: Number.parseInt(document.body.dataset.fixtureCapCloseCount ?? "0", 10),
-      completeCount: Number.parseInt(document.body.dataset.fixtureCompleteCount ?? "0", 10),
-      cspViolations: globalThis.__slotsContentSecurityPolicyProbe?.violations ?? null,
-      event: document.body.dataset.fixtureEvent ?? null,
-      evidenceScope: document.body.dataset.fixtureEvidenceScope ?? null,
-      featureMode: feature?.getAttribute("data-mode") ?? null,
-      fixtureStatus: document.body.dataset.fixtureStatus ?? null,
-      milestoneCount: Number.parseInt(document.body.dataset.fixtureMilestoneCount ?? "0", 10),
-      milestone: document.body.dataset.fixtureMilestone ?? null,
-      milestones: document.body.dataset.fixtureMilestones?.split(",").filter(Boolean) ?? [],
-      roundState: document.body.dataset.fixtureRoundState ?? null,
-      sequence: document.body.dataset.fixtureSequence ?? null,
-      spinAction: spin?.getAttribute("data-action") ?? null,
-      spinDisabled: !(spin instanceof HTMLButtonElement) || spin.disabled,
-      spinMode: spin?.getAttribute("data-mode") ?? null,
-      stage: document.body.dataset.fixtureStage ?? null,
-      summaryCloseCount: Number.parseInt(
-        document.body.dataset.fixtureSummaryCloseCount ?? "0",
-        10,
-      ),
-      traceViolation: document.body.dataset.fixtureTraceViolation ?? null,
-      activeVisualIds:
-        document.body.dataset.fixtureVisualActiveIds?.split(",").filter(Boolean) ?? [],
-      activeVisualOperations:
-        document.body.dataset.fixtureVisualActiveOperations?.split(",").filter(Boolean) ?? [],
-      visualActiveCount: Number.parseInt(
-        document.body.dataset.fixtureVisualActiveCount ?? "-1",
-        10,
-      ),
-      visualFailureCount: Number.parseInt(
-        document.body.dataset.fixtureVisualFailureCount ?? "-1",
-        10,
-      ),
-      visualMissingRequired: document.body.dataset.fixtureVisualMissingRequired ?? null,
-    };
-  });
+  const snapshot = await page.evaluate(
+    captureScenarioSnapshotInPage,
+    { terminalOnly: false },
+  );
+  if (snapshot === null) {
+    throw new Error("非终态场景快照不得为空");
+  }
+  return snapshot;
 }
 
 async function waitForTerminalVisualQuiescence(page, browserName, scenario) {
   const startedAt = Date.now();
+  let terminalSnapshotHandle;
   try {
-    await page.waitForFunction(() => (
-      document.body.dataset.fixtureStatus === "ready"
-      && document.body.dataset.fixtureRoundState === "complete"
-      && document.body.dataset.fixtureVisualActiveCount === "0"
-    ), null, { polling: 16, timeout: startupTimeoutMs });
+    terminalSnapshotHandle = await page.waitForFunction(
+      captureScenarioSnapshotInPage,
+      { terminalOnly: true },
+      { polling: 16, timeout: startupTimeoutMs },
+    );
   } catch (error) {
     const snapshot = await readScenarioSnapshot(page);
     throw new Error(
@@ -1379,7 +1400,15 @@ async function waitForTerminalVisualQuiescence(page, browserName, scenario) {
       { cause: error },
     );
   }
-  const snapshot = await readScenarioSnapshot(page);
+  let snapshot;
+  try {
+    snapshot = await terminalSnapshotHandle.jsonValue();
+  } finally {
+    await terminalSnapshotHandle.dispose();
+  }
+  if (snapshot === null) {
+    throw new Error(`${browserName}/${scenario} 原子终态视觉快照为空`);
+  }
   if (snapshot.visualActiveCount !== 0 || snapshot.activeVisualOperations.length !== 0) {
     throw new Error(
       `${browserName}/${scenario} 终态视觉静默窗口发生漂移：${JSON.stringify(snapshot)}`,

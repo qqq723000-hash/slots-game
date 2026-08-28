@@ -68,6 +68,7 @@ import {
   type RageCollectionEffectMilestone,
   type VaultUnlockPresentationMilestone,
   type WheelInteractionResult,
+  type WheelPresentationTimelineScale,
   type WheelStopOffsetSource,
 } from "./FeatureEffects";
 import {
@@ -143,6 +144,8 @@ export interface PixiRendererOptions {
   readonly characterCollectRandomSource?: CharacterCollectRandomSource;
   /** 仅供测试夹具使用的装饰性排列来源；不能选择结果格子。 */
   readonly rageCascadeCellOrderSource?: RageCascadeCellOrderSource;
+  /** 仅供非生产浏览器夹具延长真实 Wheel 动画；生产默认严格为 `1`。 */
+  readonly wheelPresentationTimelineScale?: WheelPresentationTimelineScale;
   /**
    * 初始帧缓冲区尺寸。移动设备/平板电脑启动提供其物理视口，因此 Pixi 永远不会分配然后丢弃 1280x720。
    */
@@ -759,6 +762,7 @@ export class PixiRenderer {
       options.wheelStopOffsetSource,
       this.visualTelemetry,
       options.rageCascadeCellOrderSource,
+      options.wheelPresentationTimelineScale,
     );
     // `main.reel.winLabelOverlay` 是前景卷轴覆盖。在接管/正常中奖视图之后添加它，这样一旦 Wheel 场景释放，空的较高兄弟就无法埋葬持有的大师中奖板。
     // 分阶段业主可能已在 FeatureEffects 之前建造。重新添加确切的最终同级以确定性地恢复原始 FX 顺序。
