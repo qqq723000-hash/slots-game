@@ -740,6 +740,12 @@ replace_once '    timeout-minutes: 30' '    timeout-minutes: 25' "$fixture/.gith
 expect_rejected 'Edge browser matrix lost its build and cleanup budget'
 
 reset_fixture
+replace_once '    # Windows 软件渲染截图受脚本 21 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
+  '    # Windows 软件渲染截图受脚本 20 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'Edge browser matrix timing contract drifted from the reviewed script budget'
+
+reset_fixture
 replace_once '  npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"' \
   '  true # special-feature non-Firefox matrix bypassed' \
   "$fixture/.github/workflows/frontend-conformance.yml"

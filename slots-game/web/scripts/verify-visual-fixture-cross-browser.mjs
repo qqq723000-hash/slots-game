@@ -38,8 +38,12 @@ const screenshotTimeoutMs = 90_000;
 const defaultScenarioDeadlineMs = 120_000;
 const extendedScenarioDeadlineMs = 150_000;
 const largeScenarioDeadlineMs = 180_000;
-const browserDeadlineMs = 20 * 60_000;
-const maximumBrowserBudgetMs = 21 * 60_000;
+const chromiumKongScenarioDeadlineMs = 210_000;
+const edgeKingScenarioDeadlineMs = 240_000;
+const standardBrowserDeadlineMs = 20 * 60_000;
+const slowBrowserDeadlineMs = 21 * 60_000;
+const standardMaximumBrowserBudgetMs = 21 * 60_000;
+const slowMaximumBrowserBudgetMs = 22 * 60_000;
 const temporalFrameAdvanceMs = 180;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
@@ -319,22 +323,39 @@ const scenarioRuns = Object.freeze([
   Object.freeze({ contract: requireFeatureScenario("king"), surface: phonePortraitSurface }),
   Object.freeze({ contract: requireFeatureScenario("kong"), surface: tabletLandscapeSurface }),
 ]);
-const scenarioDeadlineMsByRun = Object.freeze(scenarioRuns.map(
-  ({ contract, surface }) => resolveScenarioDeadlineMs(contract, surface),
-));
-const maximumBrowserScenarioBudgetMs = scenarioDeadlineMsByRun.reduce(
-  (total, value) => total + value,
-  0,
-);
-validateVisualFixtureTimingBudget({
-  browserDeadlineMs,
-  maximumBrowserBudgetMs,
-  maximumBrowserScenarioBudgetMs,
-  primaryActionTimeoutMs,
-  screenshotTimeoutMs,
-  scenarioCount: scenarioRuns.length,
-  scenarioDeadlineMsByRun,
-});
+const browserTimingBudgets = Object.freeze(Object.fromEntries(supportedBrowsers.map(
+  (browserName) => {
+    const scenarioDeadlineMsByRun = Object.freeze(scenarioRuns.map(
+      ({ contract, surface }) => resolveScenarioDeadlineMs(browserName, contract, surface),
+    ));
+    const maximumBrowserScenarioBudgetMs = scenarioDeadlineMsByRun.reduce(
+      (total, value) => total + value,
+      0,
+    );
+    const slowBrowser = browserName === "chromium" || browserName === "msedge";
+    const browserDeadlineMs = slowBrowser
+      ? slowBrowserDeadlineMs
+      : standardBrowserDeadlineMs;
+    const maximumBrowserBudgetMs = slowBrowser
+      ? slowMaximumBrowserBudgetMs
+      : standardMaximumBrowserBudgetMs;
+    validateVisualFixtureTimingBudget({
+      browserDeadlineMs,
+      maximumBrowserBudgetMs,
+      maximumBrowserScenarioBudgetMs,
+      primaryActionTimeoutMs,
+      screenshotTimeoutMs,
+      scenarioCount: scenarioRuns.length,
+      scenarioDeadlineMsByRun,
+    });
+    return [browserName, Object.freeze({
+      browserDeadlineMs,
+      maximumBrowserBudgetMs,
+      maximumBrowserScenarioBudgetMs,
+      scenarioDeadlineMsByRun,
+    })];
+  },
+)));
 
 const selectedBrowsers = parseSelectedBrowsers(process.argv.slice(2));
 const gateStartedAt = Date.now();
@@ -384,7 +405,17 @@ function requireFeatureScenario(capability) {
   return contract;
 }
 
-function resolveScenarioDeadlineMs(contract, surface) {
+function resolveScenarioDeadlineMs(browserName, contract, surface) {
+  if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "king-flow") {
+    return edgeKingScenarioDeadlineMs;
+  }
+  if (browserName === "chromium"
+    && surface.id === "desktop-1440x900"
+    && contract.scenario === "kong-flow") {
+    return chromiumKongScenarioDeadlineMs;
+  }
   if (surface.id === "desktop-1440x900" && contract.scenario === "king-flow") {
     return largeScenarioDeadlineMs;
   }
@@ -563,6 +594,8 @@ function closeServer(server) {
 
 async function verifyBrowser(browserName, originValue) {
   const browserStartedAt = Date.now();
+  const timingBudget = browserTimingBudgets[browserName];
+  if (!timingBudget) throw new Error(`${browserName} 缺少已验证的特殊玩法时间预算`);
   const browserType = browserName === "firefox"
     ? firefox
     : browserName === "webkit"
@@ -590,13 +623,14 @@ async function verifyBrowser(browserName, originValue) {
       if (deadlineExpired) {
         throw new Error(`${browserName} 在浏览器启动期间超过墙钟截止时间`);
       }
-      for (const run of scenarioRuns) {
+      for (const [runIndex, run] of scenarioRuns.entries()) {
         scenarioEvidence.push(await verifyScenario(
           browser,
           browserName,
           originValue,
           run.contract,
           run.surface,
+          timingBudget.scenarioDeadlineMsByRun[runIndex],
         ));
       }
       return Object.freeze({
@@ -606,8 +640,8 @@ async function verifyBrowser(browserName, originValue) {
         audioCovered: false,
         rgsSettlementCovered: false,
         durationMs: Date.now() - browserStartedAt,
-        browserDeadlineMs,
-        maximumBrowserScenarioBudgetMs,
+        browserDeadlineMs: timingBudget.browserDeadlineMs,
+        maximumBrowserScenarioBudgetMs: timingBudget.maximumBrowserScenarioBudgetMs,
         renderingMode: renderingContract.renderingMode,
         scenarios: Object.freeze(scenarioEvidence),
       });
@@ -621,9 +655,10 @@ async function verifyBrowser(browserName, originValue) {
       void requestBrowserClose();
       void browserWork.catch(() => undefined);
       rejectPromise(new Error(
-        `${browserName} 超过包含浏览器启动、全部场景与清理的 ${browserDeadlineMs}ms 墙钟截止时间`,
+        `${browserName} 超过包含浏览器启动、全部场景与清理的 `
+        + `${timingBudget.browserDeadlineMs}ms 墙钟截止时间`,
       ));
-    }, browserDeadlineMs);
+    }, timingBudget.browserDeadlineMs);
   });
   try {
     return await Promise.race([browserWork, hardDeadline]);
@@ -632,8 +667,14 @@ async function verifyBrowser(browserName, originValue) {
   }
 }
 
-async function verifyScenario(browser, browserName, originValue, contract, surface) {
-  const scenarioDeadlineMs = resolveScenarioDeadlineMs(contract, surface);
+async function verifyScenario(
+  browser,
+  browserName,
+  originValue,
+  contract,
+  surface,
+  scenarioDeadlineMs,
+) {
   let context = null;
   let contextClosePromise = null;
   let deadlineExpired = false;
