@@ -778,6 +778,18 @@ async function runScenario(
         );
       }
 
+      // 控件与视觉遥测位于同一表现边界，但 DOM/观察器投影可能跨一个微任务。只要当前
+      // milestone/stage 仍有必需截图尚未取得，就不得点击进入下一阶段；证据永远不能
+      // 被测试驱动本身跳过。
+      const pendingRenderCheckpoint = contract.renderCheckpoints.find((checkpoint) => (
+        !observed.renderCheckpoints.has(renderCheckpointKey(checkpoint))
+        && renderCheckpointSignalMatches(snapshot, checkpoint)
+      ));
+      if (pendingRenderCheckpoint) {
+        await page.waitForTimeout(16);
+        continue;
+      }
+
       const shouldContinue = !snapshot.spinDisabled
         && (snapshot.spinAction === "continue" || snapshot.spinAction === "wheel-spin");
       const shouldFastStopBigWin = !snapshot.spinDisabled
@@ -879,17 +891,12 @@ function renderCheckpointKey(checkpoint) {
 }
 
 function renderCheckpointEpoch(snapshot, checkpoint) {
-  const currentCheckpointMatches = checkpoint.source === "stage"
-    ? snapshot.stage === checkpoint.value
-    : checkpoint.source === "milestone"
-      ? snapshot.milestone === checkpoint.value
-      : false;
   const requiredVisualOperations = checkpoint.requiredVisualId === null
     ? []
     : snapshot.activeVisualOperations.filter((operation) => (
       operation.startsWith(`${checkpoint.requiredVisualId}@`)
     ));
-  if (!currentCheckpointMatches
+  if (!renderCheckpointSignalMatches(snapshot, checkpoint)
     || snapshot.sequence === null
     || !Number.isInteger(snapshot.milestoneCount)
     || snapshot.milestoneCount < 0
@@ -902,6 +909,14 @@ function renderCheckpointEpoch(snapshot, checkpoint) {
     sequence: snapshot.sequence,
     stage: snapshot.stage,
   });
+}
+
+function renderCheckpointSignalMatches(snapshot, checkpoint) {
+  return checkpoint.source === "stage"
+    ? snapshot.stage === checkpoint.value
+    : checkpoint.source === "milestone"
+      ? snapshot.milestone === checkpoint.value
+      : false;
 }
 
 function sameRenderCheckpointEpoch(expected, actual) {

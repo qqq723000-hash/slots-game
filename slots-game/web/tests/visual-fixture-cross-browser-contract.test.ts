@@ -426,6 +426,9 @@ describe("non-production special-feature browser fixture contract", () => {
     const clickStart = fixtureBrowserGate.indexOf("async function clickCurrentPrimaryAction");
     const clickEnd = fixtureBrowserGate.indexOf("function validateScenarioEvidence", clickStart);
     const clickContract = fixtureBrowserGate.slice(clickStart, clickEnd);
+    const scenarioStart = fixtureBrowserGate.indexOf("async function runScenario");
+    const scenarioEnd = fixtureBrowserGate.indexOf("function renderCheckpointKey", scenarioStart);
+    const scenarioContract = fixtureBrowserGate.slice(scenarioStart, scenarioEnd);
     expect(clickContract).toContain("page.locator('[data-role=\"spin\"]')");
     expect(fixtureBrowserGate).toContain("const primaryActionTimeoutMs = 15_000");
     expect(clickContract).toContain("await spin.click({ timeout: primaryActionTimeoutMs })");
@@ -436,6 +439,12 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(clickContract).not.toContain("element.click()");
     expect(clickContract).not.toContain("dispatchEvent");
     expect(fixtureBrowserGate).not.toContain("真实主控件");
+    expect(scenarioContract).toContain("const pendingRenderCheckpoint = contract.renderCheckpoints.find");
+    expect(scenarioContract).toContain("renderCheckpointSignalMatches(snapshot, checkpoint)");
+    expect(scenarioContract).toContain("if (pendingRenderCheckpoint) {");
+    expect(scenarioContract).toContain("await page.waitForTimeout(16)");
+    expect(scenarioContract.indexOf("const pendingRenderCheckpoint"))
+      .toBeLessThan(scenarioContract.indexOf("const shouldContinue"));
   });
 
   it("binds checkpoint epochs to screenshot bytes before slow pixel analysis", () => {
