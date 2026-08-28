@@ -35,10 +35,12 @@ import {
   applyVisualFixtureTelemetryEvent,
   applyVisualFixtureTrace,
   clearVisualFixtureCompletion,
+  clearVisualFixtureFeatureEventProjection,
   clearVisualFixturePresentationBranches,
   clearVisualFixtureTrace,
   clearVisualFixtureVault,
   createVisualFixtureCheckpointHold,
+  createVisualFixtureFeatureEventProjection,
   createVisualFixtureTelemetryProjectionState,
   isCapSummaryInputCheckpointCapture,
   isFreeSpinsSummaryInputCheckpointHold,
@@ -56,6 +58,7 @@ import {
   isWinEffectsMatrixTraceCheckpoint,
   matchVisualFixtureSemanticCheckpoint,
   publishVisualFixtureTelemetryCounts,
+  publishVisualFixtureFeatureEventProjection,
   publishReelCabinetCompositionDiagnostics,
   publishBaseVaultUnlockCheckpoint,
   publishPass48RageAuraCheckpoint,
@@ -72,6 +75,7 @@ import {
   pass55WheelChestCaptureEnvironmentViolation,
   pass55WheelChestCheckpointElapsedMs,
   resolveVisualFixtureSemanticCheckpoint,
+  projectVisualFixtureFeatureEvent,
   shouldProjectVisualFixtureTelemetryEvent,
   validatePass45SemanticCheckpoint,
   validatePass47SemanticCheckpoint,
@@ -294,9 +298,11 @@ if (!isVisualFixtureScenario(scenario)) {
   let pass54WheelCharacterPublished = false;
   let pass55WheelChestPublished = false;
   const presentationMilestones: string[] = [];
+  let featureEventProjection = createVisualFixtureFeatureEventProjection();
   const visualTelemetryState = createVisualFixtureTelemetryProjectionState(
     VISUAL_TELEMETRY_ENTRY_REQUIRED_IDS,
   );
+  publishVisualFixtureFeatureEventProjection(body.dataset, featureEventProjection);
   publishVisualFixtureTelemetryCounts(body.dataset, visualTelemetryState);
 
   const pass49GatewayFacts = (): Pass49RecoveredGatewayFacts => {
@@ -1001,8 +1007,18 @@ if (!isVisualFixtureScenario(scenario)) {
         failPass50CharacterIntro("character-intro-feature-event-observed");
         return;
       }
-      if (eventType) body.dataset.fixtureEvent = eventType;
-      else delete body.dataset.fixtureEvent;
+      const nextFeatureEventProjection = projectVisualFixtureFeatureEvent(
+        featureEventProjection,
+        eventType,
+        event,
+      );
+      if (!nextFeatureEventProjection) {
+        body.dataset.fixtureTraceViolation = "feature-event-history-projection";
+        fail();
+        return;
+      }
+      featureEventProjection = nextFeatureEventProjection;
+      publishVisualFixtureFeatureEventProjection(body.dataset, featureEventProjection);
       if (applyVisualFixtureFeatureEvent(body.dataset, eventType, event, scenario)) fail();
     },
     onLaunchPhase: (phase): void => {
@@ -1290,7 +1306,8 @@ if (!isVisualFixtureScenario(scenario)) {
     const activeVisualProjectionCountAfterDestroy =
       visualTelemetryState.activeVisualOperations.size;
     app = null;
-    delete body.dataset.fixtureEvent;
+    featureEventProjection = createVisualFixtureFeatureEventProjection();
+    clearVisualFixtureFeatureEventProjection(body.dataset);
     delete body.dataset.fixtureMilestone;
     delete body.dataset.fixtureMilestones;
     delete body.dataset.fixtureMilestoneCount;

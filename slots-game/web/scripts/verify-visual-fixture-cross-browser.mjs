@@ -37,6 +37,9 @@ import {
   primaryActionTrustedPointerGuardDecision,
   primaryActionTrustedPointerTarget,
 } from "./visual-fixture-primary-action.mjs";
+import {
+  visualFixtureEventHistorySnapshotViolation,
+} from "./visual-fixture-event-history.mjs";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const productionFixturePath = resolve(webRoot, "dist", "visual-fixtures.html");
@@ -851,6 +854,12 @@ async function runScenario(
     );
 
     const initialActionSnapshot = await readScenarioSnapshot(page);
+    requireHealthySnapshot(
+      initialActionSnapshot,
+      runtimeErrors,
+      browserName,
+      contract.scenario,
+    );
     const initialActionLease = primaryActionLeaseFromSnapshot(initialActionSnapshot);
     if (!await clickCurrentPrimaryAction(page, initialActionLease)) {
       throw new Error(`${browserName}/${contract.scenario} 的初始 Spin 输入租约已过期`);
@@ -868,8 +877,8 @@ async function runScenario(
 
     while (true) {
       const snapshot = await readScenarioSnapshot(page);
-      observeSnapshot(observed, snapshot);
       requireHealthySnapshot(snapshot, runtimeErrors, browserName, contract.scenario);
+      observeSnapshot(observed, snapshot);
       await captureNewRenderCheckpoints(
         page,
         contract,
@@ -939,8 +948,8 @@ async function runScenario(
       contract.scenario,
     );
     finalSnapshot = terminalQuiescence.snapshot;
-    observeSnapshot(observed, finalSnapshot);
     requireHealthySnapshot(finalSnapshot, runtimeErrors, browserName, contract.scenario);
+    observeSnapshot(observed, finalSnapshot);
     await captureNewRenderCheckpoints(
       page,
       contract,
@@ -1666,11 +1675,22 @@ function captureScenarioSnapshotInPage({ terminalOnly }) {
 
   const spin = document.querySelector('[data-role="spin"]');
   const feature = document.querySelector('[data-role="feature"]');
+  const eventCountText = document.body.dataset.fixtureEventCount;
+  const eventCount = eventCountText !== undefined
+    && /^(?:0|[1-9][0-9]*)$/.test(eventCountText)
+    ? Number(eventCountText)
+    : null;
   return {
     capCloseCount: Number.parseInt(document.body.dataset.fixtureCapCloseCount ?? "0", 10),
     completeCount: Number.parseInt(document.body.dataset.fixtureCompleteCount ?? "0", 10),
     cspViolations: globalThis.__slotsContentSecurityPolicyProbe?.violations ?? null,
     event: document.body.dataset.fixtureEvent ?? null,
+    eventCount,
+    events: document.body.dataset.fixtureEvents === undefined
+      ? null
+      : document.body.dataset.fixtureEvents === ""
+        ? []
+        : document.body.dataset.fixtureEvents.split(","),
     evidenceScope: document.body.dataset.fixtureEvidenceScope ?? null,
     featureMode: feature?.getAttribute("data-mode") ?? null,
     fixtureStatus: document.body.dataset.fixtureStatus ?? null,
@@ -1777,6 +1797,10 @@ async function destroyFixtureDocument(page, browserName, scenario) {
     ),
     liveCanvasCount: document.querySelectorAll('[data-role="canvas"] canvas').length,
     liveSpinCount: document.querySelectorAll('[data-role="spin"]').length,
+    eventProjectionCleared:
+      document.body.dataset.fixtureEvent === undefined
+      && document.body.dataset.fixtureEvents === undefined
+      && document.body.dataset.fixtureEventCount === undefined,
   }));
   if (evidence.status !== "destroyed"
     || evidence.appDisposed !== true
@@ -1786,7 +1810,8 @@ async function destroyFixtureDocument(page, browserName, scenario) {
     || evidence.canvasCount !== 0
     || evidence.spinCount !== 0
     || evidence.liveCanvasCount !== 0
-    || evidence.liveSpinCount !== 0) {
+    || evidence.liveSpinCount !== 0
+    || evidence.eventProjectionCleared !== true) {
     throw new Error(
       `${browserName}/${scenario} 同文档主动销毁未释放全部夹具资源：${JSON.stringify(evidence)}`,
     );
@@ -1796,14 +1821,17 @@ async function destroyFixtureDocument(page, browserName, scenario) {
 
 function observeSnapshot(observed, snapshot) {
   if (snapshot.stage) observed.stages.add(snapshot.stage);
-  if (snapshot.event) observed.events.add(snapshot.event);
+  // 轮询可能跨过瞬时 current；始终累计夹具实际发布的完整历史，而不是静态网关预期。
+  for (const event of snapshot.events) observed.events.add(event);
   if (snapshot.featureMode) observed.featureModes.add(snapshot.featureMode);
   for (const milestone of snapshot.milestones) observed.milestones.add(milestone);
 }
 
 function requireHealthySnapshot(snapshot, runtimeErrors, browserName, scenario) {
   requireNoRuntimeFailures(runtimeErrors, browserName, scenario);
-  if (snapshot.evidenceScope !== evidenceScope
+  const eventHistoryViolation = visualFixtureEventHistorySnapshotViolation(snapshot);
+  if (eventHistoryViolation !== null
+    || snapshot.evidenceScope !== evidenceScope
     || !Array.isArray(snapshot.cspViolations)
     || snapshot.cspViolations.length !== 0
     || snapshot.fixtureStatus === "failed"
@@ -1812,7 +1840,10 @@ function requireHealthySnapshot(snapshot, runtimeErrors, browserName, scenario) 
     || snapshot.activeVisualOperations.length !== snapshot.visualActiveCount
     || snapshot.visualFailureCount !== 0
     || snapshot.visualMissingRequired !== "") {
-    throw new Error(`${browserName}/${scenario} 的表现夹具失败：${JSON.stringify(snapshot)}`);
+    throw new Error(
+      `${browserName}/${scenario} 的表现夹具失败`
+      + `${eventHistoryViolation ? `（${eventHistoryViolation}）` : ""}：${JSON.stringify(snapshot)}`,
+    );
   }
 }
 

@@ -27,6 +27,11 @@ import {
   primaryActionTrustedPointerGuardDecision,
   primaryActionTrustedPointerTarget,
 } from "../scripts/visual-fixture-primary-action.mjs";
+import {
+  visualFixtureEventHistorySnapshotViolation,
+  visualFixtureEventHistoryLimit,
+} from "../scripts/visual-fixture-event-history.mjs";
+import { VISUAL_FIXTURE_EVENT_HISTORY_LIMIT } from "../src/testing/visualFixtureObservation";
 import fixtureBrowserGate from "../scripts/verify-visual-fixture-cross-browser.mjs?raw";
 import fixtureMain from "../src/testing/visualFixturesMain.ts?raw";
 
@@ -642,6 +647,8 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain("evidence.visualProjectionActiveCount !== 0");
     expect(fixtureBrowserGate).toContain("evidence.liveCanvasCount !== 0");
     expect(fixtureBrowserGate).toContain("evidence.liveSpinCount !== 0");
+    expect(fixtureBrowserGate).toContain("eventProjectionCleared:");
+    expect(fixtureBrowserGate).toContain("evidence.eventProjectionCleared !== true");
     expect(fixtureMain).toContain("fixtureDestroyRetainedPayloadBytes");
     expect(fixtureMain).toContain("fixtureDestroyVisualActiveCount");
     expect(fixtureMain).toContain("fixtureDestroyVisualProjectionActiveCount");
@@ -689,6 +696,107 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(scenarioContract).toContain("clickCurrentPrimaryAction(page, actionLease)");
     expect(scenarioContract.indexOf("const pendingRenderCheckpoint"))
       .toBeLessThan(scenarioContract.indexOf("const shouldContinue"));
+  });
+
+  it("validates and observes only the fixture's bounded event history", () => {
+    expect(visualFixtureEventHistoryLimit).toBe(VISUAL_FIXTURE_EVENT_HISTORY_LIMIT);
+    expect(visualFixtureEventHistorySnapshotViolation({
+      event: null,
+      eventCount: 0,
+      events: [],
+    })).toBeNull();
+    expect(visualFixtureEventHistorySnapshotViolation({ event: null, eventCount: 0 }))
+      .toBe("event-history-structure");
+    const healthy = {
+      event: "vault.upgraded",
+      eventCount: 2,
+      events: ["vault.unlocked", "vault.upgraded"],
+    };
+    expect(visualFixtureEventHistorySnapshotViolation(healthy)).toBeNull();
+    expect(visualFixtureEventHistorySnapshotViolation({ ...healthy, eventCount: 1 }))
+      .toBe("event-history-count");
+    expect(visualFixtureEventHistorySnapshotViolation({ ...healthy, event: "vault.unlocked" }))
+      .toBe("event-history-current-last");
+    expect(visualFixtureEventHistorySnapshotViolation({
+      ...healthy,
+      events: ["bad,event", "vault.upgraded"],
+    }))
+      .toBe("event-history-entry");
+    expect(visualFixtureEventHistorySnapshotViolation({
+      event: "wheel.started",
+      eventCount: visualFixtureEventHistoryLimit + 1,
+      events: Array.from(
+        { length: visualFixtureEventHistoryLimit + 1 },
+        () => "wheel.started",
+      ),
+    })).toBe("event-history-count");
+
+    expect(fixtureBrowserGate).toContain(
+      '/^(?:0|[1-9][0-9]*)$/.test(eventCountText)',
+    );
+    expect(fixtureBrowserGate).toContain("eventCount,");
+    expect(fixtureBrowserGate).toContain(
+      'events: document.body.dataset.fixtureEvents === undefined',
+    );
+    expect(fixtureBrowserGate).toContain('document.body.dataset.fixtureEvents.split(",")');
+    const observeStart = fixtureBrowserGate.indexOf("function observeSnapshot");
+    const observeEnd = fixtureBrowserGate.indexOf("function requireHealthySnapshot", observeStart);
+    const observeContract = fixtureBrowserGate.slice(observeStart, observeEnd);
+    expect(observeContract).toContain(
+      "for (const event of snapshot.events) observed.events.add(event)",
+    );
+    expect(observeContract).not.toContain("snapshot.event) observed.events.add");
+    expect(observeContract).not.toContain("requiredEvents");
+    expect(fixtureBrowserGate).toContain(
+      "visualFixtureEventHistorySnapshotViolation(snapshot)",
+    );
+
+    const scenarioStart = fixtureBrowserGate.indexOf("async function runScenario");
+    const scenarioEnd = fixtureBrowserGate.indexOf("async function runBrowser", scenarioStart);
+    const scenarioContract = fixtureBrowserGate.slice(scenarioStart, scenarioEnd);
+    const initialSnapshotIndex = scenarioContract.indexOf(
+      "const initialActionSnapshot = await readScenarioSnapshot(page)",
+    );
+    const initialHealthIndex = scenarioContract.indexOf(
+      "requireHealthySnapshot(\n      initialActionSnapshot,",
+      initialSnapshotIndex,
+    );
+    const initialClickIndex = scenarioContract.indexOf(
+      "clickCurrentPrimaryAction(page, initialActionLease)",
+      initialSnapshotIndex,
+    );
+    expect(initialSnapshotIndex).toBeGreaterThanOrEqual(0);
+    expect(initialHealthIndex).toBeGreaterThanOrEqual(0);
+    expect(initialClickIndex).toBeGreaterThanOrEqual(0);
+    expect(initialHealthIndex).toBeGreaterThan(initialSnapshotIndex);
+    expect(initialHealthIndex).toBeLessThan(initialClickIndex);
+
+    const loopStart = scenarioContract.indexOf("while (true)");
+    const loopEnd = scenarioContract.indexOf("if (!finalSnapshot)", loopStart);
+    const loopContract = scenarioContract.slice(loopStart, loopEnd);
+    const loopHealthIndex = loopContract.indexOf("requireHealthySnapshot(snapshot");
+    const loopObserveIndex = loopContract.indexOf("observeSnapshot(observed, snapshot)");
+    expect(loopHealthIndex).toBeGreaterThanOrEqual(0);
+    expect(loopObserveIndex).toBeGreaterThanOrEqual(0);
+    expect(loopHealthIndex).toBeLessThan(loopObserveIndex);
+
+    const terminalStart = scenarioContract.indexOf(
+      "finalSnapshot = terminalQuiescence.snapshot",
+    );
+    const terminalEnd = scenarioContract.indexOf(
+      "await captureNewRenderCheckpoints",
+      terminalStart,
+    );
+    const terminalContract = scenarioContract.slice(terminalStart, terminalEnd);
+    const terminalHealthIndex = terminalContract.indexOf(
+      "requireHealthySnapshot(finalSnapshot",
+    );
+    const terminalObserveIndex = terminalContract.indexOf(
+      "observeSnapshot(observed, finalSnapshot)",
+    );
+    expect(terminalHealthIndex).toBeGreaterThanOrEqual(0);
+    expect(terminalObserveIndex).toBeGreaterThanOrEqual(0);
+    expect(terminalHealthIndex).toBeLessThan(terminalObserveIndex);
   });
 
   it("emits one guarded trusted pointer and observes exact lease consumption", async () => {

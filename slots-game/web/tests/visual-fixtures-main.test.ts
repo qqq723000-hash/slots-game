@@ -16,10 +16,12 @@ import {
   applyVisualFixtureTelemetryEvent,
   applyVisualFixtureTrace,
   clearVisualFixtureCompletion,
+  clearVisualFixtureFeatureEventProjection,
   clearVisualFixturePresentationBranches,
   clearVisualFixtureTrace,
   clearVisualFixtureVault,
   createVisualFixtureCheckpointHold,
+  createVisualFixtureFeatureEventProjection,
   createVisualFixtureTelemetryProjectionState,
   isCapSummaryInputCheckpointCapture,
   isFreeSpinsSummaryInputCheckpointHold,
@@ -31,10 +33,13 @@ import {
   isWinEffectsMatrixTraceCheckpoint,
   matchVisualFixtureSemanticCheckpoint,
   resolveVisualFixtureSemanticCheckpoint,
+  projectVisualFixtureFeatureEvent,
+  publishVisualFixtureFeatureEventProjection,
   shouldProjectVisualFixtureTelemetryEvent,
   validatePass45SemanticCheckpoint,
   VISUAL_FIXTURE_RELEASE_KEY,
   type VisualFixtureDataset,
+  VISUAL_FIXTURE_EVENT_HISTORY_LIMIT,
 } from "../src/testing/visualFixtureObservation";
 
 describe("visual fixture entry source contract", () => {
@@ -112,6 +117,58 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).toContain("delete body.dataset.fixtureMilestoneCount");
     expect(fixtureMain).toContain("onPresentationBranch");
     expect(fixtureMain).toContain("applyVisualFixturePresentationBranch(body.dataset, branch)");
+  });
+
+  it("keeps actual feature-event history durable, bounded, and independent from current", () => {
+    const wheel = { type: "wheel.started" as const };
+    const vault = {
+      type: "vault.upgraded" as const,
+      reel: 1,
+      row: 2,
+      fromMultiplier: 2,
+      toMultiplier: 3,
+      prize: "x3",
+      step: 1,
+    };
+    const initial = createVisualFixtureFeatureEventProjection();
+    const first = projectVisualFixtureFeatureEvent(initial, wheel.type, wheel);
+    const second = first && projectVisualFixtureFeatureEvent(first, vault.type, vault);
+    const cleared = second && projectVisualFixtureFeatureEvent(second, null);
+
+    expect(first).toMatchObject({ event: "wheel.started", eventCount: 1 });
+    expect(second).toMatchObject({ event: "vault.upgraded", eventCount: 2 });
+    expect(cleared).toEqual({
+      event: null,
+      events: ["wheel.started", "vault.upgraded"],
+      eventCount: 2,
+    });
+
+    const dataset: VisualFixtureDataset = {};
+    publishVisualFixtureFeatureEventProjection(dataset, cleared!);
+    expect(dataset).toMatchObject({
+      fixtureEvents: "wheel.started,vault.upgraded",
+      fixtureEventCount: "2",
+    });
+    expect(dataset.fixtureEvent).toBeUndefined();
+    clearVisualFixtureFeatureEventProjection(dataset);
+    expect(dataset).toEqual({});
+
+    const full = Object.freeze({
+      event: "wheel.started" as const,
+      events: Object.freeze(Array.from(
+        { length: VISUAL_FIXTURE_EVENT_HISTORY_LIMIT },
+        () => "wheel.started" as const,
+      )),
+      eventCount: VISUAL_FIXTURE_EVENT_HISTORY_LIMIT,
+    });
+    expect(projectVisualFixtureFeatureEvent(full, vault.type, vault)).toBeNull();
+    expect(projectVisualFixtureFeatureEvent({ ...full, eventCount: 1 }, null)).toBeNull();
+    expect(projectVisualFixtureFeatureEvent(initial, wheel.type, null)).toBeNull();
+    expect(projectVisualFixtureFeatureEvent({
+      event: null,
+      events: null,
+      eventCount: 0,
+    } as unknown as Readonly<typeof initial>, null)).toBeNull();
   });
 
   it("queues one real primary-control Continue click after the merge-start callback", () => {
