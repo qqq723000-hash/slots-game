@@ -72,6 +72,8 @@ func newCircuitBreaker(
 
 // acquire 刻意采用非阻塞语义。熔断器已打开或半开探针额度占满时，
 // 调用方会立即收到拒绝，绝不在本进程内排队等待。
+// English: acquire intentionally uses non-blocking semantics. When the fuse is open or the half-open probe quota
+// is full, the caller will receive a rejection immediately and will never wait in line in this process.
 func (breaker *circuitBreaker) acquire() (*circuitPermit, bool) {
 	breaker.mu.Lock()
 	previous := breaker.state
@@ -99,6 +101,9 @@ func (breaker *circuitBreaker) acquire() (*circuitPermit, bool) {
 
 // available 只读检查当前是否有准入可能，不占用探针或长期许可。
 // 因此成功只是一项提示；经济意图持久化之后仍必须以 acquire 为最终闸门。
+// English: available Read-only checks whether access is currently possible and does not occupy probes or long-term
+// licenses. Success is therefore only a hint; after economic intentions are sustained, acquisition must still be
+// the final gate.
 func (breaker *circuitBreaker) available() bool {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
@@ -154,6 +159,8 @@ func (permit *circuitPermit) complete(success bool) {
 }
 
 // cancel 归还半开探针，但不会把本地容量压力误记成远端钱包故障。
+// English: cancel returns the half-open probe, but does not mistakenly register local capacity pressure as a
+// remote wallet failure.
 func (permit *circuitPermit) cancel() {
 	if permit == nil || permit.breaker == nil {
 		return

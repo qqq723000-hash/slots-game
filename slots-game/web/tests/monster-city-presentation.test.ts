@@ -35,8 +35,8 @@ describe("monster-city presentation timing", () => {
       scale: 0.72,
     });
 
-    // 在 1280×720 下，捕获到的原始脚趾底边（462.346）换算为 692.889。
-    // 若父级组合缩放为 1.05，会错误地将其移到 727.533。
+    // 在 1280×720 下，捕获到的原始脚趾底边（462.346）换算为 692.889。 / English: At 1280×720, the original toe base captured (462.346) translates to 692.889.
+    // 若父级组合缩放为 1.05，会错误地将其移到 727.533。 / English: A parent combo scale of 1.05 would incorrectly move it to 727.533.
     const rawToeBottom = 462.346;
     const authoredBottom = 360 + rawToeBottom * 0.72;
     const compoundedBottom = 360 * 1.05 + rawToeBottom * 0.72 * 1.05;

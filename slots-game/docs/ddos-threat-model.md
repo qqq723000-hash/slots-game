@@ -1,4 +1,4 @@
-# RGS DDoS 威胁模型与验证门禁
+# RGS DDoS 威胁模型与验证门禁 / RGS DDoS Threat Model and Verification Gates
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
@@ -8,6 +8,10 @@
 状态：后端应用层防护以及 AWS/Helm/Terraform 契约与负向夹具已实现本地证据；真实账号中的
 WAF/ALB/CloudFront/Route 53/Shield 状态、公网大流量清洗、EKS 容量和第三方钱包承压仍属于目标环境
 门禁。仓库提供只读实时回读脚本，但当前本地结果不冒充真实 AWS 验证或抗 DDoS 认证。
+
+## English summary / 英文摘要
+
+This document defines layered denial-of-service and resource-exhaustion controls for the public RGS path, from AWS edge filtering through Go admission controls to PostgreSQL authority. The repository provides local code, negative fixtures, and read-only validation contracts, while Valkey remains an admission mechanism rather than the source of economic truth. Live AWS account state, internet-scale mitigation, EKS capacity, third-party wallet capacity, operational approvals, and independent DDoS certification remain external deployment gates.
 
 ## 1. 安全结论
 

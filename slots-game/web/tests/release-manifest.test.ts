@@ -1,4 +1,4 @@
-// @ts-nocheck -- 清单实现是供 Node 构建与运维脚本复用的纯 JavaScript 模块。
+// @ts-nocheck -- 清单实现是供 Node 构建与运维脚本复用的纯 JavaScript 模块。 / English: @ts-nocheck -- The manifest implementation is a pure JavaScript module for reuse by Node build and operation scripts.
 import { describe, expect, it } from "vitest";
 
 import {

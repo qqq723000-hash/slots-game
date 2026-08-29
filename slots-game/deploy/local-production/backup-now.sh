@@ -1,5 +1,7 @@
 #!/bin/sh
 # 立即生成一组完整备份，随后在隔离数据库中做真实恢复验证。
+# English: Instantly generate a set of full backups, followed by real recovery verification in an isolated
+# database.
 set -eu
 # shellcheck source=deploy/local-production/common.sh
 . "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/common.sh"

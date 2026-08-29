@@ -689,8 +689,8 @@ describe("Primal aggregate win presentation contract", () => {
         label: probe.labelProbe?.label,
       });
 
-    // 此处测试的是分配标识。只替换局部时钟，避免测试在 Node 中依赖 Pixi 的
-    // 浏览器 RAF 填充实现。
+    // 此处测试的是分配标识。只替换局部时钟，避免测试在 Node 中依赖 Pixi 的 / English: What is being tested here is the assignment ID. Only replace the local clock to avoid tests that depend on Pixi in Node
+    // 浏览器 RAF 填充实现。 / English: Browser RAF padding implementation.
       Object.assign(celebration as unknown as Record<string, unknown>, {
         animate: async () => undefined,
       });
@@ -1015,8 +1015,8 @@ describe("Primal aggregate win presentation contract", () => {
       expect(milestones).toEqual(["visible"]);
       expect(dimNonWinningCells).toHaveBeenCalledOnce();
       expect(dimNonWinningCells).toHaveBeenCalledWith(plainWins[0]!.cells);
-    // 空闲重复演出是官方强调路径：它会调暗未中奖符号，但绝不能再次发出首次
-    // 展示的符号赢分或高亮命令。
+    // 空闲重复演出是官方强调路径：它会调暗未中奖符号，但绝不能再次发出首次 / English: The idle repeat is the official highlight path: it dims unwinn symbols but can never be issued again for the first time
+    // 展示的符号赢分或高亮命令。 / English: Revealed symbols win points or highlight commands.
       expect(highlight).not.toHaveBeenCalled();
       expect(clearHighlights).not.toHaveBeenCalled();
       expect(clearWinDimming).not.toHaveBeenCalled();
@@ -1029,8 +1029,8 @@ describe("Primal aggregate win presentation contract", () => {
       expect(resident?.boxScene.visible).toBe(true);
       expect(clock.callbacks.size).toBe(1);
 
-    // Infinity 是语义哨兵值，而不是极大的有限超时。无论将墙上时钟推进多大的
-    // 有限值，都必须让同一个驻留代次保持活动，且绝不能发布 HOLD/hide。
+    // Infinity 是语义哨兵值，而不是极大的有限超时。无论将墙上时钟推进多大的 / English: Infinity is a semantic sentinel value, not a huge finite timeout. No matter how far you push the wall clock
+    // 有限值，都必须让同一个驻留代次保持活动，且绝不能发布 HOLD/hide。 / English: Finite value, both must keep the same resident generation active, and HOLD/hide must never be issued.
       const finiteTimes = [
         clock.invocationAt + 16,
         clock.invocationAt + 60_000,
@@ -1062,7 +1062,7 @@ describe("Primal aggregate win presentation contract", () => {
       await flushMicrotasks();
       await presentation;
 
-    // 跨越逻辑边界无需额外 RAF：Continue 会取消无限 HOLD，并立即开始预设退出。
+    // 跨越逻辑边界无需额外 RAF：Continue 会取消无限 HOLD，并立即开始预设退出。 / English: No additional RAF is required to cross logical boundaries: Continue cancels the infinite HOLD and starts the preset exit immediately.
       expect(logicalPresentationComplete).toBe(true);
       expect(milestones).toEqual(["visible", "hide-start"]);
       expect(milestones).not.toContain("hold-complete");
@@ -1166,14 +1166,14 @@ describe("Primal aggregate win presentation contract", () => {
       });
       expect(clock.callbacks.size).toBe(1);
 
-    // 刻意让可观察的墙上时钟经过真实 Promise 轮次。驻留诊断报告的是调度器的
-    // H+0 边界，而非偶然产生的微任务或检查延迟。
+    // 刻意让可观察的墙上时钟经过真实 Promise 轮次。驻留诊断报告的是调度器的 / English: Deliberately letting the observable wall clock go through real Promise rounds. Resident diagnostics report the scheduler's
+    // H+0 边界，而非偶然产生的微任务或检查延迟。 / English: H+0 boundaries, not accidental microtasks or check delays.
       await Promise.resolve();
       await Promise.resolve();
       clock.setNow(clock.invocationAt + holdMs + 37);
 
-    // 后继调用会取消第 1 代预设隐藏，并在同一调用栈中安装第 2 代 HOLD 更新器：
-    // 只使用一个 RAF，中间没有空隙。
+    // 后继调用会取消第 1 代预设隐藏，并在同一调用栈中安装第 2 代 HOLD 更新器： / English: Subsequent calls cancel the generation 1 preset hiding and install the generation 2 HOLD updater in the same call stack:
+    // 只使用一个 RAF，中间没有空隙。 / English: Only one RAF is used, with no gaps in between.
       const secondInvocationAt = clock.invocationAt + holdMs + 37;
       const secondPresentation = celebration.present(
         [multipliedHandoffWins[1]!],
@@ -1296,8 +1296,8 @@ describe("Primal aggregate win presentation contract", () => {
       await flushMicrotasks();
       await presentation;
 
-    // CONTINUE 会在隐藏开始时结束外层记录调度器，而驻留标签和帧仍保持挂载，
-    // 以完成其预设隐藏。
+    // CONTINUE 会在隐藏开始时结束外层记录调度器，而驻留标签和帧仍保持挂载， / English: CONTINUE ends the outer record scheduler when hiding begins, while resident tags and frames remain mounted,
+    // 以完成其预设隐藏。 / English: to complete its default hiding.
       expect(logicalPresentationComplete).toBe(true);
       expect(probe.labelProbe?.commands.map(({ animation }) => animation)).toEqual(
         expectedLabelAnimations,
@@ -1329,8 +1329,8 @@ describe("Primal aggregate win presentation contract", () => {
       expect(resident?.pendingCleanupCount).toBe(1);
       expect(clock.callbacks.size).toBe(1);
 
-    // 从已取消 HOLD 捕获的回调即使迟到也必须保持无作用，尤其不能发布合并或
-    // 停留里程碑，也不能替换已经运行的隐藏片段。
+    // 从已取消 HOLD 捕获的回调即使迟到也必须保持无作用，尤其不能发布合并或 / English: Callbacks captured from a canceled HOLD must remain inactive even if they are late, and in particular must not post a merge or
+    // 停留里程碑，也不能替换已经运行的隐藏片段。 / English: Staying at the milestone also cannot replace hidden fragments that have already been run.
       const commandsAtHideStart = [...(probe.labelProbe?.commands ?? [])];
       const milestonesAtHideStart = [...milestones];
       staleHoldCallback?.(
@@ -1340,8 +1340,8 @@ describe("Primal aggregate win presentation contract", () => {
       expect(probe.labelProbe?.commands).toEqual(commandsAtHideStart);
       expect(milestones).toEqual(milestonesAtHideStart);
 
-    // 驻留隐藏尾段持有视图期间，重复请求应为空操作：不能强制隐藏视图，也不能
-    // 提前或重复发出结束事件。
+    // 驻留隐藏尾段持有视图期间，重复请求应为空操作：不能强制隐藏视图，也不能 / English: While the view is held by the resident hidden tail segment, repeated requests should be a no-op: the view cannot be forced to be hidden, nor can
+    // 提前或重复发出结束事件。 / English: Emit the end event early or repeatedly.
       celebration.requestFinish();
       await flushMicrotasks();
       expect(resident?.scene.visible).toBe(true);
@@ -1420,8 +1420,8 @@ describe("Primal aggregate win presentation contract", () => {
       expect(clock.callbacks.size).toBe(1);
       expect(probe!.read("winLabelMultiplier")).toBe("");
 
-    // 已释放的检查点会调度新的 RAF。赋值、通知和 merge_start 不得发生在
-    // Promise 释放微任务中。
+    // 已释放的检查点会调度新的 RAF。赋值、通知和 merge_start 不得发生在 / English: Released checkpoints schedule new RAFs. Assignments, notifications, and merge_start must not occur in
+    // Promise 释放微任务中。 / English: Promise is released in microtask.
       clock.runFrame(clock.invocationAt + WIN_LABEL_AUTHORED_TIMELINE_MS.showDuration + 100);
       expect(milestones).toEqual(["visible", "show-complete", "merge-start"]);
       expect(probe!.read("winLabelMultiplier")).toBe(" x5");
@@ -1483,8 +1483,8 @@ describe("Primal aggregate win presentation contract", () => {
         }
       });
 
-    // 一个延迟 RAF 会跨过全部三个片段。只有 show、merge_start 和 merge_end
-    // 的预设时钟全部追平后，里程碑才有效。
+    // 一个延迟 RAF 会跨过全部三个片段。只有 show、merge_start 和 merge_end / English: A delayed RAF spans all three segments. Only show, merge_start and merge_end
+    // 的预设时钟全部追平后，里程碑才有效。 / English: The milestone will be effective only after all the preset clocks are tied.
       clock.runFrame(clock.invocationAt + 3_000);
       expect(milestones).toEqual([
         "visible",
@@ -1614,8 +1614,8 @@ describe("Primal aggregate win presentation contract", () => {
           (milestone) => { milestones.push(milestone); },
         );
 
-    // 在 H 之后很久才交付首个 RAF。渲染器只能重建边界早于 H 的预设转换；
-    // 绝不能因超调而泄漏 merge-settled 或其他更晚的转换。
+    // 在 H 之后很久才交付首个 RAF。渲染器只能重建边界早于 H 的预设转换； / English: The first RAF was delivered long after the H . The renderer can only reconstruct preset transformations whose boundaries are earlier than H;
+    // 绝不能因超调而泄漏 merge-settled 或其他更晚的转换。 / English: Merge-settled or other later transformations must not leak due to overshoot.
         const overshootAt = clock.invocationAt + expected.holdDurationMs + 5_000;
         clock.runFrame(overshootAt);
         await flushMicrotasks();
@@ -1868,7 +1868,7 @@ describe("Primal aggregate win presentation contract", () => {
       expect(milestones).toEqual(["visible"]);
       expect(startDisappear).not.toHaveBeenCalled();
 
-    // 首个 RAF 并非合成的 t=0：停留会在调用时刻+D 结束。
+    // 首个 RAF 并非合成的 t=0：停留会在调用时刻+D 结束。 / English: The first RAF is not synthetic t=0: the dwell ends at the calling time +D.
       runFrame(invocationAt + holdDurationMs);
       await flushMicrotasks();
       expect(milestones).toEqual(["visible", "hold-complete"]);

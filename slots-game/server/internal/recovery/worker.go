@@ -1,4 +1,6 @@
 // recovery 包在短暂故障或进程重启后恢复持久化的钱包待处理轮次。
+// English: The recovery package restores persistent wallet pending rounds after a brief failure or process
+// restart.
 package recovery
 
 import (
@@ -26,6 +28,8 @@ type Config struct {
 	ObservationInterval time.Duration
 	ObservationTimeout  time.Duration
 	// StaleAfter 只为旧配置源代码兼容保留；到期时间现在完全由持久 next_attempt_at 决定。
+	// English: StaleAfter is reserved only for old configuration source code compatibility; expiration time is now
+	// determined entirely by persistent next_attempt_at.
 	StaleAfter          time.Duration
 	AttemptTimeout      time.Duration
 	LeaseDuration       time.Duration
@@ -35,12 +39,19 @@ type Config struct {
 	MaxParallel         int
 	RiskExpiryBatchSize int
 	// FullJitter 仅用于确定性测试。生产默认在 [0, upperBound] 内均匀取值。
+	// English: FullJitter is only used for deterministic testing. The production default value is uniform within [0,
+	// upperBound].
 	FullJitter func(time.Duration) time.Duration
 	// InitialObservationJitter 只错开首次数据库 backlog 快照；恢复 pass 仍会立即执行，
 	// 后续快照保持 ObservationInterval 固定周期。测试可注入返回零的函数。
+	// English: InitialObservationJitter only staggers the first database backlog snapshot; the recovery pass will
+	// still be executed immediately, and subsequent snapshots will maintain a fixed period of ObservationInterval.
+	// Tests can inject functions that return zero.
 	InitialObservationJitter func(time.Duration) time.Duration
 	// Now 仅用于确定性测试恢复循环新鲜度。生产默认使用进程 UTC 时钟；积压年龄
 	// 始终由存储适配器使用权威存储时钟计算。
+	// English: Now is only used for deterministic testing of restored loop freshness. Production uses the process UTC
+	// clock by default; backlog age is always calculated by the storage adapter using the authoritative storage clock.
 	Now              func() time.Time
 	StartupReadiness *StartupReadiness
 }
@@ -158,6 +169,8 @@ func New(
 }
 
 // Run 立即执行恢复，随后按有界周期运行，直至进程上下文被取消。
+// English: Run performs recovery immediately and then runs in a bounded period until the process context is
+// canceled.
 func (w *Worker) Run(ctx context.Context) {
 	w.runAndObserve(ctx)
 	ticker := time.NewTicker(w.config.Interval)
@@ -183,6 +196,7 @@ func (w *Worker) RunOnce(ctx context.Context) (runErr error) {
 	if w.riskExpiryRepository != nil {
 		if _, err := w.riskExpiryRepository.ExpireRiskReviews(ctx, w.config.RiskExpiryBatchSize); err != nil {
 			// 风险到期失败必须让本轮观测失败，但不能饿死独立的钱包未知结果恢复。
+			// A risk-expiry failure must fail this observed pass but must not starve independent recovery of unknown wallet outcomes.
 			failures = append(failures, err)
 		}
 	}
@@ -277,6 +291,8 @@ func (w *Worker) logObservationFailure(err error) {
 func (w *Worker) logFailure(message string, err error) {
 	if w.logger != nil {
 		// 底层 PostgreSQL 错误可能包含 SQL、绑定值或拓扑；只输出固定错误族。
+		// English: The underlying PostgreSQL errors may contain SQL, bound values, or topology; only fixed error families
+		// are output.
 		w.logger.Error(message, "error_class", safelog.ErrorClass(err))
 	}
 }
@@ -337,10 +353,15 @@ func (w *Worker) processClaim(ctx context.Context, claim rgs.WalletRecoveryClaim
 	if !scheduled {
 		// 终态转换或带新栅栏的领取已经赢得竞态。两者都不允许旧 Worker 覆盖持久状态，
 		// 并且都是预期的收敛路径。
+		// English: The final state transition or the claim with a new fence has won the race. Neither allows old workers
+		// to overwrite persistent state, and both are expected convergence paths.
 		return nil
 	}
 	// 有效的非终态决策与已持久化重试共同表示本次恢复步骤完成；即使 Resolver
 	// 将钱包待决或传输状态报告为错误，也不应把已安全调度的步骤判为失败。
+	// English: A valid non-final decision and a persisted retry together indicate the completion of this recovery
+	// step; even if the Resolver reports the wallet pending or transfer status as an error, the safely scheduled step
+	// should not be judged as a failure.
 	return nil
 }
 
@@ -349,6 +370,9 @@ func (w *Worker) backoffUpperBound(record rgs.RoundRecord, next rgs.WalletRecove
 	if next == rgs.WalletRecoveryApply {
 		// APPLY 预算会在能够证明 NOT_SENT 时归还；RetryCount 不归还，专门保证
 		// 本地熔断、bulkhead 或配置失败不会永远以初始间隔打热数据库。
+		// English: The APPLY budget is returned when NOT_SENT can be proven; the RetryCount is not returned, specifically
+		// to ensure that local circuit breakers, bulkheads, or configuration failures do not forever warm the database at
+		// the initial interval.
 		attempts = record.RetryCount
 	}
 	if attempts < 1 {
@@ -378,6 +402,7 @@ func expectedTerminalError(err error) bool {
 func (w *Worker) runAndObserve(ctx context.Context) {
 	if err := w.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		// 联合错误链可能携带轮次、会话、钱包或数据库细节。
+		// A joined error chain may carry round, session, wallet, or database details.
 		w.logFailure("round recovery pass failed", err)
 	}
 }

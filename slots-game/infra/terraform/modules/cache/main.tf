@@ -101,6 +101,10 @@ resource "aws_elasticache_subnet_group" "this" {
 # 共享/经济 token bucket 都带 TTL。任何 LRU/LFU 逐出都会把被删桶在下一次请求
 # 重建为满额，形成内存压力下的准入 fail-open；noeviction 让写入显式 OOM，应用
 # 将脚本错误映射为新经济意图 503 fail-closed，资金恢复读路径不依赖此缓存。
+# English: Sharing/economic token buckets all have TTL. Any LRU/LFU eviction will cause the deleted bucket to be
+# used in the next request Rebuild to full, causing admission fail-open under memory pressure; noeviction allows
+# explicit OOM writes, application Map script errors to new economic intent 503 fail-closed, funds recovery read
+# path does not rely on this cache.
 resource "aws_elasticache_parameter_group" "noeviction" {
   name        = "${var.name_prefix}-valkey-noeviction"
   family      = local.valkey_parameter_group_family

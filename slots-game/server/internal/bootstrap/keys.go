@@ -49,6 +49,7 @@ func loadEd25519PrivateKey(path string) (ed25519.PrivateKey, error) {
 		return nil, errors.New("private key must be a regular file")
 	}
 	// 使用专用密钥组的部署允许组读取；执行位、组写入及任何其他用户权限均被拒绝。
+	// Deployments using a dedicated key group may permit group read; execute bits, group write, and all permissions for other users are rejected.
 	if permission := info.Mode().Perm(); permission&0o137 != 0 {
 		return nil, fmt.Errorf("private key permissions %04o are too broad", permission)
 	}

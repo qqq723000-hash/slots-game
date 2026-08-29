@@ -11,6 +11,10 @@ import (
 
 // RoundObserver 接收有界基数业务事件。实现不得将运营商、玩家、会话、轮次或交易标识附加为标签。
 // 仅当存储库报告已持久改变状态时才发出转换回调；重放与冲突回调描述一次已完成的协调器请求结果。
+// English: RoundObserver receives bounded cardinality business events. Implementations MUST not append operator,
+// player, session, round, or transaction identifiers as tags. Transition callbacks are emitted only when the
+// repository reports a persistent change in state; replay and conflict callbacks describe the results of a
+// completed coordinator request.
 type RoundObserver interface {
 	RoundPrepared()
 	RoundCommitted()
@@ -21,6 +25,8 @@ type RoundObserver interface {
 
 // WalletObserver 记录真实适配器调用。只有 ApplyRound 结果的经济状态无法归类为成功、拒绝、
 // 冲突或无效回执时，才发出 WalletUnknownOutcome。
+// English: WalletObserver records real adapter calls. WalletUnknownOutcome is issued only if the economic status
+// of the ApplyRound result cannot be classified as success, rejection, conflict, or invalid receipt.
 type WalletObserver interface {
 	WalletCall()
 	WalletUnknownOutcome()
@@ -28,12 +34,16 @@ type WalletObserver interface {
 
 // IntegrityObserver 与普通轮次状态观测保持分离。只有写入首个持久隔离标记的事务会发出回调；
 // 回调必须使用不含实体标识标签的有界基数计数器。
+// English: IntegrityObserver remains separate from normal round state observations. Only the transaction that
+// writes the first durable isolation token issues a callback; the callback must use a bounded cardinality counter
+// without an entity identification tag.
 type IntegrityObserver interface {
 	RoundIntegrityQuarantined()
 	SessionIntegrityQuarantined()
 }
 
 // ObservedWallet 装饰钱包端口，但不改变其经济或幂等行为。
+// English: ObservedWallet decorates the wallet port but does not change its economic or idempotent behavior.
 type ObservedWallet struct {
 	next           WalletPort
 	nextResolution WalletResolutionPort

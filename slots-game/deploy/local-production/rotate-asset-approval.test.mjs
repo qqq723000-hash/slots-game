@@ -266,6 +266,8 @@ test("prepares a changed approval without polluting the committed approval when 
     now: new Date("2026-08-26T05:00:00.000Z"),
   }), expectedVerification(fixture.pendingPath));
   // 模拟随后定义提交失败：不调用 commit，已提交审批和备份必须保持不变。
+  // English: The simulation subsequently defines a commit failure: commit is not called, and the submitted
+  // approval and backup must remain unchanged.
   assert.equal(readFileSync(fixture.approvalPath, "utf8"), committedBefore);
   assert.deepEqual(readdirSync(fixture.backups), []);
 });

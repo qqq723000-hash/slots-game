@@ -1,6 +1,8 @@
 #!/bin/sh
 # 只读检查本机单副本定义轮换是否已排空。调用者必须先停止 RGS，
 # 避免检查与文件轮换之间继续签发旧定义会话。
+# English: Read-only Checks whether the native single copy definition rotation has been drained. The caller must
+# first stop RGS, Avoid continuing to sign off old definition sessions between checks and file rotations.
 set -eu
 # shellcheck source=deploy/local-production/common.sh
 . "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/common.sh"

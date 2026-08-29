@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 # 从受保护 Terraform delivery 输出生成不含 Secret 值的同步资源。
+# English: Generate sync resources without Secret values from protected Terraform delivery output.
 require "json"
 
 delivery_path = ARGV.fetch(0) { abort "用法: render-external-secrets.rb <delivery.json> <namespace>" }

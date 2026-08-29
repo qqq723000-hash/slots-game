@@ -19,6 +19,8 @@ const (
 
 // VerificationKey 受租户及用途范围约束。同一用途内的密钥标识必须唯一；
 // 绝不能使用未经验证的运营商请求头选择密钥。
+// English: VerificationKey is subject to tenant and usage scope. Key identification must be unique within the same
+// purpose; keys must not be selected using unvalidated operator request headers.
 type VerificationKey struct {
 	KeyID      string
 	OperatorID string

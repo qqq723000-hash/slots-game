@@ -112,8 +112,8 @@ function createHarness(): LaunchSceneHarness {
     },
     update: vi.fn((deltaSeconds: number) => {
       for (const entry of currentTracks.values()) {
-        // 与 Spine 4.1 保持一致：先检查是否完成，再累加当前增量，因此恰好位于
-        // 边界时会由下一次 apply 释放。
+        // 与 Spine 4.1 保持一致：先检查是否完成，再累加当前增量，因此恰好位于 / English: Consistent with Spine 4.1: checks for completion before accumulating the current increment, so it happens to be
+        // 边界时会由下一次 apply 释放。 / English: When the boundary is reached, it will be released by the next apply.
         if (entry.mixingFrom
           && entry.mixTime > 0
           && entry.mixTime >= entry.mixDuration) {
@@ -1002,7 +1002,7 @@ describe("LaunchScene Wheel character state", () => {
         monster.state.getCurrent(track),
       ]));
       scene.playCharacterAnimation("win", false);
-      // Wheel 完成时使用的同一种仅续接赋值，不得撤销它已经持有的任务。
+      // Wheel 完成时使用的同一种仅续接赋值，不得撤销它已经持有的任务。 / English: The same kind of continuation-only assignment that the Wheel completes with, and may not undo tasks it already holds.
       scene.setCharacterBodyContinuation("feature", false);
       expect(scene.setCharacterIntroCapturePaused(true)).toBe(true);
       monster.update.mockClear();

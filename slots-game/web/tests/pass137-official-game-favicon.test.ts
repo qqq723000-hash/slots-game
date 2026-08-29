@@ -1,4 +1,4 @@
-// @ts-nocheck -- 仅在 Node 中运行的静态入口与二进制资源契约测试。
+// @ts-nocheck -- 仅在 Node 中运行的静态入口与二进制资源契约测试。 / English: @ts-nocheck -- Static entry and binary resource contract tests that only run in Node.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 

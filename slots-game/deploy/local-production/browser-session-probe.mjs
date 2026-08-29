@@ -1,4 +1,6 @@
 // 该脚本在文档创建前注入，只记录凭据是否存在，绝不复制 URL fragment 中的实际值。
+// English: This script is injected before the document is created and only records whether the credentials
+// exist and never copies the actual values in the URL fragment.
 export const browserSessionProbeSource = `(() => {
   const values = new URLSearchParams(location.hash.startsWith('#') ? location.hash.slice(1) : location.hash);
   const safeBlockedTarget = (value) => {

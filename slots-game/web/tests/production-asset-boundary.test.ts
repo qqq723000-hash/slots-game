@@ -1,4 +1,4 @@
-// @ts-nocheck -- 该契约测试只在 Node/Vitest 中读取构建脚本。
+// @ts-nocheck -- 该契约测试只在 Node/Vitest 中读取构建脚本。 / English: @ts-nocheck -- This contract test only reads the build script in Node/Vitest.
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

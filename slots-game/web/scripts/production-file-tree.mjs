@@ -18,6 +18,8 @@ function nodeKind(metadata) {
 /**
  * 枚举发布输入树时不得跟随链接或静默忽略特殊节点。
  * 任何可能进入发布 COPY 边界的节点都必须是目录或经过清单摘要固定的普通文件。
+ *
+ * 英文 / English: Enumerations publishing input trees must not follow links or silently ignore special nodes. Any node that may enter the publishing COPY boundary must be a directory or an ordinary file that has been fixed with a manifest digest.
  */
 export async function regularFilesUnder(root) {
   const output = [];

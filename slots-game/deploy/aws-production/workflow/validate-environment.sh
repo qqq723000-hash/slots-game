@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 该脚本只验证受保护 GitHub Environment 注入的固定边界，不调用 AWS。
+# English: This script only verifies the fixed boundaries of the protected GitHub Environment injection and does
+# not make calls to AWS.
 set -eu
 
 fail() {

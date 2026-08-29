@@ -16,6 +16,9 @@ type bucket struct {
 
 // Limiter 是有界的进程内准入限制器。生产还必须在入口网关实施全局限制；即使上游
 // 策略误配，本限制器仍保护每个进程，但不能冒充跨副本限流。
+// English: Limiter is a bounded in-process admission limiter. Production must also implement global limits at the
+// ingress gateway; this limiter still protects each process even if the upstream policy is mismatched, but cannot
+// pretend to be cross-replica traffic limiting.
 type Limiter struct {
 	mu         sync.Mutex
 	rate       float64
@@ -41,6 +44,9 @@ func (l *Limiter) Allow(key string, now time.Time) bool {
 	defer l.mu.Unlock()
 	// LRU 顺序让清理只检查最老键；单次最多回收固定数量，避免 100k 会话桶
 	// 在同一 mutex 临界区产生 O(n) 停顿。过期键会在后续请求中渐进回收。
+	// English: LRU order allows cleaning to only check the oldest keys; a maximum of a fixed number can be recycled at
+	// a time to avoid O(n) pauses for 100k session buckets in the same mutex critical section. Expired keys will be
+	// progressively recycled on subsequent requests.
 	l.cleanupExpired(now, 64)
 	state, exists := l.buckets[key]
 	if !exists {

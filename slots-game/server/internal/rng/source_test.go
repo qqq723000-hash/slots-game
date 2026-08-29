@@ -9,6 +9,8 @@ import (
 func TestCryptoSourceRejectsBiasedPrefix(t *testing.T) {
 	var entropy [16]byte
 	// 当 n=3 时拒绝阈值为 1。必须丢弃零，下一个 uint64 值 4 会得到结果 1。
+	// English: The rejection threshold is 1 when n=3. Zeros must be discarded, and the next uint64 value 4 will result
+	// in 1.
 	binary.BigEndian.PutUint64(entropy[0:8], 0)
 	binary.BigEndian.PutUint64(entropy[8:16], 4)
 	source := &CryptoSource{Reader: bytes.NewReader(entropy[:])}

@@ -1,4 +1,4 @@
-// @ts-nocheck -- 仅在 Node 中运行的真实 Spine 材质与时间线证据校验器。
+// @ts-nocheck -- 仅在 Node 中运行的真实 Spine 材质与时间线证据校验器。 / English: @ts-nocheck -- A true Spine material and timeline evidence checker that only runs in Node.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -33,7 +33,7 @@ const SYMBOLS = Object.freeze([
   Object.freeze({ name: "Wild x50", file: "Symbol6.skel", sha256: "22b6ccae468e3d04b7c0dabf2a59c3dfcf00ed1d4f96fc4ee6a15c10ef3fc87d", expected: [[23, 5], [24, 7], [24, 8], [27, 10], [26, 7]] }),
 ]);
 
-/** 官方四个低标的 stop -> idle NORMAL/ADD 附件矩阵，采样时间与 WIN 证据一致。 */
+/** 官方四个低标的 stop -> idle NORMAL/ADD 附件矩阵，采样时间与 WIN 证据一致。 / English: The official four low-standard stop -> idle NORMAL/ADD attachment matrices, the sampling time is consistent with the WIN evidence. */
 const IDLE_SYMBOLS = Object.freeze([
   Object.freeze({ name: "Helmet", file: "Symbol2.skel", sha256: "45443fd00e66109bc0a24d99d33539c284e8ea2dd2a36393ceabcc87d7b85922", expected: [[1, 1], [9, 2], [9, 2], [9, 3], [9, 3]] }),
   Object.freeze({ name: "Radio", file: "Symbol3.skel", sha256: "f9a5fb119d5e4a1b2597bfc41a27ec3eb47d2416d335a8be4b1ac18190a114dd", expected: [[1, 0], [9, 1], [9, 1], [9, 1], [9, 1]] }),
@@ -46,6 +46,8 @@ const IDLE_SYMBOLS = Object.freeze([
  * 特殊符号命令形态：转轴透视滤镜启用时，每种情况都可能暴露一个不透明且
  * 以黑色为零值的 add/ 图集附件。将二进制标识与时间线用例放在一起，避免
  * 源资源变化后悄无声息地让此验证失去意义。
+ *
+ * 英文 / English: Pass58 originally verified WIN paths for normal symbols and Wild. Here's what the special symbol command looks like in SymbolView in action: When the pivot perspective filter is enabled, each case may expose an add/gallery attachment that is opaque and has a black value of zero. Place the binary identifier together with the timeline use case to avoid silently rendering this validation meaningless if the source resource changes.
  */
 const SPECIAL_SYMBOLS = Object.freeze({
   rage: Object.freeze({
@@ -65,6 +67,8 @@ const SPECIAL_SYMBOLS = Object.freeze({
 /**
  * 每条生产环境动态特殊符号路径都恰好覆盖一次。样本既包含时间线刻意从暗态
  * 开始的零 ADD 姿态，也包含后续 add/ 帧；每个样本都会执行拆分断言。
+ *
+ * 英文 / English: Each production environment dynamic special symbol path is covered exactly once. Samples contain both the zero ADD pose where the timeline deliberately starts from the dark state and subsequent add/ frames; split assertions are performed for each sample.
  */
 const SPECIAL_DYNAMIC_CASES = Object.freeze([
   Object.freeze({
@@ -267,7 +271,7 @@ function advanceAt60Hz(
   }
 }
 
-/** 推进墙上时钟时间而非单条轨道，确保排队片段和多轨片段反映真实行为。 */
+/** 推进墙上时钟时间而非单条轨道，确保排队片段和多轨片段反映真实行为。 / English: Advance wall clock time instead of individual tracks to ensure queued and multi-track clips reflect real behavior. */
 function advanceByMs(
   state: AnimationState,
   skeleton: Skeleton,
@@ -287,6 +291,8 @@ function advanceByMs(
  * 用一个真实 Skeleton 姿态模拟 SymbolView 的两次实时渲染。Pixi 会在渲染时
  * 创建 Sprite/Mesh 对象，因此这个仅在 Node 中运行的证据工具会先为每个真实
  * Spine Slot 附加最小可渲染记录，再执行生产材质辅助函数。
+ *
+ * 英文 / English: Simulate two real-time renderings of SymbolView with a real Skeleton pose. Pixi creates Sprite/Mesh objects at render time, so this Node-only evidence tool appends a minimum renderable record to each real Spine Slot before executing the production material helper function.
  */
 function assertRealPoseSplitsIntoNormalAndAdditivePasses(
   skeleton: Skeleton,

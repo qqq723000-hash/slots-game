@@ -1,5 +1,8 @@
 // Command secret-env 从受限文件加载单个环境变量，再用原进程替换自身。
 // 它避免把 PostgreSQL DSN 写入镜像或容器的静态配置。
+// English: Command secret-env loads a single environment variable from a restricted file and replaces itself
+// with the original process. It avoids writing the PostgreSQL DSN into the static configuration of the image or
+// container.
 package main
 
 import (

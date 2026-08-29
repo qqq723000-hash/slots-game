@@ -1,5 +1,7 @@
 #!/bin/sh
 # 本地渲染真实 Chart，证明 Terraform subnet/SG/CIDR 与 ALB 关键注解漂移会在发布前失败。
+# English: Render real charts locally to prove that Terraform subnet/SG/CIDR and ALB key annotation drift will
+# fail before release.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

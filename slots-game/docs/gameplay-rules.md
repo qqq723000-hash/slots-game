@@ -1,9 +1,13 @@
-# 玩法规则与权威事件契约
+# Gameplay rules and authoritative event contract / 玩法规则与权威事件契约
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document separates confirmed rule behavior from probability values that the available reference material does not disclose. The Go engine is authoritative for the grid, wins, feature state, event order, and every economic amount, while animation code only presents the returned events and never samples or corrects a result. The implemented rule contract and deterministic tests are not an approved commercial mathematics package, so exact reel weights, RTP, RNG, jurisdictional rules, and the final executable still require independent review and certification.
 
 状态：已实现规则契约；精确商业数学仍未认证。
 

@@ -1,9 +1,15 @@
-# AWS 正式生产运维
+# AWS 正式生产运维 / AWS production operations
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document defines operating responsibilities and minimum evidence for monitoring, incident response, backup, restore, and disaster recovery in the adopter's AWS target environment.
+Cloud health, HTTP success, or a completed backup job never proves economic correctness; round, wallet, audit, idempotency, and recovery invariants must be validated through application evidence and reconciliation, and unknown wallet outcomes must not be guessed.
+Final SLO, RTO, RPO, capacity, restore, failover, incident, security, reconciliation, and business-release acceptance remain external gates owned and exercised by the adopter.
 
 状态：正式运行、监控、备份与灾难恢复手册
 

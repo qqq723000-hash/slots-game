@@ -6,6 +6,8 @@ export interface StagedComponentConstructionStage {
   readonly id: string;
   /**
    * 构造一个逻辑所有者。返回处理程序会将临时所有权转移给运行程序，直到完成的图明确采用它为止。
+   *
+   * 英文 / English: Construct a logical owner. Returning the handler transfers temporary ownership to the runner until the completed graph explicitly takes it.
    */
   readonly build: () => void | (() => void);
 }
@@ -28,23 +30,25 @@ export interface StagedComponentConstructionOptions {
 }
 
 export interface StagedComponentConstructionOwnership {
-  /** 将每个构建的所有者纳入最终图中，而不对其进行处置。 */
+  /** 将每个构建的所有者纳入最终图中，而不对其进行处置。 / English: Incorporate each build's owner into the final graph without disposing of it. */
   release(): void;
-  /** 按照相反的构建顺序一次性处理所有仍拥有的组件。 */
+  /** 按照相反的构建顺序一次性处理所有仍拥有的组件。 / English: Process all the components you still have in one go, in reverse build order. */
   dispose(): void;
 }
 
 export interface StagedGraphOwnershipTransfer {
   readonly graphOwnsComponents: boolean;
-  /** 在最终图表采用该组件之前使用的清理。 */
+  /** 在最终图表采用该组件之前使用的清理。 / English: Cleanup used before this component is adopted into the final chart. */
   componentDisposer(dispose: () => void): () => void;
   /**
    * 以原子方式将每个组件传输到完整的图表中。其退回的处理器成为唯一的拆解所有者；先前的组件处理器无操作。
+   *
+   * 英文 / English: Atomically transfer each component into the complete graph. Its returned processor becomes the sole teardown owner; there is no operation on the previous component processor.
    */
   transferToGraph(disposeGraph: () => void): () => void;
 }
 
-/** 分阶段最终所有者图的显式一次性所有权转移。 */
+/** 分阶段最终所有者图的显式一次性所有权转移。 / English: Explicit one-time ownership transfer for staged final owner graphs. */
 export function createStagedGraphOwnershipTransfer(): StagedGraphOwnershipTransfer {
   let graphOwnsComponents = false;
   return {
@@ -72,6 +76,8 @@ export function createStagedGraphOwnershipTransfer(): StagedGraphOwnershipTransf
  * 在每个动画帧边界之后准确构建一个逻辑组件。
  *
  * 进度故意保持在 1 以下：调用者拥有最终的图形连接，并且只有在连接成功后才可以发布一个。任何取消或构建错误都会以相反的顺序破坏已创建的所有者。
+ *
+ * 英文 / English: Build a logical component exactly after each animation frame boundary. The progress is deliberately kept below 1: the caller owns the final graph connection, and can publish one only after the connection is successful. Any cancellation or build error will destroy the created owners in reverse order.
  */
 export async function runStagedComponentConstruction(
   stages: readonly StagedComponentConstructionStage[],
@@ -90,7 +96,7 @@ export async function runStagedComponentConstruction(
       try {
         disposers[index]?.();
       } catch {
-        // 拆解是尽最大努力，但一个坏主人不能让其他人陷入困境。
+        // 拆解是尽最大努力，但一个坏主人不能让其他人陷入困境。 / English: Disassembly is a best effort effort, but one bad owner can't leave others in trouble.
       }
     }
     disposers.length = 0;
@@ -123,7 +129,7 @@ export async function runStagedComponentConstruction(
         componentCount: STAGED_COMPONENT_BATCH_CAP,
         durationMs,
       }));
-      // 为成功的最终图形接线保留最后的进度量。
+      // 为成功的最终图形接线保留最后的进度量。 / English: Reserve the final amount of progress for successful final graph wiring.
       options.onProgress?.(completed / (stages.length + 1));
     }
     return Object.freeze({ release, dispose });

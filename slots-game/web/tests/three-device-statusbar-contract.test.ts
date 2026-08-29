@@ -1,4 +1,4 @@
-// @ts-nocheck -- 源码级级联合约测试不依赖浏览器 DOM 实现。
+// @ts-nocheck -- 源码级级联合约测试不依赖浏览器 DOM 实现。 / English: @ts-nocheck -- Source code level cascade contract testing does not rely on browser DOM implementation.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { computeResponsiveLayoutSnapshot } from "../src/renderer/ResponsiveLayout";

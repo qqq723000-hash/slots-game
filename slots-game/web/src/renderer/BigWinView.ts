@@ -68,10 +68,10 @@ export const BIG_WIN_TIER_THRESHOLDS = Object.freeze([
   Object.freeze({ tier: "ultra" as const, multiplier: 500n }),
 ]);
 
-/** 在安装本机覆盖之前，主机的中奖流程拥有此延迟。 */
+/** 在安装本机覆盖之前，主机的中奖流程拥有此延迟。 / English: The host's winning process has this delay until the native overlay is installed. */
 export const BIG_WIN_CONTROLLER_LEAD_IN_MS = 300;
 
-/** 持续时间从提供的 Spine 4.1.24 BigWin 骨架中读取。 */
+/** 持续时间从提供的 Spine 4.1.24 BigWin 骨架中读取。 / English: The duration is read from the provided Spine 4.1.24 BigWin skeleton. */
 export const BIG_WIN_ANIMATION_MS = Object.freeze({
   show: 1_000,
   countStart: 500,
@@ -82,12 +82,12 @@ export const BIG_WIN_ANIMATION_MS = Object.freeze({
 
 export const BIG_WIN_DEFAULT_HOLD_MS = 4_000;
 export const BIG_WIN_FAST_HOLD_MS = 2_000;
-/** 活动 BigWinPresentationController 时钟：250ms/x，上限为 30 秒。 */
+/** 活动 BigWinPresentationController 时钟：250ms/x，上限为 30 秒。 / English: Active BigWinPresentationController clock: 250ms/x, capped at 30 seconds. */
 export const BIG_WIN_MIN_COUNT_MS = 5_000;
 export const BIG_WIN_MAX_COUNT_MS = 30_000;
 export const BIG_WIN_COUNT_MS_PER_MULTIPLIER = 250n;
 
-/** 捕获BigWin.skel中的文本字段；它是一个边界附件，而不是一个面板。 */
+/** 捕获BigWin.skel中的文本字段；它是一个边界附件，而不是一个面板。 / English: Capture the text field in BigWin.skel; it is a bounds attachment, not a panel. */
 export const BIG_WIN_VALUE_SLOT = Object.freeze({
   name: "bigwinValue",
   bone: "win_value",
@@ -95,19 +95,19 @@ export const BIG_WIN_VALUE_SLOT = Object.freeze({
   height: 128.95,
 });
 
-/** 从 `game_bundle.json` 捕获 `bigwinValue` 位图文本字段大小。 */
+/** 从 `game_bundle.json` 捕获 `bigwinValue` 位图文本字段大小。 / English: Captures the `bigwinValue` bitmap text field size from `game_bundle.json`. */
 export const BIG_WIN_VALUE_FONT_SIZE = 32;
 
-/** BMFont 以原始文本字段的预设大小进行基线校正。 */
+/** BMFont 以原始文本字段的预设大小进行基线校正。 / English: BMFont performs baseline correction at the original text field's preset size. */
 export const BIG_WIN_VALUE_BASELINE_OFFSET = -(
   PRIMAL_BITMAP_FONT_BASE / 2
 ) * (BIG_WIN_VALUE_FONT_SIZE / PRIMAL_BITMAP_FONT_SIZE);
 
-/** Pixi BMFont 原场独立Y配合前线盒。 */
+/** Pixi BMFont 原场独立Y配合前线盒。 / English: Pixi BMFont original independent Y with front line box. */
 export const BIG_WIN_VALUE_BITMAP_HEIGHT = PRIMAL_BITMAP_FONT_LINE_HEIGHT
   * (BIG_WIN_VALUE_FONT_SIZE / PRIMAL_BITMAP_FONT_SIZE);
 
-/** 精确桌面包含 minBound [-600,-515,1200,1200] 的转换。 */
+/** 精确桌面包含 minBound [-600,-515,1200,1200] 的转换。 / English: The exact desktop contains a conversion of minBound [-600,-515,1200,1200]. */
 export const BIG_WIN_DESKTOP_LAYOUT = Object.freeze({
   x: 640,
   y: 309,
@@ -126,6 +126,8 @@ const BIG_WIN_DESKTOP_REGION = Object.freeze({
  * 将制作好的 Big Win 骨架拆分到独立的 Pixi 同级节点中。
  *
  * Pixi-Spine 的 Y 向上到屏幕空间的转换为这些骨骼提供了负行列式。区域附件需要这种反射，但将其复制到金额或硬币淋浴同级镜像其已经的屏幕空间输出。
+ *
+ * 英文 / English: Split the created Big Win skeleton into independent Pixi sibling nodes. Pixi-Spine's Y-up conversion to screen space provides a negative determinant for these bones. The area attachment requires this reflection, but copying it to the amount or coin shower sibling mirrors its already screen space output.
  */
 export function uprightBigWinSiblingTransform(
   matrix: Readonly<{ a: number; b: number; c: number; d: number }>,
@@ -137,7 +139,7 @@ export function uprightBigWinSiblingTransform(
   };
 }
 
-/** 将官方 Big Win 最小绑定投影到活动渲染器区域中。 */
+/** 将官方 Big Win 最小绑定投影到活动渲染器区域中。 / English: Project the official Big Win minimal rig into the active renderer area. */
 export function bigWinResponsiveTransform(region: ResponsiveRendererRegion) {
   const [left, top, width, height] = BIG_WIN_DESKTOP_LAYOUT.minBound;
   return resolveResponsiveMinBound(region, { left, top, width, height });
@@ -154,15 +156,15 @@ export interface BigWinUpgradePlan {
   readonly fromTier: BigWinTier;
   readonly toTier: BigWinTier;
   readonly thresholdMultiplier: bigint;
-  /** 相对于计数开始，而不是控制器拥有的导入。 */
+  /** 相对于计数开始，而不是控制器拥有的导入。 / English: Starts relative to the count, rather than the controller-owned import. */
   readonly atCountMs: number;
-  /** 相对于原生`bigwin_show`。 */
+  /** 相对于原生`bigwin_show`。 / English: Relative to native `bigwin_show`. */
   readonly atPresentationMs: number;
   readonly animation: BigWinTransitionAnimation;
 }
 
 interface BigWinMilestoneBase {
-  /** 相对于原生`bigwin_show`；不包括控制器引入线。 */
+  /** 相对于原生`bigwin_show`；不包括控制器引入线。 / English: Relative to native `bigwin_show`; does not include controller lead-ins. */
   readonly atMs: number;
   readonly amountMinor: bigint;
 }
@@ -198,12 +200,12 @@ export type BigWinMilestone =
   });
 
 export interface BigWinPlan {
-  /** 服务器预设的投注额和奖励，始终保留为整数。 */
+  /** 服务器预设的投注额和奖励，始终保留为整数。 / English: The bet amounts and rewards preset by the server are always kept as integers. */
   readonly betMinor: bigint;
   readonly winMinor: bigint;
   readonly multiplierFloor: bigint;
   readonly finalTier: BigWinTier;
-  /** 记录集成控制器；不包含在此视图的时钟中。 */
+  /** 记录集成控制器；不包含在此视图的时钟中。 / English: Records the integrated controller; not included in this view's clock. */
   readonly controllerLeadInMs: typeof BIG_WIN_CONTROLLER_LEAD_IN_MS;
   readonly countStartAtMs: number;
   readonly countMs: number;
@@ -218,12 +220,14 @@ export interface BigWinPlan {
 }
 
 export interface BigWinPlanOptions {
-  /** 默认为捕获的自然最终层保留 (4000ms)。 */
+  /** 默认为捕获的自然最终层保留 (4000ms)。 / English: Defaults to captured natural final layer retention (4000ms). */
   readonly holdMs?: number;
 }
 
 /**
  * 根据权威整数制定仅视觉计划。返回低于 20 倍 Big Win 阈值的 null，并且从不将货币转换为 Number。
+ *
+ * 英文 / English: Develop a visual-only plan based on authoritative integers. Returns null below the 20x Big Win threshold and never converts the currency to a Number.
  */
 export function planBigWin(
   winMinor: bigint,
@@ -307,7 +311,7 @@ export function planBigWin(
     }),
   ];
 
-  // 阈值可以与计数结束一致。稳定的插入顺序使升级回调保持在计数结束之前，与原始 setValue 流程相匹配。
+  // 阈值可以与计数结束一致。稳定的插入顺序使升级回调保持在计数结束之前，与原始 setValue 流程相匹配。 / English: The threshold can coincide with the end of counting. Stable insertion order keeps the upgrade callback until the end of the count, matching the original setValue process.
   milestones.sort((left, right) => left.atMs - right.atMs);
 
   return Object.freeze({
@@ -339,7 +343,7 @@ export function bigWinTierFor(winMinor: bigint, betMinor: bigint): BigWinTier | 
   return null;
 }
 
-/** 支持每个预设的向上过渡，包括直接跳过的级别。 */
+/** 支持每个预设的向上过渡，包括直接跳过的级别。 / English: Supports upward transitions for every preset, including directly skipping levels. */
 export function bigWinTransitionAnimation(
   fromTier: BigWinTier,
   toTier: BigWinTier,
@@ -350,7 +354,7 @@ export function bigWinTransitionAnimation(
   return `${fromTier}_to_${toTier}` as BigWinTransitionAnimation;
 }
 
-/** 化妆品专柜插值；确切的服务器奖励是在计数结束时强制执行的。 */
+/** 化妆品专柜插值；确切的服务器奖励是在计数结束时强制执行的。 / English: Cosmetic Shoppe interpolation; exact server reward is enforced at end of count. */
 export function bigWinAmountAt(plan: BigWinPlan, presentationElapsedMs: number): bigint {
   if (!Number.isFinite(presentationElapsedMs) || presentationElapsedMs <= plan.countStartAtMs) return 0n;
   if (presentationElapsedMs >= plan.countEndAtMs || plan.countMs === 0) return plan.winMinor;
@@ -363,7 +367,7 @@ export function bigWinAmountAt(plan: BigWinPlan, presentationElapsedMs: number):
 
 export type BigWinPresentationResult = "complete" | "cancelled";
 
-/** 一个接受的 CONTINUE 选择控制器的快速查看路径。 */
+/** 一个接受的 CONTINUE 选择控制器的快速查看路径。 / English: An accepted CONTINUE selects the controller's quick view path. */
 export type BigWinInteractionResult = "quick-view";
 
 export interface BigWinVerifiedArtworkPayload {
@@ -377,6 +381,8 @@ export interface BigWinVerifiedArtworkPayload {
 /**
  * 将 feature-big-win 目标包中的四项已验证负载绑定到真实展示器。依赖包由租约
  * 保留/校验，但此处不把共享 spine_ui atlas 冒充为 Big Win 独占首包节省。
+ *
+ * 英文 / English: Bind four verified payloads from the feature-big-win target package to real demonstrators. Dependent packages are retained/verified by the lease, but the shared spine_ui atlas is not passed off as a Big Win exclusive first package save here.
  */
 export function bigWinVerifiedArtworkFromPackage(
   loaded: LoadedAssetPackage,
@@ -433,19 +439,21 @@ function requiredVerifiedBigWinResource(
 }
 
 export interface BigWinViewOptions {
-  /** 仅纯显示格式；货币/面额政策属于主办方。 */
+  /** 仅纯显示格式；货币/面额政策属于主办方。 / English: Pure display format only; currency/denomination policies belong to the sponsor. */
   readonly formatAmount?: (amountMinor: bigint) => string;
   readonly onMilestone?: (
     milestone: BigWinMilestone,
     plan: BigWinPlan,
   ) => unknown;
   readonly visualTelemetry?: VisualTelemetryReporter;
-  /** 仅控制本地装饰粒子预算；不参与中奖、金额、层级或服务端状态。 */
+  /** 仅控制本地装饰粒子预算；不参与中奖、金额、层级或服务端状态。 / English: Only controls the local decoration particle budget; does not participate in winnings, amounts, levels or server status. */
   readonly coinShowerOptions?: BigWinCoinShowerOptions;
 }
 
 /**
  * BMFont 页面和 Big Win 币有意共享一个 PNG。首先注册字体，以便在硬币加载器重新使用捕获的页面之前完全安装其拥有的页面纹理。
+ *
+ * 英文 / English: The BMFont page and the Big Win coin intentionally share a PNG. First register the font so that the page texture it owns is fully installed before the coin loader reuses the captured page.
  */
 export async function loadBigWinSharedAtlas(
   loadBitmapFont: () => Promise<boolean>,
@@ -455,7 +463,7 @@ export async function loadBigWinSharedAtlas(
   try {
     bitmapFontInstalled = await loadBitmapFont();
   } catch {
-    // 文本回退路径仍然有效，但硬币淋浴仍应加载。
+    // 文本回退路径仍然有效，但硬币淋浴仍应加载。 / English: The text fallback path still works, but the coin shower should still load.
   }
   await loadCoinAtlas();
   return bitmapFontInstalled;
@@ -481,6 +489,8 @@ interface ActiveBigWinPresentation {
  * 本机 BigWin.skel 覆盖。
  *
  * 该视图拥有捕获的 1280x720 桌面根转换；主机将其添加​​到逻辑阶段并从其代码中调用更新。它只提供一个提供的计划：它既不评估中奖，也不发挥作用。音频可以订阅语义里程碑。
+ *
+ * 英文 / English: Native BigWin.skel override. This view holds the captured 1280x720 desktop root transform; the host adds it to the logic stage and calls updates from its code. It offers only one offered plan: it neither evaluates winnings nor plays a role. Audio can be subscribed to semantic milestones.
  */
 export class BigWinView extends Container {
   private readonly amountPoint = new Vector2();
@@ -501,13 +511,13 @@ export class BigWinView extends Container {
   private displayedAmountMinor = 0n;
   private readonly visualTelemetry: VisualTelemetryReporter | null;
   private visualOperation: VisualTelemetryOperation | null = null;
-  /** 仅当全局 BitmapFont 未接管 verified PNG 时由视图持有。 */
+  /** 仅当全局 BitmapFont 未接管 verified PNG 时由视图持有。 / English: Only held by the view if the global BitmapFont has not taken over the verified PNG. */
   private ownedVerifiedAtlasTexture: Texture | null = null;
 
   constructor(options: BigWinViewOptions = {}) {
     super();
     this.coinShower = new BigWinCoinShower(Math.random, options.coinShowerOptions);
-    // 从构建开始就拥有淋浴间，而不仅仅是在艺术品加载后。它的 150 个精灵池是跨帧构建的，因此在该工作期间被破坏的所有者必须在提交之前处理分离的尝试。
+    // 从构建开始就拥有淋浴间，而不仅仅是在艺术品加载后。它的 150 个精灵池是跨帧构建的，因此在该工作期间被破坏的所有者必须在提交之前处理分离的尝试。 / English: Own the coin shower from construction, not only after artwork loads. Its 150-sprite pool is built across frames, so an owner destroyed during that work must dispose of the detached attempt before commit.
     this.addChild(this.coinShower);
     this.setResponsiveLayout(BIG_WIN_DESKTOP_REGION);
     this.formatter = options.formatAmount
@@ -525,7 +535,7 @@ export class BigWinView extends Container {
     this.setDisplayedAmount(this.displayedAmountMinor);
   }
 
-  /** 在物理移动设备调整大小后保持此场景级叠加居中。 */
+  /** 在物理移动设备调整大小后保持此场景级叠加居中。 / English: Keeps this scene-level overlay centered after physical mobile device resize. */
   setResponsiveLayout(region: ResponsiveRendererRegion): void {
     const transform = bigWinResponsiveTransform(region);
     this.position.set(transform.x, transform.y);
@@ -630,7 +640,7 @@ export class BigWinView extends Container {
       );
       spineProgress = 1;
       publish();
-      // 顺序提交避免 skeleton 解析失败后留下已采用的 GPU/150-Sprite 代。
+      // 顺序提交避免 skeleton 解析失败后留下已采用的 GPU/150-Sprite 代。 / English: Sequential commit avoids skeleton parsing failure leaving behind adopted GPU/150-Sprite generations.
       verifiedTexture = await loadPixiTextureFromVerifiedBytes(
         verified!.fontPageBytes,
         "image/png",
@@ -679,7 +689,7 @@ export class BigWinView extends Container {
         this.ownedVerifiedAtlasTexture = verifiedTexture;
       }
       verifiedTexture = null;
-      // 文本跟随骨架中最终制作好的边界槽位。该组件不绘制合成底板，也不替换美术资源。
+      // 文本跟随骨架中最终制作好的边界槽位。该组件不绘制合成底板，也不替换美术资源。 / English: The text follows the final border slots in the skeleton. This component does not draw the composite baseboard, nor does it replace art assets.
       this.addChild(spine, this.coinShower, amount);
       this.playHidden();
       this.setDisplayedAmount(0n);
@@ -710,7 +720,7 @@ export class BigWinView extends Container {
     return attempt;
   }
 
-  /** 仅在真实层隐藏剪辑之后或使用 `cancelled` 才能解决。 */
+  /** 仅在真实层隐藏剪辑之后或使用 `cancelled` 才能解决。 / English: This can only be solved after hiding the clip on the real layer or using `cancelled`. */
   async present(
     plan: BigWinPlan,
     signal?: AbortSignal,
@@ -780,12 +790,12 @@ export class BigWinView extends Container {
     this.finishActive("cancelled");
   }
 
-  /** 一旦官方 500ms 输入门打开，就结束剩余计数。 */
+  /** 一旦官方 500ms 输入门打开，就结束剩余计数。 / English: Once the official 500ms input gate opens, the remaining count ends. */
   requestAdvance(): BigWinInteractionResult | null {
     const active = this.active;
     if (!active || active.hideStarted || active.quickView || active.checkpointPending) return null;
-    // 在评估栅栏前，先完成当前时钟下所有已到期的制作内容。正常逐帧更新时这一步已经完成，
-    // 但当事件与 500ms 边界落在同一帧时，它能保证输入行为确定。
+    // 在评估栅栏前，先完成当前时钟下所有已到期的制作内容。正常逐帧更新时这一步已经完成， / English: Complete all production content due on the current clock before estimating the fence. This step has been completed during normal frame-by-frame update.
+    // 但当事件与 500ms 边界落在同一帧时，它能保证输入行为确定。 / English: But it guarantees deterministic input behavior when the event falls on the same frame as the 500ms boundary.
     this.advanceTo(active.elapsedMs);
     if (this.active !== active || !active.countStarted || active.hideStarted
       || active.quickView || active.checkpointPending) {
@@ -797,7 +807,7 @@ export class BigWinView extends Container {
     const { plan } = active;
     this.setDisplayedAmount(plan.winMinor);
 
-    // BigWinCounter.setValue可以直接跳转到目标层。仅发出一个转换，而不是重播每个跳过的阈值。
+    // BigWinCounter.setValue可以直接跳转到目标层。仅发出一个转换，而不是重播每个跳过的阈值。 / English: BigWinCounter.setValue can jump directly to the target layer. Only one transition is emitted instead of replaying each skipped threshold.
     if (active.tier !== plan.finalTier) {
       const destination = BIG_WIN_TIER_THRESHOLDS.find(({ tier }) => tier === plan.finalTier);
       if (!destination) throw new Error(`Missing Big Win tier: ${plan.finalTier}`);
@@ -815,7 +825,7 @@ export class BigWinView extends Container {
       ? this.checkpointWait.promise
       : null;
     if (pendingLevelUp) {
-      // 快速查看点击可以跳层，但捕获的升级姿势必须在计数结束发出之前保持独立可观察。
+      // 快速查看点击可以跳层，但捕获的升级姿势必须在计数结束发出之前保持独立可观察。 / English: A quick view click can jump layers, but the captured upgrade pose must remain independently observable until the end of the count is emitted.
       void pendingLevelUp.then(() => this.commitQuickView(active));
     } else {
       this.commitQuickView(active);
@@ -826,8 +836,8 @@ export class BigWinView extends Container {
   override destroy(options?: Parameters<Container["destroy"]>[0]): void {
     this.requestId += 1;
     this.finishActive("cancelled");
-    // 即使调用者省略 `{ children: true }` 也保留所有权。 BigWinCoinShower.destroy 将进行中的切片加载标记为已取消；然后，
-    // 该尝试会破坏其本地的、尚未提交的池。
+    // 即使调用者省略 `{ children: true }` 也保留所有权。 BigWinCoinShower.destroy 将进行中的切片加载标记为已取消；然后， / English: Ownership is retained even if the caller omits `{ children: true }`. BigWinCoinShower.destroy marks an in-progress slice load as canceled; then,
+    // 该尝试会破坏其本地的、尚未提交的池。 / English: This attempt destroys its local, uncommitted pool.
     if (!this.coinShower.destroyed) {
       this.coinShower.destroy({ children: true });
     }
@@ -837,7 +847,7 @@ export class BigWinView extends Container {
     super.destroy(options);
   }
 
-  /** 推进语义时间线和手动驱动的 Spine 视图。 */
+  /** 推进语义时间线和手动驱动的 Spine 视图。 / English: Advance semantic timelines and hand-driven Spine views. */
   update(deltaMs: number): void {
     const activeAtStart = this.active;
     const spine = this.spine;
@@ -853,7 +863,7 @@ export class BigWinView extends Container {
     this.advanceTo(Math.min(activeAtStart.plan.completeAtMs, activeAtStart.elapsedMs + deltaMs));
   }
 
-  /** 自然股票更新会按稳定的时间顺序耗尽每个到期的里程碑。 */
+  /** 自然股票更新会按稳定的时间顺序耗尽每个到期的里程碑。 / English: Natural stock updates exhaust each expiring milestone in a stable chronological order. */
   private advanceTo(targetMs: number): void {
     const activeAtStart = this.active;
     const spine = this.spine;
@@ -1023,7 +1033,7 @@ export class BigWinView extends Container {
       });
     }
 
-    // 抑制未消耗的自然里程碑。快速查看仅拥有 2 秒的保留、预设的层隐藏以及从此时开始的完成。
+    // 抑制未消耗的自然里程碑。快速查看仅拥有 2 秒的保留、预设的层隐藏以及从此时开始的完成。 / English: Suppresses unconsumed natural milestones. Quick View only has a 2 second hold, preset layer hiding, and completion from that point on.
     active.nextMilestone = plan.milestones.length;
     active.quickView = {
       hideAtMs: active.elapsedMs + plan.fastHoldMs,
@@ -1120,7 +1130,7 @@ export class BigWinView extends Container {
     const attachment = slot.getAttachment() as { vertices?: ArrayLike<number> } | null;
     const vertices = attachment?.vertices;
     if (amount instanceof BitmapText) {
-      // 原始 TextField 用假人替换附件，并将 BMFont 悬挂在 win_value 骨骼原点处。它的 Y 位置是字体基础校正，而不是附件矩形的视觉中心。
+      // 原始 TextField 用假人替换附件，并将 BMFont 悬挂在 win_value 骨骼原点处。它的 Y 位置是字体基础校正，而不是附件矩形的视觉中心。 / English: The original TextField replaces the attachment with a dummy and hangs the BMFont at the win_value bone origin. Its Y position is the font base correction, not the visual center of the attachment rectangle.
       this.amountPoint.set(0, BIG_WIN_VALUE_BASELINE_OFFSET);
       slot.bone.localToWorld(this.amountPoint);
       amount.position.copyFrom(this.amountPoint);
@@ -1145,7 +1155,7 @@ export class BigWinView extends Container {
       amount.position.set(slot.bone.worldX, slot.bone.worldY);
     }
 
-    // 遵循预设的值骨骼的实时位置、旋转和比例。骨架的根变换仍然归集成容器所有。
+    // 遵循预设的值骨骼的实时位置、旋转和比例。骨架的根变换仍然归集成容器所有。 / English: The real-time position, rotation and scale of bones follow preset values. The skeleton's root transform is still owned by the integration container.
     const bone = slot.bone;
     const transform = uprightBigWinSiblingTransform(bone.matrix);
     amount.rotation = transform.rotation;

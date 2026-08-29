@@ -1598,7 +1598,7 @@ describe("RgsGateway", () => {
 
     expect(gateway.acknowledgeSpinResult("round-a", 1)).toBe(true);
     await vi.runAllTicks();
-    // 模拟后台冻结：单调恢复时钟已过期，但 deadline timer 尚未获得调度机会。
+    // 模拟后台冻结：单调恢复时钟已过期，但 deadline timer 尚未获得调度机会。 / English: Simulation background freeze: The monotonic recovery clock has expired, but the deadline timer has not yet been given a scheduling opportunity.
     monotonicNow = 1_000;
     resolveAcknowledgement?.(response(acknowledgementEnvelope(
       acknowledgementRequestId,
@@ -1661,7 +1661,7 @@ describe("RgsGateway", () => {
     await vi.advanceTimersByTimeAsync(1);
     await vi.waitFor(() => expect(gateway.hasPendingSpin).toBe(false));
     expect(acknowledgementAttempts).toBe(2);
-    // 已交付轮次不能通过重复 SESSION_OPENED 把控制器推进回 requesting。
+    // 已交付轮次不能通过重复 SESSION_OPENED 把控制器推进回 requesting。 / English: Delivered rounds cannot advance the controller back to requesting by repeating SESSION_OPENED.
     expect(observed.log.statuses).toEqual(["connecting", "online"]);
     expect(observed.log.sessions).toHaveLength(1);
   });
@@ -3324,7 +3324,7 @@ describe("RgsGateway", () => {
     expect(operatorRecovery).toHaveBeenCalledWith(observed.log.errors[0]);
     expect(callbackOrder.slice(-3)).toEqual(["status:offline", "error", "operator"]);
 
-    // 一次性 launch code 已消费；terminal refresh failure 必须使旧网关不可再次 connect。
+    // 一次性 launch code 已消费；terminal refresh failure 必须使旧网关不可再次 connect。 / English: The one-time launch code has been consumed; terminal refresh failure must make the old gateway unable to connect again.
     gateway.connect();
     await Promise.resolve();
     expect(observed.log.errors).toHaveLength(1);
@@ -3529,7 +3529,7 @@ describe("RgsGateway", () => {
     },
     {
       name: "sequence",
-      // revision 只允许与对应的一次 sequence 递增同步前进。
+      // revision 只允许与对应的一次 sequence 递增同步前进。 / English: The revision is only allowed to advance synchronously with the corresponding sequence increment.
       refreshOverrides: { revision: "1", sequence: "9" },
     },
   ])("terminates and retains the pending ledger when refresh advances outside its $name window", async ({
@@ -4630,8 +4630,8 @@ describe("RgsGateway", () => {
     const result = levelTwoRageResult();
     const malformedCommit = {
       ...result,
-      // pending 游标的其余字段保持权威，使测试在恢复内存身份后精确触发
-      // acceptCommitted 的会话截止时间不变量。
+      // pending 游标的其余字段保持权威，使测试在恢复内存身份后精确触发 / English: The remaining fields of the pending cursor remain authoritative, allowing the test to fire exactly after the in-memory identity is restored
+      // acceptCommitted 的会话截止时间不变量。 / English: Session deadline invariant for acceptCommitted.
       idleDisconnectAt: "2030-01-01T00:00:01Z",
     };
     const fetchImplementation = vi.fn<typeof fetch>(async (url, init) => (

@@ -1,4 +1,4 @@
-// @ts-nocheck -- 仅在 Node/Vitest 中读取发布元数据与确定性生成制品。
+// @ts-nocheck -- 仅在 Node/Vitest 中读取发布元数据与确定性生成制品。 / English: @ts-nocheck -- Only read release metadata and deterministically build artifacts in Node/Vitest.
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";

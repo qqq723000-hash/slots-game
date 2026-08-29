@@ -1,9 +1,36 @@
-# 变更记录
+# Changelog / 变更记录
 
 本项目采用语义化版本。每个正式版本必须绑定 Git 提交、OCI 镜像摘要、SBOM、来源证明、
 签名结果、数据库迁移清单和前端发布清单；仅修改标签不得形成新版本。
 
+## English summary / 英文摘要
+
+This changelog records the repository's versioned source, runtime, delivery, and verification changes. A formal release must bind its Git commit, immutable OCI image digests, SBOM, provenance, signatures, database migration manifest, and Web release manifest; changing only a tag does not create a valid release. Repository checks and local fixtures provide repeatable source evidence, but live cloud deployment, operator integration, asset authorization, and regulatory acceptance remain external gates.
+
 ## 未发布
+
+- 新增精确 `24.000` 秒的 H.264/AAC 有声中英双语本地全栈演示，画面覆盖游戏图标、真实转轮中奖、
+  Primal Wheel 特殊玩法，以及同回合 Go RGS 与 PostgreSQL 脱敏结算证据；README 先加载轻量 WebP
+  海报、点击后再请求 fast-start MP4，并以清单和自动门禁固定哈希、字节数、时长、编解码器与分辨率。
+  / Added an exact `24.000`-second H.264/AAC bilingual local full-stack demo with game symbols, a real
+  reel win, the Primal Wheel feature, and sanitized same-round Go RGS/PostgreSQL settlement evidence.
+  READMEs load a lightweight WebP poster first and request the fast-start MP4 only after a click, while
+  a manifest and automated gate pin hashes, byte sizes, duration, codecs, and dimensions.
+- 修复个人项目文档门禁递归读取仓库外未跟踪文件的问题；门禁现在只检查 Git 跟踪路径、拒绝受跟踪的
+  文档/文本符号链接，并要求每份说明都包含实质中文与英文内容。/ Fixed the personal-project
+  documentation gate so it validates only Git-tracked paths, rejects tracked documentation/text
+  symlinks, ignores unrelated untracked files, and requires substantive Chinese and English content.
+- 将人工代码注释契约升级为逐语义块中英双语验证，扩大到 Go、Web、Shell、SQL、Terraform、配置与
+  交付脚本，同时保留 shebang、构建标签、linter 指令和 heredoc 载荷等机器语义。/ Upgraded the
+  human-comment contract to require Chinese and English in each semantic block across Go, Web, Shell,
+  SQL, Terraform, configuration, and delivery scripts while preserving machine directives and heredoc
+  payload semantics.
+- 修复 Docker Desktop 在 macOS bind mount 上映射 Linux `0400` 文件时造成的权限门禁误报；动态镜像
+  契约改用 daemon 管理卷模拟 `emptyDir/fsGroup`，并从容器导出 tar 元数据验证实际 `0400` 权限、
+  内容一致性和禁止覆盖行为。/ Fixed the Docker Desktop permission-gate false failure caused by
+  macOS bind-mount mode translation. The runtime image contract now uses a daemon-managed volume to
+  model `emptyDir/fsGroup` and verifies container-side `0400` mode, exact content, and no-overwrite
+  behavior through exported tar metadata.
 
 ## 1.3.0 - 2026-08-29
 

@@ -26,8 +26,8 @@ export function shouldUseAuthoredPrimalSpine(
   if (capabilities.mode === "off") return false;
   if (capabilities.maxTextureSize !== null
     && capabilities.maxTextureSize < REQUIRED_TEXTURE_SIZE) return false;
-  // 角色动作属于必需表现资产而非可选增强；桌面端与 Level2 手机图集都能放入
-  // 4096 纹理页，因此 RAM/指针启发式不得静默把已制作 Spine 替换成位图。
+  // 角色动作属于必需表现资产而非可选增强；桌面端与 Level2 手机图集都能放入 / English: Character actions are required performance assets rather than optional enhancements; they can be included in both desktop and Level2 mobile atlases
+  // 4096 纹理页，因此 RAM/指针启发式不得静默把已制作 Spine 替换成位图。 / English: 4096 texture page, so the RAM/pointer heuristics must not silently replace the made spine with a bitmap.
   void channel;
   return true;
 }

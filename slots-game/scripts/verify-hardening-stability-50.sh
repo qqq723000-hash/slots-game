@@ -210,6 +210,8 @@ while [ "$round" -le "$rounds" ]; do
   run_step "$round" local-production-static \
     "$repository_root/deploy/local-production/verify-static-contract.sh"
   # `$1` 由下面显式传入的子 shell 参数展开，不能在父 shell 提前插值。
+  # English: `$1` is expanded by the child shell parameters explicitly passed in below and cannot be
+  # interpolated in advance in the parent shell.
   # shellcheck disable=SC2016
   run_step "$round" hardening-checklist \
     sh -c 'cd "$1" && node --test \

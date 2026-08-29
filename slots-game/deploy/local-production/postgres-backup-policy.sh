@@ -1,5 +1,7 @@
 #!/bin/sh
 # RGS 迁移完成后再授予只读备份角色，避免备份进程持有 owner/superuser。
+# English: Grant the read-only backup role after the RGS migration is completed to prevent the backup process
+# from holding owner/superuser.
 set -eu
 
 admin_password="$(sed -n '1p' /run/postgres-input/postgres-admin.password)"

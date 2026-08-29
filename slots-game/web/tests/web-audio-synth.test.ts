@@ -158,7 +158,7 @@ describe("WebAudioSynth lazy bootstrap", () => {
       counts.push(recording.sources.length - before);
     }
 
-    // 落定音保持转轴风格，PPS/Vault 保持冲击风格，奖励音保持赢分风格。
+    // 落定音保持转轴风格，PPS/Vault 保持冲击风格，奖励音保持赢分风格。 / English: The landing tone maintains the reel style, the PPS/Vault maintains the impact style, and the bonus tone maintains the winning style.
     expect(counts).toEqual([3, 3, 4, 4, 3, 3, 4, 4]);
     expect(recording.sources.every((source) => (
       source.start.mock.calls.length === 1 && source.stop.mock.calls.length === 1

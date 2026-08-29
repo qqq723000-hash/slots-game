@@ -171,6 +171,9 @@ func validateRound(request roundRequest, encoded []byte) (validatedRound, error)
 
 // validateRoundWithPolicy 默认只接受 v2 完整绑定。旧 v1 兼容必须由部署显式开启，
 // 且只能同时缺少两个 v2 字段，避免半升级请求降级绕过完整命令校验。
+// English: validateRoundWithPolicy only accepts v2 full bindings by default. Old v1 compatibility must be
+// explicitly enabled by the deployment, and only two v2 fields can be missing at the same time to avoid
+// semi-upgrade request downgrade bypassing full command verification.
 func validateRoundWithPolicy(
 	request roundRequest,
 	encoded []byte,
@@ -214,6 +217,8 @@ func validateRoundWithPolicy(
 		}
 		// 摘要由 operator 从已解析的完整命令重算；客户端提交值只用于恒定比较，
 		// 不能作为账本幂等或审计事实直接信任。
+		// English: The digest is recalculated by the operator from the parsed full command; client-submitted values are
+		// only used for constant comparisons and cannot be trusted directly as ledger idempotent or audit facts.
 		if expected := rgs.CommandDigestFor(command); subtleCompare(
 			[]byte(request.CommandDigest), []byte(expected),
 		) == 0 {
@@ -356,6 +361,9 @@ func checkedBalance(balance, debit, credit int64) (int64, error) {
 	}
 	// 原子 round 的派奖是投注结算结果，不能反向为同一轮的投注融资；必须先从
 	// 轮次开始时的余额中完整扣除 debit，再把 credit 加回剩余余额。
+	// English: The payout of an atomic round is the result of betting settlement, and cannot be reversed to finance
+	// betting in the same round; the debit must be completely deducted from the balance at the beginning of the round,
+	// and then the credit is added back to the remaining balance.
 	if debit > balance {
 		return 0, errInsufficientFunds
 	}

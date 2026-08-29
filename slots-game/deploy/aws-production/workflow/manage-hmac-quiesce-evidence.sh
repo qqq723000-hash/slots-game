@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # 在私网 runner 上受控停止或恢复 API，并用版本化 S3 对象交付可审计证据。
+# English: Controlled stop or resume APIs on a private runner and deliver auditable evidence with versioned S3
+# objects.
 set -euo pipefail
 umask 077
 

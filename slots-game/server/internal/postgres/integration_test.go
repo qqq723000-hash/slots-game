@@ -84,6 +84,9 @@ func TestPostgresProductionRoundAndCredentialConcurrency(t *testing.T) {
 	}
 	// -race 和共享 CI 负载可能让获胜请求的事务提交超过生产默认的一秒观察窗。
 	// 本测试验证同一轮次最终收敛，而不是客户端快路径延迟，因此使用独立的有界等待。
+	// English: -race and shared CI workloads may allow transaction commits for winning requests to exceed the
+	// production default one second observation window. This test verifies eventual convergence in the same round, not
+	// client fast path latency, so separate bounded waits are used.
 	convergenceConfig := rgs.CoordinatorConfig{PendingWait: 10 * time.Second}
 	coordinatorA, err := rgs.NewCoordinator(convergenceConfig, repositoryA, wallet, registry)
 	if err != nil {
@@ -203,6 +206,8 @@ func TestPostgresPrepareRechecksIdleDeadlineAfterWaitingForSessionLock(t *testin
 	defer contenderDB.Close()
 	// 单连接连接池保证下方取得的后端 PID 就是执行 PrepareRound 的连接，
 	// 因而 pg_blocking_pids 的锁等待判定具有确定性。
+	// English: The single-connection connection pool ensures that the backend PID obtained below is the connection
+	// that executes PrepareRound, so the lock waiting decision of pg_blocking_pids is deterministic.
 	contenderDB.SetMaxOpenConns(1)
 	contenderDB.SetMaxIdleConns(1)
 	migrator, err := sql.Open("pgx", databaseURLs.migrator)
@@ -289,6 +294,7 @@ func TestPostgresPrepareRechecksIdleDeadlineAfterWaitingForSessionLock(t *testin
 	}()
 
 	// 直接证明竞争者在截止时间前已进入并阻塞于会话行，不依赖调度器休眠或进程时钟。
+	// Prove directly that the contender entered and blocked on the session row before the deadline, without relying on scheduler sleeps or the process clock.
 	waitForPostgresBlocker(t, ctx, migrator, contenderPID)
 	var blockedAt time.Time
 	if err := migrator.QueryRowContext(ctx, databaseClockSQL).Scan(&blockedAt); err != nil {
@@ -1141,6 +1147,8 @@ func testPostgresLaunchCreateAuthorityAfterConflictWait(
 
 	// 第二个 Create 已在摘要锁上等待；此时再观测数据库时钟，能证明它最终返回的
 	// CreatedAt 是等待之后而不是等待之前取得的值。
+	// English: The second Create has been waiting on the digest lock; observing the database clock at this time can
+	// prove that the CreatedAt it finally returns is the value obtained after waiting rather than before waiting.
 	var beforeRollback time.Time
 	if err := database.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&beforeRollback); err != nil {
 		t.Fatalf("observe database time before rollback: %v", err)

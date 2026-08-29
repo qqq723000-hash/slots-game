@@ -1,9 +1,13 @@
-# 本机集成验收
+# Local integration acceptance / 本机集成验收
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This directory runs the complete integration acceptance flow on one macOS host through the production configuration branch, with loopback-only host ports and persistent state outside the repository. It exercises TLS PostgreSQL, TLS and ACL-protected Valkey admission, separate public and operations listeners, HTTPS ingress, durable wallet and audit fixtures, and the local monitoring and log pipeline. The result is local system evidence only: it does not prove AWS topology, multi-Availability-Zone behavior, managed-service controls, external wallet or operator acceptance, cloud security, or disaster recovery.
 
 此目录在一台 macOS 主机上以 `RGS_ENVIRONMENT=production` 配置分支运行完整集成验收，
 不属于 AWS 正式生产拓扑，也不能证明多可用区、托管服务或云端安全控制已经落地。环境使用

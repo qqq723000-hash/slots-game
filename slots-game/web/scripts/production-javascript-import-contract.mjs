@@ -3,7 +3,7 @@ import { init, parse } from "es-module-lexer";
 
 await init;
 
-/** 提取所有静态模块来源，包括 import、重导出和仅副作用导入；动态 import 不参与初始化图。 */
+/** 提取所有静态模块来源，包括 import、重导出和仅副作用导入；动态 import 不参与初始化图。 / English: Extract all static module sources, including imports, re-exports, and side-effect-only imports; dynamic imports do not participate in the initialization graph. */
 export function staticModuleSpecifiers(source) {
   const [imports] = parse(source);
   return imports
@@ -36,7 +36,7 @@ function localArtifactReference(importerName, specifier) {
   return resolved;
 }
 
-/** 构造所有生产 JavaScript 产物之间的静态依赖图。 */
+/** 构造所有生产 JavaScript 产物之间的静态依赖图。 / English: Construct a static dependency graph between all production JavaScript artifacts. */
 export function staticChunkGraph(artifacts) {
   const sources = new Map();
   for (const artifact of artifacts) {
@@ -124,7 +124,7 @@ function cycleDescription(graph, component) {
   return edges.join("\n");
 }
 
-/** 拒绝任意多节点强连通分量以及单节点自环。 */
+/** 拒绝任意多节点强连通分量以及单节点自环。 / English: Any multi-node strongly connected components and single-node self-loops are rejected. */
 export function assertAcyclicStaticChunkGraph(artifacts) {
   const graph = staticChunkGraph(artifacts);
   const cycles = stronglyConnectedComponents(graph)

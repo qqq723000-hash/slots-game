@@ -125,6 +125,8 @@ func TestEconomicAdmissionHealthTracksCanaryAndRuntimeOutcomes(t *testing.T) {
 		t.Fatal("economic budget rejection was not returned")
 	}
 	// 合法的限流响应即使拒绝本次意图，仍能证明 Lua 路径当前可用。
+	// English: A legal throttling response can still prove that the Lua path is currently available even if the intent
+	// is rejected.
 	assertEconomicAdmissionHealth(t, metrics, 1, now.Add(-6*time.Second).Unix())
 
 	fake.wait = true
@@ -301,6 +303,7 @@ func TestEconomicAdmissionFailsClosedOnUnknownRouteTimeoutAndMalformedReply(t *t
 	fake.wait = false
 	fake.result = []int64{1, 1, 0}
 	// 上一次后端超时会打开一秒熔断；推进注入时钟，让本次调用真正到达并验证畸形协议响应。
+	// The previous backend timeout opens a one-second circuit; advance the injected clock so this call reaches the backend and validates the malformed protocol response.
 	admission.now = func() time.Time { return time.Now().Add(2 * time.Second) }
 	if result := admission.admitCost(context.Background(), "operator-a", 1); result.decision != economicBackendUnavailable {
 		t.Fatalf("malformed result = %+v", result)

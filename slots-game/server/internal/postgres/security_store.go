@@ -21,6 +21,8 @@ import (
 
 const (
 	// MaximumSecurityPurgeBatch 限制单次维护事务，避免清理长期持有大量行锁并与请求流量竞争。
+	// English: MaximumSecurityPurgeBatch limits a single maintenance transaction to avoid cleaning long-held row locks
+	// and competing with request traffic.
 	MaximumSecurityPurgeBatch = 10_000
 	nonceScopeParts           = 3
 )
@@ -29,6 +31,9 @@ var securityIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{
 
 // NonceStore 是签名运营商请求共享的 PostgreSQL 防重放存储。随机数只以 SHA-256 摘要持久化；
 // INSERT 冲突转换允许过期摘要再次被消费，同时保证所有服务副本中只有一个成功者。
+// English: NonceStore is a shared PostgreSQL anti-replay store for signature operator requests. The random number
+// is only persisted as SHA-256 digest; INSERT conflict conversion allows the expired digest to be consumed again,
+// while ensuring that there is only one success in all service replicas.
 type NonceStore struct {
 	db *sql.DB
 }
@@ -70,6 +75,8 @@ func (s *NonceStore) Consume(ctx context.Context, scope, nonce string, expiresAt
 		return true, nil
 	case errors.Is(err, sql.ErrNoRows):
 		// 以 PostgreSQL 时钟判断，请求携带的到期时间已过，或同一随机数摘要仍有未过期记录。
+		// English: Judging from the PostgreSQL clock, the expiration time carried in the request has passed, or there are
+		// still unexpired records for the same random number digest.
 		return false, nil
 	default:
 		return false, fmt.Errorf("postgres nonce store: consume: %w", err)
@@ -79,6 +86,10 @@ func (s *NonceStore) Consume(ctx context.Context, scope, nonce string, expiresAt
 // PurgeExpired 每次最多删除 batchSize 条过期随机数。调用方应周期执行，并在返回数量等于
 // batchSize 时继续分批处理；SKIP LOCKED 使多个维护工作器并发运行时仍保持安全。
 // PostgreSQL 时钟会对调用方边界取上限，防止快时钟副本提前删除仍有效的重放墓碑。
+// English: PurgeExpired deletes at most batchSize expired random numbers each time. The caller should execute
+// periodically and continue batch processing when the returned quantity equals batchSize; SKIP LOCKED allows for
+// safety when multiple maintenance workers run concurrently. The PostgreSQL clock caps the caller boundary to
+// prevent fast-clock replicas from prematurely deleting still-valid replay tombstones.
 func (s *NonceStore) PurgeExpired(ctx context.Context, before time.Time, batchSize int) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -102,6 +113,8 @@ func (s *NonceStore) PurgeExpired(ctx context.Context, before time.Time, batchSi
 
 // LaunchStore 持久化浏览器一次性启动凭据。公开输入只包含 SHA-256 摘要，明文启动码
 // 禁止跨越该适配器边界。
+// English: LaunchStore persists browser one-time launch credentials. The public input contains only the SHA-256
+// digest and the clear text activation code is prohibited from crossing this adapter boundary.
 type LaunchStore struct {
 	db *sql.DB
 }
@@ -186,6 +199,7 @@ func (s *LaunchStore) Consume(ctx context.Context, request launch.ConsumeRequest
 	if !securityIdentifierPattern.MatchString(request.Binding.OperatorID) ||
 		!securityIdentifierPattern.MatchString(request.Binding.SessionID) {
 		// 与其他不可消费凭据返回同一结果，避免向直接调用适配器的一方暴露租户及会话绑定判定接口。
+		// Return the same result as every other non-consumable credential so direct adapter callers cannot probe tenant or session binding decisions.
 		return launch.Record{}, launch.ErrCodeUnavailable
 	}
 
@@ -204,6 +218,7 @@ func (s *LaunchStore) Consume(ctx context.Context, request launch.ConsumeRequest
 	).Scan(&storedOperatorID, &claimsJSON, &createdAt, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		// 未知、过期、已消费、租户不匹配和会话不匹配的凭据刻意返回不可区分的结果。
+		// Unknown, expired, consumed, tenant-mismatched, and session-mismatched credentials deliberately return indistinguishable results.
 		return launch.Record{}, launch.ErrCodeUnavailable
 	}
 	if err != nil {
@@ -235,6 +250,11 @@ func (s *LaunchStore) Consume(ctx context.Context, request launch.ConsumeRequest
 // launch.IdempotencyRetention 的启动记录。在此之前每一行（包括已消费记录）都是幂等墓碑，
 // 防止确定性启动凭据重新变成可消费状态。PostgreSQL 时钟会对调用方边界取上限，避免
 // 快时钟副本缩短幂等保留期。
+// English: PurgeExpired can delete at most batchSize startup records each time that have exceeded the redemption
+// window and have passed launch.IdempotencyRetention. Every row before this (including consumed records) is an
+// idempotent tombstone, preventing the deterministic startup credentials from becoming consumable again. The
+// PostgreSQL clock caps the caller boundary to prevent fast-clock replicas from shortening the idempotent
+// retention period.
 func (s *LaunchStore) PurgeExpired(ctx context.Context, before time.Time, batchSize int) (int64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err

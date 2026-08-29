@@ -1,11 +1,13 @@
 import type { TimelineCue } from "./Timeline";
 
-// 当 300ms 镀铬显示在 5 秒结束时，GameTransition 解锁桌面控件。背景、角色和预混音频自然地继续。
+// 当 300ms 镀铬显示在 5 秒结束时，GameTransition 解锁桌面控件。背景、角色和预混音频自然地继续。 / English: When the 300ms chrome display ends at 5 seconds, GameTransition unlocks the desktop controls. Backgrounds, characters, and premixed audio continue naturally.
 export const INTRO_DURATION_MS = 5_000;
 export const REDUCED_INTRO_DURATION_MS = 200;
 
 /**
  * 计时是根据提供的 Spine/音频源测量的，而不是根据屏幕记录推断的。角色的骨盆拥有完整的下落、冲击和反弹；播放该曲目时，主持人必须保持固定。
+ *
+ * 英文 / English: Timings are measured against the provided Spine/Audio source, not inferred from screen recordings. The character's pelvis has full fall, impact and rebound; the presenter must remain stationary while the track is played.
  */
 export const AUTHORED_INTRO_TIMING_MS = Object.freeze({
   logoEnd: 4_700,
@@ -69,15 +71,15 @@ export function introFrameAt(timeMs: number): IntroFrame {
     logoX: 640,
     logoY: 360,
     logoScale: 0.8,
-    // 制作好的 `intro` 身体轨迹从视口上方开始，并自行执行下落。
-    // 这些参数刻意不再叠加第二套位移。
+    // 制作好的 `intro` 身体轨迹从视口上方开始，并自行执行下落。 / English: The crafted `intro` body trajectory starts above the viewport and performs its own fall.
+    // 这些参数刻意不再叠加第二套位移。 / English: These parameters deliberately do not superimpose a second set of displacements.
     colossusAlpha: world,
     colossusX: 640,
     colossusY: 0,
     colossusScale: 1,
     monsterRevealProgress: world,
     atmosphereProgress: world,
-    // 背景/正面 Spine `intro` 包含本机缩放和影响。
+    // 背景/正面 Spine `intro` 包含本机缩放和影响。 / English: Background/front Spine `intro` contains native scaling and effects.
     shockwave: 0,
     reelProgress: chrome,
     hudProgress: chrome,

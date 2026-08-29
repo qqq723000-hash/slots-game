@@ -5,6 +5,10 @@
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
 
+## English summary / 英文摘要
+
+The Web client is a read-only presentation layer for server-authoritative results and does not choose symbols, calculate wins, change balances, or advance payable feature state. Production configuration and release identity are fixed during the controlled build, one-time launch values are removed from the URL before further validation, secrets remain in memory, and missing handoff or writable recovery requirements fail closed before betting is enabled. Automated type, build, asset, determinism, browser, and lifecycle checks provide repository evidence, while real-device acceptance, operator embedding, CDN behavior, asset authorization, and applicable licensing approval remain external release gates.
+
 前端是只读的权威结果表现层，使用 TypeScript、PixiJS 6.5.2 和 Spine 4.1。它不选择符号、计算
 输赢、修改余额或推进可赔付特性状态。正式入口只创建 `RgsGateway`，不存在 WebSocket 开发回退。
 

@@ -21,6 +21,9 @@ import (
 
 // Repository 是 RGS 聚合的 PostgreSQL 持久化实现。每个修改轮次的方法必须先锁定
 // 所属会话行，确保所有应用副本遵循同一个按会话划分的串行顺序。
+// English: Repository is a PostgreSQL persistence implementation of RGS aggregates. Each method that modifies a
+// round must first lock the corresponding session row to ensure that all application copies follow the same serial
+// order divided by session.
 type Repository struct {
 	db                *sql.DB
 	integrityObserver rgs.IntegrityObserver
@@ -489,6 +492,8 @@ func (r *Repository) AcknowledgeResultDelivery(
 	if errors.Is(err, rgs.ErrManualReview) {
 		// 确认会解除下一局的结果交付栅栏，因此必须在解除前重新校验完整提交结果；
 		// 仅比对客户端提供的哈希会让损坏的经济记录逃过隔离。
+		// Acknowledgement releases the next-round result-delivery fence, so the complete committed result must be revalidated first;
+		// comparing only the client-supplied hash would let a corrupt economic record escape quarantine.
 		_, _, quarantineErr := quarantineCorruptRound(
 			ctx, tx, key, "committed result acknowledgement integrity validation failed",
 			r.integrityObserver,
@@ -636,6 +641,10 @@ func (r *Repository) PrepareRound(
 	// 必须先真正取得会话行锁，再用新语句读取数据库时钟和待交付栅栏。PostgreSQL
 	// 可能在 LockRows 等待前求值目标列表；若将二者放在 FOR UPDATE 查询中，等待
 	// 跨过 idle deadline 或前序事务提交待确认结果后，便可能错误接收下一经济意图。
+	// English: You must first actually obtain the session row lock, and then use a new statement to read the database
+	// clock and pending delivery fence. PostgreSQL may evaluate the target list before LockRows waits; if the two are
+	// placed in the FOR UPDATE query, the next economic intention may be received incorrectly after waiting for the
+	// idle deadline to be crossed or the previous transaction to submit the pending results.
 	var now time.Time
 	var resultDeliveryPending bool
 	if err := tx.QueryRowContext(
@@ -682,6 +691,8 @@ func (r *Repository) PrepareRound(
 		return rgs.RoundRecord{}, false, err
 	}
 	// 本次预备时间来自持有会话锁后的 PostgreSQL 时钟，不受 Pod 时钟偏差影响。
+	// English: This preparation time comes from the PostgreSQL clock after holding the session lock and is not
+	// affected by Pod clock deviation.
 	riskAssessment, err := r.riskPolicy.Assess(result, now)
 	if err != nil {
 		return rgs.RoundRecord{}, false, fmt.Errorf("postgres repository: assess high-value risk: %w", err)
@@ -752,6 +763,8 @@ func (r *Repository) PrepareRound(
 		if sqlState(err) == "23505" {
 			// 会话锁本应阻止同一会话出现此冲突；若仍发生，应按重放竞态安全失败，
 			// 只允许调用方用原业务身份重试，不能生成新轮次。
+			// The session lock should prevent this same-session conflict; if it still occurs, fail safely as a replay race,
+			// allowing only a retry with the original business identity and never creating a new round.
 			return rgs.RoundRecord{}, false, rgs.ErrRoundPending
 		}
 		return rgs.RoundRecord{}, false, fmt.Errorf("postgres repository: persist prepared round bundle: %w", err)
@@ -839,6 +852,9 @@ func (r *Repository) ClaimWallet(
 	}
 	// 多副本的本地时钟可能存在偏差。租约判定与持久化时间都以 PostgreSQL 为唯一时钟，
 	// 调用方仅表达已校验的租约时长，禁止快时钟副本提前抢占租约。
+	// English: The local clocks of multiple replicas may be skewed. The lease determination and persistence time are
+	// both based on PostgreSQL as the only clock. The caller only expresses the verified lease duration and prohibits
+	// fast clock replicas from preempting the lease in advance.
 	var databaseNow time.Time
 	if err := tx.QueryRowContext(ctx, walletLeaseClockSQL).Scan(&databaseNow); err != nil {
 		return rgs.WalletRecoveryClaim{}, false, fmt.Errorf("postgres repository: read wallet lease clock: %w", err)
@@ -947,6 +963,8 @@ func claimWalletLocked(
 	applyIncrement, lookupIncrement, retryIncrement := 0, 0, 0
 	if action == rgs.WalletRecoveryApply {
 		// 在任何 APPLY 外呼之前持久切到 LOOKUP；即使随后进程崩溃，也只能先查权威结果。
+		// English: Persistently switch to LOOKUP before any APPLY outbound call; even if the process crashes later, you
+		// can only check the authoritative result first.
 		record.WalletPhase = rgs.WalletRecoveryLookup
 		record.WalletApplyAttempts++
 		record.RetryCount++
@@ -1133,6 +1151,9 @@ func (r *Repository) MarkManualReview(ctx context.Context, key rgs.RoundKey, rea
 	defer tx.Rollback()
 	// 全仓持久写统一遵守 session→round 锁序。完整性隔离虽然不依赖可解析的
 	// round 内容，也必须先取得 session 锁，避免与 Commit/Claim 形成反序死锁。
+	// English: Persistent writing for all positions uniformly follows the session→round lock order. Although integrity
+	// isolation does not rely on parsable round content, it must first obtain the session lock to avoid reverse-order
+	// deadlock with Commit/Claim.
 	if _, err := lockSession(ctx, tx, key); err != nil {
 		if errors.Is(err, rgs.ErrSessionIntegrity) {
 			return rgs.RoundRecord{}, false, r.quarantineLockedSession(
@@ -1175,6 +1196,11 @@ const recoverySnapshotSQL = `
 // partial index 顺序最多读取 501 个持久调度候选；501 表示实际积压至少达到告警门槛，
 // 而不是精确总数。第一行仍是全局最早候选，因此逾期年龄不会因截断失真。会话
 // 绑定继续由领取事务强校验；异常失配行不能从积压观测中静默消失。
+// English: RecoverySnapshot uses the database clock to generate a bounded recovery view shared by all workers. It
+// reads up to 501 persistent scheduling candidates in 0008 partial index order; 501 indicates that the actual
+// backlog reaches at least the alert threshold, not an exact total. The first row is still the global earliest
+// candidate, so the overdue age is not distorted by truncation. Session bindings continue to be strongly verified
+// by claim transactions; abnormal mismatch rows cannot disappear silently from the backlog of observations.
 func (r *Repository) RecoverySnapshot(ctx context.Context) (rgs.RecoverySnapshot, error) {
 	var backlog, oldestDueMillis int64
 	var observedAt time.Time
@@ -1218,6 +1244,10 @@ func (r *Repository) ClaimRecoverableRounds(
 	// session 行在候选 SQL 内以 SKIP LOCKED 领取；PostgreSQL 的 LockRows 节点先于
 	// LIMIT 产出行，因此热会话不会占掉批次名额。返回后再按 session→round→wallet
 	// ledger 完成完整锁序与校验，绝不把未经核验的命令交给外部钱包。
+	// English: Session rows are retrieved with SKIP LOCKED in the candidate SQL; PostgreSQL's LockRows node produces
+	// rows before LIMIT, so hot sessions will not occupy the batch quota. After returning, press session→round→wallet
+	// ledger to complete the complete lock sequence and verification, and never give unverified commands to external
+	// wallets.
 	rows, err := tx.QueryContext(ctx, recoverableRoundClaimSQL, selectionNow, limit)
 	if err != nil {
 		return nil, fmt.Errorf("postgres repository: lock recoverable rounds: %w", err)
@@ -1245,6 +1275,8 @@ func (r *Repository) ClaimRecoverableRounds(
 	lockedCandidates := make([]lockedRecoveryCandidate, 0, len(keys))
 	for _, key := range keys {
 		// 候选 SQL 已持有本 session 的写锁；这里重新扫描完整状态并继续统一锁序。
+		// English: The candidate SQL already holds the write lock for this session; the complete status is rescanned here
+		// and the lock sequence continues to be unified.
 		session, err := lockSession(ctx, tx, key)
 		if err != nil {
 			if errors.Is(err, rgs.ErrSessionIntegrity) {
@@ -1277,6 +1309,9 @@ func (r *Repository) ClaimRecoverableRounds(
 	}
 	// 候选锁等待可能消耗租约窗口。所有 session/round 锁到手后重新读取数据库时钟，
 	// 确保交付给 worker 的完整 leaseDuration 从实际取得写所有权的时刻开始计算。
+	// English: Candidate lock waiting may consume the lease window. Reread the database clock after all session/round
+	// locks are acquired, ensuring that the full leaseDuration delivered to the worker is calculated from the moment
+	// write ownership is actually taken.
 	databaseNow := selectionNow
 	if len(lockedCandidates) > 0 {
 		if err := tx.QueryRowContext(ctx, walletLeaseClockSQL).Scan(&databaseNow); err != nil {
@@ -1379,6 +1414,8 @@ func (r *Repository) ScheduleWalletRecovery(
 		return false, rgs.ErrInvalidRequest
 	}
 	// PostgreSQL 是调度时钟；显式 Retry-After 只作为下界，绝不能缩短 full-jitter。
+	// English: PostgreSQL is the scheduling clock; explicit Retry-After only acts as a lower bound and never shortens
+	// the full-jitter.
 	var explicitNotBefore any
 	if !disposition.NextAttemptAt.IsZero() {
 		explicitNotBefore = disposition.NextAttemptAt.UTC()
@@ -1573,6 +1610,10 @@ func (r *Repository) quarantineLockedSession(
 // quarantineCorruptSession 刻意只更新会话生命周期标记，不重写余额、序号、修订号、
 // 特性状态、待决轮次归属、轮次状态或钱包账本状态。这些值是人工对账证据，
 // 也可能对应无法从损坏状态安全推断的外部资金副作用。
+// English: quarantineCorruptSession intentionally updates only session lifecycle markers and does not overwrite
+// balances, sequence numbers, revision numbers, feature status, pending round ownership, round status, or wallet
+// ledger status. These values are evidence of manual reconciliation and may also correspond to external funding
+// side effects that cannot be safely inferred from the corrupted state.
 func quarantineCorruptSession(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1642,6 +1683,10 @@ func quarantineCorruptSession(
 // quarantineCorruptRound 是 result_json 字段或冗余资金列不可信时的故障安全路径。
 // 它无需解码派彩即可阻断所属会话；已提交轮次保留资金状态和成功钱包账本，
 // 未提交轮次统一进入 MANUAL_REVIEW，且不得再做自动钱包恢复。
+// English: quarantineCorruptRound is a failsafe path when the result_json field or redundant funds column cannot
+// be trusted. It can block the session without decoding the payout; submitted rounds retain the fund status and
+// successful wallet ledger, while unsubmitted rounds enter MANUAL_REVIEW and no automatic wallet recovery is
+// allowed.
 func quarantineCorruptRound(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1701,6 +1746,8 @@ func quarantineCorruptRound(
 		ledgerStatus := "UNKNOWN"
 		if persistedStatus == string(rgs.RoundRiskPending) {
 			// 风险待决轮次从未进入钱包 claim；完整性隔离不能伪造可能已发生外部副作用。
+			// English: Risk pending rounds never entered the wallet claim; integrity isolation cannot be faked as external
+			// side effects may have occurred.
 			ledgerStatus = "FAILED"
 		}
 		_, err = tx.ExecContext(ctx, `
@@ -1744,6 +1791,10 @@ func quarantineCorruptRound(
 // quarantineWalletClaimIntegrity 处理领取前发现的钱包账本缺失、重复或错绑。
 // 调用方已按 session→round→wallet ledger 顺序持锁；这里先把该逻辑轮次下所有
 // 非终态账本证据标记为 UNKNOWN，再复用轮次完整性隔离并原子提交。
+// English: quarantineWalletClaimIntegrity handles the missing, duplicate or wrongly linked wallet ledgers found
+// before claiming. The caller has held the lock in the order of session→round→wallet ledger; here, all non-final
+// ledger evidence in this logical round are marked as UNKNOWN, and then the round is reused for complete isolation
+// and atomic submission.
 func (r *Repository) quarantineWalletClaimIntegrity(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -1793,6 +1844,8 @@ func (r *Repository) Ping(ctx context.Context) error {
 }
 
 // Name 与 Check 让 Repository 直接参与 platform.Readiness 的同一套依赖检查。
+// English: Name and Check allow the Repository to directly participate in the same set of dependency checks of
+// platform.Readiness.
 func (r *Repository) Name() string                    { return "database" }
 func (r *Repository) Check(ctx context.Context) error { return r.Ping(ctx) }
 
@@ -1981,6 +2034,8 @@ func scanRound(row rowScanner) (rgs.RoundRecord, error) {
 	record.Request.BetMinor = betMinor
 	record.Request.StartRevision = uint64(startRevision)
 	// 传输代际只用于隔离 HTTP 授权，刻意不属于 rgs_rounds 持久化的不可变经济身份。
+	// English: Transport generation is only used to isolate HTTP authorization and is intentionally not part of the
+	// immutable economic identity persisted by rgs_rounds.
 	record.Request.TransportGeneration = 1
 	if err := rgs.ValidateSpinRequest(record.Request); err != nil {
 		return rgs.RoundRecord{}, rgs.ErrManualReview
@@ -1994,6 +2049,9 @@ func scanRound(row rowScanner) (rgs.RoundRecord, error) {
 		validateRoundInputFeature(inputFeature, record.Request) != nil {
 		// input_feature_state 字段允许为空，只为迁移时保留无法证明局前状态的旧记录。
 		// 禁止从当前会话或局后结果猜测；二者都可能描述更晚的状态。
+		// English: The input_feature_state field is allowed to be empty, and only old records that cannot prove the
+		// pre-office status are retained during migration. Guessing from current session or post-game results is
+		// prohibited; both may describe a later state.
 		return rgs.RoundRecord{}, rgs.ErrManualReview
 	}
 	record.InputFeatureState = inputFeature
@@ -2158,6 +2216,10 @@ func decodeStrictRoundResult(encoded []byte, destination *rgs.SpinResult) error 
 // requirePathAwardBaseAmountPresence 区分缺失数字字段与显式零值；Go JSON 解码器会把
 // 两者都映射为 int64(0)。低投注分配可以合法产生零值路径，但权威的乘数前金额仍必须
 // 显式存在于持久化结果中，不能因零值而省略。
+// English: requirePathAwardBaseAmountPresence distinguishes missing numeric fields from explicit zero values; the
+// Go JSON decoder will map both to int64(0). Low stake allocations can legally produce zero value paths, but the
+// authoritative pre-multiplier amount must still be explicitly present in the persisted result and cannot be
+// omitted for a zero value.
 func requirePathAwardBaseAmountPresence(encoded []byte) error {
 	type pathAwardPresence struct {
 		BaseAmountMinor *json.RawMessage `json:"BaseAmountMinor"`
@@ -2214,6 +2276,9 @@ func validateBinding(session rgs.Session, request rgs.SpinRequest, databaseNow t
 	}
 	// 会话先由 FOR UPDATE 锁定，数据库时钟随后由同一事务的新语句取得。这里绝不能
 	// 回退到 Pod 时钟，否则慢时钟副本会接受已过期会话，快时钟副本则会误拒绝。
+	// English: The session is first locked by FOR UPDATE, and the database clock is subsequently obtained by a new
+	// statement in the same transaction. You must not fall back to the Pod clock here, otherwise the slow-clock
+	// replica will accept the expired session, and the fast-clock replica will mistakenly reject it.
 	if databaseNow.IsZero() || !session.ExpiresAt.After(databaseNow) {
 		return rgs.ErrSessionExpired
 	}

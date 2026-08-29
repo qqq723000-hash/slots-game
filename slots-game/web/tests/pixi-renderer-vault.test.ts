@@ -140,8 +140,8 @@ describe("PixiRenderer Vault presentation", () => {
     ]);
     expect(highlightAwards).toHaveBeenLastCalledWith(["mini", "grand"]);
 
-    // 下一阶段将 MINI 改为 MINOR，同时保留未改动的 GRAND 单元格；完整目标投影
-    // 不得再点亮 MINI。
+    // 下一阶段将 MINI 改为 MINOR，同时保留未改动的 GRAND 单元格；完整目标投影 / English: Next stage changes MINI to MINOR while leaving the GRAND cells unchanged; full target projection
+    // 不得再点亮 MINI。 / English: The MINI must no longer be illuminated.
     renderer.highlightVaultMutationBatch([{
       type: "vault.upgraded", reel: 1, row: 0,
       fromMultiplier: 10, toMultiplier: 30, prize: "MINOR", step: 1,
@@ -151,7 +151,7 @@ describe("PixiRenderer Vault presentation", () => {
       [["minor", "grand"]],
     ]);
 
-    // 最终可支付事件只负责结束记账；不会重放已在变更开始时执行的即时赢分。
+    // 最终可支付事件只负责结束记账；不会重放已在变更开始时执行的即时赢分。 / English: The final payable event is only responsible for closing accounting; instant wins that were executed at the start of the change will not be replayed.
     renderer.cueFeatureEnvironment(finalAwards[1], true);
     renderer.cueFeatureEnvironment({ ...finalAwards[0], prize: "MINOR" }, true);
     expect(highlightAwards).toHaveBeenCalledTimes(2);
@@ -208,8 +208,8 @@ describe("PixiRenderer Wheel result reveal", () => {
       amountMinor: "1000",
     }, true);
 
-    // 权威 Wheel 事件会引入场景，但它并非玩家输入。原始控制器会在整个入场和
-    // 等待输入就绪期间保持高亮或变暗的塔不变。
+    // 权威 Wheel 事件会引入场景，但它并非玩家输入。原始控制器会在整个入场和 / English: The authoritative Wheel event introduces the scene, but it is not player input. The original controller will be present throughout the admission and
+    // 等待输入就绪期间保持高亮或变暗的塔不变。 / English: Keep highlighted or dimmed towers unchanged while waiting for input to be ready.
     expect(resetPanelAnimations).not.toHaveBeenCalled();
     expect(hideLogo).toHaveBeenCalledTimes(1);
     expect(highlightAward).not.toHaveBeenCalled();
@@ -255,11 +255,11 @@ describe("PixiRenderer Wheel result reveal", () => {
     expect(highlightAward).toHaveBeenCalledWith("MINI");
     expect(resetPanelAnimations).not.toHaveBeenCalled();
 
-    // Wheel 摘要的 Continue/outro 会恢复 Base 场景，而不是恢复塔。
+    // Wheel 摘要的 Continue/outro 会恢复 Base 场景，而不是恢复塔。 / English: The Wheel summary's Continue/outro restores the Base scene, not the Tower.
     renderer.completeWheelPresentation(BASE_FEATURE);
     expect(resetPanelAnimations).not.toHaveBeenCalled();
 
-    // 随后被接受的 Base SPIN_START 才是原始重置边界。
+    // 随后被接受的 Base SPIN_START 才是原始重置边界。 / English: The subsequently accepted Base SPIN_START is the original reset boundary.
     renderer.beginSpinPresentation(false);
     expect(resetPanelAnimations).toHaveBeenCalledTimes(1);
     expect(beginSpin).toHaveBeenCalledWith(false);
@@ -295,8 +295,8 @@ describe("PixiRenderer Wheel result reveal", () => {
       renderer.cueFeatureEnvironment({ type: "wheel.started" }, false);
       renderer.cueFeatureEnvironment(award, false);
 
-    // Wheel 结果虽已提前解码，但在真正落定前必须保持不可见；验收基线不会在场景
-    // 进入或就绪时变暗。
+    // Wheel 结果虽已提前解码，但在真正落定前必须保持不可见；验收基线不会在场景 / English: Although the wheel results are decoded in advance, they must remain invisible until they are actually settled; the acceptance baseline will not be in the scene
+    // 进入或就绪时变暗。 / English: Dim when entering or ready.
       expect(darkenAllPanels).not.toHaveBeenCalled();
       expect(highlightAward).not.toHaveBeenCalled();
 
@@ -311,8 +311,8 @@ describe("PixiRenderer Wheel result reveal", () => {
         mode,
         awarded: 8,
       }, false);
-    // 此时入场演出可见，且 CONTINUE_SPIN 仍处于活动状态。原始塔会持续变暗，
-    // 直到确认绿色 Spin。
+    // 此时入场演出可见，且 CONTINUE_SPIN 仍处于活动状态。原始塔会持续变暗， / English: The entry is now visible and CONTINUE_SPIN is still active. The original tower will continue to dim,
+    // 直到确认绿色 Spin。 / English: Until the green Spin is confirmed.
       expect(resetPanelAnimations).not.toHaveBeenCalled();
       expect(setVisualStripMode).toHaveBeenCalledWith(mode);
       expect(transitionAuthoredPalette).toHaveBeenCalledWith(
@@ -331,7 +331,7 @@ describe("PixiRenderer Wheel result reveal", () => {
         awarded: 8,
         cumulativeWinMinor: "0",
       }, false);
-    // FREESPIN_END 没有订阅 GameJackpotController 重置事件。
+    // FREESPIN_END 没有订阅 GameJackpotController 重置事件。 / English: FREESPIN_END is not subscribed to the GameJackpotController reset event.
       expect(resetPanelAnimations).toHaveBeenCalledTimes(1);
     },
   );

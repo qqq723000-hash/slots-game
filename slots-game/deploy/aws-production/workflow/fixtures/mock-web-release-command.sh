@@ -1,6 +1,7 @@
 #!/bin/sh
 
 # 由 test-web-release-switch-faults.sh 通过 aws/curl/sleep 三个符号链接调用。
+# English: Called by test-web-release-switch-faults.sh through three aws/curl/sleep symbolic links.
 set -eu
 
 fail() {

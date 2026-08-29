@@ -109,7 +109,7 @@ function assertWritableRecoveryStorage(
         if (previous === null) storage.removeItem(RGS_STORAGE_PROBE_KEY);
         else storage.setItem(RGS_STORAGE_PROBE_KEY, previous);
       } catch {
-        // 预检已经失败；清理异常不能覆盖统一、无底层细节的配置错误。
+        // 预检已经失败；清理异常不能覆盖统一、无底层细节的配置错误。 / English: Preflight has failed; cleanup exceptions cannot cover uniform, configuration errors without underlying details.
       }
     }
     throw new RgsGatewayConfigurationError(
@@ -121,6 +121,8 @@ function assertWritableRecoveryStorage(
 /**
  * 生产入口只允许完整的 HTTPS RGS 配置与一次性交接值。任何缺失或畸形输入
  * 都必须故障关闭，禁止浏览器切换到未认证的备用传输。
+ *
+ * 英文 / English: The production portal only allows full HTTPS RGS configuration with one-time handover values. Any missing or malformed input must fail closed, preventing the browser from switching to an unauthenticated alternative transport.
  */
 export function createConfiguredGameGateway(options: ConfiguredGatewayOptions): GameGateway {
   const pageUrl = new URL(options.pageUrl);
@@ -137,7 +139,7 @@ export function createConfiguredGameGateway(options: ConfiguredGatewayOptions): 
     options.env.VITE_RGS_DEFAULT_BET_MINOR,
     options.env.VITE_RGS_HOST_ORIGIN,
   ];
-  // 无论配置是否完整都先清除一次性凭据，禁止失败页把它留在地址栏、截图或浏览器历史中。
+  // 无论配置是否完整都先清除一次性凭据，禁止失败页把它留在地址栏、截图或浏览器历史中。 / English: Regardless of whether the configuration is complete or not, clear the one-time credentials first to prevent failed pages from leaving them in the address bar, screenshots, or browser history.
   scrubRgsFragment(pageUrl, options.history);
   const launchCode = fragments.get("rgsLaunchCode");
   const operatorId = fragments.get("rgsOperatorId");
@@ -160,8 +162,8 @@ export function createConfiguredGameGateway(options: ConfiguredGatewayOptions): 
     );
   }
   if (options.isFramed && !operatorHostOrigin) {
-    // 跨源 iframe 无法依赖子窗口 CustomEvent；没有精确宿主来源时禁止启动，
-    // 绝不使用 `*` 绕过一次性会话的安全恢复边界。
+    // 跨源 iframe 无法依赖子窗口 CustomEvent；没有精确宿主来源时禁止启动， / English: Cross-origin iframe cannot rely on child window CustomEvent; it is prohibited to start without a precise host source.
+    // 绝不使用 `*` 绕过一次性会话的安全恢复边界。 / English: Never use `*` to bypass the safe recovery boundary of a one-time session.
     throw new RgsGatewayConfigurationError(
       "framed RGS requires VITE_RGS_HOST_ORIGIN",
     );
@@ -174,8 +176,8 @@ export function createConfiguredGameGateway(options: ConfiguredGatewayOptions): 
         "Production RGS requires writable recovery ledger storage",
       );
     }
-    // 资金恢复不变量：会话交换前必须证明浏览器能同步持久化并清理轮次账本。
-    // 若此处降级，下注可能已提交却没有可恢复的原始轮次证据。
+    // 资金恢复不变量：会话交换前必须证明浏览器能同步持久化并清理轮次账本。 / English: Fund recovery invariant: Before session exchange, it must be proven that the browser can synchronize persistence and clean up the round ledger.
+    // 若此处降级，下注可能已提交却没有可恢复的原始轮次证据。 / English: If downgraded here, bets may have been submitted without evidence of the original round to recover.
     assertWritableRecoveryStorage(options.sessionStorage);
     ledgerStorage = new JsonRgsRecoveryLedgerStorage(options.sessionStorage);
   }

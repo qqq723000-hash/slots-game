@@ -3,6 +3,9 @@
 
 # 在临时仓库副本中主动削弱每个关键控制，证明静态门禁会失败；不需要 Docker daemon。
 # SC1003/SC2016 仅因测试必须替换夹具中的字面量 `$` 与 Dockerfile 行尾反斜杠而关闭。
+# English: Proactively weaken every critical control in a temporary repository copy, proving static gating will
+# fail; no Docker daemon required. SC1003/SC2016 is closed only because tests must replace literal `$` with
+# trailing backslashes in Dockerfile lines in fixtures.
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -132,6 +135,8 @@ NODE
 
 # awk -v 会解释反斜杠转义；内嵌 JavaScript 的 \u0027 必须按原始字节替换，
 # 否则负向夹具可能没有真正改变目标行却继续执行。
+# English: awk -v will interpret backslash escapes; \u0027 in embedded JavaScript must be replaced by raw bytes,
+# Otherwise the negative fixture may continue executing without actually changing the target row.
 replace_literal_once() {
   old=$1
   new=$2
@@ -210,6 +215,9 @@ expect_rejected() {
 
 # GNU awk 会在 -v 中重新解释尾随反斜杠；辅助函数必须直接按行字节边界替换最后一次
 # 精确匹配，同时保持其余重复行与源文件是否含最终 LF 不变。
+# English: GNU awk reinterprets trailing backslashes in -v; helper functions must directly replace the last one
+# on a line byte boundary An exact match while keeping the remaining duplicate lines unchanged regardless of
+# whether the source file contains the final LF.
 replace_last_old='RUN --network=none rm -rf /usr/share/nginx/html && \'
 replace_last_new='RUN --network=none true && \'
 replace_last_with_lf="$test_root/replace-last-with-lf.txt"
@@ -349,6 +357,8 @@ replace_once 'org.opencontainers.image.licenses="NOASSERTION"' \
 expect_rejected 'Web OCI metadata asserted an unapproved repository license'
 
 # 用最小本地资产夹具证明 checks bundle 缺失时会失败关闭；无需 Docker 或网络。
+# English: Prove bundle checks fail on missing shutdown with minimal local asset fixtures; no Docker or
+# networking required.
 trivy_asset_root="$test_root/trivy-assets"
 prepare_trivy_asset_fixture() {
   rm -rf "$trivy_asset_root"
@@ -382,6 +392,8 @@ if "$trivy_asset_verifier" "$trivy_asset_root/cache" "$trivy_asset_root/evidence
 fi
 
 # 用无敏感值夹具证明 always-upload 前会删除 Trivy secret 的 Code/Match，同时保留规则证据。
+# English: Use a non-sensitive value fixture to prove that the Trivy secret's Code/Match will be deleted before
+# always-upload, while retaining the rule evidence.
 command -v node >/dev/null 2>&1 || fail 'Node.js is required for the Trivy evidence sanitizer contract test'
 trivy_secret_fixture="$test_root/trivy-secret-report.json"
 printf '%s\n' \
@@ -395,6 +407,9 @@ fi
 
 # 源码报告夹具锁定 Docker/Helm 与四个 Terraform 环境的精确目标，同时证明 Git 跟踪
 # 清单、隔离复制清单、路径边界和符号链接任一失真都会失败关闭。
+# English: Source reporting fixtures lock down Docker/Helm with precise targeting of four Terraform environments
+# while proving Git tracking Any distortion of manifests, quarantined replication manifests, path boundaries,
+# and symbolic links will fail the shutdown.
 trivy_source_fixture="$test_root/trivy-source-reports"
 prepare_trivy_source_fixture() {
   rm -rf "$trivy_source_fixture"
@@ -525,6 +540,8 @@ if verify_trivy_source_fixture >/dev/null 2>&1; then
 fi
 
 # 最小 OCI layout 夹具验证 bundle finalizer 真正把 source tree 与逐文件摘要写入清单。
+# English: Minimal OCI layout fixture validation bundle finalizer actually writes the source tree with
+# file-by-file digest into the manifest.
 bundle_fixture="$test_root/release-bundle"
 bundle_layout="$test_root/oci-layout"
 mkdir -p "$bundle_fixture" "$bundle_layout"
@@ -553,6 +570,8 @@ grep -F -x 'SOURCE_TREE_SHA=abcdef0123456789abcdef0123456789abcdef01' "$bundle_f
   fail 'release bundle emitted invalid checksums'
 
 # Web 审批的公开时效与规范化元数据摘要必须跨越构建/发布权限边界；原始审批仍不进入 bundle。
+# English: Public aging and canonical metadata summaries for web approvals must cross the build/publish
+# permissions boundary; the original approval still does not enter the bundle.
 approval_fixture="$test_root/release-asset-approval.json"
 approval_metadata="$test_root/release-asset-approval-metadata.env"
 printf '%s\n' \
@@ -620,6 +639,8 @@ if env \
 fi
 
 # S3 的输入只能是从已复核 OCI digest 提取的静态根；清单必须逐文件封闭验证。
+# English: Input to S3 can only be static roots extracted from reviewed OCI digests; the manifest must be
+# verified on a file-by-file basis.
 web_static_root="$test_root/web-static-root"
 mkdir -p "$web_static_root/assets"
 printf '%s\n' '<!doctype html><title>fixture</title>' > "$web_static_root/index.html"
@@ -1242,24 +1263,44 @@ replace_once '        run: make verify' '        run: make verify-supply-chain-c
 expect_rejected 'release skipped complete source conformance'
 
 reset_fixture
-replace_once 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test test-race vet build' 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test vet build' "$fixture/Makefile"
+replace_once ' test test-race vet build' ' test vet build' "$fixture/Makefile"
 expect_rejected 'release verify closure omitted race tests'
 
 reset_fixture
-replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' 'verify-supply-chain-contract: verify-hardening-stability-contract verify-personal-project-docs' "$fixture/Makefile"
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs verify-demo-media' 'verify-supply-chain-contract: verify-hardening-stability-contract verify-personal-project-docs verify-demo-media' "$fixture/Makefile"
 expect_rejected 'ordinary supply-chain CI skipped the hardening checklist gate'
 
 reset_fixture
-replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' 'verify-supply-chain-contract: verify-hardening-checklist verify-personal-project-docs' "$fixture/Makefile"
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs verify-demo-media' 'verify-supply-chain-contract: verify-hardening-checklist verify-personal-project-docs verify-demo-media' "$fixture/Makefile"
 expect_rejected 'ordinary supply-chain CI skipped the hardening stability contract gate'
 
 reset_fixture
-replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract' "$fixture/Makefile"
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs verify-demo-media' 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-demo-media' "$fixture/Makefile"
 expect_rejected 'ordinary supply-chain CI skipped the personal-independent documentation gate'
 
 reset_fixture
 replace_once 'node scripts/verify-personal-project-docs.mjs' 'true # personal-independent documentation verification removed' "$fixture/Makefile"
 expect_rejected 'ordinary supply-chain CI removed the personal-independent documentation verifier'
+
+reset_fixture
+replace_once 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs verify-demo-media' 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' "$fixture/Makefile"
+expect_rejected 'ordinary supply-chain CI skipped the demo media gate'
+
+reset_fixture
+replace_once ' verify-demo-media verify-hardening-checklist' ' verify-hardening-checklist' "$fixture/Makefile"
+expect_rejected 'demo media gate was no longer phony'
+
+reset_fixture
+insert_after_once 'verify-demo-media:' 'detached-demo-media-recipes:' "$fixture/Makefile"
+expect_rejected 'demo media recipes were detached from their target'
+
+reset_fixture
+replace_once 'node --test scripts/verify-demo-media.test.mjs' 'true # demo media negative tests removed' "$fixture/Makefile"
+expect_rejected 'demo media gate removed its negative tests'
+
+reset_fixture
+replace_once 'node scripts/verify-demo-media.mjs' 'true # demo media verification removed' "$fixture/Makefile"
+expect_rejected 'demo media gate removed its direct verifier'
 
 reset_fixture
 replace_once '        run: ./deploy/supply-chain/scan.sh source "$SUPPLY_CHAIN_REPORT_DIR/source"' '        run: true # source security scan removed' "$fixture/.github/workflows/supply-chain-release.yml"
@@ -1302,6 +1343,10 @@ expect_rejected 'ordinary supply-chain CI regressed to the generic RGS image'
 reset_fixture
 replace_once "  -e RGS_DATABASE_URL_FILE=/run/cluster-contract/database-url \\" "  -e RGS_DATABASE_URL=inline-secret \\" "$fixture/deploy/cluster-production/verify-image-runtime-contract.sh"
 expect_rejected 'cluster image runtime contract skipped positive secret-file loading'
+
+reset_fixture
+replace_literal_once 'member.mode != 0o400' 'member.mode != 0o600' "$fixture/deploy/cluster-production/verify-image-runtime-contract.sh"
+expect_rejected 'cluster image runtime contract weakened the materialized secret mode'
 
 reset_fixture
 replace_once '        run: make verify-deployment-contracts' '        run: true # deployment contracts removed' "$fixture/.github/workflows/supply-chain-release.yml"

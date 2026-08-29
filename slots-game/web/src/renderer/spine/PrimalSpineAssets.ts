@@ -70,6 +70,8 @@ export interface PrimalSpineSpec {
 
 /**
  * 从项目桌面资源包中提取的预设框架。应用程序仅消耗 Spine 数据和图集页面，不依赖任何外部专有 JavaScript 运行时。
+ *
+ * 英文 / English: Preset frames extracted from the project desktop resource pack. The application only consumes Spine data and gallery pages and does not rely on any external proprietary JavaScript runtime.
  */
 export const PRIMAL_SPINE_SPECS: Readonly<Record<PrimalSpineKey, PrimalSpineSpec>> = Object.freeze({
   background: Object.freeze({
@@ -300,6 +302,8 @@ export function primalSpineAtlasUrl(
 /**
  * pixi-spine 从 atlas 文本回调页面名。只允许当前固定资源族的有界 AVIF
  * basename，禁止绝对 URL、查询串、反斜杠和目录穿越进入 Texture.fromURL。
+ *
+ * 英文 / English: pixi-spine calls back the page name from atlas text. Only the bounded AVIF basename of the current fixed resource family is allowed, absolute URLs, query strings, backslashes, and directory traversal into Texture.fromURL are prohibited.
  */
 export function resolvePrimalSpineAtlasPageUrl(
   group: PrimalSpineSpec["group"],
@@ -338,15 +342,15 @@ export function loadPrimalSpineData(
     loadAtlas(spec.group, channel),
     fetchBinary(primalSpineSkeletonUrl(key)),
   ]).then(([atlas, binary]) => {
-    // pixi-spine 3.1 的通用中间件丢失了 Uint8Array 字节偏移量。使用固定的 4.1 运行时解析确切的响应缓冲区可以避免上游错误，
-    // 并使提供的 Spine 4.1.24 文件可靠。
+    // pixi-spine 3.1 的通用中间件丢失了 Uint8Array 字节偏移量。使用固定的 4.1 运行时解析确切的响应缓冲区可以避免上游错误， / English: pixi-spine 3.1's generic middleware lost Uint8Array byte offsets. Using fixed 4.1 runtime to parse the exact response buffer avoids upstream bugs,
+    // 并使提供的 Spine 4.1.24 文件可靠。 / English: and make the provided Spine 4.1.24 documentation reliable.
     const parser = new SkeletonBinary(new AtlasAttachmentLoader(atlas));
     return parser.readSkeletonData(new Uint8Array(binary.slice(0))) as SpineData;
   });
 
   dataPromises.set(cacheKey, promise);
   void promise.catch(() => {
-    // 暂时性网络故障必须在稍后启动时保持可重试。
+    // 暂时性网络故障必须在稍后启动时保持可重试。 / English: Transient network failures must remain retryable on later startups.
     if (dataPromises.get(cacheKey) === promise) dataPromises.delete(cacheKey);
   });
   return promise;
@@ -355,6 +359,8 @@ export function loadPrimalSpineData(
 /**
  * 直接解析事件租约已验证的 skeleton 字节；共享 atlas 仍复用首启建立的
  * channel/group Promise，不会再次请求 BigWin.skel URL。
+ *
+ * 英文 / English: Directly parse the verified skeleton bytes of the event lease; the shared atlas still reuses the channel/group Promise established at the beginning and will not request the BigWin.skel URL again.
  */
 export async function loadPrimalSpineDataFromVerifiedBinary(
   key: PrimalSpineKey,
@@ -405,16 +411,16 @@ function loadAtlas(
           void pageAttempt.then(
             (texture) => complete(texture.baseTexture),
             (error: unknown) => {
-              // Pixi 6 会在 Promise 拒绝前把页面对象留在全局 cache；仅按本次
-              // Texture.fromURL 同步捕获的对象身份驱逐，使下一次 atlas 加载可重试。
+              // Pixi 6 会在 Promise 拒绝前把页面对象留在全局 cache；仅按本次 / English: Pixi 6 will leave the page object in the global cache before Promise is rejected; only this time
+              // Texture.fromURL 同步捕获的对象身份驱逐，使下一次 atlas 加载可重试。 / English: Texture.fromURL synchronously captures object identity eviction so that it can be retried on the next atlas load.
               disposePixiTextureAttempt(attemptedTexture);
               textureError ??= error;
-              // 让 atlas 解析器在拒绝外部 Promise 之前正常终止，而不是让其回调链挂起。
+              // 让 atlas 解析器在拒绝外部 Promise 之前正常终止，而不是让其回调链挂起。 / English: Let the atlas parser terminate gracefully before rejecting the outer Promise, rather than leaving its callback chain hanging.
               complete(Texture.EMPTY.baseTexture);
             },
           );
         } catch (error) {
-          // 第三方解析器提供的页名或同步 Texture 错误都必须完成回调，避免解析悬挂。
+          // 第三方解析器提供的页名或同步 Texture 错误都必须完成回调，避免解析悬挂。 / English: Callbacks must be completed for page names or synchronous Texture errors provided by third-party parsers to avoid parsing hangs.
           if (pageUrl) disposePixiTextureAttempt(cachedPixiTextureAttempt(pageUrl));
           textureError ??= error;
           complete(Texture.EMPTY.baseTexture);

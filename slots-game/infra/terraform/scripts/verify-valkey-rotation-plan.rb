@@ -431,6 +431,10 @@ module ValkeyRotationPlanContract
     if before_accesses.all? { |access| access == PRE_ECONOMIC_SHARED_ADMISSION_ACL }
       # v2 keyspace/HMAC 均不变，只追加新脚本所需命令；旧 runtime 使用的权限是严格子集。
       # 该扩权必须作为独立 steady 状态迁移先于应用发布，不能伪装成密码或 HMAC 轮换。
+      # English: v2 keyspace/HMAC are unchanged, only the commands required by the new script are appended; the
+      # permissions used by the old runtime are a strict subset. This entitlement must be issued as a separate
+      # steady state transition before the application is released, and cannot be disguised as a password or
+      # HMAC rotation.
       assert(transition == :steady, "Valkey v2 economic ACL 追加只能在 steady 计划中先于新 runtime 应用")
       expected_before = PRE_ECONOMIC_SHARED_ADMISSION_ACL
     else

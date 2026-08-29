@@ -18,12 +18,19 @@ import (
 //go:embed migrations/*.sql
 var localOperatorMigrations embed.FS
 
-// 0002 曾在未显式排除 NULL 的情况下依赖 PostgreSQL CHECK；其 UNKNOWN 结果可放行
-// half-bound v2 行。允许且只允许这一份已知历史摘要升级清单，随后 0003 在同一迁移事务
-// 中安装强约束。任意其他历史漂移仍然失败关闭。
+// 0002 曾在未显式排除 NULL 的情况下依赖 PostgreSQL CHECK；其 UNKNOWN 结果可放行 half-bound v2 行，
+// 随后 0003 在同一迁移事务中安装强约束。0003 的第二个历史摘要只对应注释双语化，剔除整行 SQL
+// 注释后的可执行字节保持冻结。仅允许这两个精确旧摘要升级，任意其他历史漂移仍然失败关闭。
+// English: 0002 once relied on a PostgreSQL CHECK without explicitly excluding NULL, so UNKNOWN could admit
+// half-bound v2 rows before 0003 installed the stronger constraint in the same migration transaction. The second
+// historical digest for 0003 only localizes comments; its executable bytes remain frozen after standalone SQL
+// comments are removed. Only these two exact old digests may upgrade, and every other historical drift fails closed.
 var acceptedLocalOperatorMigrationChecksums = map[string]map[string]struct{}{
 	"0002_wallet_v2_binding.sql": {
 		"a1fb48dfa1a2a8a5ca508d0995f31b1ecfbf0a864d92a6ee607af6e2f73be71c": {},
+	},
+	"0003_wallet_v2_binding_null_hardening.sql": {
+		"54b1dc3ecf6306a65e00a23a691d372fcecfea283347dde63c95008de9123802": {},
 	},
 }
 
@@ -429,6 +436,9 @@ func (s *postgresStore) Apply(ctx context.Context, request validatedRound) (stor
 	defer tx.Rollback()
 	// 成功与拒绝分表保存，但同一 operation 必须共享一个事务级决策锁；否则两个
 	// 并发副本可能分别观察空表，并在余额变化前后写出相互矛盾的资金终态。
+	// English: Success and rejection are saved in separate tables, but the same operation must share a
+	// transaction-level decision lock; otherwise, two concurrent copies may observe the empty table separately and
+	// write conflicting final status of funds before and after the balance changes.
 	if err := lockWalletOperationDecision(ctx, tx, request.OperatorID, request.OperationID); err != nil {
 		return storedOperation{}, fmt.Errorf("lock wallet operation decision: %w", err)
 	}
@@ -469,6 +479,8 @@ func (s *postgresStore) Apply(ctx context.Context, request validatedRound) (stor
 		}
 		// 会话到期阻止新游戏意图，但不能阻止已预备资金命令在恢复流程中结算；
 		// 因此这里验证不可变归属绑定，不用当前时间推断这项命令是否曾被发送。
+		// Session expiry blocks new game intent but cannot block settlement of an already prepared funds command during recovery;
+		// therefore validate immutable ownership binding here instead of using current time to infer whether the command was ever sent.
 		if !matches {
 			return persistWalletRejection(ctx, tx, request, walletRejectionSessionInvalid)
 		}
@@ -597,6 +609,9 @@ func (s *postgresStore) Rollback(ctx context.Context, request validatedRollback)
 	// Apply、确定拒绝与人工 rollback 必须先取得完全相同的 operation 决策锁，
 	// 再按 operation→account 顺序读取。否则 rollback 可在 Apply 尚未落账时误报不存在，
 	// 或与 Apply 形成相反的资金终态。
+	// English: Apply, confirmed rejection and manual rollback must first obtain exactly the same operation decision
+	// lock, and then read in the order of operation→account. Otherwise, rollback may falsely report that it does not
+	// exist when Apply has not been settled, or it may form an opposite final state of funds to Apply.
 	if err := lockWalletOperationDecision(ctx, tx, request.OperatorID, request.OperationID); err != nil {
 		return storedOperation{}, fmt.Errorf("lock wallet rollback decision: %w", err)
 	}
@@ -618,6 +633,9 @@ func (s *postgresStore) Rollback(ctx context.Context, request validatedRollback)
 	if operation.RolledBack {
 		// 另一副本可能在本事务等待 operation 行锁期间完成了同一个 rollback；
 		// 锁释放后重新按 rollback ID 查询，精确重放仍必须返回原始回执。
+		// English: Another replica may have completed the same rollback while this transaction is waiting for the
+		// operation row lock; after the lock is released, the rollback ID is queried again, and accurate replay must still
+		// return the original receipt.
 		replay, replayFound, replayErr := loadRollback(ctx, tx, request.OperatorID, request.RollbackID)
 		if replayErr != nil {
 			return storedOperation{}, replayErr
@@ -636,6 +654,7 @@ func (s *postgresStore) Rollback(ctx context.Context, request validatedRollback)
 		return storedOperation{}, fmt.Errorf("lock rollback wallet account: %w", err)
 	}
 	// 回滚按当前余额反向应用原操作，不能恢复历史快照，否则会覆盖其后的合法轮次。
+	// Rollback reverses the original operation against the current balance and must not restore a historical snapshot that would overwrite later valid rounds.
 	updatedBalance, err := checkedBalance(balance, operation.CreditMinor, operation.DebitMinor)
 	if err != nil {
 		return storedOperation{}, fmt.Errorf("reverse wallet operation: %w", err)
@@ -692,6 +711,8 @@ func lockWalletOperationDecision(
 }
 
 // Consume 让所有本机服务副本共享 nonce 防重放状态；数据库时间是唯一到期时钟。
+// English: Consume lets all local service replicas share the nonce anti-replay state; the database time is the
+// only expiration clock.
 func (s *postgresStore) Consume(
 	ctx context.Context,
 	scope, nonce string,
@@ -706,6 +727,10 @@ func (s *postgresStore) Consume(
 	// 请求验证使用进程时钟，但防重放的唯一权威边界是共享数据库时钟。即使本机
 	// 时钟落后，也不能插入数据库已判定过期的墓碑，否则同一 nonce 会反复命中
 	// “已过期可更新”分支并被多次接受。
+	// English: Request validation uses the process clock, but the only authoritative boundary against replay is the
+	// shared database clock. Even if the local clock falls behind, a tombstone that has been determined to be expired
+	// by the database cannot be inserted, otherwise the same nonce will hit the "expired and updateable" branch
+	// repeatedly and be accepted multiple times.
 	err = s.database.QueryRowContext(ctx, localOperatorNonceConsumeSQL,
 		operatorID, keyID, hex.EncodeToString(digest[:]), expiresAt.UTC(),
 	).Scan(&consumed)

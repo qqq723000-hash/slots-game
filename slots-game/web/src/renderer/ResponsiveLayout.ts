@@ -26,14 +26,14 @@ const FEATURE_PREVIEW_UI_TABLET_EDGE = 768;
 export interface ResponsiveFrameGeometry {
   readonly x: number;
   readonly y: number;
-  /** 经过唯一根缩放后占用的外层 CSS 宽度。 */
+  /** 经过唯一根缩放后占用的外层 CSS 宽度。 / English: The outer CSS width occupied by the unique root scaling. */
   readonly width: number;
-  /** 经过唯一根缩放后占用的外层 CSS 高度。 */
+  /** 经过唯一根缩放后占用的外层 CSS 高度。 / English: The outer CSS height occupied by the unique root scaling. */
   readonly height: number;
   readonly scale: number;
   readonly designWidth: number;
   readonly designHeight: number;
-  /** PC authored 投影在左右裁切时不可见的逻辑宽度；移动 contain 始终为零。 */
+  /** PC authored 投影在左右裁切时不可见的逻辑宽度；移动 contain 始终为零。 / English: PC authored The logical width of the projection that is not visible when clipping left and right; moving contain is always zero. */
   readonly visibleInsetX: number;
 }
 
@@ -97,17 +97,17 @@ export type MobileBaseLayout = Readonly<Record<MobileBaseNode, ResponsiveNodeLay
 export type MobileFpsLayout = Readonly<Record<MobileFpsNode, ResponsiveNodeLayout>>;
 
 export interface ResponsiveLayoutSnapshotOptions {
-  /** 默认为桌面，因此现有启动器保持逐字节兼容。 */
+  /** 默认为桌面，因此现有启动器保持逐字节兼容。 / English: Defaults to desktop so existing launchers remain byte-for-byte compatible. */
   readonly channel?: ResponsiveChannel;
-  /** 捕获的屏幕截图使用右手模式：左侧为实用控件，右侧为 Spin。 */
+  /** 捕获的屏幕截图使用右手模式：左侧为实用控件，右侧为 Spin。 / English: The screenshot is captured using right-hand mode: utility controls on the left and Spin on the right. */
   readonly handMode?: MobileHandMode;
-  /** 确定性测试/主机覆盖；省略使用官方的纵横比规则。 */
+  /** 确定性测试/主机覆盖；省略使用官方的纵横比规则。 / English: Deterministic testing/host coverage; omit use of official aspect ratio rules. */
   readonly mobileProfile?: MobileLayoutProfile;
-  /** Feature Preview 有一套单独的官方长宽比规则。 */
+  /** Feature Preview 有一套单独的官方长宽比规则。 / English: Feature Preview has a separate set of official aspect ratio rules. */
   readonly fpsProfile?: MobileFpsLayoutProfile;
-  /** 确定性主机覆盖；只覆盖参考档位标签，绝不把连续设计域锁回预设尺寸。 */
+  /** 确定性主机覆盖；只覆盖参考档位标签，绝不把连续设计域锁回预设尺寸。 / English: Deterministic host override; only overrides reference scale labels and never locks continuous design domains back to default sizes. */
   readonly surfaceProfile?: ResponsiveSurfaceProfile;
-  /** 只控制 backing resolution，绝不进入逻辑几何。 */
+  /** 只控制 backing resolution，绝不进入逻辑几何。 / English: Only controls backing resolution, never enters logical geometry. */
   readonly pixelRatio?: number;
 }
 
@@ -122,9 +122,11 @@ export interface ResponsiveLayoutRuntimeOptions {
   /**
    * 显式布局通道覆盖，仅供确定性宿主/测试使用。省略时每次提交都会重新解析
    * 视口与输入能力；资源通道由 AppController 独立冻结，不能从这里推断。
+   *
+   * 英文 / English: Explicit layout channel overrides, for deterministic hosting/testing use only. When omitted, the viewport and input capabilities will be re-parsed for each submission; the resource channel is independently frozen by the AppController and cannot be inferred from here.
    */
   readonly channel?: ResponsiveChannel;
-  /** 确定性生命周期测试接缝；生产环境使用 requestAnimationFrame。 */
+  /** 确定性生命周期测试接缝；生产环境使用 requestAnimationFrame。 / English: Deterministic lifecycle testing seams; production uses requestAnimationFrame. */
   readonly requestFrame?: (callback: FrameRequestCallback) => number;
   readonly cancelFrame?: (handle: number) => void;
 }
@@ -133,17 +135,17 @@ export interface ResponsiveLayoutSnapshot {
   readonly channel: ResponsiveChannel;
   readonly handMode: MobileHandMode;
   readonly surfaceProfile: ResponsiveSurfaceProfile;
-  /** 外层可用区域，单位为未缩放的浏览器 CSS 像素。 */
+  /** 外层可用区域，单位为未缩放的浏览器 CSS 像素。 / English: The outer available area in unscaled browser CSS pixels. */
   readonly physicalViewportRegion: ResponsiveRendererRegion;
-  /** Pixi、DOM 与点击区共用的固定设计坐标域。 */
+  /** Pixi、DOM 与点击区共用的固定设计坐标域。 / English: Fixed design coordinate domain shared by Pixi, DOM and click area. */
   readonly viewportRegion: ResponsiveRendererRegion;
-  /** Pixi 内容可用的设计区域，不包括移动状态栏。 */
+  /** Pixi 内容可用的设计区域，不包括移动状态栏。 / English: The design area available for Pixi content, excluding the mobile status bar. */
   readonly gameplayRegion: ResponsiveRendererRegion;
-  /** 设计坐标中的移动状态栏区域。桌面将其保持在零高度。 */
+  /** 设计坐标中的移动状态栏区域。桌面将其保持在零高度。 / English: Move the status bar area in design coordinates. The tabletop keeps it at zero height. */
   readonly statusRegion: ResponsiveRendererRegion;
-  /** 每个通道都只使用一次的等比根投影。 */
+  /** 每个通道都只使用一次的等比根投影。 / English: A geometric root projection that is used only once for each channel. */
   readonly frame: ResponsiveFrameGeometry;
-  /** 兼容桌面消费者；移动端使用 frame。 */
+  /** 兼容桌面消费者；移动端使用 frame。 / English: Compatible with desktop consumers; mobile uses frames. */
   readonly desktopFrame: ResponsiveFrameGeometry | null;
   readonly pixelRatio: number;
   readonly mobileProfile: MobileLayoutProfile | null;
@@ -180,6 +182,8 @@ export const RESPONSIVE_DESIGN_SURFACES: Readonly<
 /**
  * 捕获尺寸只标定逻辑长边，不构成设备白名单。常见手机、折叠屏和平板长宽比
  * 都连续映射；只有超出 9:22/22:9 的病态视口才钳制并由根投影留黑边。
+ *
+ * 英文 / English: The capture size only calibrates the logical long side and does not constitute a device whitelist. Common mobile phone, folding screen and tablet aspect ratios are continuously mapped; only pathological viewports exceeding 9:22/22:9 are clamped and left with black edges by root projection.
  */
 const MOBILE_DESIGN_LONG_EDGE = 844;
 const MOBILE_MIN_DESIGN_ASPECT = 9 / 22;
@@ -200,7 +204,7 @@ function nodeLayout(
   });
 }
 
-/** 从捕获的移动配置中提取精确的基础游戏节点合约。 */
+/** 从捕获的移动配置中提取精确的基础游戏节点合约。 / English: Extract the precise base game node contract from the captured mobile configuration. */
 export const MOBILE_BASE_LAYOUTS: Readonly<Record<MobileLayoutProfile, MobileBaseLayout>>
   = Object.freeze({
     pt: Object.freeze({
@@ -223,7 +227,7 @@ export const MOBILE_BASE_LAYOUTS: Readonly<Record<MobileLayoutProfile, MobileBas
     }),
   });
 
-/** 精确的 Feature Preview 合约； FPS 故意使用不同的断点。 */
+/** 精确的 Feature Preview 合约； FPS 故意使用不同的断点。 / English: Exact Feature Preview contract; FPS intentionally uses different breakpoints. */
 export const MOBILE_FPS_LAYOUTS: Readonly<Record<MobileFpsLayoutProfile, MobileFpsLayout>>
   = Object.freeze({
     pt: Object.freeze({
@@ -252,7 +256,7 @@ export const MOBILE_FPS_LAYOUTS: Readonly<Record<MobileFpsLayoutProfile, MobileF
     }),
   });
 
-/** 来自 layout_mobile.json 的官方基础游戏配置文件路由。 */
+/** 来自 layout_mobile.json 的官方基础游戏配置文件路由。 / English: Official base game configuration file routes from layout_mobile.json. */
 export function mobileLayoutProfile(
   viewportWidth: number,
   viewportHeight: number,
@@ -263,7 +267,7 @@ export function mobileLayoutProfile(
   return "ls";
 }
 
-/** 来自 layout_fps_mobile.json 的官方 Feature Preview 路由。 */
+/** 来自 layout_fps_mobile.json 的官方 Feature Preview 路由。 / English: Official Feature Preview route from layout_fps_mobile.json. */
 export function mobileFpsLayoutProfile(
   viewportWidth: number,
   viewportHeight: number,
@@ -275,7 +279,7 @@ export function mobileFpsLayoutProfile(
   return "ls";
 }
 
-/** 资产通道保持冻结；该函数只在通道内部选择固定的设计表面。 */
+/** 资产通道保持冻结；该函数只在通道内部选择固定的设计表面。 / English: The asset channel remains frozen; the function only selects fixed design surfaces inside the channel. */
 export function responsiveSurfaceProfile(
   viewportWidth: number,
   viewportHeight: number,
@@ -293,6 +297,8 @@ export function responsiveSurfaceProfile(
 /**
  * 将物理长宽比连续转换为移动逻辑设计域。返回值只改变逻辑坐标密度，最终到
  * 物理视口仍由 `computeResponsiveFrameGeometry` 执行唯一一次等比根缩放。
+ *
+ * 英文 / English: Continuously transform physical aspect ratios into moving logical design domains. The return value only changes the logical coordinate density, and finally the physical viewport still performs the only proportional root scaling by `computeResponsiveFrameGeometry`.
  */
 export function responsiveDesignSurface(
   viewportWidth: number,
@@ -325,6 +331,8 @@ export function responsiveDesignSurface(
  *
  * Desktop 有意返回未更改的固定 1280x720 投影。移动设备按当前物理长宽比
  * 连续生成逻辑设计域及节点转换，因此消费者不需要复制捕获的布局数学。
+ *
+ * 英文 / English: Purely channel-aware interface for the next renderer/UI integration pass. Desktop intentionally returns an unchanged fixed 1280x720 projection. Mobile devices continuously generate logical design domains and node transitions based on the current physical aspect ratio, so consumers do not need to copy the captured layout math.
  */
 export function computeResponsiveLayoutSnapshot(
   viewportWidth: number,
@@ -381,7 +389,7 @@ export function computeResponsiveLayoutSnapshot(
     });
   }
 
-  // Profile 是按长宽比选择的内容规则，而不是固定画布。每次 resize 都重新路由。
+  // Profile 是按长宽比选择的内容规则，而不是固定画布。每次 resize 都重新路由。 / English: Profile is a content rule that selects by aspect ratio, not a fixed canvas. Rerouting every resize.
   const baseProfile = options.mobileProfile
     ?? mobileLayoutProfile(physicalWidth, physicalHeight);
   const fpsProfile = options.fpsProfile
@@ -426,12 +434,12 @@ export function computeResponsiveLayoutSnapshot(
     mobileLayouts,
     mobileTransforms: resolveNodeLayoutSet(gameplayRegion, mobileLayouts),
     fpsLayouts,
-    // 预览位于游戏内状态栏之前，并占据捕获的客户端中的整个移动启动器表面。
+    // 预览位于游戏内状态栏之前，并占据捕获的客户端中的整个移动启动器表面。 / English: The preview is located before the in-game status bar and takes up the entire mobile launcher surface in the captured client.
     fpsTransforms: resolveNodeLayoutSet(viewportRegion, fpsLayouts),
   });
 }
 
-/** 显式启动器通道中奖；粗指针设备否则使用移动设备。 */
+/** 显式启动器通道中奖；粗指针设备否则使用移动设备。 / English: Explicit launcher channels win; thick pointer devices otherwise use mobile devices. */
 export function responsiveChannelFromEnvironment(
   environment: ResponsiveChannelEnvironment = {},
 ): ResponsiveChannel {
@@ -445,6 +453,8 @@ export function responsiveChannelFromEnvironment(
  * 解析当前构图通道。`layout=` 仍是最高优先级；显式 `channel=desktop` 必须保持
  * PC 构图。官网移动启动器只提供 `channel=mobile`，因此在手机/平板尺寸范围内也
  * 把它作为移动构图的可靠提示。超出该范围的桌面窗口继续按输入能力选择。
+ *
+ * 英文 / English: Parse the current composition channel. `layout=` still has highest priority; explicit `channel=desktop` must preserve PC composition. The official website mobile launcher only provides `channel=mobile`, so use it as a reliable tip for mobile composition in the mobile/tablet size range. Desktop windows outside this range continue to be selected based on input capabilities.
  */
 export function responsiveLayoutChannel(
   viewportWidth: number,
@@ -454,8 +464,8 @@ export function responsiveLayoutChannel(
   const params = new URLSearchParams(environment.search ?? "");
   const explicit = params.get("layout")?.toLowerCase();
   if (explicit === "mobile" || explicit === "desktop") return explicit;
-  // 启动参数中的显式桌面通道必须同时约束布局；否则触屏 PC 会加载桌面资源，
-  // 却因 coarse pointer 切到移动坐标域，导致 HUD 与特殊玩法使用两套投影。
+  // 启动参数中的显式桌面通道必须同时约束布局；否则触屏 PC 会加载桌面资源， / English: An explicit desktop channel in the launch parameters must also constrain the layout; otherwise the touch screen PC will load the desktop resources,
+  // 却因 coarse pointer 切到移动坐标域，导致 HUD 与特殊玩法使用两套投影。 / English: However, because the coarse pointer cuts into the moving coordinate domain, the HUD and special gameplay use two sets of projections.
   if (params.get("channel")?.toLowerCase() === "desktop") return "desktop";
 
   const width = finiteDimension(viewportWidth);
@@ -467,7 +477,7 @@ export function responsiveLayoutChannel(
     return "mobile";
   }
   if (environment.coarsePointer) return "mobile";
-  // 触控笔记本通常同时暴露 maxTouchPoints 与精细主指针，仍应保持 PC 构图。
+  // 触控笔记本通常同时暴露 maxTouchPoints 与精细主指针，仍应保持 PC 构图。 / English: Touch laptops often expose both maxTouchPoints and fine main pointers, and PC composition should still be maintained.
   if (environment.finePointer) return "desktop";
   const compactTouchDevice = Number.isFinite(environment.touchPoints)
     && (environment.touchPoints ?? 0) > 0
@@ -485,6 +495,8 @@ export function responsiveLayoutChannel(
  * 逻辑渲染器仍是 1280x720；桌面先让 4:3 authored 区域完整适配视口，再对称裁掉
  * 1280 渲染器的左右翼。这样 16:10/4:3 PC 的画面与状态栏贴住物理底边，同时
  * `visibleInsetX` 让 DOM、Pixi HUD 和特殊玩法控件锚定到实际可见区域。
+ *
+ * 英文 / English: 1200x900 authored composition projecting the PC reference baseline. The logical renderer is still 1280x720; the desktop first allows the 4:3 authored area to completely fit into the viewport, and then symmetrically cuts off the left and right wings of the 1280 renderer. In this way, the 16:10/4:3 PC screen and status bar stick to the physical bottom edge, while `visibleInsetX` allows the DOM, Pixi HUD and special gameplay controls to be anchored to the actual visible area.
  */
 export function computeDesktopFrameGeometry(
   viewportWidth: number,
@@ -515,7 +527,7 @@ export function computeDesktopFrameGeometry(
   };
 }
 
-/** 将设计表面以一次等比 contain 缩放居中，绝不 cover、裁切或分别拉伸坐标轴。 */
+/** 将设计表面以一次等比 contain 缩放居中，绝不 cover、裁切或分别拉伸坐标轴。 / English: Centers the design surface at a constant contain scale, never covering, clipping, or stretching the axes individually. */
 export function computeResponsiveFrameGeometry(
   viewportWidth: number,
   viewportHeight: number,
@@ -546,7 +558,7 @@ export function computeResponsiveFrameGeometry(
   };
 }
 
-/** 黑边返回 null；设计表面内的点统一映射到 Pixi/DOM 坐标。 */
+/** 黑边返回 null；设计表面内的点统一映射到 Pixi/DOM 坐标。 / English: Black edges return null; points within the design surface are uniformly mapped to Pixi/DOM coordinates. */
 export function responsiveDesignPoint(
   geometry: ResponsiveFrameGeometry,
   viewportX: number,
@@ -589,6 +601,8 @@ export function responsiveCompositionScale(
 
 /**
  * 返回固定 1280x720 渲染器在对称裁剪外框后仍然可见的部分。官方布局区域在该矩形内解析，而不是针对隐藏的渲染器翼。
+ *
+ * 英文 / English: Returns the portion of the fixed 1280x720 renderer that remains visible after symmetrically cropping the bounding box. The official layout area is resolved within this rectangle, not for the hidden renderer wing.
  */
 export function responsiveRendererRegion(
   visibleInsetX: number,
@@ -605,7 +619,7 @@ export function responsiveRendererRegion(
   };
 }
 
-/** 捕获的布局引擎使用的精确 `minBound`/对齐投影。 */
+/** 捕获的布局引擎使用的精确 `minBound`/对齐投影。 / English: Captures the exact `minBound`/aligned projection used by the layout engine. */
 export function resolveResponsiveMinBound(
   region: ResponsiveRendererRegion,
   minBound: ResponsiveMinBound,
@@ -630,7 +644,7 @@ export function resolveResponsiveMinBound(
   };
 }
 
-/** 解析在 Pixi 调整大小之前由 ResponsiveLayout 写入的继承内联接口。 */
+/** 解析在 Pixi 调整大小之前由 ResponsiveLayout 写入的继承内联接口。 / English: Resolve inherited inline interfaces written by ResponsiveLayout before Pixi resizes. */
 export function responsiveVisibleInset(value: string | null | undefined): number {
   const inset = Number.parseFloat(value ?? "");
   return Number.isFinite(inset) && inset > 0 ? inset : 0;
@@ -638,6 +652,8 @@ export function responsiveVisibleInset(value: string | null | undefined): number
 
 /**
  * 在预设的逻辑像素中保留可见的控制艺术，同时从捕获的 cqw/cqh 合约中投影透明的移动点击区域。
+ *
+ * 英文 / English: Preserves visible control art in preset logical pixels while projecting transparent mobile click areas from captured cqw/cqh contracts.
  */
 export function responsiveControlGeometry(
   viewportWidth: number,
@@ -722,6 +738,8 @@ export class ResponsiveLayout {
   private running = false;
   /**
    * 使 ResizeObserver/浏览器事件队列保留的回调无效。 `disconnect()` 可以防止将来的观察，但它无法撤销在拆卸之前已排队的回调。
+   *
+   * 英文 / English: Invalidate callbacks retained by ResizeObserver/browser event queue. `disconnect()` can prevent future observations, but it cannot undo callbacks that were queued before being disassembled.
    */
   private lifecycleGeneration = 0;
   private windowResizeHandler: (() => void) | null = null;
@@ -775,7 +793,7 @@ export class ResponsiveLayout {
       });
     };
     applyNowIfCurrent();
-    // `onLayout` 是应用程序代码，可以在初始发布期间同步拆除该实例。
+    // `onLayout` 是应用程序代码，可以在初始发布期间同步拆除该实例。 / English: `onLayout` is application code that can synchronously tear down the instance during initial publishing.
     if (!this.running || generation !== this.lifecycleGeneration) return;
     if (typeof ResizeObserver !== "undefined") {
       this.observer = new ResizeObserver(scheduleIfCurrent);
@@ -809,6 +827,8 @@ export class ResponsiveLayout {
   /**
    * 左右手模式只重新发布表现布局；同一次提交同时驱动 DOM、Jackpot 与 FreeSpin HUD。
    * 实例字段在旋转和 resize 间保持，绝不进入下注或结果协议。
+   *
+   * 英文 / English: Left- and right-handed mode only republishes the presentation layout; the same commit drives both the DOM, Jackpot, and FreeSpin HUD. Instance fields persist across rotations and resizes and never enter the bet or result protocol.
    */
   setHandMode(handMode: MobileHandMode): void {
     if (handMode !== "left" && handMode !== "right") return;
@@ -821,7 +841,7 @@ export class ResponsiveLayout {
   private readonly apply = (): void => {
     const width = this.viewport.clientWidth;
     const height = this.viewport.clientHeight;
-    // DevTools 和旋转会短暂发布 0×N/N×0；保留上一稳定表面，不得压缩到 1×1。
+    // DevTools 和旋转会短暂发布 0×N/N×0；保留上一稳定表面，不得压缩到 1×1。 / English: DevTools and rotations briefly publish 0×N/N×0; the last stable surface is retained and must not be compressed to 1×1.
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
     const snapshot = computeResponsiveLayoutSnapshot(
       width,
@@ -868,7 +888,7 @@ export class ResponsiveLayout {
     this.applyFeaturePreviewVariables(snapshot);
     this.applyFrame(snapshot);
 
-    // 捕获的游戏在纵向下仍可玩； DOM 中保留本地旋转提示符只是为了与现有 shell 兼容。
+    // 捕获的游戏在纵向下仍可玩； DOM 中保留本地旋转提示符只是为了与现有 shell 兼容。 / English: Captured games are still playable in portrait orientation; the local rotation prompt is retained in the DOM only for compatibility with existing shells.
     const outerViewport = this.frame.closest?.<HTMLElement>('[data-role="viewport"]')
       ?? this.viewport;
     outerViewport.dataset.orientationLock = "false";
@@ -904,6 +924,8 @@ export class ResponsiveLayout {
   /**
    * 官方 Feature Preview 是 1280x720 预设的叠加层，由与其 Pixi Spine 内容相同的独立 FPS 最小绑定投影。
    * 将 DOM 标签保留在该转换上可以防止手机和平板电脑规则偏离，同时控件的大小仍保持与物理短边的距离。
+   *
+   * 英文 / English: The official Feature Preview is an overlay of 1280x720 presets projected by the same independent FPS minimum rig as its Pixi Spine content. Keeping DOM tags on this transition prevents phone and tablet rules from deviating while the control remains sized away from its physical short edge.
    */
   private applyFeaturePreviewVariables(snapshot: ResponsiveLayoutSnapshot): void {
     const content = snapshot.fpsTransforms?.content;
@@ -977,7 +999,7 @@ export class ResponsiveLayout {
     this.frame.style.setProperty("--fps-checkbox-atlas-x", `${-checkboxSize * 38.92}px`);
   }
 
-  /** 从捕获的 18/36px 高度缩放紧凑型移动状态条。 */
+  /** 从捕获的 18/36px 高度缩放紧凑型移动状态条。 / English: Scale compact mobile status bar from captured 18/36px height. */
   private applyMobileStatusVariables(snapshot: ResponsiveLayoutSnapshot): void {
     const height = snapshot.statusRegion.height;
     const properties = [

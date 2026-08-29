@@ -1,5 +1,7 @@
 #!/bin/sh
 # 动态验收 TLS、认证、数据库、可观测、日志 sink 和真实一次性启动会话。
+# English: Dynamic acceptance of TLS, authentication, databases, observables, log sinks and true one-time boot
+# sessions.
 set -eu
 # shellcheck source=deploy/local-production/common.sh
 . "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/common.sh"
@@ -185,6 +187,8 @@ compose exec -T \
   -e PROBE_BEARER_FILE=/run/operator-secrets/local-operator-metrics.token \
   local-operator /service-probe
 # 密码只经容器环境传给 valkey-cli，不进入命令行、宿主输出或 Compose 环境。
+# English: The password is only passed to valkey-cli through the container environment and does not enter the
+# command line, host output or Compose environment.
 # shellcheck disable=SC2016
 compose exec -T valkey sh -ceu '
   REDISCLI_AUTH="$(sed -n "1p" /run/valkey-secrets/valkey-password)"
@@ -221,6 +225,8 @@ let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
 done
 test "$targets_ready" = 1 || { printf '%s\n' 'Prometheus 必需 targets 未全部 up。' >&2; exit 1; }
 # Prometheus 就绪早于首次规则求值；等待规则全部加载并完成一次健康求值，避免冷启动误报。
+# English: Prometheus is ready earlier than the first rule evaluation; wait for all rules to be loaded and
+# complete a health evaluation to avoid cold start false positives.
 rules_ready=0
 attempt=0
 while [ "$attempt" -lt 12 ]; do
@@ -271,6 +277,8 @@ let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
 }
 
 # 备份状态与三个有界持久化存储必须由已认证的 local-operator scrape 暴露。
+# English: Backup state and three bounded persistence stores must be exposed by an authenticated local-operator
+# scrape.
 require_prometheus_vector 'local_production_backup_status_file_readable{job="local-operator"} == 1'
 require_prometheus_vector 'local_production_backup_last_success_timestamp_seconds{job="local-operator"} > 0'
 require_prometheus_vector 'local_production_backup_consecutive_failures{job="local-operator"} == 0'
@@ -300,6 +308,8 @@ process.stdin.on("data", chunk => { source += chunk; }).on("end", () => {
 
 read_operator_log_bytes() {
   # 容器内 shell 应展开文件/计数变量，宿主不得提前展开。
+  # English: The in-container shell should expand file/count variables, the host must not expand them
+  # beforehand.
   # shellcheck disable=SC2016
   compose exec -T backup sh -ceu '
     total=0
@@ -321,6 +331,8 @@ read_operator_log_bytes() {
 verify_operator_log_probe() {
   expected_digest=$1
   # 容器内 shell 按受控摘要搜索脱敏 JSONL，宿主不得提前展开。
+  # English: The in-container shell searches for desensitized JSONL by controlled digest, and the host must not
+  # expand it in advance.
   # shellcheck disable=SC2016
   compose exec -T backup sh -ceu '
     needle=$1
@@ -338,9 +350,15 @@ verify_operator_log_probe() {
 # 在触发之前同时记录 sink 累计值和持久文件总字节。只发送一个业务探针；后续推进
 # 只能来自 Vector 的固定四字段 10 秒心跳，不能再发业务事件掩盖低流量磁盘唤醒问题。
 # 唯一安全 request id 仅用于计算日志中的 SHA-256 摘要，不作为业务/租户标识。
+# English: Both sink cumulative value and persistent file total bytes are recorded before triggering. Only send
+# one business probe; follow up It can only come from Vector's fixed four-field 10-second heartbeat, and no
+# business events can be sent to cover up low-traffic disk wake-up issues. The unique secure request id is only
+# used to calculate the SHA-256 digest in the logs and is not used as a business/tenant identifier.
 vector_sink_baseline=$(read_vector_sink_counter)
 operator_log_bytes_baseline=$(read_operator_log_bytes)
 # 模板字符串插值必须由 Node 求值，不能由当前 shell 提前展开。
+# English: Template string interpolation must be evaluated by Node and cannot be prematurely expanded by the
+# current shell.
 # shellcheck disable=SC2016
 log_probe_request_id=$(node -e '
 const {randomBytes}=require("node:crypto");
@@ -382,6 +400,9 @@ printf '%s\n' 'Vector 单业务探针已在 25 秒内完成文件增长与精确
 
 # sent counter 经 Vector internal_metrics 和 Prometheus 两个 15 秒周期传播；它只验证
 # 可观测链路新鲜度，不参与也不推翻上面已经完成的 25 秒业务交付判定。
+# English: sent counter is propagated via Vector internal_metrics and Prometheus in two 15-second periods; it
+# only verifies The link freshness can be observed without participating in or overturning the 25-second service
+# delivery judgment completed above.
 counter_ready=0
 counter_attempt=0
 while [ "$counter_attempt" -le 7 ]; do
@@ -439,6 +460,9 @@ printf 'Authorization: Bearer %s\n' "$alert_token" \
 
 # 向真实 Alertmanager API 注入一个两分钟自愈的技术探针，确认非空 receiver 经过
 # TLS/Bearer 到达 local-operator，并由 Prometheus 观察到持久化成功计数增长。
+# English: Inject a two-minute self-healing technical probe into the real Alertmanager API to confirm that the
+# non-null receiver passes TLS/Bearer reaches the local-operator and the persistence success count is observed
+# by Prometheus to increase.
 alert_baseline_json="$(curl --fail --silent --show-error --get \
   --data-urlencode 'query=local_operator_alert_accepted_total{job="local-operator"}' \
   http://127.0.0.1:9090/api/v1/query)"
@@ -497,6 +521,7 @@ for forbidden_log in \
 done
 
 # 未知 SNI/Host 必须在 TLS 握手层被拒绝，不得默认落到 Web。
+# English: Unknown SNI/Host must be rejected at the TLS handshake layer and must not fall to the web by default.
 if curl --insecure --silent --show-error --connect-timeout 3 --output /dev/null \
   --resolve unknown.localhost:8443:127.0.0.1 https://unknown.localhost:8443/ 2>/dev/null; then
   printf '%s\n' '未知入口主机名未被拒绝。' >&2

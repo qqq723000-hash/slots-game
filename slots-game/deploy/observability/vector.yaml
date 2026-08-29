@@ -4,14 +4,21 @@ sources:
   rgs_container_stdout:
     type: file
     # 由 Compose 强制注入，仅应匹配 RGS 容器 stdout 文件，不能使用全节点通配符。
+    # English: Forced injection by Compose, should only match RGS container stdout files, full node wildcards
+    # cannot be used.
     include:
       - "${RGS_CONTAINER_LOG_GLOB}"
     # 新发现的容器日志必须从头读，避免 Vector 晚启动时跳过 startup/fatal/security 行；
     # 已发现文件仍由持久化 data_dir checkpoint 续读，24 小时上限阻止无限历史重放。
+    # English: Newly discovered container logs must be read from the beginning to avoid skipping the
+    # startup/fatal/security line when Vector is started late; Found files are still read by the persistent
+    # data_dir checkpoint, and the 24-hour cap prevents infinite history replay.
     read_from: beginning
     ignore_older_secs: 86400
     internal_metrics:
       # 文件路径随容器轮换且基数无界；运行态只保留固定 component_id 标签。
+      # English: The file path rotates with the container and the base is unbounded; only the fixed component_id
+      # label is retained in the running state.
       include_file_tag: false
 
   vector_internal_metrics:
@@ -20,12 +27,17 @@ sources:
     scrape_interval_secs: 15
     tags:
       # 容器 hostname 会在重建后变化；禁止它制造无界历史时序。
+      # English: The container hostname will change after rebuilding; disabling it from creating unbounded
+      # history.
       host_key: ""
 
   archive_flush_heartbeat_metric:
     type: static_metrics
     # Vector 0.57 的磁盘缓冲在低流量下可能等待下一条事件才提交当前批次；固定心跳
     # 为归档链路提供有界推进事件，同时不承载用户、请求或运行环境数据。
+    # English: Vector 0.57's disk buffer may wait for the next event before submitting the current batch under
+    # low traffic; fixed heartbeat Provides bounded push events for archive links while carrying no user,
+    # request, or runtime environment data.
     interval_secs: 10
     namespace: vector
     metrics:
@@ -48,6 +60,8 @@ transforms:
       - archive_flush_heartbeat_to_log
     source: |-
       # 无条件从空对象重建；上游指标名、标签、hostname 或未来新增字段都不能进入归档。
+      # English: Rebuild from an empty object unconditionally; no upstream indicator names, labels, hostnames or
+      # future new fields can be entered into the archive.
       . = {
         "service": "vector",
         "time": now(),
@@ -63,6 +77,8 @@ transforms:
       raw = string!(.message)
 
       # 兼容 Kubernetes CRI stdout 包装；未匹配时继续按裸 JSONL 处理。
+      # English: Compatible with Kubernetes CRI stdout wrapper; continues processing as bare JSONL when not
+      # matched.
       cri, cri_err = parse_regex(raw, r'^(?P<timestamp>[^ ]+) (?P<stream>stdout|stderr) (?P<partial>[FP]) (?P<payload>.*)$')
       if cri_err == null {
         raw = string!(cri.payload)
@@ -72,6 +88,8 @@ transforms:
       }
 
       # 兼容 Docker json-file 的外层包装，但绝不连接高权限 docker.sock。
+      # English: Compatible with the outer wrapper of Docker json-file, but never connect to high-privilege
+      # docker.sock.
       docker, docker_err = parse_json(raw)
       if docker_err == null && is_object(docker) {
         docker = object!(docker)
@@ -89,6 +107,9 @@ transforms:
       } else {
         # 非结构化行可能来自第三方库并夹带 DSN、token 或请求内容；只保留固定标记，
         # 禁止把无法按字段脱敏的原文发送到长期日志接收端。
+        # English: Unstructured rows may come from third-party libraries and carry DSNs, tokens, or request
+        # content; only fixed tags are retained, It is prohibited to send original text that cannot be
+        # desensitized by field to the long-term log receiver.
         .message = "unparseable-log-redacted"
         .parse_error = true
       }
@@ -101,6 +122,9 @@ transforms:
     source: |-
       # 输出从空对象重建；normalize 即使合入未来未知或任意深度 JSON，也没有字段能
       # 靠“未命中黑名单”穿过边界。只复制当前 RGS slog 契约中的审核标量。
+      # English: The output is reconstructed from an empty object; no fields from normalize can be merged into
+      # future unknown or arbitrary depth JSON. Cross the border with a "blacklist of misses". Only copy audit
+      # scalars in the current RGS slog contract.
       event = .
       . = { "service": "rgs-server" }
 
@@ -226,6 +250,9 @@ transforms:
 
       # 最后再按固定 msg 映射重建。即使第三方 JSON 伪造了合法形态的 allowlist 字段，
       # 认证告警也不能携带 game_id，HTTP 日志也不能携带 definition_hash。
+      # English: Finally, rebuild according to the fixed msg mapping. Even if the third-party JSON forges the
+      # legal form of the allowlist field, Authentication alarms cannot carry game_id, and HTTP logs cannot
+      # carry definition_hash.
       sanitized = .
       . = { "service": "rgs-server" }
       if is_timestamp(sanitized.time) { .time = sanitized.time }
@@ -290,6 +317,8 @@ sinks:
       - redact_rgs_sensitive_fields
       - safe_archive_flush_heartbeat
     # 必须是经过网络与合规审批的 HTTPS/mTLS egress；禁止在 URI 中嵌入用户名或令牌。
+    # English: Must be a network and compliance-approved HTTPS/mTLS egress; embedding usernames or tokens in the
+    # URI is prohibited.
     uri: "${RGS_LOG_SINK_URI}"
     method: post
     encoding:
@@ -302,11 +331,15 @@ sinks:
     buffer:
       type: disk
       # Vector 当前磁盘缓冲实现要求至少 268435488 bytes；使用精确最小值控制资源占用。
+      # English: Vector's current disk buffer implementation requires at least 268435488 bytes; uses precise
+      # minimums to control resource usage.
       max_size: 268435488
       when_full: block
     request:
       timeout_secs: 10
       # 保留 Vector 的近无限默认重试；有限次数会在短时出口故障后丢弃已缓冲批次。
+      # English: Preserves Vector's near-infinite default retries; a limited number of buffered batches are
+      # dropped after a short egress failure.
     tls:
       verify_certificate: true
       verify_hostname: true
@@ -317,6 +350,9 @@ sinks:
       - vector_internal_metrics
     # 只由同一 internal observability 网络中的 Prometheus 抓取；Compose 不发布该端口。
     # Vector 同时连接受限日志 egress，平台网络策略必须拒绝该网络向 9598 发起连接。
+    # English: Only crawled by Prometheus on the same internal observability network; Compose does not publish
+    # this port. Vector is connected to the restricted log egress at the same time, and the platform network
+    # policy must deny the network to initiate connections to 9598.
     address: 0.0.0.0:9598
     flush_period_secs: 60
 
@@ -427,3 +463,6 @@ tests:
 
 # 安全不变量：该配置不决定删除周期。接收端必须按 retention-policy.example.yml
 # 的已批准副本实施保留、legal hold、可审计删除和容量告警。
+# English: Security invariant: This configuration does not determine the deletion period. The receiving end must
+# follow retention-policy.example.yml Approved copies are subject to retention, legal hold, auditable deletion,
+# and capacity alerts.

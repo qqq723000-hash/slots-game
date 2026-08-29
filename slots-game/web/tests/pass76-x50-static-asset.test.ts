@@ -1,4 +1,4 @@
-// @ts-nocheck -- 用于校验不可变且已提取的官方 PNG 资源。
+// @ts-nocheck -- 用于校验不可变且已提取的官方 PNG 资源。 / English: @ts-nocheck -- Used to verify immutable and extracted official PNG resources.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,7 +11,7 @@ describe("Pass76 official static x50 Wild asset", () => {
     const png = readFileSync(X50_STATIC_ASSET);
 
     expect(png.subarray(1, 4).toString("ascii")).toBe("PNG");
-    // PNG 的 IHDR 从第 8 字节开始，宽度和高度从第 16 字节开始。
+    // PNG 的 IHDR 从第 8 字节开始，宽度和高度从第 16 字节开始。 / English: PNG's IHDR starts at byte 8, and width and height start at byte 16.
     expect(png.readUInt32BE(16)).toBe(200);
     expect(png.readUInt32BE(20)).toBe(170);
     expect(createHash("sha256").update(png).digest("hex"))

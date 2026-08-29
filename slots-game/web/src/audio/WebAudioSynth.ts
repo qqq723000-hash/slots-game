@@ -49,13 +49,15 @@ function disconnect(nodes: readonly AudioNode[]): void {
     try {
       node.disconnect();
     } catch {
-      // 节点可能已因浏览器拆卸而断开连接。
+      // 节点可能已因浏览器拆卸而断开连接。 / English: The node may have been disconnected due to browser teardown.
     }
   }
 }
 
 /**
  * 原始程序网络音频实现。它不执行任何提取操作，也不拥有任何许可/第三方样本；每个声音都是在运行时合成的。
+ *
+ * 英文 / English: Original procedural network audio implementation. It does not perform any extraction operations, nor does it own any licensed/third-party samples; every sound is synthesized on the fly.
  */
 export class WebAudioSynth implements AudioBackend {
   private readonly contextFactory: AudioContextFactory;
@@ -131,7 +133,7 @@ export class WebAudioSynth implements AudioBackend {
     try {
       switch (cue) {
         case "intro.game":
-          // 启动序列是预混合捕获的提示；合成替代品将创建 false 咆哮/冲击同步点。
+          // 启动序列是预混合捕获的提示；合成替代品将创建 false 咆哮/冲击同步点。 / English: The startup sequence is a cue for pre-mixed capture; synthetic alternatives will create false growl/shock sync points.
           return;
         case "ui.click":
         case "ui.open":
@@ -182,7 +184,7 @@ export class WebAudioSynth implements AudioBackend {
           return;
         case "wheel.king-spin-won":
         case "wheel.kong-quest-won":
-          // IDs 50/51 是可观察的调度程序语义，没有捕获播放操作。程序替代品是 false 音频。
+          // IDs 50/51 是可观察的调度程序语义，没有捕获播放操作。程序替代品是 false 音频。 / English: IDs 50/51 are observable scheduler semantics and do not capture playback operations. The program alternative is false audio.
           return;
         case "feature.start":
         case "free-spins.outro":
@@ -228,7 +230,7 @@ export class WebAudioSynth implements AudioBackend {
           return;
       }
     } catch {
-      // 失败的装饰性声音被故意从游戏流程中隔离出来。
+      // 失败的装饰性声音被故意从游戏流程中隔离出来。 / English: The decorative sounds of failure are deliberately isolated from the flow of the game.
     }
   }
 
@@ -242,7 +244,7 @@ export class WebAudioSynth implements AudioBackend {
         : this.createCityAmbient(context, options);
       this.loops.set(cue, loop);
     } catch {
-      // 循环创建是尽力而为的；稍后的请求可能会重试。
+      // 循环创建是尽力而为的；稍后的请求可能会重试。 / English: Loop creation is best-effort; later requests may be retried.
     }
   }
 
@@ -260,7 +262,7 @@ export class WebAudioSynth implements AudioBackend {
       loop.gain.gain.setValueAtTime(Math.max(MIN_GAIN, loop.gain.gain.value), now);
       loop.gain.gain.exponentialRampToValueAtTime(MIN_GAIN, stopAt);
     } catch {
-      // 停止下面的源仍然会释放循环。
+      // 停止下面的源仍然会释放循环。 / English: Stopping the source below will still release the loop.
     }
     let remaining = loop.sources.length;
     const release = (): void => {
@@ -297,7 +299,7 @@ export class WebAudioSynth implements AudioBackend {
     try {
       if (context.state === "running") await context.suspend();
     } catch {
-      // 浏览器可能会导致页面暂停或 OS 音频中断。
+      // 浏览器可能会导致页面暂停或 OS 音频中断。 / English: The browser may cause page pauses or OS audio interruptions.
     }
   }
 
@@ -316,7 +318,7 @@ export class WebAudioSynth implements AudioBackend {
     try {
       await context.close();
     } catch {
-      // 在 HMR、导航和 OS 中断期间，拆卸仍然安全。
+      // 在 HMR、导航和 OS 中断期间，拆卸仍然安全。 / English: Disassembly remains safe during HMR, navigation and OS outages.
     }
   }
 
@@ -384,7 +386,7 @@ export class WebAudioSynth implements AudioBackend {
     });
   }
 
-  /** 由沥青金属和过滤火花制成的短时上升装药。 */
+  /** 由沥青金属和过滤火花制成的短时上升装药。 / English: A short rising charge made of bituminous metal and filtered sparks. */
   private playEnergyCollect(context: AudioContext, options: NormalizedAudioCueOptions): void {
     const start = context.currentTime + options.delayMs / 1_000;
     const durationScale = options.reducedMotion ? 0.62 : 1;
@@ -413,7 +415,7 @@ export class WebAudioSynth implements AudioBackend {
     });
   }
 
-  /** 紧凑的加速轮/棘轮手势而不是采样循环。 */
+  /** 紧凑的加速轮/棘轮手势而不是采样循环。 / English: Compact speed wheel/ratchet gesture instead of sample loop. */
   private playWheelSpin(context: AudioContext, options: NormalizedAudioCueOptions): void {
     const start = context.currentTime + options.delayMs / 1_000;
     const durationScale = options.reducedMotion ? 0.46 : 1;
@@ -445,7 +447,7 @@ export class WebAudioSynth implements AudioBackend {
     }
   }
 
-  /** 仅当权威特征开始时才使用大调模式过渡和弦。 */
+  /** 仅当权威特征开始时才使用大调模式过渡和弦。 / English: Use major mode transition chords only when the authoritative character begins. */
   private playFeatureStart(context: AudioContext, options: NormalizedAudioCueOptions): void {
     const start = context.currentTime + options.delayMs / 1_000;
     const durationScale = options.reducedMotion ? 0.58 : 1;
@@ -742,7 +744,7 @@ export class WebAudioSynth implements AudioBackend {
         try {
           source.disconnect();
         } catch {
-          // 已经释放了。
+          // 已经释放了。 / English: has been released.
         }
       }
     }
@@ -756,13 +758,13 @@ export class WebAudioSynth implements AudioBackend {
         loop.gain.gain.cancelScheduledValues(now);
         loop.gain.gain.setValueAtTime(MIN_GAIN, now);
       } catch {
-        // 上下文可能已经被中断或关闭。
+        // 上下文可能已经被中断或关闭。 / English: The context may have been interrupted or closed.
       }
       for (const source of loop.sources) {
         try {
           source.stop(now);
         } catch {
-          // 先前停止的源不需要进一步的工作。
+          // 先前停止的源不需要进一步的工作。 / English: Previously stopped sources require no further work.
         }
       }
       disconnect(loop.nodes);

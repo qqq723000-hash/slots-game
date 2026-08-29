@@ -39,6 +39,9 @@ const (
 
 // HTTPPublisherConfig 定义供应商无关的 rgs-outbox-http-v1 契约。SigningKey 刻意与
 // 运营商及钱包签名材料分离；复用任一密钥都会扩大其信任域并增加轮换复杂度。
+// English: HTTPPublisherConfig defines the vendor-independent rgs-outbox-http-v1 contract. SigningKey is
+// intentionally separated from operator and wallet signing materials; reusing any key expands its trust domain and
+// increases rotation complexity.
 type HTTPPublisherConfig struct {
 	Endpoint                 string
 	KeyID                    string
@@ -52,6 +55,10 @@ type HTTPPublisherConfig struct {
 // HTTPPublisher 发送不可变且经过 HMAC 认证的事件信封。接收端通过任意 2xx 响应确认
 // 持久化且幂等接收，并且必须按 HeaderEventID 与 HeaderIdempotencyKey 去重。
 // 重定向会被拒绝，防止凭据及签名消息转发到其他信任主体。
+// English: HTTPPublisher sends immutable HMAC authenticated event envelopes. The receiving end confirms persistent
+// and idempotent reception through any 2xx response, and must deduplicate the HeaderEventID and
+// HeaderIdempotencyKey. Redirects are denied, preventing credential and signature messages from being forwarded to
+// other trusted principals.
 type HTTPPublisher struct {
 	endpoint *url.URL
 	keyID    string
@@ -172,12 +179,16 @@ func (publisher *HTTPPublisher) Publish(ctx context.Context, event Event) error 
 		}
 		// net/http 错误通常包含完整 URL、代理或 TLS 细节，而分发器会记录该错误；
 		// 因此只返回稳定分类，禁止把部署内部信息传入日志。
+		// English: Net/http errors typically contain full URL, proxy or TLS details and are logged by the dispatcher;
+		// therefore only stable classifications are returned and deployment-internal information is not passed into the
+		// log.
 		return errors.New("outbox http: delivery transport failed")
 	}
 	defer response.Body.Close()
 	_, _ = io.CopyN(io.Discard, response.Body, maxSinkResponseBytes)
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		// 错误中禁止包含响应体或端点；二者都可能携带凭据或下游内部信息并被后续日志记录。
+		// Errors must not include the response body or endpoint; either may carry credentials or downstream internals and be logged later.
 		return fmt.Errorf("outbox http: sink returned status %d", response.StatusCode)
 	}
 	return nil
@@ -185,6 +196,8 @@ func (publisher *HTTPPublisher) Publish(ctx context.Context, event Event) error 
 
 // Close 清除从文件加载的应用凭据并关闭空闲连接。该操作幂等；正在进行的 Publish
 // 使用私有密钥副本，不会读取已清除的共享切片。
+// English: Close Clears application credentials loaded from file and closes idle connections. The operation is
+// idempotent; an ongoing Publish uses a copy of the private key and does not read cleared shared slices.
 func (publisher *HTTPPublisher) Close() error {
 	if publisher == nil {
 		return nil
@@ -261,6 +274,8 @@ type HTTPClientConfig struct {
 
 // NewSecureHTTPClient 构造审计接收端专用传输。可选 CA 及 mTLS 材料只在启动时读取一次；
 // 即使调用方提供自定义客户端，发布器仍会禁用重定向。
+// English: NewSecureHTTPClient Constructs an audit receiver-specific transport. Optional CA and mTLS material is
+// read only once at startup; the publisher still disables redirection even if the caller provides a custom client.
 func NewSecureHTTPClient(config HTTPClientConfig) (*http.Client, error) {
 	if config.Timeout <= 0 || config.Timeout > time.Hour {
 		return nil, fmt.Errorf("%w: invalid HTTP timeout", ErrInvalidInput)

@@ -516,8 +516,8 @@ describe("rare-state renderer replay", () => {
       reel: Math.floor(cellIndex / 3),
       row: cellIndex % 3,
     }, cellIndex === 4 || cellIndex === 7]));
-    // 转轴优先索引 1 上已稳定的 Rage 仍是普通 Symbol7，只会作为一次成功且
-    // 不发生变换的遍历空操作参与流程。
+    // 转轴优先索引 1 上已稳定的 Rage 仍是普通 Symbol7，只会作为一次成功且 / English: A stabilized Rage on reel priority index 1 is still a normal Symbol7 and only counts as a success and
+    // 不发生变换的遍历空操作参与流程。 / English: A no-op traversal that does not undergo transformations participates in the process.
     expect(reelCalls.reveal).toHaveBeenCalledWith({ reel: 0, row: 1 }, false);
     expect(onRageRespin).toHaveBeenCalledOnce();
     expect(onRagePound).toHaveBeenCalledOnce();
@@ -667,8 +667,8 @@ describe("rare-state renderer replay", () => {
     }, false);
     const startedAt = clock.now;
     clock.frameAt(startedAt);
-    // 刻意延迟的一帧会使剩余所有预设边界都到期。发生异常的检查点仍必须立即
-    // 停止当前同一个回调。
+    // 刻意延迟的一帧会使剩余所有预设边界都到期。发生异常的检查点仍必须立即 / English: An intentional delay of one frame causes all remaining preset boundaries to expire. The checkpoint where the exception occurs must still be immediately
+    // 停止当前同一个回调。 / English: Stop the same current callback.
     clock.frameAt(startedAt + 4_120);
     expect(milestones.map(({ phase }) => phase)).toEqual(["started", "exploding"]);
 
@@ -1259,8 +1259,8 @@ describe("rare-state renderer replay", () => {
     expect(effects.requestFreeSpinSummaryContinue()).toBe(false);
     expect(milestones).toEqual(["ready", "cancelled"]);
 
-    // 取消回合并不等于销毁渲染器：同一个 effects 实例必须仍可供下一个权威
-    // Feature 事件使用。
+    // 取消回合并不等于销毁渲染器：同一个 effects 实例必须仍可供下一个权威 / English: Canceling a turn does not equal destroying the renderer: the same effects instance must still be available for the next authority
+    // Feature 事件使用。 / English: Feature event usage.
     const nextIntro = effects.presentAfterReels({
       type: "free_spins.started",
       mode: "EXPANSION",
@@ -1298,8 +1298,8 @@ describe("rare-state renderer replay", () => {
 
     expect(milestones).toEqual(["ready"]);
     expect(clock.pendingFrames).toBe(0);
-    // 同一主控件的旧 trusted click 可能在新摘要租约打开后才到达。checkpoint 持有
-    // 期间必须消费但不得关闭摘要，否则跨浏览器像素门会永远错过该姿势。
+    // 同一主控件的旧 trusted click 可能在新摘要租约打开后才到达。checkpoint 持有 / English: An old trusted click for the same master control may arrive after a new digest lease has been opened. checkpoint holds
+    // 期间必须消费但不得关闭摘要，否则跨浏览器像素门会永远错过该姿势。 / English: The digest must be consumed during the period but must not be closed, otherwise the cross-browser pixel gate will miss the gesture forever.
     expect(effects.requestFreeSpinSummaryContinue()).toBe(true);
     await flushAsync();
     expect(milestones).toEqual(["ready"]);
@@ -1532,7 +1532,7 @@ describe("rare-state renderer replay", () => {
     expect(milestones).toEqual(["popup-ready"]);
     expect(offsetSource).not.toHaveBeenCalled();
     expect(effects.requestWheelInteraction()).toBe("popup-continued");
-    // 弹窗手势不能在同一轮处理中继续穿透到 Ready 门控。
+    // 弹窗手势不能在同一轮处理中继续穿透到 Ready 门控。 / English: Pop-up gestures cannot continue to penetrate the Ready gate in the same round of processing.
     expect(effects.requestWheelInteraction()).toBeNull();
     expect(offsetSource).not.toHaveBeenCalled();
     await flushAsync();
@@ -1540,7 +1540,7 @@ describe("rare-state renderer replay", () => {
     expect(milestones).toEqual([
       "popup-ready", "popup-continue", "wheel-ready",
     ]);
-    // 无界的 Ready RAF 可以任意延迟运行，且不消耗 RNG。
+    // 无界的 Ready RAF 可以任意延迟运行，且不消耗 RNG。 / English: Unbounded Ready RAF can run with any delay and consumes no RNG.
     clock.frameAt(clock.now);
     await flushAsync();
     clock.frameAt(clock.now + 10_000);
@@ -1579,8 +1579,8 @@ describe("rare-state renderer replay", () => {
     clock.frameAt(outroStartedAt + PRIMAL_WHEEL_TIMELINE_MS.wheelHide + 0.001);
     await flushAsync();
 
-    // Wheel 隐藏是流程屏障。Layer B 从此处开始，而转轴淡出和场景仍占有
-    // 剩余半秒。
+    // Wheel 隐藏是流程屏障。Layer B 从此处开始，而转轴淡出和场景仍占有 / English: Wheel hiding is a process barrier. Layer B starts here while the reels fade out and the scene still occupies
+    // 剩余半秒。 / English: Half a second left.
     expect(milestones.filter((value) => value === "bonus-label")).toHaveLength(1);
     expect(presentationSettled).toBe(true);
     expect(reels.alpha).toBeCloseTo(0.5, 3);
@@ -1681,8 +1681,8 @@ describe("rare-state renderer replay", () => {
     expect(calls).toEqual(["spin-start", "checkpoint"]);
     expect(offsetSource).not.toHaveBeenCalled();
 
-    // 先前存在的 Ready RAF 可以完成，但在夹具持有屏障期间，它不得再渲染一个
-    // Ready 样本，也不得进入 BEGIN_SPIN。
+    // 先前存在的 Ready RAF 可以完成，但在夹具持有屏障期间，它不得再渲染一个 / English: A pre-existing Ready RAF can be completed, but it must not render another one while the fixture is holding the barrier
+    // Ready 样本，也不得进入 BEGIN_SPIN。 / English: Ready samples must also not enter BEGIN_SPIN.
     clock.frameAt(clock.now + 5_000);
     await flushAsync();
     expect(clock.pendingFrames).toBe(0);
@@ -1772,8 +1772,8 @@ describe("rare-state renderer replay", () => {
     await flushAsync();
     expect(effects.requestWheelInteraction()).toBe("spin-started");
     await flushAsync();
-    // 无障碍精简只移除墙上时钟等待和装饰性偏移 RNG；流程仍会完整经过生产
-    // 生命周期和权威落定阶段。
+    // 无障碍精简只移除墙上时钟等待和装饰性偏移 RNG；流程仍会完整经过生产 / English: Accessibility Streamlining only removes wall clock waits and cosmetic offset RNGs; the process remains intact through production
+    // 生命周期和权威落定阶段。 / English: Life cycle and authority settling stage.
     expect(offsetSource).not.toHaveBeenCalled();
 
     const timelineScale = featureEffectDuration("wheel", true)

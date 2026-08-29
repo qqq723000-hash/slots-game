@@ -2,6 +2,9 @@
 
 # 受保护发布工作流只调用此固定入口。实际配置语义仍由 verify-static-contract.sh 检查；
 # 本脚本负责受控渲染、固定镜像预加载、短命 CA 夹具与私密临时目录清理。
+# English: Protected publishing workflows only call this fixed entry. Actual configuration semantics are still
+# checked by verify-static-contract.sh; This script is responsible for controlled rendering, fixed image
+# preloading, short-lived CA fixtures and private temporary directory cleanup.
 set -eu
 umask 077
 
@@ -46,6 +49,8 @@ docker pull "$PROMETHEUS_IMAGE"
 docker pull "$VECTOR_IMAGE"
 docker pull "$GRAFANA_IMAGE"
 # 发布入口已完成 digest 固定镜像预载；行为门禁禁止自行 pull 或访问宿主端口。
+# English: The publishing portal has completed digest fixed image preloading; behavioral gate prohibits
+# self-pull or access to the host port.
 make test-vector-bounded-flush
 docker run --rm --pull never --network none --read-only \
   --cap-drop ALL --security-opt no-new-privileges:true --user "$(id -u):$(id -g)" \

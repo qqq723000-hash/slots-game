@@ -1,5 +1,7 @@
 #!/bin/sh
 # AWS 正式交付契约对内置 Web、Pod TLS、非 ALB 入口和宽松网络失败闭合。
+# English: AWS artifactsion delivery contracts are closed to built-in web, Pod TLS, non-ALB ingress, and
+# permissive network failures.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -177,6 +179,7 @@ for phase in install upgrade; do
 done
 
 # 关键 AWS 边界的危险覆盖必须被渲染语义契约拒绝。
+# English: Dangerous overrides of critical AWS boundaries must be denied by the rendering semantics contract.
 for override in \
   'web.enabled=true' \
   'ingress.className=nginx' \

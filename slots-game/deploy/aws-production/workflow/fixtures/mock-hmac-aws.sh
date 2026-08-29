@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # HMAC 停机证据测试专用 AWS CLI；所有对象都保存在测试临时目录。
+# English: HMAC outage evidence test-specific AWS CLI; all objects are saved in the test temporary directory.
 set -euo pipefail
 
 service=${1:-}

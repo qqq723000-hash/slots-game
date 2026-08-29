@@ -1,6 +1,9 @@
 #!/bin/sh
 # 在启动容器前验证本机集成验收 Compose、镜像元数据、HSTS 与 Grafana 离线约束。
 # 本文件需精确检索被验收脚本中的字面量 `$...`，且 Node 负向变异不应由 shell 展开。
+# English: Verify native integration acceptance of Compose, image metadata, HSTS and Grafana offline constraints
+# before launching containers. This file needs to accurately retrieve the literal `$...` in the accepted script,
+# and Node negative mutations should not be expanded by the shell.
 # shellcheck disable=SC2016,SC1003
 set -eu
 

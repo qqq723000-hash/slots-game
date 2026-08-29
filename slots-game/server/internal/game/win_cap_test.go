@@ -99,6 +99,8 @@ func TestBaseVaultAwardsAreSequentiallyClippedAt2500x(t *testing.T) {
 
 	// 即使在不依赖定义的持久化边界，当上限事件不再与已支付的整场总额匹配时，
 	// 也会拒绝表面自洽但多支付一个单位的结果；感知定义的边界同样会拒绝。
+	// Even at the definition-independent persistence boundary, a cap event that no longer matches the paid whole-cycle total
+	// rejects a superficially self-consistent result overpaid by one unit; the definition-aware boundary rejects it as well.
 	tampered := outcome
 	tampered.Events = append([]Event(nil), outcome.Events...)
 	lastAward := -1

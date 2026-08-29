@@ -3,6 +3,9 @@
 ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:bcf91d2c73ab64fa1c4ac7fbac5ac523057c8af7d553ab9251c7aef38c260979
 # 上游 Nginx 镜像尚未包含 Alpine 对 CVE-2026-14456 的 OpenSSL 修复。补丁 APK 来自
 # Alpine v3.24 官方稳定仓库，按架构分别绑定内容摘要；运行层只通过只读 mount 离线安装。
+# English: The upstream Nginx image does not yet contain Alpine's OpenSSL fix for CVE-2026-14456. Patch APK from
+# Alpine v3.24 official stable warehouse, content summaries are bound separately according to architecture; the
+# running layer is only installed offline through read-only mount.
 FROM scratch AS openssl-patches
 ADD --checksum=sha256:161223a16f042b8e469e9441291e071464fd91d4f4bbe6f496ee8d0abd4e0701 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk /x86_64/libcrypto3.apk
 ADD --checksum=sha256:aca521e5ae4a321322a9d47ed64a1775f5ab1ffd215d1e9fc0433c58f7bfd037 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk /x86_64/libssl3.apk
@@ -20,6 +23,8 @@ RUN --network=none \
     apk info -e 'libcrypto3=3.5.8-r0' >/dev/null && \
     apk info -e 'libssl3=3.5.8-r0' >/dev/null
 # Docker COPY 会合并目录；整体重建可同时清除上游默认页和隐藏文件。
+# English: Docker COPY merges directories; a full rebuild clears upstream default pages and hidden files at the
+# same time.
 RUN --network=none rm -rf /usr/share/nginx/html && \
     install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html
 USER 101:101

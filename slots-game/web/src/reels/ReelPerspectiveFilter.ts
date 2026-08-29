@@ -5,10 +5,10 @@ export interface ReelPerspectiveFilterDiagnostics {
   readonly sourceFrame: Readonly<{ x: number; y: number; width: number; height: number }> | null;
 }
 
-/** Primal Rampage 的 `Bg` 卷轴过滤器提供精确透视默认值。 */
+/** Primal Rampage 的 `Bg` 卷轴过滤器提供精确透视默认值。 / English: Primal Rampage's `Bg` scroll filter provides precise perspective defaults. */
 export const PRIMAL_REEL_PERSPECTIVE_ANGLE = [0, -0.1] as const;
 export const PRIMAL_REEL_PERSPECTIVE_DEPTH = 1.5;
-/** 官方场景/滤镜坐标加倍为 DPR2；本地 Pixi 保留 CSS 单位。 */
+/** 官方场景/滤镜坐标加倍为 DPR2；本地 Pixi 保留 CSS 单位。 / English: Official scene/filter coordinates doubled to DPR2; native Pixi retains CSS units. */
 export const PRIMAL_REEL_PERSPECTIVE_COORDINATE_SCALE = 2;
 export const PRIMAL_REEL_PERSPECTIVE_EFFECTIVE_DEPTH =
   PRIMAL_REEL_PERSPECTIVE_DEPTH * PRIMAL_REEL_PERSPECTIVE_COORDINATE_SCALE;
@@ -26,6 +26,8 @@ export function primalReelPerspectiveEffectiveDepth(coordinateScale: number): nu
 
 /**
  * 捕获的游戏包中两个着色器阶段使用的共享源。保持VIEWPORT分支完整：它是官方运行时启用的路径，并产生箱体的窄顶/宽底投影。
+ *
+ * 英文 / English: Captured shared source used by two shader stages in the game package. Keep the VIEWPORT branch intact: it is the official runtime-enabled path and produces the narrow top/wide bottom projection of the box.
  */
 export const PRIMAL_REEL_PERSPECTIVE_SHADER_SOURCE = `// @render filter
 precision lowp float;
@@ -53,12 +55,12 @@ void main() {
 		vec2 position = aVertexPosition * outputFrame.zw;
 		vTexCoord = position * inputSize.zw;
 		position -= 0.5 * outputFrame.zw;
-		// 以画面中心为基准手动计算透视效果
+		// 以画面中心为基准手动计算透视效果 / English: Manually calculate the perspective effect based on the center of the screen
 		float depth = 1.0 + dot(position, 0.001 * uDepth * sin(uAngle));
 		position = position * cos(uAngle) / depth;
 		position = position + 0.5 * outputFrame.zw + outputFrame.xy;
 		vec3 projected = projectionMatrix * vec3(position, 1);
-		// 右侧插值依赖该深度修正
+		// 右侧插值依赖该深度修正 / English: The right interpolation relies on this depth correction
 		gl_Position = vec4(projected.xy * depth, 0, depth);
 	#endif // VIEWPORT
 }
@@ -80,6 +82,8 @@ export const PRIMAL_REEL_PERSPECTIVE_FRAGMENT_SOURCE =
 
 /**
  * 完整卷轴层次结构使用的官方后合成投影。调用者拥有它的安装位置；该类有意没有显示树知识，因此它不会意外地投影各个卷轴层。
+ *
+ * 英文 / English: The official post-compositing projection used by the full reel hierarchy. The caller owns where it is mounted; the class intentionally does not show tree knowledge so it does not accidentally project individual scroll layers.
  */
 export class ReelPerspectiveFilter extends Filter {
   private appliedFrames = 0;
@@ -97,7 +101,7 @@ export class ReelPerspectiveFilter extends Filter {
     this.setCoordinateScale(PRIMAL_REEL_PERSPECTIVE_COORDINATE_SCALE);
   }
 
-  /** 将投影数学和离屏目标与物理 DPR 域相匹配。 */
+  /** 将投影数学和离屏目标与物理 DPR 域相匹配。 / English: Match projection math and off-screen targets to physical DPR domains. */
   setCoordinateScale(coordinateScale: number): void {
     const safeScale = primalReelPerspectiveCoordinateScale(coordinateScale);
     this.uniforms.uDepth = PRIMAL_REEL_PERSPECTIVE_DEPTH * safeScale;

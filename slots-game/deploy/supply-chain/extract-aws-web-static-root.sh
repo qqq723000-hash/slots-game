@@ -2,6 +2,9 @@
 
 # 本脚本只从调用方已完成 Cosign/attestation 验证并按 digest 拉取的 Web 镜像提取 S3 输入。
 # 它不会接受 tag，也不会读取工作区 web/dist；docker create 只建立文件系统视图，不启动镜像。
+# English: This script only extracts S3 input from the web image that the caller has completed
+# Cosign/attestation verification and pulled by digest. It will not accept tags, nor will it read the workspace
+# web/dist; docker create only creates a file system view and does not start the image.
 set -eu
 umask 077
 
@@ -40,6 +43,8 @@ mkdir -m 0755 "$static_root"
 mkdir -m 0700 "$evidence_dir"
 
 # 只接受调用方预先拉取并验证的本地 digest；本脚本不隐式 pull，也不以 tag 重新解析目标。
+# English: Only local digests pre-pulled and verified by the caller are accepted; this script does not pull
+# implicitly, nor does it re-parse the target with tags.
 docker image inspect "$image_reference" >/dev/null 2>&1 || \
   fail 'verified immutable Web image is not present locally'
 container_id=$(docker create "$image_reference") || fail 'cannot create a filesystem view of the verified Web image'
@@ -55,6 +60,8 @@ docker cp "$container_id:/etc/nginx/conf.d/default.conf" "$evidence_dir/release-
 node "$static_verifier" "$static_root" >/dev/null
 
 # CloudFront Response Headers Policy 必须复制同一 OCI digest 内唯一的 CSP，不能另写第二套宽松策略。
+# English: The CloudFront Response Headers Policy must copy the unique CSP within the same OCI digest, and
+# cannot write a second set of relaxed policies.
 # shellcheck disable=SC2016
 CSP_CONFIG="$evidence_dir/release-nginx.conf" CSP_OUTPUT="$evidence_dir/cloudfront-content-security-policy.txt" \
   node -e '

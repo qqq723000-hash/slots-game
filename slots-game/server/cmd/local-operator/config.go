@@ -361,6 +361,7 @@ func loadSigningKey(directory, operatorID string, purpose operator.KeyPurpose, d
 		PrivateKey: privateKey, NotBefore: notBefore, NotAfter: notAfter,
 	}
 	// 启动时执行一次真实签名，确保私钥当前有效且至少覆盖一个完整响应窗口。
+	// Perform one real signature at startup to prove the private key is currently valid and covers at least one complete response window.
 	now := time.Now().UTC().Truncate(time.Second)
 	if purpose == operator.KeyPurposeHTTPResponse {
 		response := &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header)}

@@ -225,6 +225,9 @@ resource "aws_cloudwatch_log_group" "reader" {
 
 # RDS PostgreSQL DB instance 不发布 AWS/RDS Deadlocks 指标；必须从已导出的 PostgreSQL 日志派生。
 # 这里只把受控的精确错误短语转换为低基数自定义 Count 指标。
+# English: RDS PostgreSQL DB instances do not publish AWS/RDS Deadlocks metrics; they must be derived from
+# exported PostgreSQL logs. Here only controlled exact error phrases are converted into low-cardinality custom
+# Count indicators.
 resource "aws_cloudwatch_log_metric_filter" "deadlocks" {
   name           = local.deadlock_filter_name
   log_group_name = aws_cloudwatch_log_group.this["postgresql"].name
@@ -335,6 +338,10 @@ resource "aws_db_instance" "this" {
 
 # 该资源只提供一个同区域异步只读副本。显式指定 subnet group 时，AWS provider 要求
 # replicate_source_db 使用源实例 ARN；同区域加密副本由 RDS 强制继承源 KMS key，不能在此伪装成跨区 DR。
+# English: This resource only provides an asynchronous read-only replica of the same region. When explicitly
+# specifying a subnet group, the AWS provider requires replicate_source_db uses the source instance ARN; the
+# same-region encrypted copy is forced to inherit the source KMS key by RDS and cannot be disguised as a
+# cross-region DR here.
 resource "aws_db_instance" "reader" {
   count = var.read_replica.enabled ? 1 : 0
 
@@ -508,6 +515,8 @@ resource "aws_cloudwatch_metric_alarm" "reader_capacity_low" {
 }
 
 # ReplicaLag 缺失本身需要值班确认，因此它与普通容量指标不同，缺失数据按 breaching 处理。
+# English: The lack of ReplicaLag itself requires on-duty confirmation, so it is different from ordinary
+# capacity indicators. Missing data is treated as breaching.
 resource "aws_cloudwatch_metric_alarm" "reader_replica_lag" {
   count = var.read_replica.enabled ? 1 : 0
 
@@ -534,6 +543,8 @@ resource "aws_cloudwatch_metric_alarm" "reader_replica_lag" {
 }
 
 # 存储 IOPS 上限由读写共享，必须按 ReadIOPS + WriteIOPS 总量告警，不能分别套用完整预算。
+# English: The upper limit of storage IOPS is shared by read and write, and the alarm must be based on the total
+# amount of ReadIOPS + WriteIOPS. The complete budget cannot be applied separately.
 resource "aws_cloudwatch_metric_alarm" "total_iops" {
   alarm_name          = "${var.name_prefix}-postgresql-total-iops-high"
   alarm_description   = "RDS 读写总 IOPS 持续接近经批准的存储或实例预算"
@@ -588,6 +599,8 @@ resource "aws_cloudwatch_metric_alarm" "total_iops" {
 }
 
 # gp3 的 I/O channel 带宽同样由读写共享，按 ReadThroughput + WriteThroughput 总量告警。
+# English: The I/O channel bandwidth of gp3 is also shared by reading and writing, and the total amount of
+# readThroughput + WriteThroughput alarms.
 resource "aws_cloudwatch_metric_alarm" "total_throughput" {
   alarm_name          = "${var.name_prefix}-postgresql-total-throughput-high"
   alarm_description   = "RDS 读写总吞吐持续接近经批准的存储或实例带宽预算"
@@ -642,6 +655,9 @@ resource "aws_cloudwatch_metric_alarm" "total_throughput" {
 }
 
 # PostgreSQL deadlock 日志是经济事务正确性的离散异常；单次匹配必须立即进入值班链路，不能套用容量告警的 2/3 debounce。
+# English: The PostgreSQL deadlock log is a discrete exception to the correctness of economic transactions; a
+# single match must immediately enter the on-duty link, and the 2/3 debounce of the capacity alarm cannot be
+# applied.
 resource "aws_cloudwatch_metric_alarm" "deadlocks" {
   alarm_name          = "${var.name_prefix}-postgresql-deadlocks"
   alarm_description   = "RDS PostgreSQL 导出日志匹配 deadlock detected；需保全日志并执行受控事务证据调查"

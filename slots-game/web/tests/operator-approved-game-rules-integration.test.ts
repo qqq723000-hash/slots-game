@@ -1,4 +1,4 @@
-// @ts-expect-error Vitest 在 Node 中运行；浏览器 tsconfig 故意不声明 Node 内置模块。
+// @ts-expect-error Vitest 在 Node 中运行；浏览器 tsconfig 故意不声明 Node 内置模块。 / English: @ts-expect-error Vitest runs in Node; the browser tsconfig intentionally does not declare Node built-in modules.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 

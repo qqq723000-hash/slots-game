@@ -11,13 +11,15 @@ export class MoneyDisplayBindingError extends Error {
 }
 
 export interface MinorUnitFormatter extends MoneyDisplayBinding {
-  /** 面板/弹窗金额；可按需加入千位分隔符，但绝不经过浮点数。 */
+  /** 面板/弹窗金额；可按需加入千位分隔符，但绝不经过浮点数。 / English: Panel/pop-up window amount; thousands separators can be added as needed, but floating point numbers will never be used. */
   format(value: MoneyMinor, grouped?: boolean): string;
 }
 
 /**
  * 为一个已验证会话创建不可变格式器。闭包固定 currency/exponent，防止同一帧内
  * Balance、Bet、Win 分别读取到不同的可变配置。
+ *
+ * 英文 / English: Create an immutable formatter for an authenticated session. Closure fixes currency/exponent to prevent Balance, Bet, and Win from reading different variable configurations in the same frame.
  */
 export function createMinorUnitFormatter(
   binding: Readonly<MoneyDisplayBinding>,
@@ -53,7 +55,7 @@ export function createMinorUnitFormatter(
   });
 }
 
-/** 启动壳尚未取得权威会话时只用于不可交互占位；首个 SessionOpened 会替换它。 */
+/** 启动壳尚未取得权威会话时只用于不可交互占位；首个 SessionOpened 会替换它。 / English: Only used as a non-interactive placeholder when the startup shell has not yet acquired an authoritative session; the first SessionOpened will replace it. */
 export const DEFAULT_MINOR_UNIT_FORMATTER = createMinorUnitFormatter({
   currency: "XXX",
   currencyExponent: 2,

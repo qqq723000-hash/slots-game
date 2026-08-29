@@ -46,8 +46,8 @@ const startupTimeoutMs = 45_000;
 const featurePreviewStartupTimeoutMs = 90_000;
 const maximumFeaturePreviewStartupTimeoutMs = 2 * 60_000;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
-// ResponsiveLayout 在 390x844 移动设计面使用 390x844、scale=1 的唯一根投影；
-// DomOverlay 将捕获的 Spin 中心 638.36328125 与 85.91 外圈发布到同一设计坐标域。
+// ResponsiveLayout 在 390x844 移动设计面使用 390x844、scale=1 的唯一根投影； / English: ResponsiveLayout uses the unique root projection of 390x844, scale=1 on the 390x844 mobile design surface;
+// DomOverlay 将捕获的 Spin 中心 638.36328125 与 85.91 外圈发布到同一设计坐标域。 / English: DomOverlay publishes the captured Spin center 638.36328125 and the outer circle 85.91 to the same design coordinate domain.
 const mobilePortraitGeometryContract = Object.freeze({
   designHeight: 844,
   designWidth: 390,

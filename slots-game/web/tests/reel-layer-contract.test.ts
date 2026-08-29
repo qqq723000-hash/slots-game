@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { GridCell } from "../src/app/state/types";
 
-// Pixi 的 Node 构建会在首次创建 Graphics 时延迟创建 1x1 白色纹理。
-// 最小 canvas 适配器可让此结构测试检查显示树，无需引入 jsdom 或浏览器渲染器。
+// Pixi 的 Node 构建会在首次创建 Graphics 时延迟创建 1x1 白色纹理。 / English: Pixi's Node build lazily creates a 1x1 white texture when Graphics are first created.
+// 最小 canvas 适配器可让此结构测试检查显示树，无需引入 jsdom 或浏览器渲染器。 / English: The minimal canvas adapter allows this structural test to check the display tree without introducing jsdom or the browser renderer.
 class TestElement {}
 class TestImageElement extends TestElement {}
 class TestVideoElement extends TestElement {}

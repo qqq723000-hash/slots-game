@@ -63,7 +63,7 @@ describe("100-spin Auto Play transaction stress", () => {
     expect(state.autoplayRemaining).toBe(0);
     expect(state.syncAutoplayControl).toHaveBeenCalledTimes(100);
 
-    // 次数耗尽后，迟到或重复的 ROUNDSTART 不能创建第 101 次旋转。
+    // 次数耗尽后，迟到或重复的 ROUNDSTART 不能创建第 101 次旋转。 / English: Once the number has been exhausted, a late or repeated ROUNDSTART cannot create the 101st spin.
     overlay.commitAcceptedPaidAutoplaySpin();
     expect(overlay.finalizeAcceptedPaidAutoplaySpin()).toBe(false);
     expect(state.autoplayRemaining).toBe(0);
@@ -122,8 +122,8 @@ describe("100-spin Auto Play transaction stress", () => {
       expect(state.autoplayRemaining).toBe(reservedCount);
 
       if (retryableOrdinals.has(ordinal)) {
-        // 可重试的传输错误会让这个已接受的请求保持待定。
-        // 在校验结果到达前，重复观察到接受状态必须保持幂等。
+        // 可重试的传输错误会让这个已接受的请求保持待定。 / English: A retryable transport error will keep the accepted request pending.
+        // 在校验结果到达前，重复观察到接受状态必须保持幂等。 / English: Repeated observations of the acceptance state must remain idempotent until the check result arrives.
         overlay.commitAcceptedPaidAutoplaySpin();
         overlay.commitAcceptedPaidAutoplaySpin();
         expect(state.autoplayRemaining).toBe(reservedCount);
@@ -192,7 +192,7 @@ describe("100-spin Auto Play transaction stress", () => {
     expect(spinHandler).toHaveBeenCalledTimes(6);
     expect(fastStopHandler).toHaveBeenCalledTimes(1);
 
-    // 只有下一个被接受的外层 Base ROUNDSTART 才会消耗一次付费次数。
+    // 只有下一个被接受的外层 Base ROUNDSTART 才会消耗一次付费次数。 / English: Only the next accepted outer Base ROUNDSTART will consume one paid time.
     state.spinMode = "ready";
     overlay.commitAcceptedPaidAutoplaySpin();
     expect(state.autoplayRemaining).toBe(99);

@@ -2,6 +2,9 @@
 
 # 验证在线阶段确实取得官方 Trivy DB 与 checks bundle，并把本次动态内容身份写入证据。
 # 仅依赖文件系统，可在负向测试中删除任一资产来证明离线扫描会失败关闭。
+# English: Verify that the online phase obtained the official Trivy DB and checks bundle, then record the
+# dynamic content identity as evidence. The check uses only the filesystem, so negative tests can delete either
+# asset to prove that offline scanning fails closed.
 set -eu
 
 fail() {

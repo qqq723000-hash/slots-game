@@ -1,5 +1,6 @@
 #!/bin/sh
 # 在无网络、无宿主机端口的临时 PostgreSQL 中恢复最新备份集。
+# English: Restore the latest backup set in a temporary PostgreSQL with no network and no host port.
 set -eu
 # shellcheck source=deploy/local-production/common.sh
 . "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/common.sh"

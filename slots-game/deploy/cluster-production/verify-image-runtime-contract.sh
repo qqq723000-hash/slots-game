@@ -1,5 +1,7 @@
 #!/bin/sh
 # 真实构建并执行集群发布镜像，防止静态模板与最终镜像入口悄然分叉。
+# English: Really build and execute the cluster release image to prevent the static template and the final image
+# entry from quietly bifurcating.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -11,6 +13,8 @@ fixture_directory=$(mktemp -d "${temporary_root%/}/slots-cluster-image-contract.
 probe_server_pid=''
 runtime_container=''
 migrator_container=''
+materializer_container=''
+materializer_volume=''
 
 fail() {
   printf '%s\n' "cluster image runtime contract: $*" >&2
@@ -18,6 +22,9 @@ fail() {
 }
 
 cleanup() {
+  if test -n "$materializer_container"; then
+    docker rm -f "$materializer_container" >/dev/null 2>&1 || true
+  fi
   if test -n "$runtime_container"; then
     docker rm -f "$runtime_container" >/dev/null 2>&1 || true
   fi
@@ -28,6 +35,9 @@ cleanup() {
     kill "$probe_server_pid" >/dev/null 2>&1 || true
     wait "$probe_server_pid" >/dev/null 2>&1 || true
   fi
+  if test -n "$materializer_volume"; then
+    docker volume rm "$materializer_volume" >/dev/null 2>&1 || true
+  fi
   case "$fixture_directory" in
     "${temporary_root%/}"/slots-cluster-image-contract.*) rm -rf -- "$fixture_directory" ;;
     *) fail "拒绝清理异常路径 $fixture_directory" ;;
@@ -35,7 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-for command in docker python3 grep mktemp cat chmod id uname mkdir cmp; do
+for command in docker python3 grep mktemp cat chmod id uname mkdir cmp awk; do
   command -v "$command" >/dev/null 2>&1 || fail "缺少命令 $command"
 done
 
@@ -72,30 +82,63 @@ cmp "$repository_root/server/THIRD_PARTY_NOTICES.txt" "$fixture_directory/runtim
 cmp "$repository_root/server/THIRD_PARTY_NOTICES.txt" "$fixture_directory/migrator-third-party-notices.txt" >/dev/null ||
   fail '迁移镜像没有交付权威 Go 第三方许可声明'
 
-materializer_directory="$fixture_directory/materializer"
-mkdir "$materializer_directory"
-printf '%s\n' 'materialized-secret' >"$materializer_directory/source"
-chmod 0440 "$materializer_directory/source"
+# Docker Desktop 会把 Linux 容器在 macOS bind mount 上创建的 0400 文件映射为 0600；Docker Desktop can surface a Linux-created 0400 file as 0600 on a macOS bind mount.
+# 使用 daemon 管理的卷模拟 Kubernetes emptyDir/fsGroup；Use a daemon-managed volume to model Kubernetes emptyDir/fsGroup.
+# 从 docker cp 的 tar 元数据读取容器侧 mode，避免误判主机文件系统语义；Read the container-side mode from docker cp tar metadata to avoid confusing host filesystem semantics with an image regression.
+volume_initializer_image=$(awk '
+  $1 == "ARG" && $2 ~ /^GO_IMAGE=/ { count += 1; sub(/^GO_IMAGE=/, "", $2); image = $2 }
+  END { if (count != 1) exit 1; print image }
+' "$script_directory/Dockerfile.services") || fail '无法解析固定摘要的卷初始化镜像'
+case "$volume_initializer_image" in
+  *@sha256:*) ;;
+  *) fail '卷初始化镜像没有固定摘要' ;;
+esac
+materializer_volume="slots-cluster-image-materializer-${fixture_directory##*.}"
+docker volume create "$materializer_volume" >/dev/null
+docker run --rm --platform linux/amd64 --user 0:0 \
+  --mount "type=volume,src=$materializer_volume,dst=/run/materializer" \
+  --entrypoint /bin/sh \
+  "$volume_initializer_image" -eu -c '
+    install -d -o 0 -g 65532 -m 0750 /run/materializer/source
+    install -d -o 65532 -g 65532 -m 0700 /run/materializer/destination
+    printf "%s\n" materialized-secret > /run/materializer/source/secret
+    chown 0:65532 /run/materializer/source/secret
+    chmod 0440 /run/materializer/source/secret
+  '
 docker run --rm --platform linux/amd64 \
-  --user "$(id -u):$(id -g)" \
-  --mount "type=bind,src=$materializer_directory,dst=/run/materializer" \
+  --user 65532:65532 \
+  --mount "type=volume,src=$materializer_volume,dst=/run/materializer" \
   --entrypoint /secret-materializer \
-  "$runtime_image" /run/materializer/source /run/materializer/destination
-python3 - "$materializer_directory/destination" <<'PYTHON'
-import os
-import pathlib
-import stat
+  "$runtime_image" /run/materializer/source/secret /run/materializer/destination/secret
+materializer_container=$(docker create --platform linux/amd64 \
+  --mount "type=volume,src=$materializer_volume,dst=/run/materializer,readonly" \
+  "$runtime_image")
+materializer_archive="$fixture_directory/materialized-secret.tar"
+docker cp "$materializer_container:/run/materializer/destination/secret" - >"$materializer_archive"
+python3 - "$materializer_archive" <<'PYTHON'
 import sys
+import tarfile
 
-path = pathlib.Path(sys.argv[1])
-if stat.S_IMODE(os.stat(path).st_mode) != 0o400 or path.read_text(encoding="utf-8") != "materialized-secret\n":
+with tarfile.open(sys.argv[1], mode="r:*") as archive:
+    members = [member for member in archive.getmembers() if member.isfile()]
+    if len(members) != 1:
+        raise SystemExit("物化凭据 tar 必须只包含一个普通文件")
+    member = members[0]
+    extracted = archive.extractfile(member)
+    if extracted is None:
+        raise SystemExit("物化凭据 tar 无法读取")
+    payload = extracted.read()
+
+if member.mode != 0o400 or payload != b"materialized-secret\n":
     raise SystemExit("物化凭据不是 0400 或内容不一致")
 PYTHON
+docker rm "$materializer_container" >/dev/null
+materializer_container=''
 if docker run --rm --platform linux/amd64 \
-  --user "$(id -u):$(id -g)" \
-  --mount "type=bind,src=$materializer_directory,dst=/run/materializer" \
+  --user 65532:65532 \
+  --mount "type=volume,src=$materializer_volume,dst=/run/materializer" \
   --entrypoint /secret-materializer \
-  "$runtime_image" /run/materializer/source /run/materializer/destination >/dev/null 2>&1; then
+  "$runtime_image" /run/materializer/source/secret /run/materializer/destination/secret >/dev/null 2>&1; then
   fail '/secret-materializer 错误覆盖了已有凭据'
 fi
 

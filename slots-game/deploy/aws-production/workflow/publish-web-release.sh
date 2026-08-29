@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 调用方必须先验证并拉取 Web digest；本脚本只写全新的不可变前缀，再调用固定版本切换接口。
+# English: The caller must first verify and pull the Web digest; this script only writes a new immutable prefix,
+# and then calls the fixed version switching interface.
 set -eu
 umask 077
 
@@ -121,6 +123,8 @@ while IFS= read -r relative_path; do
     --server-side-encryption aws:kms --ssekms-key-id "$AWS_WEB_KMS_KEY_ARN" \
     --output json > "$put_response" 2> "$put_stderr"; then
     # 非零可能是 If-None-Match 命中，也可能是响应丢失。两者都只能由完整 HEAD 回读裁决。
+    # English: Non-zero may be an If-None-Match hit or a response loss. Both can only be read-back by the full
+    # HEAD.
     put_status=reconciled
   fi
   head_json=$(aws s3api head-object --bucket "$AWS_WEB_BUCKET" --key "$object_key" \
@@ -302,6 +306,9 @@ manual_intervention() {
 
 # get-key 是第一权威读；仅当 key 不存在或该读取失败时，再用完整 list-keys 区分
 # “确实没有 active-release”和“控制面不可读”。任何重复、畸形或双重读取失败都返回未知。
+# English: get-key is the first authoritative read; only when the key does not exist or the read fails, the
+# complete list-keys are used to distinguish "There is indeed no active-release" and "Control plane is
+# unreadable". Any duplication, malformation, or double read failure returns Unknown.
 read_active_release_authoritatively() {
   authoritative_output=$1
   authoritative_error="${authoritative_output%.json}.stderr"
@@ -382,6 +389,9 @@ fi
 
 # CLI 非零或响应损坏并不证明服务端未写入。一次立即回读到旧值也不能证明超时请求
 # 不会稍后提交，因此必须用原 ETag 做一次 CAS fence，并只读对账到 ETag 确认推进。
+# English: A non-zero CLI or corrupted response does not prove that the server did not write. An immediate
+# readback to the old value does not justify a timeout request It will not be submitted later, so you must use
+# the original ETag to do a CAS fence and read-only reconciliation to the ETag to confirm the advancement.
 active_json="$delivery_evidence/kvs-active-after.json"
 if ! read_active_release_authoritatively "$active_json"; then
   manual_intervention promotion-reconciliation \
@@ -403,6 +413,8 @@ if test "$promotion_command_status" != success && \
     promotion_fence_status=success
     if test "$previous_release" = none; then
       # 首次发布没有可写回的旧值；用相同目标重试消费原 ETag，随后仍必须权威对账。
+      # English: There is no old value to write back for the first release; retry consuming the original ETag
+      # with the same target, and subsequent reconciliation must still be authoritative.
       if ! aws cloudfront-keyvaluestore put-key --kvs-arn "$AWS_CLOUDFRONT_KVS_ARN" \
         --if-match "$kvs_etag_before" --key active-release --value "$release_id" \
         --output json > "$promotion_fence_json" 2> "$promotion_fence_stderr"; then
@@ -412,6 +424,8 @@ if test "$promotion_command_status" != success && \
       --if-match "$kvs_etag_before" --key active-release --value "$previous_release" \
       --output json > "$promotion_fence_json" 2> "$promotion_fence_stderr"; then
       # 条件写回旧值会推进 ETag；原超时请求随后只能收到 precondition failure。
+      # English: Conditional writing back the old value advances the ETag; the original timeout request then
+      # only receives a precondition failure.
       promotion_fence_status=error-reconcile-required
     fi
   else
@@ -436,6 +450,8 @@ if test "$promotion_command_status" != success && \
       fence_release_first=$authoritative_active_release
       fence_etag_first=$authoritative_kvs_etag
       # Key 与 store ETag 是两个 API；二次读取相同 pair，防止迟到写恰好落在两次读取之间。
+      # English: Key and store ETag are two APIs; reading the same pair twice prevents late writes from falling
+      # exactly between two reads.
       fence_confirm_active="$delivery_evidence/kvs-active-after-fence-${fence_attempt}-confirm.json"
       if ! read_active_release_authoritatively "$fence_confirm_active"; then
         manual_intervention promotion-fence \

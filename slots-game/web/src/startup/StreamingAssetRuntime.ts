@@ -40,7 +40,7 @@ export interface StreamingAssetRuntimeDiagnostics {
   readonly backgroundScheduled: boolean;
   readonly backgroundRunning: boolean;
   readonly featureStageVerified: boolean;
-  /** 旧影子校验始终为零；只有真实消费者租约持有载荷时才允许非零。 */
+  /** 旧影子校验始终为零；只有真实消费者租约持有载荷时才允许非零。 / English: Old shadow checksums are always zero; non-zero is only allowed if a real consumer lease holds the payload. */
   readonly retainedPayloadBytes: number;
   readonly peakOperationPayloadBytes: number;
   readonly lastError: string | null;
@@ -65,6 +65,8 @@ export interface StreamingAssetRuntimePort {
   /**
    * 可选是为了兼容旧宿主；生产 StreamingAssetRuntime 在 on-demand/shadow 模式下
    * 始终提供经过清单大小与 SHA-256 校验的消费者租约。
+   *
+   * 英文 / English: Optional for compatibility with older hosts; the production StreamingAssetRuntime in on-demand/shadow mode always provides consumer leases with manifest size and SHA-256 validation.
    */
   acquirePackage?(
     id: string,
@@ -74,7 +76,7 @@ export interface StreamingAssetRuntimePort {
   destroy(): void;
 }
 
-/** 消费者所有权扩展；永远不能成为权威功能、结果或金额决策输入。 */
+/** 消费者所有权扩展；永远不能成为权威功能、结果或金额决策输入。 / English: Consumer ownership extension; can never be an authoritative function, outcome, or dollar amount decision input. */
 export interface StreamingAssetConsumerPort {
   acquirePackage(id: string, signal?: AbortSignal): Promise<AcquiredAssetPackage>;
   acquireStage(stage: AssetPackageStage, signal?: AbortSignal): Promise<AcquiredAssetPackageStage>;
@@ -89,7 +91,7 @@ export interface StreamingAssetRuntimeOptions {
   readonly mode?: AssetStreamingMode | string;
   readonly fetch?: typeof fetch;
   readonly manifestUrl?: string;
-  /** 一个串行影子操作或真实消费者租约允许保留的已验证响应字节。 */
+  /** 一个串行影子操作或真实消费者租约允许保留的已验证响应字节。 / English: A serial shadow operation or real consumer lease allows reserved authenticated response bytes. */
   readonly maxOperationPayloadBytes?: number;
   readonly managerOptions?: Omit<
     StreamingAssetPackageManagerOptions,
@@ -107,6 +109,8 @@ const DEFAULT_MAX_OPERATION_PAYLOAD_BYTES = 16 * 1024 * 1024;
 /**
  * 未显式配置时启用真实事件租约；未知构建值仍故障关闭为 off。shadow 保留
  * 启动后全功能包校验，而 on-demand 只在真实消费事件发生后取包。
+ *
+ * 英文 / English: Enables real event leasing when not explicitly configured; unknown build values ​​still fail off to off. Shadow retains full-featured package verification after startup, while on-demand only fetches packages after a real consumption event occurs.
  */
 export function assetStreamingMode(value: unknown): AssetStreamingMode {
   if (value === undefined || value === "") return "on-demand";
@@ -125,13 +129,15 @@ export interface StreamingAssetEventLease {
   readonly signal: AbortSignal;
   readonly ready: Promise<AcquiredAssetPackage>;
   readonly released: boolean;
-  /** 幂等；取消尚未完成的获取，并释放已经采用的包引用。 */
+  /** 幂等；取消尚未完成的获取，并释放已经采用的包引用。 / English: Idempotent; cancels pending acquisitions and releases already taken package references. */
   release(): boolean;
 }
 
 /**
  * 将消费者包租约绑定到单次功能事件。状态只由调用者动作驱动，不读取玩法或服务端
  * 结果；先 release 后晚到的错误实现也无法泄漏底层包引用。
+ *
+ * 英文 / English: Bind consumer package leases to single-shot functionality events. The state is only driven by the caller's actions and does not read gameplay or server-side results; incorrect implementations that release first and then arrive late cannot leak the underlying package reference.
  */
 export function beginStreamingAssetEventLease(
   consumer: Pick<StreamingAssetConsumerPort, "acquirePackage">,
@@ -143,8 +149,8 @@ export function beginStreamingAssetEventLease(
   let eventLease!: StreamingAssetEventLease;
   let acquisition: Promise<AcquiredAssetPackage>;
   try {
-    // 调用本身必须发生在权威结果进入对应表现状态之前；底层网络/校验仍异步，
-    // 同步异常则转换为同一个 ready 拒绝边界。
+    // 调用本身必须发生在权威结果进入对应表现状态之前；底层网络/校验仍异步， / English: The call itself must occur before the authoritative result enters the corresponding representation state; the underlying network/validation is still asynchronous,
+    // 同步异常则转换为同一个 ready 拒绝边界。 / English: Synchronous exceptions are converted to the same ready rejection boundary.
     acquisition = Promise.resolve(consumer.acquirePackage(packageId, controller.signal));
   } catch (error) {
     acquisition = Promise.reject(error);
@@ -158,8 +164,8 @@ export function beginStreamingAssetEventLease(
       acquired = lease;
       return lease;
     });
-  // 事件可能先进入制作好的 lead-in；立即登记拒绝观察者，避免弱网失败在正式
-  // await 边界前形成 unhandledrejection。调用方随后 await ready 仍会收到原错误。
+  // 事件可能先进入制作好的 lead-in；立即登记拒绝观察者，避免弱网失败在正式 / English: The event may first enter the prepared lead-in; register reject observers immediately to avoid weak network failure in the formal
+  // await 边界前形成 unhandledrejection。调用方随后 await ready 仍会收到原错误。 / English: An unhandledrejection is formed before the await boundary. The caller who subsequently awaits ready will still receive the original error.
   void ready.catch(() => undefined);
   eventLease = Object.freeze({
     signal: controller.signal,
@@ -201,7 +207,7 @@ export function createStreamingAssetRuntime(
   });
 }
 
-/** 只发布有界 DOM 遥测；禁止暴露文件名、原始字节、凭据或个人信息。 */
+/** 只发布有界 DOM 遥测；禁止暴露文件名、原始字节、凭据或个人信息。 / English: Only publish bounded DOM telemetry; exposure of filenames, raw bytes, credentials, or personal information is prohibited. */
 export function publishStreamingAssetDiagnostics(
   root: Pick<HTMLElement, "dataset">,
   diagnostics: Readonly<StreamingAssetRuntimeDiagnostics>,
@@ -234,6 +240,8 @@ export function publishStreamingAssetDiagnostics(
 /**
  * 流式资源运行时。shadow 操作只保留诊断；on-demand 消费者可在有界租约内把
  * 已校验负载交给 Pixi。两种模式都不能参与权威功能、结果或金额决策。
+ *
+ * 英文 / English: Streaming resource runtime. Shadow operations only retain diagnostics; on-demand consumers can hand verified payloads to Pixi within bounded leases. Neither mode can participate in authoritative functions, results, or monetary decisions.
  */
 export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
   private readonly channel: PrimalRuntimeAssetChannel;
@@ -268,7 +276,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     release(): boolean;
   }>();
   private destroyed = false;
-  /** 销毁释放完成后、内部 manager 引用清空前采样的不可变终态。 */
+  /** 销毁释放完成后、内部 manager 引用清空前采样的不可变终态。 / English: The immutable final state sampled after the destruction and release is completed and before the internal manager reference is cleared. */
   private destroyedDiagnostics: StreamingAssetRuntimeDiagnostics | null = null;
 
   constructor(options: StreamingAssetRuntimeOptions) {
@@ -354,7 +362,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     });
   }
 
-  /** Big Win 等真实功能事件使用的大小/SHA-256 已验证消费者所有权 API。 */
+  /** Big Win 等真实功能事件使用的大小/SHA-256 已验证消费者所有权 API。 / English: Real feature events like Big Win use the Size/SHA-256 verified consumer ownership API. */
   async acquirePackage(
     id: string,
     signal?: AbortSignal,
@@ -368,7 +376,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     );
   }
 
-  /** 原子阶段所有权 API；shadow 诊断与未来整阶段消费者参见 acquirePackage()。 */
+  /** 原子阶段所有权 API；shadow 诊断与未来整阶段消费者参见 acquirePackage()。 / English: Atomic stage ownership API; see acquirePackage() for shadow diagnostics and future full stage consumers. */
   async acquireStage(
     stage: AssetPackageStage,
     signal?: AbortSignal,
@@ -392,7 +400,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
       if (this.destroyed) return;
       this.backgroundRunning = true;
       this.publish();
-      // 在公开承诺之前同步解析，以便测试和主机可以从空闲回调边界加入实际操作。
+      // 在公开承诺之前同步解析，以便测试和主机可以从空闲回调边界加入实际操作。 / English: Resolve synchronously before exposing the promise so that test and host can join the actual operation from the idle callback boundary.
       this.backgroundPromise = this.preloadStage("feature-on-demand")
         .then(() => undefined)
         .catch((cause: unknown) => {
@@ -409,7 +417,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     return true;
   }
 
-  /** 用于观察故障开放后台操作的测试/主机接口。 */
+  /** 用于观察故障开放后台操作的测试/主机接口。 / English: Test/host interface for observing fail-open background operations. */
   whenBackgroundSettled(): Promise<void> {
     return this.backgroundPromise;
   }
@@ -429,7 +437,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
       featureStageVerified:
         featurePackages.length > 0 &&
         featurePackages.every((entry) => entry.state === "verified"),
-      // 仅当运行时拥有的租约有效时才会保留实验性消费者有效负载。浏览器缓存所有权位于 JS 堆合约之外。
+      // 仅当运行时拥有的租约有效时才会保留实验性消费者有效负载。浏览器缓存所有权位于 JS 堆合约之外。 / English: Experimental consumer payloads are only retained while the runtime-owned lease is valid. Browser cache ownership resides outside of the JS heap contract.
       retainedPayloadBytes: this.consumerManager?.retainedPayloadBytes() ?? 0,
       peakOperationPayloadBytes: this.peakOperationPayloadBytes,
       lastError: this.manifestError,
@@ -455,12 +463,12 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
       try {
         lease.release();
       } catch {
-        // 一个格式错误的消费者无法阻止同级租约在运行时生命周期边界丢弃其解码的有效负载。
+        // 一个格式错误的消费者无法阻止同级租约在运行时生命周期边界丢弃其解码的有效负载。 / English: A malformed consumer cannot prevent a peer lease from discarding its decoded payload at a runtime lifetime boundary.
       }
     }
     this.activeConsumerLeases.clear();
-    // 必须在 manager 引用清空前读取释放后的真实计数；否则 `null ?? 0` 会把失败的
-    // release 伪装成零 retained bytes。终态仍保持既有的空 packages 合同。
+    // 必须在 manager 引用清空前读取释放后的真实计数；否则 `null ?? 0` 会把失败的 / English: The real count after release must be read before the manager reference is cleared; otherwise `null ?? 0` will fail
+    // release 伪装成零 retained bytes。终态仍保持既有的空 packages 合同。 / English: release disguises itself as zero retained bytes. The final state still retains the existing empty packages contract.
     const retainedPayloadBytesAfterRelease =
       this.consumerManager?.retainedPayloadBytes() ?? 0;
     this.manifest = null;
@@ -474,7 +482,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
       ...this.diagnostics(),
       retainedPayloadBytes: retainedPayloadBytesAfterRelease,
     });
-    // 故意不要在这里发布：被销毁的所有者没有有效的 DOM 或遥测接收器，并且此生命周期禁止延迟回调。
+    // 故意不要在这里发布：被销毁的所有者没有有效的 DOM 或遥测接收器，并且此生命周期禁止延迟回调。 / English: Intentionally not posted here: the destroyed owner has no valid DOM or telemetry receiver, and deferred callbacks are prohibited for this lifecycle.
   }
 
   private async acquireConsumerLease<
@@ -501,7 +509,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
       this.throwIfInactive(signal);
       wrapped = wrap(underlying);
       underlying = null;
-      // 即使管理器获取与运行时或调用者取消同时解决，也要捍卫完成/采用边界。
+      // 即使管理器获取与运行时或调用者取消同时解决，也要捍卫完成/采用边界。 / English: Defend completion/adoption boundaries even if manager acquisition resolves concurrently with runtime or caller cancellation.
       this.throwIfInactive(signal);
       return wrapped;
     } catch (cause: unknown) {
@@ -510,8 +518,8 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
       throw normalizeError(cause, signal);
     } finally {
       operation.unlink();
-      // destroy 可能先于不可中止的 manager acquire 完成。该异步分支释放自己的
-      // pending/active reference 后，只更新冻结的数值终态，不把 manager 重新挂回 owner。
+      // destroy 可能先于不可中止的 manager acquire 完成。该异步分支释放自己的 / English: destroy may complete before a non-abortable manager acquire. The asynchronous branch releases its own
+      // pending/active reference 后，只更新冻结的数值终态，不把 manager 重新挂回 owner。 / English: After pending/active reference, only the frozen value final state is updated, and the manager is not re-hung back to owner.
       if (this.destroyed && manager) {
         this.updateDestroyedRetainedPayloadBytes(manager.retainedPayloadBytes());
       }
@@ -721,7 +729,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     );
     this.markTargets(targetIds, "loading", 0, null);
 
-    // 一个网络/解码通道可在低内存手机上保持瞬态响应、摘要复制和 JSON 解析开销。最后这个管理者被抛弃了；它的字节图永远不会交给渲染器/音频消费者。
+    // 一个网络/解码通道可在低内存手机上保持瞬态响应、摘要复制和 JSON 解析开销。最后这个管理者被抛弃了；它的字节图永远不会交给渲染器/音频消费者。 / English: A network/decode channel preserves transient response, digest copying, and JSON parsing overhead on low-memory phones. Eventually this manager was abandoned; its bytemap was never handed over to the renderer/audio consumer.
     let manager: StreamingAssetPackageManager | null =
       new StreamingAssetPackageManager(manifest, {
         ...this.managerOptions,
@@ -761,7 +769,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
       throw error;
     } finally {
       operation.unlink();
-      // 显式破坏 LoadedAssetPackage 字节和解码图的唯一强所有者。未制作 Spine、纹理、过滤器或音频实例。
+      // 显式破坏 LoadedAssetPackage 字节和解码图的唯一强所有者。未制作 Spine、纹理、过滤器或音频实例。 / English: Explicitly destroy the LoadedAssetPackage as the only strong owner of the bytes and decoded map. No instances of spines, textures, filters, or audio are made.
       manager = null;
     }
   }
@@ -910,7 +918,7 @@ export class StreamingAssetRuntime implements StreamingAssetRuntimePort {
     try {
       this.onDiagnostics(this.diagnostics());
     } catch {
-      // 诊断仅是观察。损坏的 DOM/遥测接收器不能失败、取消或重新安排完整性影子工作。
+      // 诊断仅是观察。损坏的 DOM/遥测接收器不能失败、取消或重新安排完整性影子工作。 / English: Diagnosis is observation only. Corrupted DOM/telemetry receivers cannot fail, cancel, or reschedule integrity shadow jobs.
     }
   }
 }

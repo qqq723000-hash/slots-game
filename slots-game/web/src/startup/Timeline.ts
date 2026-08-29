@@ -23,7 +23,7 @@ export interface TimelineSchedulerPolicy {
   readonly maxCatchUpTicks: number;
 }
 
-/** 经桌面与移动端视觉基线验证的确定性调度参数。 */
+/** 经桌面与移动端视觉基线验证的确定性调度参数。 / English: Deterministic scheduling parameters verified with desktop and mobile visual baselines. */
 export const PRIMAL_SCHEDULER_POLICY = Object.freeze({
   fps: 30,
   maxCatchUpTicks: 5,
@@ -39,7 +39,7 @@ export const browserTimelineClock: TimelineClock = {
   cancelFrame: (handle) => cancelAnimationFrame(handle),
 };
 
-/** 使用小的确定性时间线而不是引入第二个动画运行时。 */
+/** 使用小的确定性时间线而不是引入第二个动画运行时。 / English: Use a small deterministic timeline instead of introducing a second animation runtime. */
 export class Timeline {
   private readonly durationMs: number;
   private readonly cues: readonly TimelineCue[];
@@ -130,6 +130,8 @@ export class Timeline {
   /**
    * 镜像官方 30 fps Scheduler 更新程序。停滞的 RAF 最多可以处理 5 个挂起的报价单；然后，它的纪元被重新调整，
    * 因此隐藏选项卡和第一帧停顿无法跳过整个墙壁间隙的 Spine 时间线。
+   *
+   * 英文 / English: Mirror the official 30 fps Scheduler updater. A stalled RAF can handle up to 5 pending quotes; then, its epoch is rescaled so that hidden tabs and first-frame stalls cannot skip the entire wall gap of the Spine timeline.
    */
   private schedulerElapsedAt(time: number): number {
     const policy = this.scheduler;

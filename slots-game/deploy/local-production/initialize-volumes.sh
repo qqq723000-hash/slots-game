@@ -1,6 +1,8 @@
 #!/bin/sh
 # 把宿主机初始材料按服务白名单分配到独立卷。
 # CA 私钥和 definition approval 私钥未出现在任何复制列表中。
+# English: Allocate the host's initial assets to independent volumes according to the service whitelist. The CA
+# private key and the definition approval private key do not appear in any replication lists.
 set -eu
 umask 077
 
@@ -130,6 +132,8 @@ for name in postgres-backup.password local-production-root-ca.pem; do
 done
 
 # 渲染后的观测配置不含凭据，但仍以只读、服务专用卷分发。
+# English: The rendered observation configuration does not contain credentials, but is still distributed as a
+# read-only, service-private volume.
 test -s /source/rendered/prometheus.yml
 install -m 0600 -o 65534 -g 65534 /source/rendered/prometheus.yml /target/prometheus/prometheus.yml
 mkdir -p /target/prometheus/rules
@@ -153,12 +157,16 @@ for directory_owner in \
   chown "${ownership%%:*}:${ownership##*:}" "$path"
   chmod 0700 "$path"
   # 非空 marker 防止 Docker 首次挂载时用镜像目录的 root 属性重新覆盖卷根。
+  # English: A non-empty marker prevents Docker from re-overwriting the volume root with the root attribute of
+  # the image directory when it is first mounted.
   : >"$path/.initialized"
   chown "${ownership%%:*}:${ownership##*:}" "$path/.initialized"
   chmod 0600 "$path/.initialized"
 done
 
 # 运营数据卷只初始化必需父目录，绝不清理已持久化的审计或日志。
+# English: The operational data volume only initializes the necessary parent directories and never clears
+# persisted audits or logs.
 mkdir -p /target/operator-data/audit /target/operator-data/logs /target/operator-data/alerts
 chown 65532:65532 /target/operator-data /target/operator-data/audit \
   /target/operator-data/logs /target/operator-data/alerts

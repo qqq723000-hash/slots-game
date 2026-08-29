@@ -53,6 +53,11 @@ type localizedHistoricalMigration struct {
 // localizedHistoricalMigrations 是历史迁移注释汉化的唯一兼容边界。数据库账本继续使用
 // 原始发布校验值；每次加载都必须先逐字节核验剔除整行 SQL 注释后的可执行内容。
 // 任何可执行 SQL 令牌、顺序或空白漂移都会失败即关闭，绝不能借注释本地化绕过迁移冻结策略。
+// English: localizedHistoricalMigrations is the only compatible boundary for the localization of historical
+// migration annotations. The database ledger continues to use the original release verification value; each load
+// must first verify the executable content byte by byte after removing the entire line of SQL comments. Any
+// executable SQL token, order, or whitespace drift will fail and be closed, and annotation localization must not
+// be used to bypass migration freeze policies.
 var localizedHistoricalMigrations = map[string]localizedHistoricalMigration{
 	"0002_outbox_delivery": {
 		ledgerChecksum:   "c3d9062080aaaee42c5bf3afe17561b2ab4063b88c76f3151d2f1fd359e2ca51",
@@ -70,6 +75,26 @@ var localizedHistoricalMigrations = map[string]localizedHistoricalMigration{
 		ledgerChecksum:   "2dffbfb97d2cf2c8e1bfd9c93348c1e63237e29e417340d31e0200b3e7316586",
 		executableSHA256: "92e8af3a60e6fe5cb2d34b8f2fcb7cfe640f31472a4fff5e84b8d1522dacf2fe",
 	},
+	"0008_wallet_recovery_scheduler": {
+		ledgerChecksum:   "73c7c28413a4c7313b5f451f95750e2a6be986fca21717e48763c9f9f4062420",
+		executableSHA256: "cf4fd1b43b63167fd9d5ae0caf30d130c14428cef33bdc689a50f5a3d4c0b70a",
+	},
+	"0009_postgres_hot_path": {
+		ledgerChecksum:   "fe05563382fa6f558ecfb8944658740f718551032274a81521711b2d25e8314c",
+		executableSHA256: "93f938e09c8cfde114928d551b6be889015dfedd10d3c104146a1494bb86cc0e",
+	},
+	"0010_wallet_recovery_registry_invariant": {
+		ledgerChecksum:   "5fc3fe96f71a66bd252713751e36139000eb6e503f981fb520df7e5f3412ce17",
+		executableSHA256: "e5532af2e283712083201253050d7c1ccb722ecabdc6c2d8debdc4f16b789142",
+	},
+	"0011_high_value_risk_review": {
+		ledgerChecksum:   "260ddb33a04620d3ca2b2300855a94485ff57befd6101a7544471d6441288246",
+		executableSHA256: "86f033958ceff7bd8e8a016160a8fada1ebc19768eb4dde3c5b683b9f37135d5",
+	},
+	"0012_session_idle_disconnect": {
+		ledgerChecksum:   "bae4016984f9099d06c8b833348f4d6214b37fb9e67e3be87e0f307db4182580",
+		executableSHA256: "fa26354f712621368803022cfccc04654ef330bb310bf8d8117a377f0c859f55",
+	},
 }
 
 type MigrationReport struct {
@@ -82,6 +107,9 @@ type MigrationReport struct {
 
 // MigrateAndReconcile 在同一个咨询锁事务内按顺序执行待补迁移并精确配置运行时权限；
 // 对外提供服务的进程禁止调用它，避免请求路径隐式修改数据库模式或权限。
+// English: MigrateAndReconcile executes pending migrations sequentially within the same advisory lock transaction
+// and accurately configures runtime permissions; processes that provide external services are prohibited from
+// calling it to avoid implicit modification of the database schema or permissions in the request path.
 func MigrateAndReconcile(
 	ctx context.Context,
 	db *sql.DB,

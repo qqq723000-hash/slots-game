@@ -97,26 +97,26 @@ export interface LoadAssetPackageOptions {
 export interface AcquiredAssetPackage {
   readonly id: string;
   readonly package: LoadedAssetPackage;
-  /** 目标加上依赖项，按稳定的依赖顺序。 */
+  /** 目标加上依赖项，按稳定的依赖顺序。 / English: Target plus dependencies, in stable dependency order. */
   readonly packageIds: readonly string[];
   readonly released: boolean;
-  /** 幂等。仅在过渡到已发布时返回 true。 */
+  /** 幂等。仅在过渡到已发布时返回 true。 / English: Idempotent. Returns true only when transitioning to published. */
   release(): boolean;
 }
 
 export interface AcquiredAssetPackageStage {
   readonly stage: AssetPackageStage;
-  /** 完整的依赖关闭，以稳定的依赖顺序。 */
+  /** 完整的依赖关闭，以稳定的依赖顺序。 / English: Complete dependency closure, in stable dependency order. */
   readonly packageIds: readonly string[];
   readonly packages: readonly LoadedAssetPackage[];
   readonly released: boolean;
-  /** 幂等。仅在过渡到已发布时返回 true。 */
+  /** 幂等。仅在过渡到已发布时返回 true。 / English: Idempotent. Returns true only when transitioning to published. */
   release(): boolean;
 }
 
 export interface StreamingAssetPackageManagerOptions {
   readonly fetch?: typeof fetch;
-  /** 测试/宿主可显式绑定 Vite public base；正式构建默认使用 import.meta.env.BASE_URL。 */
+  /** 测试/宿主可显式绑定 Vite public base；正式构建默认使用 import.meta.env.BASE_URL。 / English: Test/host can explicitly bind Vite public base; official builds use import.meta.env.BASE_URL by default. */
   readonly publicAssetBaseUrl?: string;
   readonly decoders?: Readonly<Record<string, AssetResourceDecoder>>;
   readonly concurrency?: number;
@@ -125,7 +125,7 @@ export interface StreamingAssetPackageManagerOptions {
   readonly attemptTimeoutMs?: number;
   readonly onProgress?: (progress: Readonly<AssetPackageProgress>) => void;
   readonly digest?: (bytes: Uint8Array) => Promise<string>;
-  /** 可选硬质天花板，用于消费者保留的独特包装。 */
+  /** 可选硬质天花板，用于消费者保留的独特包装。 / English: Optional hard ceiling for unique packaging reserved by consumers. */
   readonly maxRetainedBytes?: number;
 }
 
@@ -289,6 +289,8 @@ export function validateAssetPackageManifest(
 /**
  * Window.fetch 是 Web-IDL 方法；存储在类上时，不得继承包或运行时实例作为 receiver。
  * 注入的 fetch 实现保留调用方绑定；这里只规范化浏览器默认实现。
+ *
+ * 英文 / English: Window.fetch is a Web-IDL method; when stored on a class, it must not inherit a package or runtime instance as a receiver. The injected fetch implementation retains caller bindings; only the browser default implementation is normalized here.
  */
 export function defaultStreamingAssetFetch(): typeof fetch {
   if (typeof globalThis.fetch !== "function") {
@@ -452,13 +454,13 @@ export class StreamingAssetPackageManager {
     return this.requireRuntime(id).ready;
   }
 
-  /** 实时消费者句柄数。有意排除待定收购。 */
+  /** 实时消费者句柄数。有意排除待定收购。 / English: The number of real-time consumer handles. Pending acquisitions intentionally excluded. */
   referenceCount(id: string): number {
     this.requireSpec(id);
     return this.requireRuntime(id).activeReferences;
   }
 
-  /** 由待处理和实时消费者句柄保留的唯一清单字节。 */
+  /** 由待处理和实时消费者句柄保留的唯一清单字节。 / English: Unique manifest bytes reserved by pending and live consumer handles. */
   retainedPayloadBytes(): number {
     return this.validated.dependencyOrder.reduce((total, id) => {
       const runtime = this.requireRuntime(id);
@@ -469,6 +471,8 @@ export class StreamingAssetPackageManager {
 
   /**
    * 加载并保留一个包及其完整的依赖关系闭包。并发调用者共享获取/解码工作，但接收独立的、幂等可释放的句柄。
+   *
+   * 英文 / English: Loads and retains a package and its complete dependency closure. Concurrent callers share the fetch/decode work but receive independent, idempotent releasable handles.
    */
   async acquire(
     id: string,
@@ -488,7 +492,7 @@ export class StreamingAssetPackageManager {
     }
   }
 
-  /** 获取为一个阶段预设的所有包作为一个原子所有权单元。 */
+  /** 获取为一个阶段预设的所有包作为一个原子所有权单元。 / English: Gets all packages provisioned for a stage as an atomic ownership unit. */
   async acquireStage(
     stage: AssetPackageStage,
     options: LoadAssetPackageOptions = {},
@@ -542,7 +546,7 @@ export class StreamingAssetPackageManager {
       try {
         instance.dispose();
       } catch {
-        // 拆卸必须通过同级实例继续。共享解码资源仍然驻留，不属于实例处置。
+        // 拆卸必须通过同级实例继续。共享解码资源仍然驻留，不属于实例处置。 / English: Teardown must continue through the sibling instance. The shared decoding resource still resides and is not part of the instance's disposal.
       }
     }
     return instances.length;
@@ -894,7 +898,7 @@ async function readResponseBytes(
   signal: AbortSignal,
   report: (fraction: number) => void,
 ): Promise<Uint8Array> {
-  // 清单的字节数是完整性契约而非 Content-Length 的替身；即使服务端采用分块传输或伪造声明长度，也在第一个越界分块到达时取消网络流。
+  // 清单的字节数是完整性契约而非 Content-Length 的替身；即使服务端采用分块传输或伪造声明长度，也在第一个越界分块到达时取消网络流。 / English: The number of bytes in the manifest is an integrity contract and not a stand-in for Content-Length; even if the server uses chunked transfers or forges declared lengths, the network flow will be canceled when the first out-of-bounds chunk arrives.
   return readBoundedResponseBytes(response, {
     label: "Streaming asset resource",
     maxBytes: expectedBytes,

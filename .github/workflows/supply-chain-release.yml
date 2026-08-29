@@ -61,6 +61,9 @@ jobs:
     timeout-minutes: 90
     # 本 job 执行仓库代码与第三方依赖，故意不绑定 Environment，也没有 OIDC、attestation、
     # Registry 凭据或素材审批 secret；即使依赖被利用，也拿不到发布身份。
+    # English: This job executes repository code and third-party dependencies. It intentionally does not bind
+    # Environment, and does not have OIDC, attestation, Registry credentials or asset approval secret; even if
+    # the dependency is exploited, the publishing identity cannot be obtained.
     permissions:
       contents: read
     outputs:
@@ -127,6 +130,8 @@ jobs:
 
       - name: Scan the clean release source and regenerate dual-format SBOM
         # 必须位于所有 setup、npm ci 与 build 之前，避免 node_modules/dist 污染源码证据。
+        # English: Must be placed before all setup, npm ci and build to avoid node_modules/dist contaminating
+        # source code evidence.
         env:
           TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-release-source-cache
         run: ./deploy/supply-chain/scan.sh source "$SUPPLY_CHAIN_REPORT_DIR/source"
@@ -209,6 +214,8 @@ jobs:
 
       - name: Re-run complete source conformance on this protected tag
         # make verify 固定包含前后端全量测试、race、vet、build 与供应链静态契约。
+        # English: make verify always includes full front-end and back-end testing, race, vet, build and supply
+        # chain static contracts.
         run: make verify
 
       - name: Re-run deterministic frontend production build on this protected tag
@@ -242,6 +249,8 @@ jobs:
 
       - name: Re-run production-configuration fail-closed runtime smoke
         # 仅使用短命 CI-only v2 审批与 TLS 材料，不能替代真实生产/监管审批。
+        # English: Using short-lived CI-only v2 approvals with TLS assets is not a substitute for real
+        # artifactsion/regulatory approvals.
         env:
           RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: make smoke-runtime-production
@@ -285,6 +294,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # fresh checkout 与测试 job 隔离；本 job 不运行宿主依赖脚本，也没有 Environment/OIDC/secret。
+    # English: Fresh checkout is isolated from the test job; this job does not run host dependency scripts and
+    # does not have Environment/OIDC/secret.
     permissions:
       contents: read
     outputs:
@@ -429,6 +440,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # 此独立环境只保存一次性 exact asset approval；没有 OIDC、Registry 凭据或 attestation 权限。
+    # English: This standalone environment holds only one-time exact asset approval; there are no OIDC, Registry
+    # credentials, or attestation permissions.
     environment: supply-chain-web-approval
     permissions:
       contents: read
@@ -655,6 +668,9 @@ jobs:
     timeout-minutes: 5
     # 独立、无 checkout 的 job 用 Actions API 把不可变 artifact ID 与服务端 archive digest、
     # 当前 run、commit 和唯一名称绑定；最终发布 job 不需要扩大到 actions:read。
+    # English: Standalone, checkout-less jobs use the Actions API to combine immutable artifact IDs with
+    # server-side archive digest, Currently run, commit and unique name bindings; the final release job does not
+    # need to be expanded to actions:read.
     permissions:
       actions: read
     env:
@@ -702,6 +718,9 @@ jobs:
     timeout-minutes: 30
     # 只有这个最小 job 经过最终发布 Environment 审批并取得 OIDC/Registry 权限；它没有
     # checkout，也绝不执行 npm、Go、make、Docker build 或 scanner，只发布已校验的制品字节。
+    # English: Only this minimal job has been approved by the final release Environment and obtained
+    # OIDC/Registry permissions; it has not checkout and never execute npm, Go, make, Docker build or scanner,
+    # only the verified artifact bytes are published.
     environment: supply-chain-release
     permissions:
       contents: read
@@ -860,6 +879,9 @@ jobs:
           fi
           # 纯 OCI layout 已完成离线复核；使用断网、固定 digest 的 Skopeo 只做格式转换，
           # 生成 Docker 明确定义可 load 的归档。转换容器拿不到 OIDC、Registry 或 Docker socket。
+          # English: Pure OCI layout has completed offline review; Skopeo using disconnected and fixed digest
+          # only does format conversion. Generate Docker-defined loadable archives. The converted container
+          # cannot get OIDC, Registry or Docker socket.
           install -d -m 0700 "$PUBLISH_WORK_DIR" "$PUBLISH_EVIDENCE_DIR"
           docker run --rm --user "$(id -u):$(id -g)" --read-only --network=none \
             --tmpfs /tmp:rw,nosuid,nodev,size=256m \

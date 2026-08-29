@@ -108,6 +108,8 @@ func (i *AccessTokenIssuer) Issue(subject AccessTokenSubject, lifetime time.Dura
 
 // IssueAt 使用调用方已从权威持久化操作取得的时间签发令牌。session exchange、
 // relaunch 与 refresh 不得再次用 Pod 墙钟推导 iat/exp。
+// English: IssueAt issues the token using the time that the caller has obtained from the authoritative persistence
+// operation. Session exchange, relaunch and refresh must not use the Pod wall clock to derive iat/exp again.
 func (i *AccessTokenIssuer) IssueAt(
 	subject AccessTokenSubject,
 	lifetime time.Duration,
@@ -210,6 +212,8 @@ func NewAccessTokenVerifier(keys KeyResolver, options AccessTokenVerifierOptions
 
 // Verify 认证紧凑令牌，并将其绑定到调用方预期的租户。这是固定令牌格式，
 // 并非通用 JWT 实现。
+// English: Verify authenticates the compact token and binds it to the tenant expected by the caller. This is a
+// fixed token format, not a universal JWT implementation.
 func (v *AccessTokenVerifier) Verify(ctx context.Context, token, expectedOperatorID string) (AccessTokenClaims, error) {
 	if len(token) == 0 || len(token) > MaximumCompactTokenBytes || !validIdentifier(expectedOperatorID) {
 		return AccessTokenClaims{}, fmt.Errorf("%w: invalid compact token", ErrMalformed)

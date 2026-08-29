@@ -4,6 +4,8 @@ import { basename, resolve, sep } from "node:path";
 /**
  * 将已发布 sprite JSON 内嵌的 M4A 元数据绑定到运行时权威条目与真实文件。
  * 这条合同独立于流式包的外层哈希，避免容器重封装后留下看似完整但大小过期的描述。
+ *
+ * 英文 / English: Bind M4A metadata embedded in published sprite JSON to runtime authoritative entries and real files. This contract is independent of the outer hash of the streaming package, preventing the container from being repackaged and leaving a description that appears to be complete but has an expired size.
  */
 export async function verifyAudioSpriteDescriptorBindings({
   audio,

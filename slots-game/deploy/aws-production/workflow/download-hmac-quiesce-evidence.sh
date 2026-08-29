@@ -1,5 +1,6 @@
 #!/bin/sh
 # 按固定 S3 VersionId 下载并回读验证 HMAC 停机证据；不读取 latest。
+# English: Download and read-back verification HMAC outage evidence by fixed S3 VersionId; does not read latest.
 set -eu
 
 test "$#" -eq 2 || {

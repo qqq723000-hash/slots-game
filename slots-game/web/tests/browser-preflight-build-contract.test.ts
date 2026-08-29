@@ -1,4 +1,4 @@
-// @ts-nocheck -- 构建期字节合同直接读取 HTML/Git 属性并调用 Node 校验器。
+// @ts-nocheck -- 构建期字节合同直接读取 HTML/Git 属性并调用 Node 校验器。 / English: @ts-nocheck -- The build-time byte contract reads HTML/Git attributes directly and calls the Node validator.
 import { readFile } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";

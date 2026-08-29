@@ -44,6 +44,8 @@ func newService(store Store, options Options, random io.Reader) (*Service, error
 }
 
 // Issue 创建不透明、高熵且短期有效的凭据。只有 SHA-256 摘要能够跨越 Store 边界。
+// English: Issue creates credentials that are opaque, high-entropy, and short-lived. Only SHA-256 digests can
+// cross Store boundaries.
 func (s *Service) Issue(ctx context.Context, claims Claims) (IssuedCode, error) {
 	if err := ctx.Err(); err != nil {
 		return IssuedCode{}, err
@@ -76,6 +78,10 @@ func (s *Service) Issue(ctx context.Context, claims Claims) (IssuedCode, error) 
 // IssueCode 持久化预先派生的 256 位启动码；当摘要及所有声明已存在且仍在
 // IdempotencyRetention 内时，会重放包含原始过期时间的同一响应。生产环境使用由运营商、
 // 会话及交接幂等身份作为输入的 HMAC 派生码；任意调用方提供的启动码绝不能进入此方法。
+// English: IssueCode persists a pre-derived 256-bit activation code; while the digest and all claims exist and are
+// still within the IdempotencyRetention, the same response is replayed with the original expiration time.
+// Production environments use HMAC derived codes with operator, session, and handover idempotent identities as
+// input; any caller-supplied activation code MUST NOT enter this method.
 func (s *Service) IssueCode(ctx context.Context, claims Claims, code string) (IssuedCode, error) {
 	if err := ctx.Err(); err != nil {
 		return IssuedCode{}, err
@@ -131,6 +137,10 @@ func (s *Service) create(ctx context.Context, digest CodeDigest, claims Claims) 
 // FindCodeReplay 只查询已持久化的确定性交接响应，不创建新的启动码。它供上层在
 // durable session 绝对到期后仍满足同一 idempotency key 的有界 HTTP 重放，同时
 // 确保新的 handoff 必须先通过会话有效期裁决。
+// English: FindCodeReplay only queries persisted deterministic handover responses and does not create new startup
+// codes. It provides the upper layer with bounded HTTP replay that still satisfies the same idempotency key after
+// the absolute expiration of the durable session, while ensuring that new handoffs must first pass the session
+// validity period.
 func (s *Service) FindCodeReplay(
 	ctx context.Context,
 	claims Claims,
@@ -189,6 +199,8 @@ func (s *Service) findCodeReplay(
 }
 
 // Consume 仅在启动码原始运营商及会话绑定下执行一次性兑换。
+// English: Consume only performs one-time redemption under the original operator and session binding of the
+// activation code.
 func (s *Service) Consume(ctx context.Context, code string, binding Binding) (Claims, error) {
 	if err := ctx.Err(); err != nil {
 		return Claims{}, err

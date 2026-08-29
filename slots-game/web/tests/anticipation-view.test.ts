@@ -267,9 +267,9 @@ describe("native reel anticipation", () => {
       syncToReelHost?: (host: ReelSetView) => void;
     }).syncToReelHost;
 
-    // Pass98 只是将手工拟合的中心点和缩放复制到独立宿主中。
-    // 官方 CC/reelSuspense2 节点是 OB/reel 的子节点，因此该 API
-    // 必须改为将效果绑定到 ReelSetView 实际使用的实时投影。
+    // Pass98 只是将手工拟合的中心点和缩放复制到独立宿主中。 / English: Pass98 simply copies the hand-fitted center point and scale into a standalone host.
+    // 官方 CC/reelSuspense2 节点是 OB/reel 的子节点，因此该 API / English: The official CC/reelSuspense2 node is a child of OB/reel, so the API
+    // 必须改为将效果绑定到 ReelSetView 实际使用的实时投影。 / English: The effect must instead be bound to the real-time projection that the ReelSetView actually uses.
     expect(typeof syncToReel).toBe("function");
     syncToReel?.call(view, reels);
 

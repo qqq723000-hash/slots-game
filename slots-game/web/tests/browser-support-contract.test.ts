@@ -1,4 +1,4 @@
-// @ts-nocheck -- 该契约读取源码文件并验证构建期配置，不进入浏览器类型域。
+// @ts-nocheck -- 该契约读取源码文件并验证构建期配置，不进入浏览器类型域。 / English: @ts-nocheck -- This contract reads source code files and verifies build-time configuration without entering the browser type domain.
 import { readFile } from "node:fs/promises";
 
 import { describe, expect, it } from "vitest";

@@ -3,6 +3,9 @@
 
 # 验证 Nginx 镜像只安装经审核、按架构固定摘要的 OpenSSL APK，并在每个可运行
 # stage 结束时恢复 nginxinc 的非 root 用户。该脚本只解析 Dockerfile，不调用网络或 Docker。
+# English: Verify that the Nginx image only installs audited, architecture-fixed digest OpenSSL APKs on every
+# runnable Restore the non-root user of nginxinc at the end of the stage. This script only parses the Dockerfile
+# and makes no calls to networking or Docker.
 set -eu
 
 fail() {
@@ -41,6 +44,9 @@ done
 
 # 忽略纯注释并连接 Dockerfile 续行，按实际 shell 指令统计 apk add；不能靠在审核命令
 # 旁边另加一条联网安装，或在续行中插入签名/仓库绕过参数。
+# English: Ignore pure comments and connect Dockerfile continuation lines to count apk add based on actual shell
+# instructions; cannot rely on audit commands Add another line for network installation next to it, or insert
+# signature/repository bypass parameters in the continuation line.
 normalized=$(awk '
   /^[[:space:]]*#/ { next }
   {

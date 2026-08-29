@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # 用真实 Helm 渲染证明 maintenance-complete 只允许 API 共享 HMAC 边界变化。
+# English: Demonstrating maintenance-complete with real Helm rendering only allows the API to share HMAC
+# boundary changes.
 set -euo pipefail
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

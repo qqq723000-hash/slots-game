@@ -1,3 +1,4 @@
+# 该文件由 `terraform init` 自动维护；手动修改可能在后续更新中丢失。
 # This file is maintained automatically by "terraform init".
 # Manual edits may be lost in future updates.
 

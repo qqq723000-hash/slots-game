@@ -3,6 +3,8 @@ groups:
     interval: 30s
     rules:
       # 记录规则只按固定 scrape 标签聚合，严禁引入 operator/session/round 等高基数标签。
+      # English: Recording rules are only aggregated according to fixed scrape tags, and the introduction of
+      # high-cardinality tags such as operator/session/round is strictly prohibited.
       - record: rgs:http_request_rate:rate5m
         expr: sum by (job, environment) (rate(rgs_http_requests_total[5m]))
       - record: rgs:http_total_failure_rate:rate5m
@@ -17,6 +19,8 @@ groups:
         expr: sum by (job, environment) (rgs_db_pool_in_use_connections) / clamp_min(sum by (job, environment) (rgs_db_pool_max_open_connections), 1)
       - record: rgs:http_connection_utilization:ratio
         # 取同一环境中最繁忙副本，避免总量平均值掩盖单副本慢连接或文件描述符耗尽。
+        # English: Take the busiest replica in the same environment to avoid the total average covering a single
+        # replica's slow connection or file descriptor exhaustion.
         expr: max by (job, environment) (rgs_http_active_connections / clamp_min(rgs_http_connection_limit, 1))
 
   - name: rgs-alerts
@@ -35,6 +39,8 @@ groups:
 
       - alert: RGSNotReady
         # 已登录运维抓取却缺少该 gauge 同样失败闭合，避免旧镜像或指标回归静默变绿。
+        # English: If you have logged in to the operations capture but the gauge is missing, it will also fail
+        # to close to prevent the old image or the indicator from returning to silently turning green.
         expr: (rgs_ready{job="rgs"} == 0) or (up{job="rgs"} == 1 unless on (job, instance) rgs_ready{job="rgs"})
         for: 2m
         labels:
@@ -235,6 +241,9 @@ groups:
       - alert: RGSEconomicAdmissionUnavailable
         # 经济新意图能力与基础 API readiness 解耦；status/result/ACK 仍须保持可用。
         # gauge 缺失同样失败闭合，避免旧镜像或未接线 observer 静默变绿。
+        # English: Economic new intent capabilities are decoupled from underlying API readiness;
+        # status/result/ACK must still remain available. Gauge missing also fails to close, preventing old
+        # mirrors or unwired observers from turning green silently.
         expr: |
           (
             rgs_economic_admission_ready{job="rgs"} == 0
@@ -259,6 +268,9 @@ groups:
       - alert: RGSEconomicAdmissionObservationStale
         # age 由 shared 与 economic 两条路径最近成功时间的较早值计算，单侧高频
         # 成功不能掩盖另一侧长期未验证。-1 表示进程启动后从未完成组合验证。
+        # English: age is calculated from the earlier value of the latest success time of the two paths shared
+        # and economic, one-sided high frequency Success cannot hide the long-term unverification on the other
+        # side. -1 means that the combination verification was never completed after the process was started.
         expr: |
           (
             (
@@ -285,6 +297,8 @@ groups:
 
       - alert: RGSCapacityRejectionsSustained
         # 容量耗尽与租户/攻击限流语义不同；使用独立无标签 counter，避免误判根因。
+        # English: Capacity exhaustion has different semantics from tenant/attack current limiting; use an
+        # independent unlabeled counter to avoid misjudgment of the root cause.
         expr: sum(increase(rgs_capacity_rejected_total[5m])) > 20
         for: 5m
         labels:
@@ -344,6 +358,8 @@ groups:
     rules:
       # Watchdog 必须由外部 Alertmanager 路由到独立 dead-man switch；仅在 Prometheus UI
       # 看到 firing 不代表通知链路可用。
+      # English: Watchdog must be routed by external Alertmanager to standalone dead-man switch; only in
+      # Prometheus UI Seeing firing does not mean the notification link is available.
       - alert: RGSObservabilityWatchdog
         expr: vector(1)
         labels:
@@ -378,6 +394,8 @@ groups:
 
       - alert: VectorTelemetryUnavailable
         # 静态 target 缺失、抓取失败和异常多副本都必须失败闭合为不可用。
+        # English: Missing static targets, failed fetching, and abnormal multiple copies must fail and be closed
+        # as unavailable.
         expr: (min(up{job="vector"}) or vector(0)) < 1
         for: 2m
         labels:
@@ -412,6 +430,8 @@ groups:
 
       - alert: VectorLogBufferNearCapacity
         # 与 vector.yaml 的 268435488-byte 硬上限绑定；持续超过 80% 时在阻塞日志读取前告警。
+        # English: Binds to the 268435488-byte hard limit of vector.yaml; alerts before blocking log reading if
+        # it continues to exceed 80%.
         expr: max(vector_buffer_size_bytes{job="vector",component_id="approved_https_archive"}) > 214748390
         for: 5m
         labels:

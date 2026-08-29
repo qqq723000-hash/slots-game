@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 该脚本在取得任何云凭据前校验发布输入；镜像只允许不可变 ECR SHA-256 摘要。
+# English: This script validates publish input before obtaining any cloud credentials; the image only allows
+# immutable ECR SHA-256 digests.
 set -eu
 
 fail() {

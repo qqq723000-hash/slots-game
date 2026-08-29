@@ -326,7 +326,7 @@ describe("main RGS bootstrap boundary", () => {
       startApplication("https://game.example/play");
       await vi.waitFor(() => expect(appStart).toHaveBeenCalledOnce());
 
-      // 代表异常前已接受的一次经济请求；故障边界只能终止，绝不能重提。
+      // 代表异常前已接受的一次经济请求；故障边界只能终止，绝不能重提。 / English: Represents an economic request that has been accepted before the exception; the fault boundary can only be terminated and must not be repeated.
       expect(gateway.requestSpin("round-pending", "100")).toBe(true);
       const firstPreventDefault = vi.fn(() => { throw new Error("event cancellation failed"); });
       const firstEvent = firstEventType === "error"

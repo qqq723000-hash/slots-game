@@ -1,4 +1,6 @@
 # Helm 在安装或升级业务 Deployment 前运行数据库迁移；失败会中止发布并保留现场。
+# English: Helm runs database migrations before installing or upgrading a business deployment; failure aborts
+# the deployment and preserves the site.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -151,6 +153,8 @@ spec:
             sizeLimit: 16Mi
 ---
 # 发布成功后用同名 post hook 原子替换并删除 pre hook 网络策略；失败时保留策略和 Job 供排障。
+# English: After the release is successful, atomically replace and delete the pre hook network policy with the
+# post hook with the same name; if it fails, the policy and job will be retained for troubleshooting.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

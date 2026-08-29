@@ -60,6 +60,8 @@ export function visualFixturePlayerErrorCodeFromDetail(
 /**
  * 只冻结第一条夹具失败事实。事件与序列来自已经校验的内部投影；原始异常、URL、
  * correlationId、消息和堆栈永远不会进入该诊断表面。
+ *
+ * 英文 / English: Only the first clamp failure fact is frozen. Events and sequences come from validated internal projections; raw exceptions, URLs, correlationIds, messages, and stacks never enter the diagnostic surface.
  */
 export function publishVisualFixtureFailure(
   dataset: VisualFixtureDataset,
@@ -131,6 +133,8 @@ export function createVisualFixtureFeatureEventProjection(
  * 只记录观察者实际收到的事件类型；不从静态网关场景推导证据，也不保留事件载荷。
  * null 仅表示当前表现结束，因此只清 current；历史达到上限或结构损坏时返回 null，
  * 让调用方失败关闭夹具，而不是悄悄截断可能缺失的浏览器证据。
+ *
+ * 英文 / English: Only the event types actually received by the observer are recorded; no evidence is deduced from the static gateway scenario, and the event payload is not retained. null only indicates the end of the current performance, so only current is cleared; null is returned when the history reaches the upper limit or the structure is damaged, allowing the caller to fail to close the fixture instead of quietly truncating possible missing browser evidence.
  */
 export function projectVisualFixtureFeatureEvent(
   state: Readonly<VisualFixtureFeatureEventProjection>,
@@ -181,7 +185,7 @@ export function clearVisualFixtureFeatureEventProjection(
 export interface VisualFixtureTelemetryProjectionState {
   readonly loadedVisualIds: Set<string>;
   readonly activeVisualOperations: Set<number>;
-  /** 仅保留表现 ID 与本地 operationId，供截图把像素绑定到仍存活的具体视觉实例。 */
+  /** 仅保留表现 ID 与本地 operationId，供截图把像素绑定到仍存活的具体视觉实例。 / English: Only the presentation ID and local operationId are retained for screenshots to bind pixels to specific visual instances that are still alive. */
   readonly activeVisualIdsByOperation: Map<number, string>;
   readonly missingRequiredVisualIds: Set<string>;
   visualFailureCount: number;
@@ -218,7 +222,7 @@ export function publishVisualFixtureTelemetryCounts(
   dataset.fixtureVisualMissingRequired = [...state.missingRequiredVisualIds].join(",");
 }
 
-/** 只把不可变的实时机台快照发布到捕获测试夹具数据中。 */
+/** 只把不可变的实时机台快照发布到捕获测试夹具数据中。 / English: Only immutable real-time machine snapshots are published to capture test fixture data. */
 export function publishReelCabinetCompositionDiagnostics(
   dataset: VisualFixtureDataset,
   diagnostics: Readonly<ReelCabinetCompositionDiagnostics>,
@@ -228,6 +232,8 @@ export function publishReelCabinetCompositionDiagnostics(
 
 /**
  * 锁定第一个严格故障的身份，同时继续预测实时聚合计数。后来的视觉事件永远无法消除导致测试场景失败的诊断。
+ *
+ * 英文 / English: Lock the identity of the first strict failure while continuing to predict real-time aggregate counts. Later visual events can never eliminate the diagnosis that caused the test scenario to fail.
  */
 export function applyVisualFixtureTelemetryEvent(
   dataset: VisualFixtureDataset,
@@ -272,6 +278,8 @@ export function applyVisualFixtureTelemetryEvent(
 /**
  * 销毁窗口只接收 owner 同步发布的取消完成事件，使投影与真实 reporter 一起归零；
  * 拆卸期间新建、加载、自然完成或失败的事件都不能重新打开夹具状态。
+ *
+ * 英文 / English: The destruction window only receives cancellation completion events published synchronously by the owner, so that the projection is reset to zero together with the real reporter; events such as new creation, loading, natural completion or failure during disassembly cannot reopen the fixture state.
  */
 export function shouldProjectVisualFixtureTelemetryEvent(
   destroyed: boolean,
@@ -440,7 +448,7 @@ export function clearVisualFixturePresentationBranches(
   clearKeys(dataset, PRESENTATION_BRANCH_KEYS);
 }
 
-/** 为最终浏览器断言保留各轮的准确关门结果。 */
+/** 为最终浏览器断言保留各轮的准确关门结果。 / English: Preserve the exact closing results of each round for the final browser assertion. */
 export function applyVisualFixturePresentationBranch(
   dataset: VisualFixtureDataset,
   branch: AppPresentationBranch,
@@ -588,6 +596,8 @@ export function isPass48RageAuraCapture(
 
 /**
  * 发布两个 Pass48 捕获检查点的只读协议/Spine 证据。动画时间被序列化以供检查，但不会进行比较或用于驱动表现。
+ *
+ * 英文 / English: Post read-only protocol/Spine evidence for two Pass48 capture checkpoints. Animation times are serialized for inspection but are not compared or used to drive performance.
  */
 export function publishPass48RageAuraCheckpoint(
   dataset: VisualFixtureDataset,
@@ -703,6 +713,8 @@ function finiteTrackTime(entry: Readonly<CharacterTrackDiagnostic> | null): numb
 
 /**
  * Pass50 启动协议故意比场景允许列表更窄：几乎未命中的捕获/检查点/运行查询正常渲染，并且永远不会暂停生产时钟。
+ *
+ * 英文 / English: The Pass50 launch protocol is intentionally narrower than the scene allowed list: nearly-missed capture/checkpoint/run queries render normally, and the production clock is never paused.
  */
 export function isPass50CharacterIntroCapture(
   scenario: string,
@@ -718,6 +730,8 @@ export function isPass50CharacterIntroCapture(
 
 /**
  * 发布并验证两个浏览器保存的 INTRO 生命周期姿势之一。 LOOP 条目需要先前的诊断，以便可以将持续前进的光环与错误重新启动的轨道区分开来。
+ *
+ * 英文 / English: Publish and validate one of two browser-saved INTRO lifecycle poses. LOOP entries require prior diagnostics so that a halo that continues to progress can be distinguished from a track that restarts incorrectly.
  */
 export function publishPass50CharacterIntroCheckpoint(
   dataset: VisualFixtureDataset,
@@ -886,7 +900,7 @@ function isPass53CharacterWinCheckpoint(
     && Object.hasOwn(PASS53_CHARACTER_WIN_CHECKPOINT_MS, checkpoint);
 }
 
-/** 确切的Pass53浏览器路由；未遂查询无法暂停或步进 Character。 */
+/** 确切的Pass53浏览器路由；未遂查询无法暂停或步进 Character。 / English: Exact Pass53 browser routing; attempted query cannot pause or step Character. */
 export function isPass53CharacterWinCapture(
   scenario: string,
   capture: string | null,
@@ -905,7 +919,7 @@ export function pass53CharacterWinCheckpointElapsedMs(
   return PASS53_CHARACTER_WIN_CHECKPOINT_MS[checkpoint];
 }
 
-/** Pass53 证据仅在预设的非简化 Character 时钟上有效。 */
+/** Pass53 证据仅在预设的非简化 Character 时钟上有效。 / English: Pass53 evidence is only valid on the default non-simplified Character clock. */
 export function pass53CharacterWinCaptureEnvironmentViolation(
   scenario: string,
   capture: string | null,
@@ -936,7 +950,7 @@ function pass53NearlyEqual(actual: number | null | undefined, expected: number):
     && Math.abs(actual - expected) <= 0.000_001;
 }
 
-/** 发布一项不可变的精确时钟 Character WIN 切换观察。 */
+/** 发布一项不可变的精确时钟 Character WIN 切换观察。 / English: Publish an immutable accurate clock Character WIN toggle observation. */
 export function publishPass53CharacterWinCheckpoint(
   dataset: VisualFixtureDataset,
   scenario: string,
@@ -1058,7 +1072,7 @@ function isPass54WheelCharacterCheckpoint(
     && Object.hasOwn(PASS54_WHEEL_CHARACTER_CHECKPOINT_MS, checkpoint);
 }
 
-/** 确切的Pass54路线；正常页面和所有未遂事件都无法关闭。 */
+/** 确切的Pass54路线；正常页面和所有未遂事件都无法关闭。 / English: Exact Pass54 route; normal page and all near misses cannot be closed. */
 export function isPass54WheelCharacterCapture(
   scenario: string,
   capture: string | null,
@@ -1105,7 +1119,7 @@ function pass54NearlyEqual(actual: number | null | undefined, expected: number):
     && Math.abs(actual - expected) <= 0.000_001;
 }
 
-/** 发布一项不可变的着陆相关 WIN_FEATURE 观察结果。 */
+/** 发布一项不可变的着陆相关 WIN_FEATURE 观察结果。 / English: Publish an immutable landing-related WIN_FEATURE observation. */
 export function publishPass54WheelCharacterCheckpoint(
   dataset: VisualFixtureDataset,
   scenario: string,
@@ -1296,7 +1310,7 @@ function isPass55WheelChestCheckpoint(
   return checkpoint !== null && Object.hasOwn(PASS55_WHEEL_CHEST_CHECKPOINT_MS, checkpoint);
 }
 
-/** 确切的 Pass55 路线。生产页面和每个别名/未遂事件都无法关闭。 */
+/** 确切的 Pass55 路线。生产页面和每个别名/未遂事件都无法关闭。 / English: Exact Pass55 route. The production page and each alias/near-miss event cannot be closed. */
 export function isPass55WheelChestCapture(
   scenario: string,
   capture: string | null,
@@ -1345,7 +1359,7 @@ function pass55NearlyEqual(actual: number | null | undefined, expected: number):
     && Math.abs(actual - expected) <= 0.000_001;
 }
 
-/** 发布一个不可变的、仅 Character 的 FEATURE_CHEST_LOOP 观察结果。 */
+/** 发布一个不可变的、仅 Character 的 FEATURE_CHEST_LOOP 观察结果。 / English: Publish an immutable, Character-only FEATURE_CHEST_LOOP observation. */
 export function publishPass55WheelChestCheckpoint(
   dataset: VisualFixtureDataset,
   scenario: string,
@@ -1361,7 +1375,7 @@ export function publishPass55WheelChestCheckpoint(
     run,
   )) return null;
 
-  // 证据是一次性写入的。第二个发布者调用绝不能删除或替换第一个接受的观察，即使其有效负载也是如此。
+  // 证据是一次性写入的。第二个发布者调用绝不能删除或替换第一个接受的观察，即使其有效负载也是如此。 / English: Evidence is written once. The second publisher call must not remove or replace the first accepted observation, even if its payload is unchanged.
   if (dataset.fixtureWheelChestCheckpoint !== undefined
     || dataset.fixtureWheelChestContract !== undefined
     || dataset.fixtureWheelChestDiagnostics !== undefined) {
@@ -1478,7 +1492,7 @@ export interface Pass49RecoveredGatewayFacts {
   readonly pendingAtResult: boolean;
   readonly deliveredBeforeLaunch: boolean;
   readonly deliveryCount: number;
-  /** 仅计算持久网关接受的、身份精确的 ACK。 */
+  /** 仅计算持久网关接受的、身份精确的 ACK。 / English: Only identity-accurate ACKs accepted by the persistent gateway are counted. */
   readonly gatewayAcknowledgementCount: number;
   readonly acknowledgementAttemptCount: number;
   readonly acknowledgementAcceptedCount: number;
@@ -1559,6 +1573,8 @@ function hasExactPass49Tracks(
 /**
  * Rage 集合在后台生命周期运行时合法拥有 body/overlay 轨道 0/1。因此，EVOLVE 断言在独立预设的持久磁道 2/3 上保持准确，
  * 并将所有其他磁道记录为诊断，而不是重写实时字符。
+ *
+ * 英文 / English: The Rage collection legally owns body/overlay track 0/1 while the background lifecycle is running. Therefore, EVOLVE assertions remain accurate on 2/3 of the independently preset persistent tracks and log all other tracks as diagnostics rather than overwriting live characters.
  */
 function hasExactPass49AuraTracks(
   tracks: readonly Readonly<CharacterTrackDiagnostic>[],
@@ -1644,7 +1660,7 @@ export function isPass49RecoveredLevelUpCapture(
   return scenario === BASE_RGS_RECOVERED_LEVEL_UP_SCENARIO && capture === "1";
 }
 
-/** 记录宏表现生命周期并拒绝重复或跳过。 */
+/** 记录宏表现生命周期并拒绝重复或跳过。 / English: Record macro performance lifecycle and reject duplication or skipping. */
 export function applyPass49RecoveredRoundPresentationState(
   dataset: VisualFixtureDataset,
   scenario: string,
@@ -1669,7 +1685,7 @@ export function applyPass49RecoveredRoundPresentationState(
   return null;
 }
 
-/** 在持久重播期间，任何控制器发起的旋转请求都是无效的。 */
+/** 在持久重播期间，任何控制器发起的旋转请求都是无效的。 / English: During persistent replay, any controller-initiated rotation requests are invalid. */
 export function applyPass49RecoveredUserSpinRequest(
   dataset: VisualFixtureDataset,
   scenario: string,
@@ -1683,7 +1699,7 @@ export function applyPass49RecoveredUserSpinRequest(
     : setPass49RecoveredViolation(dataset, "rgs-recovered-user-spin-request");
 }
 
-/** 在 result.accepted 捕获准确的预表现持久交付。 */
+/** 在 result.accepted 捕获准确的预表现持久交付。 / English: Capture accurate pre-performance persistent delivery in result.accepted. */
 export function publishPass49RecoveredResultAccepted(
   dataset: VisualFixtureDataset,
   scenario: string,
@@ -1717,7 +1733,7 @@ export function publishPass49RecoveredResultAccepted(
   return dataset.fixtureRgsRecoveredViolation ?? null;
 }
 
-/** ACK只有在结果、EVOLVE事件和集合START接口后才有效。 */
+/** ACK只有在结果、EVOLVE事件和集合START接口后才有效。 / English: ACK is only valid after the result, EVOLVE event and collection START interface. */
 export function applyPass49RecoveredAcknowledgement(
   dataset: VisualFixtureDataset,
   scenario: string,
@@ -2744,7 +2760,7 @@ export interface VisualFixtureSpinControlSnapshot {
   readonly disabled: boolean;
 }
 
-/** 精确的仅浏览器触发；生产代码从不导入测试场景策略。 */
+/** 精确的仅浏览器触发；生产代码从不导入测试场景策略。 / English: Exactly browser-only triggering; production code never imports the test scenario policy. */
 export function isNormalWinContinueClickTrigger(
   scenario: string,
   capture: string | null,
@@ -2761,6 +2777,8 @@ export function isNormalWinContinueClickTrigger(
 
 /**
  * 项目证明，一次真正的主控点击穿过了公开的 DOM 合约：Continue/fast-stop 同步变为禁用等待/无。
+ *
+ * 英文 / English: The project demonstrates that a real master click passes through the exposed DOM contract: Continue/fast-stop synchronization becomes disabled wait/none.
  */
 export function applyNormalWinContinueControlClick(
   dataset: VisualFixtureDataset,
@@ -2774,7 +2792,7 @@ export function applyNormalWinContinueControlClick(
     && before.action === "fast-stop"
     && !before.disabled;
   if (!validBefore) return setNormalWinContinueViolation(dataset, "continue-control-contract");
-  // 在调用真正的 DOM 单击之前会预测计数，因为接受的处理程序会同步发出预设的隐藏开始里程碑。
+  // 在调用真正的 DOM 单击之前会预测计数，因为接受的处理程序会同步发出预设的隐藏开始里程碑。 / English: The count is predicted before the real DOM click is called because the accept handler emits a preset hidden start milestone synchronously.
   const after = click();
   const accepted = after.mode === "waiting"
     && after.action === "none"
@@ -2846,6 +2864,8 @@ function validateNormalWinContinueLogicalDone(dataset: VisualFixtureDataset): st
 /**
  * 只投影截图选择所需的信息，不序列化任何结果对象。仅当严格轨迹顺序违规必须使浏览器测试夹具失败时才返回 true；
  * 符合预期的旧轮次尾段仍会忽略。
+ *
+ * 英文 / English: Only the information required for the screenshot selection is projected, no resulting object is serialized. Returns true only if a strict trace order violation must cause the browser test fixture to fail; old round tail segments that match expectations are still ignored.
  */
 export function applyVisualFixtureTrace(
   dataset: VisualFixtureDataset,
@@ -2939,7 +2959,7 @@ export function applyVisualFixtureTrace(
     return false;
   }
 
-  // 记录的创作隐藏可能会在下一轮被接受后完成。
+  // 记录的创作隐藏可能会在下一轮被接受后完成。 / English: Recorded creative hiding may be completed after the next round is accepted.
   if (dataset.fixtureSequence !== String(trace.sequence)) {
     return scenario === BASE_RGS_RECOVERED_LEVEL_UP_SCENARIO
       ? (setPass49RecoveredViolation(dataset, "rgs-recovered-trace-sequence"), true)
@@ -3097,12 +3117,12 @@ export function applyVisualFixtureTrace(
       appendRecordTraceHistory(dataset, trace.sequence, trace.index, phase, true);
       dataset.fixtureStaleHidden = `${trace.sequence}:${trace.index}:${trace.id}`;
       dataset.fixtureTraceViolation = "stale-hidden-owner-regression";
-      // 不要让过时的完成滚动阶段、记录身份、常驻对象所有权或屏幕截图选择事实返回到传出记录。
+      // 不要让过时的完成滚动阶段、记录身份、常驻对象所有权或屏幕截图选择事实返回到传出记录。 / English: Don't let obsolete completion scroll stages, record identities, resident object ownership, or screenshot selection facts return to outgoing records.
       return true;
     }
 
-    // 在发布的零延迟程序中，中间记录的隐藏处理程序在发布 HIDDEN 之前被后继者 SHOW 取代。即使后继者尚未投影其第一个跟踪，
-    // 也要拒绝它：仅检查 `currentIndex > trace.index` 就会让意外的 333ms 等待通过有效。
+    // 在发布的零延迟程序中，中间记录的隐藏处理程序在发布 HIDDEN 之前被后继者 SHOW 取代。即使后继者尚未投影其第一个跟踪， / English: In a published zero-delay program, the hidden handler of the intermediate record is replaced by the successor SHOW before issuing HIDDEN. Even if the successor has not yet projected its first trace,
+    // 也要拒绝它：仅检查 `currentIndex > trace.index` 就会让意外的 333ms 等待通过有效。 / English: Also reject it: just checking `currentIndex > trace.index` would make the unexpected 333ms wait pass valid.
     if (phase === "hidden"
       && scenario !== NORMAL_WIN_CONTINUE_SCENARIO
       && trace.index < trace.count - 1) {
@@ -3121,7 +3141,7 @@ export function applyVisualFixtureTrace(
     }
 
     const resident = residentFactsFromTrace(trace);
-    // 序列 5 是确定性的两条记录 xN 切换装置。它的诊断是严格的可视化门的一部分，而不是可选的日志记录。
+    // 序列 5 是确定性的两条记录 xN 切换装置。它的诊断是严格的可视化门的一部分，而不是可选的日志记录。 / English: Sequence 5 is a deterministic two-record xN switching device. Its diagnostics are strictly part of the visualization gate, not optional logging.
     if (trace.sequence === 5 && trace.count === 2) {
       let violation: string | null = null;
       if (!resident) violation = "resident-facts-missing";
@@ -3239,6 +3259,8 @@ const PLAYWRIGHT_FIREFOX_CAPTURE_CLOCK_STACK =
  * Playwright Firefox 会把已恢复的 `clock.pauseAt` 过期目标竞态同时发布为协议拒绝和页面
  * `unhandledrejection`。浏览器门禁仍负责协议/时钟验证与 pageerror 记账；此分类器只避免
  * 夹具的通用拒绝钩子抢先把已经验证可恢复的截图锁为失败。
+ *
+ * 英文 / English: Playwright Firefox will publish the recovered `clock.pauseAt` expiration target race as both a protocol rejection and the page `unhandledrejection`. The browser gatekeeper is still responsible for protocol/clock validation and pageerror accounting; this classifier only prevents the fixture's generic reject hook from preemptively locking screenshots that have been verified to be recoverable as failures.
  */
 export function isVisualFixtureCaptureClockPastTargetRejection(reason: unknown): boolean {
   if (!(reason instanceof Error)
@@ -3248,7 +3270,7 @@ export function isVisualFixtureCaptureClockPastTargetRejection(reason: unknown):
   return PLAYWRIGHT_FIREFOX_CAPTURE_CLOCK_STACK.test(reason.stack);
 }
 
-/** 首先清除过时的事实，并仅公开允许列出的功能投影。 */
+/** 首先清除过时的事实，并仅公开允许列出的功能投影。 / English: Start by clearing obsolete facts and exposing only the feature projections that are allowed to be listed. */
 export function applyVisualFixtureFeatureEvent(
   dataset: VisualFixtureDataset,
   type: FeatureEvent["type"] | null,
@@ -3459,7 +3481,7 @@ const CHECKPOINTS_BY_SCENARIO = Object.freeze({
   ] as const),
 });
 
-/** 在任意查询值反映到 DOM 之前拒绝它们。 */
+/** 在任意查询值反映到 DOM 之前拒绝它们。 / English: Reject any query values ​​before they are reflected in the DOM. */
 export function resolveVisualFixtureSemanticCheckpoint(
   scenario: string,
   capture: string | null,
@@ -3474,7 +3496,7 @@ export function resolveVisualFixtureSemanticCheckpoint(
     : null;
 }
 
-/** Pass52 证据仅在作者 1500ms（非简化时钟）上才是规范的。 */
+/** Pass52 证据仅在作者 1500ms（非简化时钟）上才是规范的。 / English: Pass52 evidence is canonical only on author 1500ms (non-reduced clock). */
 export function baseVaultUnlockCaptureEnvironmentViolation(
   scenario: string,
   capture: string | null,
@@ -3492,7 +3514,7 @@ export function baseVaultUnlockCaptureEnvironmentViolation(
   return reducedMotion ? "vault-unlock-reduced-motion-not-canonical" : null;
 }
 
-/** 精确场景+标签+序列匹配器用于罕见状态屏幕截图。 */
+/** 精确场景+标签+序列匹配器用于罕见状态屏幕截图。 / English: Exact scene+label+sequence matcher for rare state screenshots. */
 export function matchVisualFixtureSemanticCheckpoint(
   scenario: string,
   capture: string | null,
@@ -3592,6 +3614,8 @@ type VaultUnlockPhaseCheckpoint = Extract<
 
 /**
  * 发布一个精确的只读 Base Vault 姿势。任何不匹配都会在测试场景中失败关闭，而不会将诊断反馈回渲染。
+ *
+ * 英文 / English: Publish an exact read-only Base Vault pose. Any mismatch will fail closed in the test scene without feeding diagnostics back to the render.
  */
 export function publishBaseVaultUnlockCheckpoint(
   dataset: VisualFixtureDataset,
@@ -3655,7 +3679,7 @@ export function publishBaseVaultUnlockCheckpoint(
   return null;
 }
 
-/** 精确的 CAP 测试场景门；序列保护可以防止陈旧的装置在其他地方暂停。 */
+/** 精确的 CAP 测试场景门；序列保护可以防止陈旧的装置在其他地方暂停。 / English: Precise CAP test scenario gates; sequence protection prevents stale installations from stalling elsewhere. */
 export function isCapSummaryInputCheckpointCapture(
   scenario: string,
   capture: string | null,
@@ -3671,6 +3695,8 @@ export function isCapSummaryInputCheckpointCapture(
 /**
  * 跨浏览器像素取证可在最终免费旋转总结输入门选择启用仅夹具保持；
  * 场景与序列校验确保该诊断接口不会暂停其他表现路径。
+ *
+ * 英文 / English: Cross-browser pixel forensics can optionally enable fixture hold only at the final free spin summary input gate; scene and sequence verification ensures that the diagnostic interface does not pause other performance paths.
  */
 export function isFreeSpinsSummaryInputCheckpointHold(
   scenario: string,
@@ -3685,7 +3711,7 @@ export function isFreeSpinsSummaryInputCheckpointHold(
   return scenario === "cap-summary" && checkpoint.sequence === 9;
 }
 
-/** 精确确定的无摘要终端保持；其他所有检查点均无法打开。 */
+/** 精确确定的无摘要终端保持；其他所有检查点均无法打开。 / English: Exactly determined no-summary terminal holds; all other checkpoints cannot be opened. */
 export function isNoSummaryTerminalCheckpointCapture(
   scenario: string,
   capture: string | null,
@@ -3709,13 +3735,13 @@ export function isWinEffectsMatrixTraceCheckpoint(
   if (trace.type === "big-win.count-start") return trace.sequence === 6;
   if (!trace.type.startsWith("win-record.") || !("index" in trace)) return false;
   if (trace.sequence >= 1 && trace.sequence <= 4) {
-    // 在预设的显示时钟前进后、消失之前按住。这是第一个屏幕截图安全的组合框架； `visible` 是语义 START 回调，可以先于第一次手动 Spine 更新。
+    // 在预设的显示时钟前进后、消失之前按住。这是第一个屏幕截图安全的组合框架； `visible` 是语义 START 回调，可以先于第一次手动 Spine 更新。 / English: Press and hold after the preset display clock advances and before it disappears. This is the first screenshot-safe composition framework; `visible` is a semantic START callback that can precede the first manual Spine update.
     return trace.type === "win-record.hold-complete" && trace.index === 0;
   }
   if (trace.sequence === 5) {
-    // START `visible` 轨迹拥有一个预设的 alpha-0 设置姿势。官方 WINLABEL_SHOWN 边界是第一个确定性基础/无 xN 帧，
-    // 发生在乘法器分配或 merge_start 播放之前。 Pass 39仅添加不透明HOLD和零延迟后继接口； hide-start 和 hide 仍然是可观察的遥测，
-    // 永远不会成为障碍。
+    // START `visible` 轨迹拥有一个预设的 alpha-0 设置姿势。官方 WINLABEL_SHOWN 边界是第一个确定性基础/无 xN 帧， / English: START `visible` tracks have a default alpha-0 setting pose. The official WINLABEL_SHOWN boundary is the first deterministic base/no xN frame,
+    // 发生在乘法器分配或 merge_start 播放之前。 Pass 39仅添加不透明HOLD和零延迟后继接口； hide-start 和 hide 仍然是可观察的遥测， / English: Occurs before multiplier allocation or merge_start plays. Pass 39 only adds opaque HOLD and zero-latency successor interfaces; hide-start and hide are still observable telemetry,
+    // 永远不会成为障碍。 / English: It will never be a hindrance.
     return ((trace.type === "win-record.show-complete"
       || trace.type === "win-record.merge-start"
       || trace.type === "win-record.merge-settled"
@@ -3733,10 +3759,10 @@ export interface VisualFixtureCheckpointHold {
   release(): void;
 }
 
-/** 浏览器自动化可以发送此密钥，而无需构造 DOM 事件。 */
+/** 浏览器自动化可以发送此密钥，而无需构造 DOM 事件。 / English: Browser Automation can send this key without constructing a DOM event. */
 export const VISUAL_FIXTURE_RELEASE_KEY = "F8";
 
-/** 事件驱动的屏幕截图保持与有限的安全释放。 */
+/** 事件驱动的屏幕截图保持与有限的安全释放。 / English: Event-driven screenshots are maintained with limited security release. */
 export function createVisualFixtureCheckpointHold(
   target: EventTarget,
   dataset: VisualFixtureDataset,

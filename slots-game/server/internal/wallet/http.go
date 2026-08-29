@@ -93,6 +93,10 @@ func NewHTTPWallet(config HTTPConfig) (*HTTPWallet, error) {
 
 // SecureHTTPClient 构造钱包专用 TLS 传输。配置独立根 CA 时只在启动阶段读取一次；
 // 文件缺失、不是普通文件、超限或不含证书都会拒绝启动，绝不降级跳过验证。
+// English: SecureHTTPClient constructs a wallet-specific TLS transport. When configuring an independent root CA,
+// it is only read once during the startup phase; if the file is missing, is not an ordinary file, exceeds the
+// limit, or does not contain a certificate, the startup will be refused and will never be downgraded to skip
+// verification.
 func SecureHTTPClient(timeout time.Duration, rootCAFile string) (*http.Client, error) {
 	if timeout <= 0 {
 		timeout = 4 * time.Second
@@ -122,6 +126,9 @@ func SecureHTTPClient(timeout time.Duration, rootCAFile string) (*http.Client, e
 			MaxResponseHeaderBytes: 32 << 10,
 			// 钱包故障时慢响应可能长期占用连接；单主机硬上限防止连接数无界增长。
 			// 响应头同样必须显式有界，不能沿用 net/http 的 MiB 级默认值放大并发内存。
+			// English: Slow response when a wallet fails may occupy connections for a long time; a hard upper limit on a
+			// single host prevents the number of connections from growing unbounded. Response headers must also be explicitly
+			// bounded, and net/http's MiB-level defaults cannot be used to amplify concurrent memory.
 			MaxConnsPerHost:       32,
 			MaxIdleConns:          100,
 			MaxIdleConnsPerHost:   20,
@@ -221,6 +228,8 @@ func (w *HTTPWallet) ProfileFor(operatorID string) (rgs.Profile, error) {
 }
 
 // SubmitRound 是 v2 结算入口；它会在发出请求前拒绝损坏的命令绑定，并返回显式供应商终态。
+// English: SubmitRound is a v2 settlement entry; it rejects broken command bindings before issuing the request and
+// returns an explicit vendor final state.
 func (w *HTTPWallet) SubmitRound(ctx context.Context, command rgs.WalletRound) rgs.Resolution {
 	return w.submitRound(ctx, command, true)
 }
@@ -244,6 +253,9 @@ func (w *HTTPWallet) submitRound(
 	if requireV2Binding {
 		// 旧 ApplyRound 兼容面继续发送 v1 JSON；只有显式 v2 SubmitRound 才扩展线协议。
 		// 即使走旧面，只要命令已携带绑定字段，上方仍会先完成本地摘要校验。
+		// English: Old ApplyRound compatibility surfaces continue to send v1 JSON; only explicit v2 SubmitRound extends
+		// the wire protocol. Even if you use the old method, as long as the command carries the binding field, the local
+		// digest verification will still be completed first.
 		walletSessionRef, commandDigest = command.WalletSessionRef, command.CommandDigest
 	}
 	payload := roundRequest{
@@ -311,6 +323,8 @@ func (w *HTTPWallet) submitRound(
 }
 
 // Resolve 查询一个完整持久化操作；命令摘要校验失败时不接受调用方提供的替代身份。
+// English: Resolve queries a full persistence operation; alternative identities provided by the caller are not
+// accepted when command digest verification fails.
 func (w *HTTPWallet) Resolve(ctx context.Context, reference rgs.OperationRef) rgs.Resolution {
 	return w.resolve(ctx, reference, true)
 }
@@ -388,6 +402,8 @@ func (w *HTTPWallet) resolve(
 	case http.StatusConflict:
 		// 状态查询冲突表示钱包发现同一资金身份对应不兼容数据，并非暂时或未知结果；
 		// 协调器必须阻断会话并转人工复核。
+		// A status-query conflict means the wallet found incompatible data for the same funds identity, not a temporary or unknown outcome;
+		// the coordinator must block the session and require manual review.
 		if exchange.Response.Status != "CONFLICT" {
 			return protocolConflict("wallet http: lookup conflict has invalid status")
 		}
@@ -491,11 +507,16 @@ func (w *HTTPWallet) do(
 	}
 	// 经济请求签名固定后才注入 Trace Context，确保可选追踪不改变钱包认证/幂等契约。
 	// 只允许发出 traceparent 与已受信的本地 tracestate；公网边界会剥离调用方 tracestate。
+	// English: The Trace Context is injected after the economic request signature is fixed to ensure that optional
+	// tracing does not change the wallet authentication/idempotent contract. Only traceparent and trusted local
+	// tracestate are allowed to be emitted; public network boundaries strip the caller tracestate.
 	telemetry.Inject(request.Context(), request.Header)
 	response, err := w.client.Do(request)
 	if err != nil {
 		// 传输故障后的资金结果不确定；协调器必须使用完全相同的操作标识
 		// 查询状态，禁止重新创建资金操作。
+		// A transport failure leaves the funds outcome uncertain; the coordinator must query status with the exact same operation identifier
+		// and must never recreate the funds operation.
 		return httpExchange{
 			Sent: true, Cause: fmt.Errorf("wallet http: transport outcome unknown: %w", err),
 		}

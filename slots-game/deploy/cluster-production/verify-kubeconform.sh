@@ -1,5 +1,7 @@
 #!/bin/sh
 # 使用固定 Kubernetes 版本校验全部原生资源；监控 CRD 由目标集群服务端复核。
+# English: Use a fixed Kubernetes version to verify all native resources; the monitoring CRD is reviewed by the
+# target cluster server.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

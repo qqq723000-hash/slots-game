@@ -10,6 +10,9 @@ import (
 
 // EvaluateWays 是纯三列连线求值器。它展开每条具体路径，使不同倍数的 WILD 格只作用于
 // 实际经过该格的路径，然后按赔付符号聚合路径。
+// English: EvaluateWays is a pure three-column wire evaluator. It expands each specific path so that different
+// multiples of WILD tiles only apply to paths that actually pass through that tile, and then aggregates the paths
+// by payout symbols.
 func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win, int64, error) {
 	if len(grid) != 3 {
 		return nil, 0, fmt.Errorf("ways: expected 3 reels, got %d", len(grid))
@@ -69,6 +72,8 @@ func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win,
 		pathAwards := make([]PathAward, 0, pathCapacity)
 		// 所有路径位置使用一个连续后备数组；每条路径的容量被截到自身长度，调用方即使
 		// 追加也不会覆盖相邻路径。相比逐路径分配，这在八行展开时可消除数百次堆分配。
+		// All path positions share one contiguous backing array; each path capacity is clipped to its own length so caller appends cannot overwrite adjacent paths.
+		// Compared with per-path allocation, this removes hundreds of heap allocations for an eight-row expansion.
 		pathCells := make([]Position, 0, pathCapacity*3)
 		wayCount := 0
 		var amount int64
@@ -144,6 +149,9 @@ func EvaluateWays(grid Grid, paytable map[Symbol]int64, unitMinor int64) ([]Win,
 
 // EvaluateWaysForBet 将已编制赔付表从参考投注缩放到所选投注。奖励取整到最近的最小货币单位；
 // 即使采用最小投注，具体的正数连线奖励也绝不会呈现为零值奖励。
+// English: EvaluateWaysForBet Scales the compiled paytable from the reference bet to the selected bet. Rewards are
+// rounded to the nearest smallest monetary unit; even with minimum bets, specific positive line rewards will never
+// appear as zero value rewards.
 func EvaluateWaysForBet(
 	grid Grid,
 	paytable map[Symbol]int64,
@@ -179,6 +187,10 @@ func EvaluateWaysForBet(
 // scalePathAwards 在不改变旧版聚合值的前提下，将已取整的聚合奖励分配到具体路径。
 // 它先取每条路径的精确下限值，再按小数余数从大到小分配剩余最小货币单位。
 // 余数相同时保留求值器的路径顺序，使低额投注取整具有确定性且可安全重放。
+// English: scalePathAwards distributes rounded aggregate awards to specific paths without changing the legacy
+// aggregate value. It first takes the precise lower limit value of each path, and then allocates the remaining
+// minimum monetary units according to the decimal remainder from large to small. The path order of the evaluators
+// is preserved when the remainders are equal, making low-stakes rounding deterministic and replay-safe.
 func scalePathAwards(
 	paths []PathAward,
 	aggregateMinor int64,
@@ -222,6 +234,10 @@ func scalePathAwards(
 	for index := range paths {
 		// BaseAmountMinor 是服务器独立解析出的展示事实。应直接缩放并取整未乘倍数的路径值，
 		// 不得通过结算金额除法反推；按最大余数分配聚合金额时，这种除法在小额投注下会丢失精度。
+		// English: BaseAmountMinor is a display fact parsed independently by the server. Unmultiplied path values should
+		// be scaled and rounded directly and should not be deduced back by division of the settlement amount; this
+		// division will lose precision under small bets when the aggregate amount is distributed according to the maximum
+		// remainder.
 		baseAmount, err := scaleWaysAward(
 			paths[index].BaseAmountMinor,
 			betMinor,

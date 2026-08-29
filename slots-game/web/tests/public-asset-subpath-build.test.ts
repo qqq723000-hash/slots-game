@@ -1,4 +1,4 @@
-// @ts-nocheck -- 在隔离临时目录运行真实 Vite 构建并检查最终 HTML/CSS 字节。
+// @ts-nocheck -- 在隔离临时目录运行真实 Vite 构建并检查最终 HTML/CSS 字节。 / English: @ts-nocheck -- Run a real Vite build in an isolated temporary directory and check the final HTML/CSS bytes.
 import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,

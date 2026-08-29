@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 
+# 对每条从 Count 提升为 Block 的 WAF 规则执行只读验证：读取精确版本的 S3 对象、核对内容摘要，
+# 并验证获批观测证据已绑定当前 Web ACL 与规则配置；绝不输出证据内容。
 # Read-only verifier for every WAF rule promoted from Count to Block. It fetches the exact
 # versioned S3 object, checks its content digest, and validates that the approved observation
 # is bound to the current Web ACL and rule configuration. It never prints evidence contents.
@@ -161,6 +163,8 @@ def terraform_plan_rollouts(plan)
 end
 
 def delivery_from_terraform_plan(plan, planned_rollouts)
+  # 首次仅 Count 部署可能包含由 provider 计算的输出值，无需晋升证据。任何请求的 Block 都必须具备
+  # 完全具象化的交付契约，以便在 apply 前把证据绑定到精确的 Web ACL、阈值、路径与规则名。
   # First-time Count-only deployments can contain provider-computed output values. They need no
   # promotion evidence. Any requested Block must have a fully materialized delivery contract so
   # evidence is bound to the exact Web ACL, thresholds, paths and rule names before apply.
@@ -172,6 +176,9 @@ def delivery_from_terraform_plan(plan, planned_rollouts)
   abort "Terraform plan 变量与 planned delivery 的 WAF rollout 不一致" unless
     delivery_rollouts == planned_rollouts
 
+  # 审批有效期是晋升门禁，而不是已批准 Block 规则的租约。稳定 Block 会持续复核精确的不可变对象、
+  # 摘要、模式与配置；但无关 apply 不应在原 30 天审批到期后永久失败。任何 Count→Block 转换、
+  # 证据引用替换或绑定配置变更，仍需取得与此受保护基础设施源码 SHA 关联且当前有效的审批。
   # Approval validity is a promotion gate, not a lease on an already-approved Block rule. A
   # steady Block keeps rechecking the exact immutable object, digest, schema and configuration,
   # but an unrelated apply must not fail forever after the original 30-day approval expires.

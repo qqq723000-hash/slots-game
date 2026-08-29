@@ -10,6 +10,8 @@ function validEventType(value) {
 /**
  * 浏览器门禁只接受夹具实时发布的有界历史。返回稳定错误码而不是修复输入，
  * 这样丢字段、截断和 current/last 漂移都会使证据失败关闭。
+ *
+ * 英文 / English: The browser gatekeeper only accepts a bounded history of fixture live releases. Return stable error codes instead of fixing input, so that missing fields, truncation, and current/last drift can cause evidence to fail to close.
  */
 export function visualFixtureEventHistorySnapshotViolation(snapshot) {
   if (!snapshot || typeof snapshot !== "object" || !Array.isArray(snapshot.events)) {

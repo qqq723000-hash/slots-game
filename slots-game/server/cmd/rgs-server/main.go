@@ -66,6 +66,9 @@ func traceEnvironment(environment platform.Environment) string {
 	}
 	// 资源属性刻意只保留 production/development 两个低基数值；当前 staging
 	// 运行策略归入非生产，而不是透传任意部署字符串。
+	// English: The resource attributes deliberately only retain the two low base values of production/development;
+	// the current staging run strategy is classified as non-production, rather than transparently transmitting any
+	// deployment string.
 	return telemetry.EnvironmentDev
 }
 
@@ -80,6 +83,8 @@ func main() {
 func logRuntimeFailure(logger *slog.Logger, err error) {
 	if logger != nil {
 		// 启动错误可能嵌套 DSN、密钥路径、代理地址或证书名；不直接写入长期日志。
+		// English: Startup errors may be nested in DSNs, key paths, proxy addresses, or certificate names; not written
+		// directly to the long-term log.
 		logger.Error("rgs server stopped", "error_class", safelog.ErrorClass(err))
 	}
 }
@@ -104,6 +109,8 @@ func withRecoveryStartupReadiness(
 ) ([]platform.DependencyCheck, *recovery.StartupReadiness) {
 	// combined 角色同时服务客户端 API；不能用后台恢复首轮改变 API
 	// readyz。生产拆分的 worker 才使用这个一次性启动门。
+	// English: The combined role also serves the client API; you cannot use the background to restore the first round
+	// of changes to the API readyz. Only workers for production splits use this one-time boot gate.
 	if role != platform.RuntimeRoleWorker {
 		return checks, nil
 	}
@@ -236,6 +243,9 @@ func run(logger *slog.Logger) error {
 	if traceErr != nil {
 		// 已通过配置语法校验但 exporter 初始化失败时，追踪失败开放；资金
 		// 正确性与服务启动不依赖遥测后端，日志只保留固定错误类别。
+		// English: When the configuration syntax verification is passed but the exporter initialization fails, the
+		// tracking failure is open; the correctness of funds and service startup do not rely on the telemetry backend, and
+		// only fixed error categories are retained in the log.
 		if logger != nil {
 			logger.Warn("distributed tracing disabled", "error_class", safelog.ErrorClass(traceErr))
 		}
@@ -741,6 +751,9 @@ func newRGSAPIHandler(
 // withSharedAdmissions 把普通 operator 高水位同时组装到 launch 和所有
 // Spin 尝试（包括重放/冲突）。经济预算仍只在 Coordinator 的首次
 // 可持久化 round 边界调用，不得用它替换这两个普通高水位。
+// English: withSharedAdmissions assembles the normal operator high-water mark to both launch and all Spin attempts
+// (including replays/conflicts). The economic budget is still only called at the Coordinator's first persistable
+// round boundary and must not be used to replace the two ordinary high-water marks.
 func withSharedAdmissions(config rgsapi.Config, admission rgsapi.Admission) rgsapi.Config {
 	config.LaunchAdmission = admission
 	config.SpinAdmission = admission
@@ -779,6 +792,8 @@ func newPublicHandler(apiHandler, clientHandler http.Handler) http.Handler {
 		}
 		// 不使用 ServeMux：它会在 API 验证前清理 ../、重复斜线并重定向，既改变
 		// 签名路径语义，也会在重定向短路时遗留未读正文。
+		// English: Don't use ServeMux: it sanitizes ../, repeats slashes, and redirects before API validation, both
+		// changing signature path semantics and leaving unread bodies when redirects short-circuit.
 		switch {
 		case strings.HasPrefix(request.URL.Path, "/operator/") && apiHandler != nil:
 			apiHandler.ServeHTTP(writer, request)
@@ -807,6 +822,10 @@ func newPublicInFlightGate(
 		// 该高水位桶是 WAF/网关失效时的最后一道常数内存保护。未认证阶段不存在
 		// 可信客户端 IP、租户身份或恢复状态，因此所有公网请求只共享一个固定键。
 		// 路由 path 可由攻击者伪造，绝不能据此绕过匿名容量或取得恢复优先级。
+		// English: This high-water bucket is a last resort constant memory protection in the event of a WAF/gateway
+		// failure. There is no trusted client IP, tenant identity, or recovery state during the unauthenticated phase, so
+		// all public network requests only share a single fixed key. Routing paths can be forged by an attacker and must
+		// not be used to bypass anonymous capacity or gain recovery priority.
 		if preAuthLimiter != nil && !preAuthLimiter.Allow("public-preauth", time.Now()) {
 			if metrics != nil {
 				metrics.PreAuthCapacityRejected.Add(1)
@@ -817,12 +836,19 @@ func newPublicInFlightGate(
 		// 这是调用方无关的进程级硬容量闸门，位于签名/令牌解析及数据库访问之前。
 		// 绝不使用 X-Forwarded-For 等未验证身份。公网监听器不暴露 liveness；
 		// ALB/Kubernetes 只能通过受限 operations 监听器探测，避免制造匿名旁路。
+		// English: This is a caller-independent process-level hard capacity gate that precedes signature/token parsing and
+		// database access. Never use unauthenticated identities such as X-Forwarded-For. Public network listeners do not
+		// expose liveness; ALB/Kubernetes can only detect through restricted operations listeners to avoid creating
+		// anonymous bypasses.
 		if release := capacity.TryAcquire(); release != nil {
 			defer release()
 			next.ServeHTTP(writer, request)
 		} else {
 			// 每次满载拒绝只在唯一决策点累计一次；外层 observeRequests 观测逻辑仍独立计入
 			// 普通请求、总失败和 5xx，绝不把容量耗尽伪装成速率限流。
+			// English: Each full load rejection is only accumulated once at the only decision point; the outer observeRequests
+			// observation logic still counts ordinary requests, total failures, and 5xx independently, and capacity exhaustion
+			// is never disguised as rate limiting.
 			if metrics != nil {
 				metrics.CapacityRejected.Add(1)
 			}
@@ -863,6 +889,9 @@ func closePublicUnreadBody(request *http.Request) {
 	if request != nil && request.Body != nil && request.Body != http.NoBody {
 		// 短路发生在 handler 读取正文之前；关闭 HTTP/1 连接，避免服务器为
 		// keep-alive 排空攻击者正文。HTTP/2 仍由流级取消和读取截止时间约束。
+		// English: The short circuit occurs before the handler reads the body; closing the HTTP/1 connection prevents the
+		// server from draining the attacker's body for keep-alives. HTTP/2 is still bound by stream-level cancellation and
+		// read deadlines.
 		request.Close = true
 	}
 }
@@ -946,6 +975,9 @@ func protectOperationsEndpoint(
 		if subtle.ConstantTimeCompare(providedDigest[:], expectedDigest[:]) != 1 {
 			// 运维面不经过公网 observeRequests 观测逻辑；认证失败只累积一个低基数计数，且
 			// 不回显令牌、端点内部状态或请求头，避免成为可枚举的探测接口。
+			// English: The operation and maintenance plane does not go through the public network observeRequests observation
+			// logic; authentication failure only accumulates a low cardinality count, and does not echo tokens, endpoint
+			// internal status or request headers to avoid becoming an enumerable detection interface.
 			if metrics != nil {
 				metrics.AuthFailures.Add(1)
 			}
@@ -965,6 +997,9 @@ func newHTTPServer(address string, handler http.Handler, config platform.Config)
 		WriteTimeout: config.WriteTimeout, IdleTimeout: config.IdleTimeout,
 		// 16 KiB 是应用最终兜底，不是边缘可直接采用的 aggregate-header Block 证明。
 		// 边缘 8 KiB 阈值必须先覆盖最大合法签发令牌、固定协议头及代理附加头的实测。
+		// English: 16 KiB is the final bottom line for applications, not an aggregate-header Block proof that can be
+		// directly adopted by the edge. The edge 8 KiB threshold must first cover actual measurements of the maximum
+		// legally issued token, fixed protocol headers, and proxy appended headers.
 		MaxHeaderBytes: 16 << 10,
 	}
 }
@@ -1007,6 +1042,9 @@ func drainAndShutdownHTTPServers(
 ) error {
 	// 必须先让 /readyz 失败，再取消后台任务并关闭监听器；这样终止探针与负载均衡
 	// 不会在请求排空期间把本副本重新加入服务池。
+	// English: You must first fail /readyz before canceling the background task and closing the listener; this way,
+	// terminating the probe and load balancing will not rejoin the replica to the service pool during request
+	// draining.
 	lifecycle.BeginDrain()
 	if stopBackground != nil {
 		stopBackground()
@@ -1097,6 +1135,9 @@ func runtimeDatabaseConfig(databaseURL string, statementTimeout, lockTimeout tim
 	}
 	// RuntimeParams 会作用于每条 database/sql 连接，包括启动探测后才获取的事务连接；
 	// 刻意覆盖 URL 中同名值，确保所有连接只服从一套有界运行时超时策略。
+	// English: RuntimeParams will act on every database/sql connection, including transaction connections obtained
+	// after starting the probe; the value of the same name in the URL is deliberately overwritten to ensure that all
+	// connections only obey a set of bounded runtime timeout policies.
 	connection.RuntimeParams["statement_timeout"] = postgresTimeoutMilliseconds(statementTimeout)
 	connection.RuntimeParams["lock_timeout"] = postgresTimeoutMilliseconds(lockTimeout)
 	return connection, nil
@@ -1285,6 +1326,8 @@ func drainExpiredSecurityCredentials(
 		}
 		// 每一轮都让两类凭据各清一批，避免一个持续满批次的表长期饿死另一类清理；
 		// 只有两者在同一轮都低于批次上限，才说明当前积压已经排空。
+		// Purge one batch from each credential class every round so a continuously full table cannot starve cleanup of the other class;
+		// the backlog is drained only when both counts are below the batch limit in the same round.
 		nonceCount, nonceErr := nonces.PurgeExpired(ctx, now, batchSize)
 		launchCount, launchErr := launches.PurgeExpired(ctx, now, batchSize)
 		if err := errors.Join(nonceErr, launchErr); err != nil {
@@ -1331,10 +1374,15 @@ type responseStatusRecorder struct {
 
 // Unwrap 让 http.ResponseController 穿过访问日志包装器访问底层 Flush、Hijack
 // 与 deadline 能力；记录状态不能改变 handler 可见的标准传输契约。
+// English: Unwrap lets http.ResponseController access underlying Flush, Hijack, and deadline capabilities through
+// an access log wrapper; logging status cannot change the standard transport contract visible to the handler.
 func (writer *responseStatusRecorder) Unwrap() http.ResponseWriter { return writer.ResponseWriter }
 
 // FlushError 在底层执行刷新路径后记录已隐式提交的 200，即使网络刷新失败；
 // ErrNotSupported 没有提交响应，不能提前锁死后续 handler 仍可提交的错误状态。
+// English: FlushError records an implicitly committed 200 after the underlying execution refresh path, even if the
+// network refresh fails; ErrNotSupported does not submit a response, and subsequent handlers cannot be locked in
+// advance and can still submit an error status.
 func (writer *responseStatusRecorder) FlushError() error {
 	err := http.NewResponseController(writer.ResponseWriter).Flush()
 	if !errors.Is(err, http.ErrNotSupported) && writer.status == 0 {
@@ -1345,6 +1393,7 @@ func (writer *responseStatusRecorder) FlushError() error {
 
 func (writer *responseStatusRecorder) WriteHeader(status int) {
 	// 103 等临时响应可以在最终状态前重复发送；101 协议切换本身是最终提交。
+	// Interim responses such as 103 may repeat before final status; protocol switch 101 is itself the final commit.
 	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
 		if writer.status == 0 {
 			writer.ResponseWriter.WriteHeader(status)
@@ -1373,6 +1422,9 @@ func observeRequests(
 ) http.Handler {
 	// 4xx 与 5xx 使用两个固定键、各自独立的日志预算。攻击流量不能创建新键，
 	// 也不能用大量 4xx 压掉稀有 5xx；完整请求/安全计数仍由无采样指标保留。
+	// English: 4xx and 5xx use two fixed-key, independent log budgets. Attack traffic cannot create new keys, nor can
+	// it overwhelm rare 5xx with large numbers of 4xx; the full request/security count is still retained by the
+	// unsampled metric.
 	failureAccessLogs := platform.NewLimiter(
 		failureAccessLogRatePerSecond,
 		failureAccessLogBurst,
@@ -1381,6 +1433,9 @@ func observeRequests(
 	)
 	// 确定性采样只决定候选集合，不能成为无限日志许可：request_id 可由调用方
 	// 选择并重放。所有成功候选再共享一个固定键预算，攻击者无法制造新桶。
+	// English: Deterministic sampling only determines the candidate set and cannot be unlimited logging permission:
+	// the request_id can be selected by the caller and replayed. All successful candidates then share a fixed key
+	// budget, and the attacker cannot create new buckets.
 	successAccessLogs := platform.NewLimiter(
 		successAccessLogRatePerSecond,
 		successAccessLogBurst,
@@ -1390,6 +1445,10 @@ func observeRequests(
 	// 日志管道本身可能因 stdout/runtime/collector 背压而阻塞。速率预算限制写入
 	// 数量，但不能限制已经阻塞的 goroutine；独立非阻塞 bulkhead 给物理写日志
 	// 设置硬并发上限，避免它在释放公网请求许可后反向耗尽连接与协程。
+	// English: The log pipe itself may be blocked due to stdout/runtime/collector backpressure. The rate budget limits
+	// the number of writes, but cannot limit blocked goroutines; the independent non-blocking bulkhead sets a hard
+	// concurrency upper limit for physical writing logs to prevent it from exhausting connections and coroutines in
+	// reverse after releasing the public network request permission.
 	accessLogWrites := newBoundedCapacity(accessLogMaxInFlight)
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		started := time.Now()
@@ -1426,6 +1485,9 @@ func observeRequests(
 				// 访问日志会长期保留：只记录固定路由枚举和 request_id 的稳定单向摘要。
 				// 绝不写入原始 URL、未知路径、查询参数、RemoteAddr 或经济/玩家标识，
 				// 以免不可信输入扩大隐私暴露面或污染日志检索索引。
+				// English: Access logs are retained long-term: only fixed route enumerations and a stable one-way digest of
+				// request_id are logged. Never write raw URLs, unknown paths, query parameters, RemoteAddr, or economic/player IDs
+				// to avoid untrusted input that could increase privacy exposure or pollute the log retrieval index.
 				arguments := []any{
 					"route", route,
 					"request_id", logRequestID,
@@ -1507,6 +1569,9 @@ func shouldEmitSuccessfulAccessLog(samplePerMillion int, route, requestID string
 	}
 	// 固定路由和安全请求标识经过 SHA-256 分桶；同一输入始终得到相同决定，
 	// 副本扩缩容或进程重启不会改变采样结果，也不会引入高基数监控标签。
+	// English: Fixed routing and security request identification are SHA-256 bucketed; the same input always results
+	// in the same decision, and replica scaling or process restarts will not change the sampling results, nor will
+	// high-cardinality monitoring tags be introduced.
 	digest := sha256.Sum256([]byte(route + "\x00" + requestID))
 	bucket := binary.BigEndian.Uint64(digest[:8]) % 1_000_000
 	return bucket < uint64(samplePerMillion)

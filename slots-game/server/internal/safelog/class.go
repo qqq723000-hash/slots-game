@@ -1,4 +1,6 @@
 // Package safelog 将任意错误链转换为固定、低基数的安全分类，供长期生产日志使用。
+// English: Package safelog converts arbitrary error chains into fixed, low-cardinality safe classifications for
+// long-term production logging.
 package safelog
 
 import (
@@ -24,6 +26,10 @@ type sqlStateError interface {
 // ErrorClass 绝不返回 err.Error()。数据库诊断可能包含 SQL、绑定值或拓扑，网络错误
 // 可能包含 URL、代理地址或证书名，联合领域错误可能包含租户或轮次标识。调用方应单独
 // 记录固定操作名；完整细节只能进入具备明确脱敏契约和访问控制的追踪或事件工具。
+// English: ErrorClass never returns err.Error(). Database diagnostics might contain SQL, bind values, or topology,
+// network errors might contain URLs, proxy addresses, or certificate names, and federated realm errors might
+// contain tenant or turn IDs. The caller should log the fixed operation name separately; full details should only
+// be entered into tracing or incident tools with clear anonymity contracts and access controls.
 func ErrorClass(err error) string {
 	if err == nil {
 		return ClassNone

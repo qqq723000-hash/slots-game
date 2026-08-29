@@ -19,6 +19,8 @@ rgs:
   sharedAdmission:
     endpointURL: rediss://valkey.example.internal:6379
     # 仅为平台保护上限；必须替换为经钱包合同和目标环境压测批准的值。
+    # English: Only a platform protection upper limit; must be replaced with a value approved by the wallet
+    # contract and target environment stress testing.
     economic:
       operatorRatePerSecond: 20
       operatorRateBurst: 40
@@ -113,6 +115,8 @@ monitoring:
     prometheus: company-platform
 
 # 示例显式启用受控 OTLP/HTTP collector；生产默认值仍为 disabled + 空 endpoint。
+# English: The example explicitly enables the controlled OTLP/HTTP collector; the artifactsion default is still
+# disabled + empty endpoint.
 observability:
   tracing:
     enabled: true

@@ -12,10 +12,14 @@ type definitionLoadPolicy struct {
 }
 
 // DefinitionLoadOption 在不削弱既有 v1 签名开发及预发布契约的前提下收紧部署策略。
+// English: DefinitionLoadOption tightens deployment strategies without weakening existing v1 signed development
+// and pre-release contracts.
 type DefinitionLoadOption func(*definitionLoadPolicy) error
 
 // RequireProductionDefinitionApproval 要求使用 v2 签名证据配置，并拒绝游戏或版本身份
 // 标记为演示用途的定义。
+// English: RequireProductionDefinitionApproval requires the use of v2 signing evidence configuration and rejects
+// game or version identity definitions marked for demonstration use.
 func RequireProductionDefinitionApproval() DefinitionLoadOption {
 	return func(policy *definitionLoadPolicy) error {
 		if policy == nil {
@@ -28,6 +32,8 @@ func RequireProductionDefinitionApproval() DefinitionLoadOption {
 
 // LoadDefinition 加载并认证运行时将执行的确切数学定义。受信发布密钥必须作为单独配置的
 // PKIX PEM 资源提供。
+// English: LoadDefinition loads and certifies the exact mathematical definition that will be executed at runtime.
+// The trusted publishing key must be provided as a separately configured PKIX PEM resource.
 func LoadDefinition(
 	definitionPath, signedApprovalPath, trustedPublicKeyPath string,
 	options ...DefinitionLoadOption,

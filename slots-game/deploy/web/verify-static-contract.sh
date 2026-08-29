@@ -1,6 +1,8 @@
 #!/bin/sh
 # shellcheck disable=SC1003,SC2016
 # 本契约刻意匹配 Docker/Make 中的字面量 `$` 与行尾反斜杠，不允许 shell 提前展开。
+# English: This contract intentionally matches literal `$` and trailing backslashes in Docker/Make, disallowing
+# early shell expansion.
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -124,6 +126,8 @@ require_fixed 'npm run licenses:generate' "$operations_readme"
 require_fixed '/THIRD_PARTY_NOTICES.txt' "$operations_readme"
 
 # 生产声明必须覆盖新增的 CSP 兼容运行库与 Spine 特殊许可，且不得混入开发工具。
+# English: artifactsion declarations must cover the newly added CSP-compatible runtime libraries and Spine
+# special licenses, and must not be mixed with development tools.
 require_fixed '@pixi/unsafe-eval@6.5.2 | 声明：MIT' "$third_party_notice"
 require_fixed '@pixi-spine/base@3.1.0 | 声明：SEE SPINE-LICENSE' "$third_party_notice"
 require_fixed '@pixi-spine/runtime-4.1@3.1.0 | 声明：SEE SPINE-LICENSE' "$third_party_notice"
@@ -153,6 +157,8 @@ test "$(grep -F -c '"licenseSha256": "ae6ec834a618890360d86e5f576b0c69eec2130947
 
 # Dockerfile 专用 ignore 优先于仓库 ignore。允许列表刻意收窄，避免 `COPY web/` 把抓包、
 # 开发者 node_modules 或旧 dist 发送给 BuildKit。
+# English: Dockerfile-specific ignore takes precedence over repository ignore. The allow list is deliberately
+# narrowed to avoid `COPY web/` from capturing packets, Developer node_modules or old dist sent to BuildKit.
 test "$(sed -n '1p' "$dockerignore")" = "**" || fail "Dockerfile.dockerignore must default-deny with **"
 for allow in \
   '!web/' \
@@ -196,6 +202,8 @@ if grep -E '^!web/scripts/\*\*([[:space:]]|$)' "$dockerignore" >/dev/null; then
 fi
 
 # Docker ARG 在这里按 Dockerfile 字面量校验，不能让当前 shell 展开。
+# English: The Docker ARG is verified here according to the Dockerfile literal, and the current shell cannot be
+# expanded.
 # shellcheck disable=SC2016
 require_line 'FROM ${NODE_IMAGE} AS dependencies' "$dockerfile"
 test "$(grep -F -x -c -- '    npm ci --ignore-scripts' "$dockerfile")" -eq 1 \
@@ -358,6 +366,7 @@ runtime_stage=$(awk '
 last_stage=$(awk '/^FROM[[:space:]]+/ { stage = $NF } END { print stage }' "$dockerfile")
 
 # 下方 Docker ARG 刻意按字面量匹配。
+# English: The Docker ARGs below are intentionally matched literally.
 # shellcheck disable=SC2016
 printf '%s\n' "$static_stage" | grep -F 'FROM ${NGINX_IMAGE} AS static-conformance' >/dev/null || fail "missing isolated nginx static conformance stage"
 printf '%s\n' "$static_stage" | grep -F 'org.opencontainers.image.title="CI_ONLY_STATIC_CONFORMANCE"' >/dev/null || fail "static conformance stage must carry a non-release label"
@@ -409,6 +418,8 @@ done
 
 # CI 必须正向构建只含配置的 conformance 目标；固定测试 origin 不得成为 runtime 默认值或
 # 被上传为素材/发布证据。
+# English: CI must forward build the conformance target with configuration only; fixed test origin must not
+# become the runtime default or Uploaded as assets/published evidence.
 require_fixed '--target config-conformance' "$frontend_workflow"
 require_fixed 'slots-web-config-conformance:ci-only-not-release-evidence' "$frontend_workflow"
 require_fixed '--build-arg VITE_RGS_BASE_URL=https://rgs.ci.invalid' "$frontend_workflow"
@@ -447,6 +458,7 @@ do
 done
 
 # 下方 Nginx 变量刻意按字面量匹配。
+# English: The Nginx variables below are intentionally matched literally.
 # shellcheck disable=SC2016
 require_fixed 'map "$status:$uri" $web_cache_control {' "$nginx_conf"
 require_fixed 'default "no-store, max-age=0";' "$nginx_conf"
@@ -461,6 +473,7 @@ require_fixed 'location = /release-manifest.json {' "$nginx_conf"
 require_fixed 'location ~* ^/assets/(.+/)?(runtime-manifest|streaming-packages)\.json$ {' "$nginx_conf"
 require_fixed 'max_ranges 1;' "$nginx_conf"
 # 下方 Nginx document-root 变量属于字面量契约。
+# English: The Nginx document-root variable below belongs to the literal contract.
 # shellcheck disable=SC2016
 require_fixed 'disable_symlinks if_not_owner from=$document_root;' "$nginx_conf"
 require_fixed 'location = /healthz {' "$nginx_conf"
@@ -532,6 +545,8 @@ fi
 
 # Nginx 的 location 级 add_header 会取消继承的 server header，因此 Cache-Control
 # 只能通过 URI map 在 server 级统一设置。
+# English: Nginx's location-level add_header will cancel the inherited server header, so Cache-Control It can
+# only be set uniformly at the server level through URI map.
 location_headers=$(awk '
   /^[[:space:]]*location[[:space:]]/ { in_location = 1 }
   in_location && /^[[:space:]]*add_header[[:space:]]/ { print }
@@ -545,6 +560,9 @@ fi
 
 # 只有允许列表中的 public、源码和构建脚本输入可以进入 dist。Docker 介入前即拒绝高置信度
 # 私钥/凭据文件；变量名和 API 协议字段本身不等同于秘密。
+# English: Only public, source, and build script inputs from the allowed list can enter dist. Docker rejects
+# high confidence before intervening Private key/credential files; variable names and API protocol fields
+# themselves are not equivalent to secrets.
 set -- \
   "$repo_root/web/public" \
   "$repo_root/web/src" \
@@ -574,6 +592,9 @@ fi
 
 # renderer 单测覆盖 CSP/XFO 语义重复、注释诱饵、URL 注入和 CLI 原子输出；这些检查
 # 在 Docker daemon 不可用时仍必须执行，镜像内 nginx -t 则负责最终语法解析。
+# English: The renderer single test covers CSP/XFO semantic duplication, annotation decoys, URL injection, and
+# CLI atomic output; these checks It must still be executed when the Docker daemon is unavailable, and nginx -t
+# in the image is responsible for the final syntax parsing.
 command -v node >/dev/null 2>&1 || fail "node is required to verify the release nginx renderer"
 node --test "$policy_verifier_test" >/dev/null || fail "Content-Security-Policy semantic tests failed"
 node --test "$release_renderer_test" >/dev/null || fail "release nginx renderer tests failed"

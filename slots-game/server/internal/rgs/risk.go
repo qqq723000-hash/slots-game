@@ -11,6 +11,8 @@ import (
 )
 
 // RiskExpiryPolicy 是高额派奖在审批窗口结束后的持久终态策略。
+// English: RiskExpiryPolicy is a persistent end-state policy for high-stakes payouts after the approval window
+// ends.
 type RiskExpiryPolicy string
 
 const (
@@ -24,6 +26,9 @@ func (policy RiskExpiryPolicy) Valid() bool {
 
 // HighValueRiskPolicy 只在显式启用时拦截达到阈值的候选派奖。阈值使用轮次币种的
 // 最小货币单位；策略版本和到期策略会随候选结果一同持久化，禁止事后重解释。
+// English: HighValueRiskPolicy only intercepts candidate bids that reach the threshold when explicitly enabled.
+// The threshold uses the smallest currency unit of the round currency; the strategy version and expiration
+// strategy will be persisted together with the candidate results, and subsequent reinterpretation is prohibited.
 type HighValueRiskPolicy struct {
 	Enabled        bool
 	ThresholdMinor int64
@@ -50,6 +55,8 @@ func (policy HighValueRiskPolicy) Validate() error {
 
 // RiskAssessment 是与首次候选结果同事务持久化的低敏决策摘要；不包含玩家、会话、
 // 棋盘、中奖线或自由文本。
+// English: RiskAssessment is a low-sensitivity decision summary persisted in the same transaction as the first
+// candidate result; it does not contain players, sessions, boards, paylines, or free text.
 type RiskAssessment struct {
 	PolicyVersion  string
 	ThresholdMinor int64
@@ -133,6 +140,7 @@ const (
 )
 
 // RiskDecisionCommand 绑定签名运营商请求和固定原因码；不接收自由文本。
+// English: RiskDecisionCommand binds signed operator requests and fixed reason codes; does not receive free text.
 type RiskDecisionCommand struct {
 	RoundKey        RoundKey
 	RequestID       string
@@ -201,6 +209,8 @@ type RiskDecisionService interface {
 }
 
 // RiskExpiryRepository 由后台 Worker 调用；实现必须使用持久存储时钟、行锁重检和有界批次。
+// English: RiskExpiryRepository is called by a background worker; implementations must use persistent storage
+// clocks, row lock rechecks, and bounded batches.
 type RiskExpiryRepository interface {
 	ExpireRiskReviews(context.Context, int) (int, error)
 }

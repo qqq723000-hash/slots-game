@@ -97,7 +97,7 @@ export {
 } from "./wheelMotion";
 
 const FEATURE_TEXTURE_URLS: readonly string[] = Object.freeze([
-  // Rage 已由符号首包拥有；Wheel 三纹理改由 feature-wheel 事件租约直接解码。
+  // Rage 已由符号首包拥有；Wheel 三纹理改由 feature-wheel 事件租约直接解码。 / English: Rage is already owned by the symbol header package; Wheel three textures are instead directly decoded by feature-wheel event leases.
   PRIMAL_ASSETS.features.energyFrames,
 ]);
 
@@ -124,7 +124,7 @@ function loadAuthoredInteractionSpines(): Promise<void> {
   return attempt;
 }
 
-/** 在移除发射幕之前预加载预设的功能板。 */
+/** 在移除发射幕之前预加载预设的功能板。 / English: Preload the preset feature board before removing the launch screen. */
 export function loadFeatureTextures(): Promise<void> {
   if (featureTextureLoad) return featureTextureLoad;
   const attempt = Promise.all([
@@ -133,13 +133,13 @@ export function loadFeatureTextures(): Promise<void> {
   ]).then(() => undefined);
   featureTextureLoad = attempt;
   void attempt.catch(() => {
-    // 纹理和预设的 Spine 分支是入门关键。保留对 PreloadGate 的拒绝，同时保持后续启动可重试。
+    // 纹理和预设的 Spine 分支是入门关键。保留对 PreloadGate 的拒绝，同时保持后续启动可重试。 / English: The Spine branch of textures and presets is key to getting started. Preserve rejection of PreloadGate while keeping subsequent launches retryable.
     if (featureTextureLoad === attempt) featureTextureLoad = null;
   });
   return attempt;
 }
 
-/** 切片 GPU 预热使用的独特的已请求特征纹理。 */
+/** 切片 GPU 预热使用的独特的已请求特征纹理。 / English: Slices unique requested feature textures used by GPU warm-up. */
 export function loadedFeatureTextures(): readonly Texture[] {
   return FEATURE_TEXTURE_URLS.map((url) => Texture.from(url));
 }
@@ -172,14 +172,14 @@ function energyFrameTexture(frame: number): Texture {
 
 export type FeatureEffectKind = "expansion" | "vault" | "wheel" | "collect" | "mode" | "summary" | "pulse";
 
-/** Wheel 弹出窗口 CONTINUE 正在播放其预设的 `show` 剪辑。 */
+/** Wheel 弹出窗口 CONTINUE 正在播放其预设的 `show` 剪辑。 / English: The Wheel popup CONTINUE is playing its preset `show` clip. */
 export function wheelPopupContinueEnabled(elapsedMs: number): boolean {
   return Number.isFinite(elapsedMs)
     && elapsedMs >= 0
     && elapsedMs < PRIMAL_WHEEL_POPUP_TIMELINE_MS.show;
 }
 
-/** A 层 CONTINUE 从摘要 `show` 实时显示，而不仅仅是从其停止姿势。 */
+/** A 层 CONTINUE 从摘要 `show` 实时显示，而不仅仅是从其停止姿势。 / English: A layer CONTINUE is shown live from the summary `show`, not just from its stop pose. */
 export function wheelSummaryContinueEnabled(
   elapsedMs: number,
   timeline: Pick<PrimalWheelRuntimeTimeline, "summaryShowAt" | "summaryHideAt">
@@ -190,7 +190,7 @@ export function wheelSummaryContinueEnabled(
     && elapsedMs < timeline.summaryHideAt;
 }
 
-/** 精确的 A 层 -> B 层切换；丢失/不规范的资金无法关闭。 */
+/** 精确的 A 层 -> B 层切换；丢失/不规范的资金无法关闭。 / English: Exact Layer-A to Layer-B handoff; a missing or non-canonical amount keeps the gate closed. */
 export function shouldHandoffWheelBonusLabel(
   event: WheelAwardedEvent,
   freeSpinSummary: boolean,
@@ -211,7 +211,7 @@ export const PRIMAL_VAULT_TEASE_TIMELINE_MS = Object.freeze({
   reducedMotion: 120,
 });
 
-/** GameUnlockBonusFeature 在 APE_THUMP 之后正好等待 ThumpAnimDuration。 */
+/** GameUnlockBonusFeature 在 APE_THUMP 之后正好等待 ThumpAnimDuration。 / English: GameUnlockBonusFeature waits for ThumpAnimDuration exactly after APE_THUMP. */
 export const PRIMAL_VAULT_GROUP_TIMELINE_MS = Object.freeze({
   thumpBarrier: 500,
   reducedMotion: 40,
@@ -224,7 +224,7 @@ export interface VaultGroupStartEvent {
 export type VaultFrameAnimation = "vault" | "vault_lvl2" | "vault_lvl3";
 export type VaultMutationEvent = Readonly<VaultUnlockedEvent | VaultUpgradedEvent>;
 
-/** GameReelFrame.onApeThump 从 symbolCount 中选择预设的框架。 */
+/** GameReelFrame.onApeThump 从 symbolCount 中选择预设的框架。 / English: GameReelFrame.onApeThump selects a preset frame from symbolCount. */
 export function vaultFrameAnimation(symbolCount: number): VaultFrameAnimation {
   if (symbolCount >= 3) return "vault_lvl3";
   if (symbolCount === 2) return "vault_lvl2";
@@ -234,6 +234,8 @@ export function vaultFrameAnimation(symbolCount: number): VaultFrameAnimation {
 /**
  * GameUnlockBonusFeature 调度 APE_THUMP 以及仍锁定的保管库数量。在第一个 King Spin 突变之后，这些符号已经打开，
  * 因此每个后续升级阶段都会有意回退到单 Vault 帧，即使多个寻址值一起升级也是如此。
+ *
+ * 英文 / English: GameUnlockBonusFeature schedules APE_THUMP with the number of vaults still locked. After the first King Spin mutation, these symbols are already turned on, so each subsequent upgrade phase intentionally falls back to a single Vault frame, even if multiple addressing values ​​are upgraded together.
  */
 export function vaultGroupFrameAnimation(
   event: Pick<VaultGroupEvent, "type" | "count"> | VaultGroupStartEvent,
@@ -271,6 +273,8 @@ export interface VaultUnlockPresentationMilestone {
 
 /**
  * GameUnlockBonusFeature 在一个循环中启动每个 Vault 突变，然后仅等待最长的预设符号剪辑。服务器事件仍然是地址和奖品的唯一来源。
+ *
+ * 英文 / English: GameUnlockBonusFeature starts each Vault mutation in a loop and then waits only for the longest preset symbol clip. Server events remain the only source of addresses and prizes.
  */
 export function vaultMutationBatchPlan(
   events: readonly VaultMutationEvent[],
@@ -302,7 +306,7 @@ export function vaultTeaseDurationMs(
     + (lockedNoWinExtraHold ? PRIMAL_VAULT_TEASE_TIMELINE_MS.lockedNoWinExtraHold : 0);
 }
 
-/** 严格的激活路径后置条件；它永远不会在失败时开始操作。 */
+/** 严格的激活路径后置条件；它永远不会在失败时开始操作。 / English: Strict activation path postcondition; it never starts operation on failure. */
 export function reportVaultTeasePlaybackReadiness(
   reporter: VisualTelemetryReporter | null,
   expected: number,
@@ -325,7 +329,7 @@ export function reportVaultTeasePlaybackReadiness(
   return ready;
 }
 
-/** 捕获的 GameFreespinView 摘要序列：显示、玩家可见的按住、隐藏。 */
+/** 捕获的 GameFreespinView 摘要序列：显示、玩家可见的按住、隐藏。 / English: Captured GameFreespinView summary sequence: show, player-visible hold, hide. */
 export const FREE_SPIN_SUMMARY_TIMELINE_MS = Object.freeze({
   show: PRIMAL_FEATURE_ANIMATION_MS.freeSpinSummary.show,
   continueHold: PRIMAL_FEATURE_ANIMATION_MS.freeSpinSummary.continueHold,
@@ -337,7 +341,7 @@ export const FREE_SPIN_SUMMARY_TIMELINE_MS = Object.freeze({
     + PRIMAL_FEATURE_ANIMATION_MS.freeSpinSummary.hide,
 });
 
-/** Free Spins 摘要 CONTINUE 在 `show` 之后打开并在隐藏边界处关闭。 */
+/** Free Spins 摘要 CONTINUE 在 `show` 之后打开并在隐藏边界处关闭。 / English: Free Spins Summary CONTINUE opens after `show` and closes at hidden boundaries. */
 export function freeSpinSummaryContinueEnabled(elapsedMs: number): boolean {
   return Number.isFinite(elapsedMs)
     && elapsedMs >= FREE_SPIN_SUMMARY_TIMELINE_MS.show
@@ -346,15 +350,15 @@ export function freeSpinSummaryContinueEnabled(elapsedMs: number): boolean {
 
 const CANONICAL_MONEY_MINOR = /^(0|[1-9]\d*)$/;
 export const FREE_SPIN_NO_WIN_COPY = "NO WIN, FREE SPINS CONCLUDED";
-/** 两人都预设了 King/Kong 介绍绑定 `%d=8`，与运行时状态无关。 */
+/** 两人都预设了 King/Kong 介绍绑定 `%d=8`，与运行时状态无关。 / English: Both default to the King/Kong intro binding `%d=8`, regardless of runtime state. */
 export const FREE_SPIN_INTRO_DISPLAY_AWARDED = 8;
 
-/** 捕获的功能名称由非 Spine 回退路径介绍面板镜像。 */
+/** 捕获的功能名称由非 Spine 回退路径介绍面板镜像。 / English: Captured feature names are introduced by the non-Spine fallback path panel mirror. */
 export function freeSpinModeTitle(mode: FreeSpinsStartedEvent["mode"]): "KONG QUEST" | "KING SPIN" {
   return mode === "OVERDRIVE" ? "KING SPIN" : "KONG QUEST";
 }
 
-/** 两个捕获的免费 Spin 面板均以 `show` 开始其布料运动。 */
+/** 两个捕获的免费 Spin 面板均以 `show` 开始其布料运动。 / English: Both captured free Spin panels start their cloth motion with `show`. */
 export function freeSpinIntroRagsStartPhase(
   _mode: FreeSpinsStartedEvent["mode"],
 ): "entry" {
@@ -364,6 +368,8 @@ export function freeSpinIntroRagsStartPhase(
 /**
  * GameFreespinController 将 `totalWin > betCoins` 添加到共享摘要门。将比较保持在规范的小单位中，
  * 这样非常大的线值就不会通过 JavaScript 数字转换而失去精度。
+ *
+ * 英文 / English: GameFreespinController Add `totalWin > betCoins` to the shared summary gate. Keep comparisons in small units of specification so that very large line values ​​do not lose precision through JavaScript number conversion.
  */
 export function shouldPresentFreeSpinSummary(
   cumulativeWinMinor: MoneyMinor,
@@ -374,7 +380,7 @@ export function shouldPresentFreeSpinSummary(
   return BigInt(cumulativeWinMinor) > BigInt(betMinor);
 }
 
-/** 将文本注入到预设的 fs_summary 插槽中，无需重新计算资金。 */
+/** 将文本注入到预设的 fs_summary 插槽中，无需重新计算资金。 / English: Inject text into the preset fs_summary slot without recalculating funds. */
 export function freeSpinSummaryTextBindings(
   event: FreeSpinsCompletedEvent,
   formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
@@ -420,7 +426,7 @@ export function featureEffectDuration(kind: FeatureEffectKind, reducedMotion: bo
 
 export const RAGE_COLLECT_SYMBOL_MS = PRIMAL_SYMBOL_ANIMATION_MS[7].collect;
 export const RAGE_COLLECT_HIDE_MS = PRIMAL_SYMBOL_ANIMATION_MS[7].hide;
-/** Spine 以延迟=0 对 `hide` 进行排队，因此默认的 150ms 混合重叠收集。 */
+/** Spine 以延迟=0 对 `hide` 进行排队，因此默认的 150ms 混合重叠收集。 / English: Spine queues `hide` with delay=0, hence the default 150ms mixed overlapped collection. */
 export const RAGE_COLLECT_HIDE_MIX_MS = SPINE_DEFAULT_MIX_SECONDS * 1_000;
 export const RAGE_COLLECT_HIDE_START_MS = Math.max(
   0,
@@ -430,13 +436,13 @@ export const RAGE_COLLECT_FULLY_HIDDEN_MS =
   RAGE_COLLECT_HIDE_START_MS + RAGE_COLLECT_HIDE_MS;
 export const RAGE_COLLECT_TRAIL_MS = 1_200;
 export const RAGE_COLLECT_CHARACTER_MS = PRIMAL_CHARACTER_ANIMATION_MS.rageCollect;
-/** 稳定对比样本：MINI、MINOR 和 MAJOR 已从 0/200/400ms 开始。 */
+/** 稳定对比样本：MINI、MINOR 和 MAJOR 已从 0/200/400ms 开始。 / English: Stable comparison samples: MINI, MINOR and MAJOR have started at 0/200/400ms. */
 export const RAGE_COLLECT_ABSORBING_MS = 500;
 export const RAGE_GUARANTEED_STOP_OUTRO_MS = 1_250;
 
 export interface RageCollectionPlan {
   readonly kind: "consume-batch" | "guaranteed-activation";
-  /** 原始集合是一个同步批次；没有人为的每个单元格交错。 */
+  /** 原始集合是一个同步批次；没有人为的每个单元格交错。 / English: The original set is a synchronized batch; there is no artificial per-cell interleaving. */
   readonly cellStartMs: readonly number[];
   readonly symbolLayerRestoreAtMs: number | null;
   readonly symbolHideStartAtMs: number | null;
@@ -446,7 +452,7 @@ export interface RageCollectionPlan {
   readonly characterMs: number;
 }
 
-/** 从 GamePPSFeature 和 GameSymbol 恢复精确的分支分裂。 */
+/** 从 GamePPSFeature 和 GameSymbol 恢复精确的分支分裂。 / English: Restore accurate branch splitting from GamePPSFeature and GameSymbol. */
 export function rageCollectionPlan(count: number, guaranteed: boolean): RageCollectionPlan {
   if (!Number.isSafeInteger(count) || count < 1) throw new Error("Rage count must be positive");
   if (guaranteed) {
@@ -481,19 +487,21 @@ export type RageCollectionEffectPhase =
 
 /**
  * 来自预设的 Rage 集合的仅渲染器事实。它们是诊断输出，从不提供协议、RNG、结算或状态转换。
+ *
+ * 英文 / English: Renderer-only facts from the preset Rage collection. They are diagnostic output and never provide protocol, RNG, settlement or state transitions.
  */
 export interface RageCollectionEffectMilestone {
   readonly phase: RageCollectionEffectPhase;
   readonly cells: readonly Readonly<CellAddress>[];
-  /** 接受的服务器结果事实；仅诊断输出。 */
+  /** 接受的服务器结果事实；仅诊断输出。 / English: Accepted server result facts; diagnostic output only. */
   readonly count: number;
   readonly triggered: boolean;
   readonly guaranteed: boolean;
   readonly level: number;
   readonly total: number;
-  /** 本地真实表现时间；仅通过缩减运动模式进行压缩。 */
+  /** 本地真实表现时间；仅通过缩减运动模式进行压缩。 / English: Local real performance time; compressed by reduced motion mode only. */
   readonly elapsedMs: number;
-  /** 相应预设的桌面时间线点。 */
+  /** 相应预设的桌面时间线点。 / English: The corresponding preset desktop timeline point. */
   readonly authoredAtMs: number;
   readonly reducedMotion: boolean;
   readonly activated: boolean;
@@ -506,7 +514,7 @@ export type SurgePresentationBranch =
   | "post-stop-activation"
   | "cascade-on-transform";
 
-/** 使用有线事实镜像 GamePPSFeature 的 `_explodedReel.length` 分支。 */
+/** 使用有线事实镜像 GamePPSFeature 的 `_explodedReel.length` 分支。 / English: Use the `_explodedReel.length` branch of the wired fact mirror GamePPSFeature. */
 export function surgePresentationBranch(
   triggered: boolean,
   guaranteed: boolean,
@@ -555,16 +563,18 @@ const EMPTY_RAGE_CASCADE_SHUFFLED_CELLS: readonly Readonly<RageCascadeShuffledCe
 
 /**
  * 用于确定性捕获的只读渲染器事实。他们可以观察预设的级联，但无法选择变换单元或任何游戏结果。
+ *
+ * 英文 / English: Read-only renderer fact for deterministic capture. They can observe preset cascades but cannot choose transform units or any game outcomes.
  */
 export interface RageCascadeEffectMilestone {
   readonly phase: RageCascadeEffectPhase;
-  /** 预设的 4120ms 桌面时间线上的对应点。 */
+  /** 预设的 4120ms 桌面时间线上的对应点。 / English: Corresponding point on the default 4120ms desktop timeline. */
   readonly authoredAtMs: number;
-  /** 本地挂钟点；按比例压缩以减少运动。 */
+  /** 本地挂钟点；按比例压缩以减少运动。 / English: Local wall clock point; scaled to reduce motion. */
   readonly elapsedMs: number;
   readonly reducedMotion: boolean;
   readonly transformedCells: readonly Readonly<CellAddress>[];
-  /** 完整的化妆品遍历计划，仅由 `exploding` 填充。 */
+  /** 完整的化妆品遍历计划，仅由 `exploding` 填充。 / English: Complete cosmetic traversal plan, populated only by `exploding`. */
   readonly shuffledCells: readonly Readonly<RageCascadeShuffledCell>[];
   readonly activationAttempted: number;
   readonly activationPlayed: number;
@@ -578,7 +588,7 @@ export type RageCascadeEffectMilestoneListener = (
   milestone: Readonly<RageCascadeEffectMilestone>,
 ) => void;
 
-/** 仅进行装饰性遍历。返回值必须是排列 0..8。 */
+/** 仅进行装饰性遍历。返回值必须是排列 0..8。 / English: Only decorative traversal is performed. The return value must be permutation 0..8. */
 export type RageCascadeCellOrderSource = () => readonly number[];
 
 export const defaultRageCascadeCellOrderSource: RageCascadeCellOrderSource = () => (
@@ -587,6 +597,8 @@ export const defaultRageCascadeCellOrderSource: RageCascadeCellOrderSource = () 
 
 /**
  * 从桌面捆绑包中恢复了精确的 GamePPSFeature 状态机计划。 `cellOrder` 必须是控制器的洗牌卷轴主 0..8 组。
+ *
+ * 英文 / English: Restored accurate GamePPSFeature state machine scheme from desktop bundle. `cellOrder` must be the controller's shuffle reel master 0..8 group.
  */
 export function rageCascadePlan(cellOrder: readonly number[]): RageCascadePlan {
   const timing = PRIMAL_FEATURE_ANIMATION_MS.rageCascade;
@@ -643,7 +655,7 @@ export interface ReelResizePlan {
   readonly totalMs: number;
 }
 
-/** 捕获了 GameReelExpandController 调度，包括其两阶段收缩。 */
+/** 捕获了 GameReelExpandController 调度，包括其两阶段收缩。 / English: Captured the GameReelExpandController dispatch, including its two-phase shrink. */
 export function reelResizePlan(
   fromRows: number,
   toRows: number,
@@ -672,7 +684,7 @@ function inOutQuad(value: number): number {
     : 1 - ((-2 * progress + 2) ** 2) / 2;
 }
 
-/** 精确的原始调整大小延迟、持续时间和缓动以毫秒为单位采样。 */
+/** 精确的原始调整大小延迟、持续时间和缓动以毫秒为单位采样。 / English: Accurate raw resize delay, duration and easing sampled in milliseconds. */
 export function reelExpansionProgress(elapsedMs: number, reducedMotion = false): number {
   if (reducedMotion) return clamp(elapsedMs / featureEffectDuration("expansion", true));
   return inOutQuad((elapsedMs - REEL_EXPANSION_DELAY_MS) / REEL_EXPANSION_RESIZE_MS);
@@ -691,6 +703,8 @@ export function reelResizeProgress(
 /**
  * GameMultiCharacterController 和 GameReelFrameView 都会在选择创作反应之前将新高度与之前的高度进行比较。
  * 通用调整大小控制器仍然保持其门的高度不变，但 `reel_stretch` 和 `reel_smash` 都不会在该分支中播放。
+ *
+ * 英文 / English: Both GameMultiCharacterController and GameReelFrameView compare the new height to the previous height before selecting a creative response. The universal resize controller still keeps the height of its gate, but neither `reel_stretch` nor `reel_smash` will play in that branch.
  */
 export function reelStructureAnimation(
   direction: ReelStructureDirection,
@@ -706,7 +720,7 @@ export const AUTHORED_WHEEL_LAYOUT = Object.freeze({
   diameter: 659 * 0.8,
 });
 
-/** 来自官方 1280x720 弹出合成的像素拟合，独立于 Wheel 几何形状。 */
+/** 来自官方 1280x720 弹出合成的像素拟合，独立于 Wheel 几何形状。 / English: Pixel fitting from official 1280x720 pop-up composition, independent of Wheel geometry. */
 export const PRIMAL_WHEEL_POPUP_LAYOUT = Object.freeze({
   x: LOGICAL_WIDTH / 2,
   y: 356,
@@ -722,9 +736,9 @@ export function wheelResponsiveLayoutTrack(
 
 export type ResponsiveSpineLayoutTrack = ReturnType<typeof wheelResponsiveLayoutTrack>;
 
-/** 物理视口内 1280x720 Wheel 场景的根投影。 */
+/** 物理视口内 1280x720 Wheel 场景的根投影。 / English: The root projection of the 1280x720 Wheel scene within the physical viewport. */
 export function wheelStageOverlayTransform(region: ResponsiveRendererRegion) {
-  // 预设的场景是720px高。在纵向中，仅宽度就足够了，但会在较短的手机横向区域中裁剪滚轮和超旋转控件（例如 844x372）。
+  // 预设的场景是720px高。在纵向中，仅宽度就足够了，但会在较短的手机横向区域中裁剪滚轮和超旋转控件（例如 844x372）。 / English: The default scene is 720px high. In portrait, width alone is enough, but will crop the scroll wheel and hyperrotation controls in the shorter landscape area of ​​the phone (e.g. 844x372).
   const scale = Math.min(
     1,
     Math.max(0, region.width / 600),
@@ -751,6 +765,8 @@ function responsiveSpineLayoutAnimation(
 /**
  * 捕获从原始 1600x900 舞台投影的桌面控件。 `wheelButton` 是 true 600x600 圆形命中目标。
  * 超自旋 Spine 位于现有 93.6px DOM Spin 控制之上，由原始 `buttonWidth * buttonEffectScale * .008` 变换控制。
+ *
+ * 英文 / English: Capture desktop controls projected from the original 1600x900 stage. `wheelButton` is a true 600x600 circular hit target. The superspin Spine sits on top of the existing 93.6px DOM Spin control, controlled by the original `buttonWidth * buttonEffectScale * .008` transform.
  */
 export const PRIMAL_WHEEL_CONTROL_LAYOUT = Object.freeze({
   sourceHitDiameter: 600,
@@ -781,7 +797,7 @@ export interface WheelControlMetrics {
 
 export type WheelControlMetricsSource = () => Readonly<WheelControlMetrics> | null;
 
-/** 将官方 DOM Spin 控制投影镜像到变换后的 Wheel 场景中。 */
+/** 将官方 DOM Spin 控制投影镜像到变换后的 Wheel 场景中。 / English: Mirror the official DOM Spin control projection into the transformed Wheel scene. */
 export function projectWheelHyperspinControl(
   metrics: Readonly<WheelControlMetrics>,
   scene: Readonly<{ x: number; y: number; scale: number }>,
@@ -818,19 +834,19 @@ export function projectWheelHyperspinControl(
     : null;
 }
 
-/** 轮子的清理路径在其权威着陆之前被取消。 */
+/** 轮子的清理路径在其权威着陆之前被取消。 / English: The wheel's clearing path was lifted before its authoritative landing. */
 export function shouldAbortWheelPresentation(started: boolean, finished: boolean): boolean {
   return started && !finished;
 }
 
 export interface FeaturePresentationPlan {
-  /** 结构效应可能会在服务器网格停止之前运行。 */
+  /** 结构效应可能会在服务器网格停止之前运行。 / English: Structural effects may run before the server grid is stopped. */
   readonly beforeReels: readonly GridExpandedEvent[];
-  /** 用于所有结果公告/效果的规范服务器顺序。 */
+  /** 用于所有结果公告/效果的规范服务器顺序。 / English: Canonical server order used for all result announcements/effects. */
   readonly orderedEvents: readonly FeatureEvent[];
 }
 
-/** 保持线阵列不变，同时暴露其预卷轴结构线索。 */
+/** 保持线阵列不变，同时暴露其预卷轴结构线索。 / English: Keeping the line array intact while exposing its pre-scroll structural cues. */
 export function createFeaturePresentationPlan(
   events: readonly FeatureEvent[],
 ): FeaturePresentationPlan {
@@ -918,6 +934,8 @@ export interface WheelSpineAnimationPlan {
 
 /**
  * 仅从 wheel.skel 中预设的七个片段中选择装饰曲目。解码的事件仍然是显示结果和奖励的唯一来源。
+ *
+ * 英文 / English: Select the grooming track only from the seven preset clips in wheel.skel. Decoded events remain the only source of display results and rewards.
  */
 export function wheelSpineAnimationPlan(
   selection: PrimalWheelAwardSelection | string | number,
@@ -1000,7 +1018,7 @@ function createAuthoredWheelPlayback(
       view.destroy({ children: true });
       return null;
     }
-    // 原始桌面包含布局：minBound(-600,-550,1200,900) at 0.8。
+    // 原始桌面包含布局：minBound(-600,-550,1200,900) at 0.8。 / English: The original desktop contains layout: minBound(-600,-550,1200,900) at 0.8.
     view.position.set(AUTHORED_WHEEL_LAYOUT.x, AUTHORED_WHEEL_LAYOUT.y);
     view.scale.set(AUTHORED_WHEEL_LAYOUT.scale);
     view.alpha = 1;
@@ -1008,7 +1026,7 @@ function createAuthoredWheelPlayback(
     view.state.setAnimation(0, plan.hidden, false);
     view.update(0);
     view.state.clearTrack(0);
-    // `hidden` 钥匙槽颜色/附件 `show` 不完全拥有。在开始演出之前恢复设置，以便物理轮子在 PRIMAL WHEEL 标题后面展开，而不是仅在“就绪”重置时才弹出。
+    // `hidden` 钥匙槽颜色/附件 `show` 不完全拥有。在开始演出之前恢复设置，以便物理轮子在 PRIMAL WHEEL 标题后面展开，而不是仅在“就绪”重置时才弹出。 / English: `hidden` key slot color/attachment `show` Not fully owned. Restore settings before starting a show so that the physical wheel expands behind the PRIMAL WHEEL header instead of only popping up on "Ready" reset.
     view.skeleton.setToSetupPose();
     view.state.setAnimation(2, layoutTrack, true);
     const show = view.state.setAnimation(0, plan.show, false);
@@ -1108,7 +1126,7 @@ function setAuthoredWheelWaiting(playback: AuthoredWheelPlayback | null): void {
   const { view, plan } = playback;
   view.state.clearTrack(0);
   view.state.clearTrack(1);
-  // `hidden` 循环 `idle` 动画故意不拥有的关键插槽颜色/附件。在进入不确定输入门之前恢复预设的设置姿势，或者轮子可以保持完全隐藏，而只有单独的超旋转提示可见。
+  // `hidden` 循环 `idle` 动画故意不拥有的关键插槽颜色/附件。在进入不确定输入门之前恢复预设的设置姿势，或者轮子可以保持完全隐藏，而只有单独的超旋转提示可见。 / English: `hidden` loop `idle` animation intentionally does not have key slot colors/attachments. Restore the preset setup pose before entering the indeterminate input gate, or the wheels can remain completely hidden, with only the separate hyperrotation prompt visible.
   view.skeleton.setToSetupPose();
   view.state.setAnimation(0, plan.idle, true);
   view.state.setAnimation(1, plan.anticipationLoop, true);
@@ -1219,7 +1237,7 @@ interface AuthoredTrailEndpointBone {
   worldToLocal(world: Vector2): Vector2;
 }
 
-/** 从 Pixi 屏幕到 Spine 本地 Y 的精确 SpineCollectTrailController 端点桥接。 */
+/** 从 Pixi 屏幕到 Spine 本地 Y 的精确 SpineCollectTrailController 端点桥接。 / English: Exact SpineCollectTrailController endpoint bridge from Pixi screen to Spine local Y. */
 export function resolveAuthoredCollectTrailEndpoint(
   bone: AuthoredTrailEndpointBone,
   point: Readonly<{ x: number; y: number }>,
@@ -1234,7 +1252,7 @@ export function resolveAuthoredCollectTrailEndpoint(
   bone.y = local.y;
 }
 
-/** 两个端点骨骼使用的原始 pointDirection(target, source) 约定。 */
+/** 两个端点骨骼使用的原始 pointDirection(target, source) 约定。 / English: The original pointDirection(target, source) convention used by two endpoint bones. */
 export function authoredCollectTrailRotation(
   source: Readonly<{ x: number; y: number }>,
   target: Readonly<{ x: number; y: number }>,
@@ -1263,8 +1281,8 @@ function createAuthoredCollectTrail(
       return null;
     }
     const trailView = view;
-    // 原始SpineCollectTrailController将每个端点归零，然后通过Bone.worldToLocal()解析Pixi路径覆盖点。
-    // 这是材料：Spine 的 Pixi 桥反射 Y。分配屏幕空间 Y 直接将完整的嘴到符号螺栓发送到视口上方。
+    // 原始SpineCollectTrailController将每个端点归零，然后通过Bone.worldToLocal()解析Pixi路径覆盖点。 / English: The original SpineCollectTrailController zeroes out each endpoint and then resolves the Pixi trail coverage points via Bone.worldToLocal().
+    // 这是材料：Spine 的 Pixi 桥反射 Y。分配屏幕空间 Y 直接将完整的嘴到符号螺栓发送到视口上方。 / English: Here’s the material: Spine’s Pixi Bridge Reflective Y. Allocate screen space Y to send the full mouth to symbol bolt directly above the viewport.
     const updateWorldTransform = (): void => trailView.skeleton.updateWorldTransform();
     resolveAuthoredCollectTrailEndpoint(sourceBone, source, updateWorldTransform);
     resolveAuthoredCollectTrailEndpoint(targetBone, target, updateWorldTransform);
@@ -1407,17 +1425,19 @@ interface AlphaTarget {
 }
 
 export interface ReelAlphaLayer {
-  /** 稳定的预层 Alpha，即使另一个动画已经拥有一个图层也是如此。 */
+  /** 稳定的预层 Alpha，即使另一个动画已经拥有一个图层也是如此。 / English: Stable pre-layer alpha, even if another animation already has a layer. */
   readonly baseAlpha: number;
-  /** 如果这是唯一的活动层，则需要所需的 alpha。 */
+  /** 如果这是唯一的活动层，则需要所需的 alpha。 / English: If this is the only active layer, the desired alpha is required. */
   setAlpha(alpha: number): void;
-  /** 幂等地删除该层而不打扰剩余的所有者。 */
+  /** 幂等地删除该层而不打扰剩余的所有者。 / English: Deletes the layer idempotently without disturbing the remaining owners. */
   release(): void;
 }
 
 /**
  * 组成在墙时间中重叠的独立卷轴淡入淡出。 Wheel 在 H+500 处返回，而其卷轴淡入淡出占据场景直到 H+1000；因此，
  * 以下 Free Spins 介绍可能会在第一个发布之前开始第二个淡入淡出。
+ *
+ * 英文 / English: Composed of independent scroll fades that overlap in wall time. The Wheel returns at H+500, and its reel fade occupies the scene until H+1000; therefore, the following Free Spins intro may begin the second fade before the first is released.
  */
 export class ReelAlphaLayers {
   private baseAlpha: number | null = null;
@@ -1455,7 +1475,7 @@ export class ReelAlphaLayers {
     });
   }
 
-  /** 立即拆卸路径；陈旧的句柄在此调用后将变为惰性。 */
+  /** 立即拆卸路径；陈旧的句柄在此调用后将变为惰性。 / English: Immediately disassembles the path; stale handles will become lazy after this call. */
   restore(): void {
     const restore = this.baseAlpha;
     this.factors.clear();
@@ -1488,7 +1508,7 @@ export interface SurgeCollectionFrame {
   readonly bannerAlpha: number;
 }
 
-/** 纯化妆品时间线；触发真相由解码事件提供。 */
+/** 纯化妆品时间线；触发真相由解码事件提供。 / English: Purely cosmetic timeline; triggering truth provided by decoded events. */
 export function surgeCollectionFrame(
   progress: number,
   triggered: boolean,
@@ -1581,60 +1601,64 @@ function createBanner(label: string, color: number, width = 520): Container {
 
 export interface FeatureEffectsHooks {
   readonly onReelStructure?: (direction: AnimatedReelStructureDirection) => void;
-  /** 弹出窗口 `show` 已启动，其第一个绑定的 CONTINUE 已上线。 */
+  /** 弹出窗口 `show` 已启动，其第一个绑定的 CONTINUE 已上线。 / English: The popup `show` has been started and its first bound CONTINUE has come online. */
   readonly onWheelPopupReady?: () => void;
-  /** 精确弹出输入就绪框架上的可选测试场景屏障。 */
+  /** 精确弹出输入就绪框架上的可选测试场景屏障。 / English: Precisely pop up optional test scenario barrier on input ready frame. */
   readonly onWheelPopupInputReadyCheckpoint?: () => void | Promise<void>;
   readonly onWheelPopupClose?: (reason: WheelSummaryCloseReason) => void;
-  /** 弹出已完成/继续，原始 wheelButton 正在接受旋转输入。 */
+  /** 弹出已完成/继续，原始 wheelButton 正在接受旋转输入。 / English: Popup completed/continued, original wheelButton is accepting rotation input. */
   readonly onWheelReady?: () => void;
-  /** 无超时 Wheel 输入门处于活动状态时可选的测试场景屏障。 */
+  /** 无超时 Wheel 输入门处于活动状态时可选的测试场景屏障。 / English: No timeout Wheel input Optional test scene barrier when gate is active. */
   readonly onWheelInputReadyCheckpoint?: () => void | Promise<void>;
   readonly onWheelSpinStart?: () => void;
   /**
    * 可选的测试夹具栅栏：位于 Character 捶胸效果负责人和旋转启动里程碑安装之后、Wheel 流程离开 S0 之前。
+   *
+   * 英文 / English: Optional Test Fixture Fence: Located after the Character Chest-Thumping Effect Leader and Spin Start Milestones are installed, but before the Wheel process leaves S0.
    */
   readonly onWheelSpinStartCheckpoint?: () => void | Promise<void>;
-  /** 旋转过程中的第二次单击将调用 Spinner.quickStop()。 */
+  /** 旋转过程中的第二次单击将调用 Spinner.quickStop()。 / English: The second click during the spin calls Spinner.quickStop(). */
   readonly onWheelQuickStop?: () => void;
   readonly onWheelSpinFinish?: () => void;
-  /** 在高光保持之前，解码着陆姿势上的可选测试场景障碍物。 */
+  /** 在高光保持之前，解码着陆姿势上的可选测试场景障碍物。 / English: Decoding optional test scene obstacles on landing pose before highlight hold. */
   readonly onWheelLandingCheckpoint?: () => void | Promise<void>;
-  /** 仅恢复角色；与 finish 不同，它不能发出着陆里程碑。 */
+  /** 仅恢复角色；与 finish 不同，它不能发出着陆里程碑。 / English: Only resumes the role; unlike finish, it cannot emit landing milestones. */
   readonly onWheelSpinAbort?: () => void;
-  /** A 层 `show` 已启动，有界 CONTINUE 门已启用。 */
+  /** A 层 `show` 已启动，有界 CONTINUE 门已启用。 / English: Layer A `show` is started, bounded CONTINUE gate is enabled. */
   readonly onWheelSummaryReady?: () => void;
-  /** 关闭输入、超时或拆卸的共享 Spin/CONTINUE 状态。 */
+  /** 关闭输入、超时或拆卸的共享 Spin/CONTINUE 状态。 / English: Close shared Spin/CONTINUE state for input, timeout, or teardown. */
   readonly onWheelSummaryClose?: (reason: WheelSummaryCloseReason) => void;
-  /** B 层在预设的 Wheel 根完成其 500ms 隐藏后开始。 */
+  /** B 层在预设的 Wheel 根完成其 500ms 隐藏后开始。 / English: Layer B starts after the preset Wheel root completes its 500ms hide. */
   readonly onWheelBonusLabelReady?: (
     event: InstantWheelAwardedEvent,
     reducedMotion: boolean,
   ) => void;
-  /** Free Spins 介绍已完全显示，并且 waitForContinue(-1) 已激活。 */
+  /** Free Spins 介绍已完全显示，并且 waitForContinue(-1) 已激活。 / English: The Free Spins intro is fully displayed and waitForContinue(-1) is activated. */
   readonly onFreeSpinsReady?: () => void;
   readonly onFreeSpinsContinue?: () => void;
-  /** Free Spins 摘要 `show` 已完成，其绑定的 CONTINUE 已上线。 */
+  /** Free Spins 摘要 `show` 已完成，其绑定的 CONTINUE 已上线。 / English: Free Spins summary `show` has been completed and its bound CONTINUE is online. */
   readonly onFreeSpinSummaryReady?: () => void;
-  /** 真实摘要输入门变得可见后可选的测试场景屏障。 */
+  /** 真实摘要输入门变得可见后可选的测试场景屏障。 / English: Optional test scene barrier after the real summary input gate becomes visible. */
   readonly onFreeSpinSummaryInputReadyCheckpoint?: () => void | Promise<void>;
   readonly onFreeSpinSummaryClose?: (reason: FreeSpinSummaryCloseReason) => void;
   readonly onRageRespin?: () => void;
   readonly onRagePound?: () => void;
   readonly onRageBackdropShake?: (phase: "respin" | "pound") => void;
-  /** 官方PPS状态1：仅在1ms收集障碍后启动塔。 */
+  /** 官方PPS状态1：仅在1ms收集障碍后启动塔。 / English: Official PPS Status 1: Launch tower only after collecting obstacles in 1ms. */
   readonly onRageCollectionCommitted?: () => void;
-  /** 同步、故障开放诊断；从未等待生产。 */
+  /** 同步、故障开放诊断；从未等待生产。 / English: Synchronized, fault-open diagnostics; never waiting for production. */
   readonly onRageCollectionMilestone?: (
     milestone: Readonly<RageCollectionEffectMilestone>,
   ) => void;
   /**
    * 用于 one-Vault 预设的解锁时钟的可选测试场景屏障。当不存在时，不会在生产中引入寻道、暂停或额外等待。
+   *
+   * 英文 / English: Optional test scenario barrier for one-Vault preset unlock clock. When absent, no seeks, pauses, or extra waits are introduced in production.
    */
   readonly onVaultUnlockPhase?: (
     milestone: Readonly<VaultUnlockPresentationMilestone>,
   ) => void | Promise<void>;
-  /** FREESPIN_END/重置在预设的摘要隐藏剪辑之前开始一次。 */
+  /** FREESPIN_END/重置在预设的摘要隐藏剪辑之前开始一次。 / English: FREESPIN_END/Reset starts once before the default summary hides the clip. */
   readonly onFreeSpinSummaryHideStart?: () => void;
 }
 
@@ -1646,6 +1670,8 @@ export const defaultWheelStopOffsetSource: WheelStopOffsetSource = () => (
 
 /**
  * 仅在接受的 Spin 门处对外观保留的 Wheel 偏移进行采样。减少运动有意使指针保持居中，而不消耗注入的源。
+ *
+ * 英文 / English: Appearance-preserving Wheel offsets are sampled only at accepted Spin gates. Reducing motion intentionally keeps the pointer centered without consuming the injected source.
  */
 export function sampleWheelStopOffset(
   source: WheelStopOffsetSource,
@@ -1662,7 +1688,7 @@ export interface PrimalWheelOutroTaskPlan {
   readonly ownershipMs: number;
 }
 
-/** 官方隐藏启动分为三个任务；只有Wheel隐藏门进程。 */
+/** 官方隐藏启动分为三个任务；只有Wheel隐藏门进程。 / English: The authored hide starts three parallel tasks; only the Wheel hide gates process completion. */
 export function primalWheelOutroTaskPlan(
   timeline: Pick<PrimalWheelRuntimeTimeline, "wheelHide" | "summaryHide" | "reelFade">,
 ): PrimalWheelOutroTaskPlan {
@@ -1677,6 +1703,8 @@ export function primalWheelOutroTaskPlan(
 
 /**
  * 原创的、非权威的特征动画层。它使用语义服务器事实，但从不计算中奖、余额、乘数或结果。
+ *
+ * 英文 / English: Original, non-authoritative feature animation layer. It uses semantic server facts but never calculates winnings, balances, multipliers or results.
  */
 export class FeatureEffects {
   readonly view = new Container();
@@ -1735,7 +1763,7 @@ export class FeatureEffects {
     this.hostLayer.addChild(this.view);
   }
 
-  /** 已校验负载在控制器持有事件租约时一次性采用；不再按 skeleton/纹理 URL 请求。 */
+  /** 已校验负载在控制器持有事件租约时一次性采用；不再按 skeleton/纹理 URL 请求。 / English: Verified payloads are taken one-time while the controller holds an event lease; no longer requested by skeleton/texture URL. */
   adoptVerifiedFreeSpinArtwork(artwork: VerifiedFreeSpinArtwork): void {
     if (this.destroyed) throw new Error("FeatureEffects was destroyed");
     this.featureArtworkGeneration += 1;
@@ -1743,7 +1771,7 @@ export class FeatureEffects {
     this.freeSpinArtworkLoad = null;
   }
 
-  /** Wheel 的三张 blob 纹理由本实例独占，并在事件租约结束/销毁时按对象身份释放。 */
+  /** Wheel 的三张 blob 纹理由本实例独占，并在事件租约结束/销毁时按对象身份释放。 / English: The three blob textures of the Wheel are exclusively owned by this instance and are released by object identity when the event lease ends/is destroyed. */
   adoptVerifiedWheelArtwork(artwork: VerifiedWheelArtwork): void {
     if (this.destroyed) {
       disposeVerifiedWheelArtwork(artwork);
@@ -1793,7 +1821,7 @@ export class FeatureEffects {
     if (!this.wheelArtworkLoad) {
       const attempt = loadPrimalSpineSet(WHEEL_VERIFIED_SPINE_KEYS).then((spines) => {
         if (!this.destroyed && generation === this.featureArtworkGeneration) {
-          // 兼容独立渲染器/测试宿主的按需 URL 回退；生产控制器始终先采用验证包。
+          // 兼容独立渲染器/测试宿主的按需 URL 回退；生产控制器始终先采用验证包。 / English: Compatible with standalone renderer/test host on-demand URL fallback; production controllers always take the validation package first.
           this.wheelArtwork = Object.freeze({
             kind: "wheel",
             channel: "desktop",
@@ -1817,24 +1845,24 @@ export class FeatureEffects {
     if (!this.wheelArtwork) throw new Error("Required Primal Wheel artwork is unavailable");
   }
 
-  /** 会话金额格式器只改变文字投影，不参与任何奖励或余额计算。 */
+  /** 会话金额格式器只改变文字投影，不参与任何奖励或余额计算。 / English: The session amount formatter only changes the text projection and does not participate in any reward or balance calculations. */
   setMoneyFormatter(formatter: MinorUnitFormatter): void {
     this.moneyFormatter = formatter;
   }
 
-  /** 只消费 ResponsiveLayout 已提交的设计方向，禁止在表现帧中直接采样物理 window。 */
+  /** 只消费 ResponsiveLayout 已提交的设计方向，禁止在表现帧中直接采样物理 window。 / English: Only the submitted design direction of ResponsiveLayout is consumed, and direct sampling of the physical window in the presentation frame is prohibited. */
   setResponsiveLayoutTrack(track: ResponsiveSpineLayoutTrack): void {
     this.responsiveLayoutTrack = track;
   }
 
-  /** 可选捕捉观察者；在正常的制作播放中不存在。 */
+  /** 可选捕捉观察者；在正常的制作播放中不存在。 / English: Optional capture observer; does not exist in normal production playback. */
   setRageCascadeMilestoneListener(
     listener: RageCascadeEffectMilestoneListener | null,
   ): void {
     this.rageCascadeMilestoneListener = listener;
   }
 
-  /** 可选捕捉观察者；生产播放路径中不存在。 */
+  /** 可选捕捉观察者；生产播放路径中不存在。 / English: Optional capture observer; does not exist in production playback path. */
   setVaultUnlockMilestoneListener(
     listener: ((
       milestone: Readonly<VaultUnlockPresentationMilestone>,
@@ -1843,7 +1871,7 @@ export class FeatureEffects {
     this.vaultUnlockMilestoneListener = listener;
   }
 
-  /** 仅供测试夹具暂停制作好的级联控制器时钟。 */
+  /** 仅供测试夹具暂停制作好的级联控制器时钟。 / English: The test fixture only suspends the crafted cascade controller clock. */
   setRageCascadePlaybackPaused(active: boolean): void {
     this.rageCascadePlaybackPaused = active;
     if (active) return;
@@ -1856,6 +1884,8 @@ export class FeatureEffects {
 
   /**
    * 仅取消活动的 PPS 替换级联。清理是同步的；拥有的表现承诺在其下一个微任务边界上被拒绝。
+   *
+   * 英文 / English: Only active PPS replacement cascades are canceled. Cleanup is synchronous; owned performance promises are rejected on their next microtask boundary.
    */
   cancelRageCascadePresentation(): boolean {
     const active = this.activeRageCascade;
@@ -1868,12 +1898,12 @@ export class FeatureEffects {
     try {
       this.cleanupRageCascade(active);
     } catch {
-      // 回合清理是失败开放的：ReelSetView.cancelPresentation 在此装饰边界之后立即拥有权威的最终重置。
+      // 回合清理是失败开放的：ReelSetView.cancelPresentation 在此装饰边界之后立即拥有权威的最终重置。 / English: Round cleanup is fail-open: ReelSetView.cancelPresentation has an authoritative final reset immediately after this decorated border.
     } finally {
       try {
         active.finish?.();
       } catch {
-        // 陈旧的展示处理器绝不能耽误回合的重置。
+        // 陈旧的展示处理器绝不能耽误回合的重置。 / English: Aged display processors must not delay round resets.
       }
     }
     return true;
@@ -1931,12 +1961,14 @@ export class FeatureEffects {
         hidden,
       }));
     } catch {
-      // 只读捕获诊断无法中断预设的播放。
+      // 只读捕获诊断无法中断预设的播放。 / English: Read-only capture diagnostics cannot interrupt scheduled playback.
     }
   }
 
   /**
    * 仅供测试夹具暂停活动 Rage 源与轨迹时钟。Character 和 Jackpot 组件由 PixiRenderer 暂停，但不会停止各自的逐帧更新器。
+   *
+   * 英文 / English: Suspends active Rage source and track clock only for test fixture. The Character and Jackpot components are paused by the PixiRenderer, but their respective frame-by-frame updaters are not stopped.
    */
   setRageCollectionPlaybackPaused(active: boolean): void {
     if (this.rageCollectionPlaybackPaused === active) return;
@@ -1976,13 +2008,13 @@ export class FeatureEffects {
     try {
       this.reels.setSymbolPlaybackPaused(this.activeRageCollectionCells, false);
     } catch {
-      // 所寻址的符号可能已经属于废弃的卷轴网格。
+      // 所寻址的符号可能已经属于废弃的卷轴网格。 / English: The addressed symbol may already belong to an abandoned reel grid.
     }
     for (const trail of this.activeRageCollectionTrails) {
       try {
         trail.state.timeScale = this.rageCollectionTrailResumeScale.get(trail) ?? 1;
       } catch {
-        // 场景清理可能已经破坏了预设的轨迹。
+        // 场景清理可能已经破坏了预设的轨迹。 / English: Scene cleanup may have destroyed the preset trajectory.
       }
     }
     this.activeRageCollectionCells = Object.freeze([]);
@@ -1991,9 +2023,9 @@ export class FeatureEffects {
   }
 
   private currentPresentationToken(): FeaturePresentationToken {
-    // 某些专项渲染器测试会刻意通过 Object.create(FeatureEffects.prototype) 构造此类，
-    // 以便在不启动 Pixi 的情况下隔离单个视觉接口。可复用的取消负责人需保持延迟创建，
-    // 同时兼容绕过构造函数的测试路径；生产实例仍使用上方字段初始化器。
+    // 某些专项渲染器测试会刻意通过 Object.create(FeatureEffects.prototype) 构造此类， / English: Some specialized renderer tests intentionally construct this class via Object.create(FeatureEffects.prototype),
+    // 以便在不启动 Pixi 的情况下隔离单个视觉接口。可复用的取消负责人需保持延迟创建， / English: to isolate a single visual interface without launching Pixi. The reusable cancellation manager needs to be created lazily,
+    // 同时兼容绕过构造函数的测试路径；生产实例仍使用上方字段初始化器。 / English: Also compatible with test paths that bypass the constructor; production instances still use the field initializer above.
     if (!this.presentationAbortController) {
       this.presentationAbortController = new AbortController();
     }
@@ -2016,7 +2048,7 @@ export class FeatureEffects {
     if (!this.isPresentationCurrent(token)) throw new FeaturePresentationCancelledError();
   }
 
-  /** 将测试夹具/资源承诺与可复用的轮次取消边界绑定。 */
+  /** 将测试夹具/资源承诺与可复用的轮次取消边界绑定。 / English: Unbound test fixture/resource commitments with reusable rounds. */
   private awaitPresentation<T>(
     pending: PromiseLike<T>,
     token: FeaturePresentationToken,
@@ -2053,7 +2085,7 @@ export class FeatureEffects {
         cells: Object.freeze(milestone.cells.map((cell) => Object.freeze({ ...cell }))),
       }));
     } catch {
-      // 只读灯具诊断无法中断预设的效果。
+      // 只读灯具诊断无法中断预设的效果。 / English: Read-only fixture diagnostics cannot interrupt preset effects.
     }
   }
 
@@ -2133,6 +2165,8 @@ export class FeatureEffects {
 
   /**
    * 官方 FASTPLAY_ON/OFF 设置的渲染器接口。仅当玩家启动 Wheel 时才会对该值进行采样，因此在主动停止期间更改该值无法更改不可变的旋转计划。
+   *
+   * 英文 / English: Renderer interface for official FASTPLAY_ON/OFF settings. This value is only sampled when the player starts the Wheel, so changing the value during an active stop cannot change the immutable rotation plan.
    */
   setWheelFastPlay(enabled: boolean): void {
     this.wheelSpeed = enabled ? "fast" : "normal";
@@ -2151,6 +2185,8 @@ export class FeatureEffects {
 
   /**
    * 通过一个交互门路由共享的 DOM Spin 控件和 600px 预设的车轮撞击圆。它永远不会改变服务器奖励。
+   *
+   * 英文 / English: A shared DOM Spin control and a 600px prefab wheel impact circle are routed through an interaction gate. It never changes server rewards.
    */
   requestWheelInteraction(): WheelInteractionResult | null {
     const popup = this.activeWheelPopupContinue;
@@ -2168,7 +2204,7 @@ export class FeatureEffects {
       try {
         this.hooks.onWheelSpinStart?.();
       } catch (error) {
-        // 保留预障碍合约：诊断/表现挂钩可能仍会显示其错误，但永远不会搁浅已接受的 Spin。
+        // 保留预障碍合约：诊断/表现挂钩可能仍会显示其错误，但永远不会搁浅已接受的 Spin。 / English: Preserve pre-barrier contracts: Diagnostics/Performance hooks may still show their errors, but accepted Spins will never be stranded.
         interaction.resolveContinue();
         throw error;
       }
@@ -2176,11 +2212,11 @@ export class FeatureEffects {
         this.hooks.onWheelSpinStartCheckpoint,
       );
       if (checkpoint) {
-        // 按设计保持故障开放：requestWheelCheckpoint 会同时处理兑现与拒绝，
-        // 因此生产流程始终可以继续执行拆卸。
+        // 按设计保持故障开放：requestWheelCheckpoint 会同时处理兑现与拒绝， / English: Keep faults open by design: requestWheelCheckpoint handles both honors and rejections,
+        // 因此生产流程始终可以继续执行拆卸。 / English: The production process can therefore always continue with disassembly.
         void checkpoint.then(() => interaction.resolveContinue());
       } else {
-        // 当没有观察者存在时，生产路径保持同步。
+        // 当没有观察者存在时，生产路径保持同步。 / English: When no observers are present, the production path remains synchronized.
         interaction.resolveContinue();
       }
       return "spin-started";
@@ -2195,7 +2231,7 @@ export class FeatureEffects {
     return null;
   }
 
-  /** 相同的 DOM Spin 控件会解除 A 层，但仅在其保持期间。 */
+  /** 相同的 DOM Spin 控件会解除 A 层，但仅在其保持期间。 / English: The same DOM Spin control dismisses the A layer, but only while it is held. */
   requestWheelSummaryContinue(): boolean {
     const interaction = this.activeWheelSummaryContinue;
     if (!interaction || interaction.state !== "waiting" || this.destroyed) return false;
@@ -2214,12 +2250,12 @@ export class FeatureEffects {
     return true;
   }
 
-  /** 仅在 Free Spins 摘要 `show` 之后的有界保持期间有效。 */
+  /** 仅在 Free Spins 摘要 `show` 之后的有界保持期间有效。 / English: Valid only during bounded hold after Free Spins summary `show`. */
   requestFreeSpinSummaryContinue(): boolean {
     const interaction = this.activeFreeSpinSummaryContinue;
     if (!interaction || interaction.state !== "waiting" || this.destroyed) return false;
-    // 可选的夹具 checkpoint 让可见 CONTINUE 保持在准确截图姿势。旧的可信点击可能在
-    // 同一 DOM 控件切换租约后才到达；该手势仍归摘要门所有，但不得越过未释放的栅栏。
+    // 可选的夹具 checkpoint 让可见 CONTINUE 保持在准确截图姿势。旧的可信点击可能在 / English: An optional fixture checkpoint keeps the visible CONTINUE in the exact screenshot pose. Old trusted clicks may be in
+    // 同一 DOM 控件切换租约后才到达；该手势仍归摘要门所有，但不得越过未释放的栅栏。 / English: The same DOM control arrives after the lease is switched; the gesture is still owned by the abstract gate, but must not cross the unreleased fence.
     if (interaction.inputCheckpointPending) return true;
     interaction.state = "continued";
     interaction.finish();
@@ -2227,7 +2263,7 @@ export class FeatureEffects {
     return true;
   }
 
-  /** 镜像GameUnlockBonusFeature在预期期间的全阶段跳过按钮。 */
+  /** 镜像GameUnlockBonusFeature在预期期间的全阶段跳过按钮。 / English: Mirrors the GameUnlockBonusFeature for full-stage skip buttons during the expected period. */
   requestVaultTeaseSkip(): boolean {
     const interaction = this.activeVaultTease;
     if (!interaction || interaction.state !== "waiting" || this.destroyed) return false;
@@ -2240,6 +2276,8 @@ export class FeatureEffects {
   /**
    * 可重复使用的圆形边界，用于已取消或外观上失败的特征。与 destroy() 不同，这使得资产、挂钩和视图主机可重用于下一个接受的服务器状态。清理是同步且幂等的；
    * 陈旧的 alpha 句柄和异步检查点之后无法写入。
+   *
+   * 英文 / English: Reusable circular borders for canceled or cosmetically failed features. Unlike destroy(), this makes assets, hooks, and view hosts reusable for the next accepted server state. Cleanup is synchronous and idempotent; stale alpha handles and async checkpoints cannot be written after.
    */
   cancelActivePresentation(): void {
     const previousController = this.presentationAbortController ?? new AbortController();
@@ -2250,7 +2288,7 @@ export class FeatureEffects {
     try {
       previousController.abort();
     } catch {
-      // 中止侦听器是内部的，但拆卸必须保持故障开放。
+      // 中止侦听器是内部的，但拆卸必须保持故障开放。 / English: The abort listener is internal, but teardown must leave the fault open.
     }
 
     const wheelPopup = this.activeWheelPopupContinue;
@@ -2315,14 +2353,14 @@ export class FeatureEffects {
       } catch { /* 隔离处理器 */ }
     }
     for (const cleanup of [...this.managedWheelSceneCleanups]) {
-      // 首先删除，以便扔掉的陈旧处理器仅保留一次。
+      // 首先删除，以便扔掉的陈旧处理器仅保留一次。 / English: Delete first so that the old processors that are thrown away are kept only once.
       this.managedWheelSceneCleanups.delete(cleanup);
       try { cleanup(); } catch { /* 隔离处理器 */ }
     }
     this.activeWheelScene = null;
     this.reelAlphaLayers.restore();
 
-    // 外部检查点没有 RAF 来拥有自己的场景。立即移除所有临时儿童；他们后来的最后块仍然无害。
+    // 外部检查点没有 RAF 来拥有自己的场景。立即移除所有临时儿童；他们后来的最后块仍然无害。 / English: External checkpoints don't have RAFs to have their own scenes. All temporary children are removed immediately; their later final blocks remain harmless.
     const transientView = this.view as Container | undefined;
     for (const child of [...(transientView?.children ?? [])]) {
       try { this.release(child as Container); } catch { /* 隔离处理器 */ }
@@ -2333,8 +2371,8 @@ export class FeatureEffects {
     if (this.destroyed) return;
     const token = this.currentPresentationToken();
     const fromRows = this.reels.activeRows;
-    // 当下一个 Free Spin 保持相同高度时，GameExpandingReelDelayFeature 仍调度 EXPAND_REELS。几何形状未改变，
-    // 但 450ms 控制器门和 1000ms 调整大小生命周期仍然可见。
+    // 当下一个 Free Spin 保持相同高度时，GameExpandingReelDelayFeature 仍调度 EXPAND_REELS。几何形状未改变， / English: GameExpandingReelDelayFeature still dispatches EXPAND_REELS when the next Free Spin remains at the same height. The geometry remains unchanged,
+    // 但 450ms 控制器门和 1000ms 调整大小生命周期仍然可见。 / English: But the 450ms controller gate and 1000ms resize lifecycle are still visible.
     const plan = reelResizePlan(fromRows, event.rows, reducedMotion);
     const structureAnimation = reelStructureAnimation(plan.direction);
     let characterAnimationStarted = false;
@@ -2391,7 +2429,7 @@ export class FeatureEffects {
       case "grid.expanded":
         return;
       case "vault.awarded":
-        // 预设的 Vault 符号拥有其中奖剪辑。旧的程序挑战/裂缝/开门覆盖物在捕获中不存在。
+        // 预设的 Vault 符号拥有其中奖剪辑。旧的程序挑战/裂缝/开门覆盖物在捕获中不存在。 / English: The preset Vault symbols have their winning clips. The old procedural challenge/crack/door opening overlays no longer exist in Capture.
         await this.presentVisual(
           this.visualDescriptor("vault.award", event.type),
           reducedMotion,
@@ -2429,8 +2467,8 @@ export class FeatureEffects {
         await this.presentWheel(event, reducedMotion, token);
         return;
       case "surge.collected":
-        // 精确三 Rage 已由 StopSequencer 预设的 SCATTER_FEATURE_ACTIVATE + 1250ms stop-outro 拥有。
-        // 它没有 PPS 收集、重新旋转、替换矩阵或 rage.transformed 连线事件。此处重播一/二 Rage 级联将添加伪造的 4120ms 场景。
+        // 精确三 Rage 已由 StopSequencer 预设的 SCATTER_FEATURE_ACTIVATE + 1250ms stop-outro 拥有。 / English: Exact three Rage already owned by StopSequencer default SCATTER_FEATURE_ACTIVATE + 1250ms stop-outro.
+        // 它没有 PPS 收集、重新旋转、替换矩阵或 rage.transformed 连线事件。此处重播一/二 Rage 级联将添加伪造的 4120ms 场景。 / English: It has no PPS collection, respins, replacement matrices or rage.transformed connection events. Replaying the one/two Rage cascade here will add a fake 4120ms scene.
         switch (surgePresentationBranch(event.triggered, event.guaranteed)) {
           case "post-stop-activation":
             return;
@@ -2452,10 +2490,10 @@ export class FeatureEffects {
         return;
       case "free_spin.awarded":
       case "free_spin.cap_reached":
-        // 两个表现流程均归 FreeSpinHudView 所有。额外旋转使用批量预设的收集轨迹； CAPLIMIT 使用重新触发面板。
+        // 两个表现流程均归 FreeSpinHudView 所有。额外旋转使用批量预设的收集轨迹； CAPLIMIT 使用重新触发面板。 / English: Both rendering processes are owned by FreeSpinHudView. Extra spins use the batch preset's collection track; CAPLIMIT uses the retrigger panel.
         return;
       case "win_cap.reached":
-        // 纯经济边界事实，保持可观测但不额外伪造未定义的独立动画。
+        // 纯经济边界事实，保持可观测但不额外伪造未定义的独立动画。 / English: Purely economic boundary facts that remain observable but do not additionally falsify undefined independent animations.
         return;
       case "free_spins.completed":
         await this.presentFreeSpinsSummary(event, reducedMotion, token);
@@ -2477,6 +2515,8 @@ export class FeatureEffects {
 
   /**
    * 环境桥首先启动 ape 和预设框架。此方法是在任何符号变异之前捕获的 500ms 组屏障。
+   *
+   * 英文 / English: The environment bridge first starts ape and preset frameworks. This method captures a 500ms group barrier before any symbol mutation.
    */
   async presentVaultGroupBarrier(
     event: VaultGroupStartEvent,
@@ -2497,6 +2537,8 @@ export class FeatureEffects {
 
   /**
    * 匹配 handleBonusUnlockAndUpgrade 的公共批次条目：所有提供的解锁/升级剪辑同步开始，然后在交换权威解锁面孔之前等待一个共享持续时间。
+   *
+   * 英文 / English: Public batch entry matching handleBonusUnlockAndUpgrade: All provided unlock/upgrade clips start synchronously, then wait for a shared duration before exchanging authoritative unlock faces.
    */
   async presentVaultMutationBatch(
     events: readonly VaultMutationEvent[],
@@ -2559,7 +2601,7 @@ export class FeatureEffects {
       return;
     }
 
-    // 捕获模式仅冻结已寻址的 Symbol8 实例。当观察者检查精确预设的附件边界时，柜体的其余部分、角色和框架保持其自然时钟。
+    // 捕获模式仅冻结已寻址的 Symbol8 实例。当观察者检查精确预设的附件边界时，柜体的其余部分、角色和框架保持其自然时钟。 / English: Capture mode freezes only addressed Symbol8 instances. While the observer examines the precisely preset boundaries of the accessories, the rest of the cabinet, character and frame maintains its natural clock.
     this.reels.setSymbolPlaybackPaused(unlockCells, true);
     try {
       await this.notifyVaultUnlockPhase("vault-unlock.enter", unlocks, token);
@@ -2591,7 +2633,7 @@ export class FeatureEffects {
       try {
         this.reels.setSymbolPlaybackPaused(unlockCells, false);
       } catch {
-        // 取消可能已经丢弃了所寻址的卷轴网格。
+        // 取消可能已经丢弃了所寻址的卷轴网格。 / English: Cancellation may have discarded the addressed scroll grid.
       }
     }
   }
@@ -2610,7 +2652,7 @@ export class FeatureEffects {
         this.assertPresentationCurrent(token);
       } catch (error) {
         if (isFeaturePresentationCancelled(error)) throw error;
-        // 捕获观察器仅具有诊断作用，并且始终会出现故障打开。
+        // 捕获观察器仅具有诊断作用，并且始终会出现故障打开。 / English: The Capture Viewer is diagnostic only and will always fail open.
       }
     }
   }
@@ -2618,6 +2660,8 @@ export class FeatureEffects {
   /**
    * GameUnlockBonusFeature 的仅限免费旋转的预期门。每个名为 Vault 的人都一起开始其预设的戏弄，
    * 然后控制器在猿重击之前保持一秒钟（加上原始的 500ms 锁定/未中奖的恩典）。
+   *
+   * 英文 / English: Free-Spin-only anticipation gate for GameUnlockBonusFeature. Every named Vault starts its authored tease simultaneously; the controller then holds for one second before the ape slam, in addition to the original 500 ms locked/no-win grace period.
    */
   async presentVaultTease(
     event: Pick<VaultGroupEvent, "cells">,
@@ -2688,6 +2732,8 @@ export class FeatureEffects {
 
   /**
    * 在一批同步中启动每一个预设的额外旋转轨迹。目标在此效果视图的坐标空间中提供，因此捕获的 Spine 骨骼保留其原始源到计数器的几何形状。
+   *
+   * 英文 / English: Launch each preset extra rotation track in a batch sync. The target is provided in the coordinate space of this effect view, so the captured Spine retains its original source-to-counter geometry.
    */
   async presentFreeSpinAwardTrails(
     events: readonly Readonly<FreeSpinAwardedEvent>[],
@@ -2853,7 +2899,7 @@ export class FeatureEffects {
     banner.position.set(LOGICAL_WIDTH / 2, 178);
     banner.alpha = 0;
     scene.addChild(dim, beams, energy, core, count, shockwave, banner);
-    // 在早期创建后，将节点/节点重新插入到暗淡和光束上方。
+    // 在早期创建后，将节点/节点重新插入到暗淡和光束上方。 / English: Re-insert the nodes/nodes above the dim and beam after the earlier creation.
     targetNodes.forEach((node) => scene.addChild(node));
     motes.forEach((mote) => scene.addChild(mote));
     scene.addChild(core, count, shockwave, banner);
@@ -2940,7 +2986,7 @@ export class FeatureEffects {
     };
     this.activeRageCascade = active;
     this.rageCascadePlaybackPaused = false;
-    // 仅当安装了可选的诊断侦听器时才分配不可变的观察事实；正常的制作播放保留其旧路径。
+    // 仅当安装了可选的诊断侦听器时才分配不可变的观察事实；正常的制作播放保留其旧路径。 / English: Immutable observation facts are only assigned when the optional diagnostic listener is installed; normal production playback retains its old path.
     const observedTransformedCells = this.rageCascadeMilestoneListener
       ? Object.freeze(transformedCells.map((cell) => Object.freeze({ ...cell })))
       : transformedCells;
@@ -2974,7 +3020,7 @@ export class FeatureEffects {
       });
     };
     const cancellationError = (): Error => (
-      // 可重复使用的圆形边界被 presentAfterReels 故意吞没。专门的级联取消（和完整的渲染器销毁）为直接诊断调用者保留了旧的拒绝合同。
+      // 可重复使用的圆形边界被 presentAfterReels 故意吞没。专门的级联取消（和完整的渲染器销毁）为直接诊断调用者保留了旧的拒绝合同。 / English: Reusable circular borders are deliberately swallowed by presentAfterReels. Specialized cascading cancellation (and complete renderer destruction) preserves the old rejection contract for direct diagnostic callers.
       !this.destroyed && !this.isPresentationCurrent(token)
         ? new FeaturePresentationCancelledError()
         : new RageCascadePresentationCancelledError()
@@ -3181,7 +3227,7 @@ export class FeatureEffects {
 
     const plan = rageCollectionPlan(addressed.length, event.guaranteed);
     if (plan.kind === "guaranteed-activation") {
-      // 防御幂等性：StopSequencer 在 presentAfterReels 可以运行之前拥有此激活。如果未来的调用者直接到达此帮助程序，切勿激活、收集或级联两次。
+      // 防御幂等性：StopSequencer 在 presentAfterReels 可以运行之前拥有此激活。如果未来的调用者直接到达此帮助程序，切勿激活、收集或级联两次。 / English: Defending idempotence: StopSequencer has this activation before presentAfterReels can run. Never activate, collect, or cascade twice if future callers reach this helper directly.
       return true;
     }
 
@@ -3205,7 +3251,7 @@ export class FeatureEffects {
     this.view.addChild(scene);
     const visualOperation = this.visualTelemetry?.start(descriptor) ?? null;
 
-    // GamePPSFeature 批量启动每个命名符号和路径。保留数组顺序以实现稳定的源映射，但每个成员的开始时间均为 0 — 故意不存在伪造交错。
+    // GamePPSFeature 批量启动每个命名符号和路径。保留数组顺序以实现稳定的源映射，但每个成员的开始时间均为 0 — 故意不存在伪造交错。 / English: GamePPSFeature batch launches each named symbol and path. Array order is preserved for stable source mapping, but each member has a start time of 0—there is intentionally no false interleaving.
     const startedCollections = addressed.reduce((count, { address }) => (
       count + (this.reels.beginSurgeCollection(address) ? 1 : 0)
     ), 0);
@@ -3247,7 +3293,7 @@ export class FeatureEffects {
       hidden: false,
       towerReactionStarted: false,
     });
-    // GamePPSFeature 一起启动符号、字符和每条踪迹，然后在 1ms 调度程序屏障之后前进其状态机。使视觉生命周期在后台保持活动状态，而不是稍后阻塞 PPS。
+    // GamePPSFeature 一起启动符号、字符和每条踪迹，然后在 1ms 调度程序屏障之后前进其状态机。使视觉生命周期在后台保持活动状态，而不是稍后阻塞 PPS。 / English: GamePPSFeature starts symbols, characters, and each trace together, then advances its state machine after a 1ms scheduler barrier. Keep the visual lifecycle active in the background instead of blocking PPS later.
     const visualLifecycle = this.animateRageCollection(duration, (progress) => {
         const elapsed = progress * duration;
         if (!absorbingObserved && elapsed >= actualAt(RAGE_COLLECT_ABSORBING_MS)) {
@@ -3289,7 +3335,7 @@ export class FeatureEffects {
         }
         if (progress >= 1) naturalComplete = true;
     }).finally(() => {
-      // 普通所有者完成预设的源剪辑。被取消的所有者不得将旧地址应用于替换的权威网格。
+      // 普通所有者完成预设的源剪辑。被取消的所有者不得将旧地址应用于替换的权威网格。 / English: Common owners complete preset source clips. The canceled owner may not apply the old address to the replaced authoritative grid.
       if (this.isPresentationCurrent(token)) {
         if (!sourceLayerRestored) {
           sourceLayerRestored = true;
@@ -3379,7 +3425,7 @@ export class FeatureEffects {
       let visualFailed = false;
       authoredIntro.alpha = 1;
       playAuthoredPanelTrack(authoredIntro, "show", 0, false, reducedMotion);
-      // GameFreespinView 在两个变体的同一状态输入帧中开始显示以及每个持久辅助轨道。
+      // GameFreespinView 在两个变体的同一状态输入帧中开始显示以及每个持久辅助轨道。 / English: GameFreespinView starts displaying in the same state input frame for both variants as well as each persistent auxiliary track.
       if (freeSpinIntroRagsStartPhase(event.mode) === "entry") {
         playAuthoredPanelTrack(authoredIntro, "rags_loop", 1, true, reducedMotion);
       }
@@ -3435,7 +3481,7 @@ export class FeatureEffects {
       return;
     }
 
-    // 保留原生面板，但将制作素材缺失导致的保真度下降明确暴露给严格视觉测试夹具。
+    // 保留原生面板，但将制作素材缺失导致的保真度下降明确暴露给严格视觉测试夹具。 / English: Keep the native panel, but explicitly expose fidelity loss from missing authored artwork to strict visual test fixtures.
     this.visualTelemetry?.failedToStart(descriptor, {
       stage: "create",
       code: "empty-presentation",
@@ -3674,7 +3720,7 @@ export class FeatureEffects {
       );
       if (this.destroyed || closeState === "cancelled") return;
 
-      // FREESPIN_END、HUD 隐藏和 KQ 卷轴重置均从该帧开始。
+      // FREESPIN_END、HUD 隐藏和 KQ 卷轴重置均从该帧开始。 / English: FREESPIN_END, HUD hiding and KQ reel reset all start from this frame.
       this.hooks.onFreeSpinSummaryHideStart?.();
       if (authoredSummary) playAuthoredPanelTrack(authoredSummary, "hide", 0, false, reducedMotion);
       await this.animate(hideMs, (progress) => {
@@ -3730,7 +3776,7 @@ export class FeatureEffects {
     }
 
     this.pendingVaultUpgradeMembers -= 1;
-    // AppController 连续供应步骤成员。较早的成员会立即返回，因此所有升级剪辑都会在同一帧中开始；最后一个拥有单个共享等待，而不是每个 Vault 序列化 833ms。
+    // AppController 连续供应步骤成员。较早的成员会立即返回，因此所有升级剪辑都会在同一帧中开始；最后一个拥有单个共享等待，而不是每个 Vault 序列化 833ms。 / English: AppController continuously supplies step members. Older members are returned immediately so all promotion clips start in the same frame; the last one has a single shared wait instead of 833ms per Vault serialization.
     if (this.pendingVaultUpgradeMembers > 0) return;
     const { durationMs } = vaultMutationBatchPlan([event], reducedMotion);
     if (durationMs > 0) await this.animate(durationMs, () => undefined);
@@ -3741,7 +3787,7 @@ export class FeatureEffects {
     reducedMotion: boolean,
     token: FeaturePresentationToken,
   ): Promise<void> {
-    // 在任何接管变得可见之前解决。未知/缺失的结果是协议错误，绝不是化妆品哈希回退路径的候选者。
+    // 在任何接管变得可见之前解决。未知/缺失的结果是协议错误，绝不是化妆品哈希回退路径的候选者。 / English: Resolve before any takeover becomes visible. Unknown/missing results are protocol errors and are never candidates for cosmetic hash fallback paths.
     const wheelPlan = wheelSpineAnimationPlan(event);
     if (!this.wheelArtwork?.spines.wheel) {
       try {
@@ -3857,8 +3903,8 @@ export class FeatureEffects {
     const banner = createBanner(featureEffectLabel(event, this.moneyFormatter), 0xff8b34, 600);
     banner.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2 + 220);
 
-    // 源按钮是制作成近似正圆的 600x600 多边形。视觉按钮继续与普通 Spin 控件共用，
-    // 但为指针用户保留这个直接点击轮盘的区域。
+    // 源按钮是制作成近似正圆的 600x600 多边形。视觉按钮继续与普通 Spin 控件共用， / English: The source button is made as a 600x600 polygon that approximates a perfect circle. Visual buttons continue to be shared with normal Spin controls,
+    // 但为指针用户保留这个直接点击轮盘的区域。 / English: But this area of ​​the direct click wheel is reserved for pointer users.
     const wheelHitTarget = new Graphics();
     wheelHitTarget.beginFill(0xffffff, 0.001)
       .drawCircle(0, 0, PRIMAL_WHEEL_CONTROL_LAYOUT.hitDiameter / 2)
@@ -3872,7 +3918,7 @@ export class FeatureEffects {
       this.requestWheelInteraction();
     });
 
-    // 原始介绍合成：下面是光环/轮子，上面是标题闪电。弹出窗口逐渐消失，而同一个驻留轮继续进入“就绪”状态。
+    // 原始介绍合成：下面是光环/轮子，上面是标题闪电。弹出窗口逐渐消失，而同一个驻留轮继续进入“就绪”状态。 / English: Original intro composition: halo/wheel below, title lightning above. The pop-up window fades away while the same dwell wheel continues into the "ready" state.
     scene.addChild(aura);
     if (authoredPlayback) scene.addChild(authoredPlayback.view);
     scene.addChild(wheel, pointer, resultReadout, banner, wheelHitTarget);
@@ -3935,7 +3981,7 @@ export class FeatureEffects {
       try {
         resetAuthoredWheel(authoredPlayback);
       } catch {
-        // 应用程序拆卸可能已经递归地销毁了预设的曲目。
+        // 应用程序拆卸可能已经递归地销毁了预设的曲目。 / English: Application teardown may have recursively destroyed preset tracks.
       }
       wheelReelAlphaLayer.release();
       this.release(scene);
@@ -4061,7 +4107,7 @@ export class FeatureEffects {
         )) * 0.22);
       }
 
-      // 捕获的 toggleReelsVisibility 在功能简介和摘要结尾处运行独立的一秒淡入淡出。
+      // 捕获的 toggleReelsVisibility 在功能简介和摘要结尾处运行独立的一秒淡入淡出。 / English: The captured toggleReelsVisibility runs independent one-second fades at the end of the feature intro and summary.
       const reelVisibility = spinFrame && spinElapsedMs >= activeTimeline.summaryHideAt
         ? smooth(phase(
           spinElapsedMs,
@@ -4109,7 +4155,7 @@ export class FeatureEffects {
     };
 
     try {
-      // 第一个 CONTINUE 与弹出窗口 `show` 处于同一帧中。它可能会缩短这种有界等待，但它只揭示了轮子就绪的门；选择仍然需要第二个手势。
+      // 第一个 CONTINUE 与弹出窗口 `show` 处于同一帧中。它可能会缩短这种有界等待，但它只揭示了轮子就绪的门；选择仍然需要第二个手势。 / English: The first CONTINUE is in the same frame as the popup `show`. It might shorten this bounded wait, but it only reveals the wheel-ready door; selection still requires a second gesture.
       const popupContinue: ActiveWheelPopupContinue = {
         state: "waiting",
         closeNotified: false,
@@ -4130,7 +4176,7 @@ export class FeatureEffects {
         (finish) => {
           popupContinue.finish = finish;
           this.activeWheelPopupContinue = popupContinue;
-          // `animate` 在第一个 RAF 之前调用其输入门。显式为预设的框架设定种子，以便诊断保留无法暴露构造函数默认值（包括回退路径结果横幅）。
+          // `animate` 在第一个 RAF 之前调用其输入门。显式为预设的框架设定种子，以便诊断保留无法暴露构造函数默认值（包括回退路径结果横幅）。 / English: `animate` calls its input gate before the first RAF. Explicitly seed the prefabricated framework so that diagnostic preserves cannot expose constructor defaults (including fallback path result banners).
           renderFrame(0, idleElapsedMs);
           this.hooks.onWheelPopupReady?.();
         },
@@ -4145,7 +4191,7 @@ export class FeatureEffects {
       if (popupContinue.state === "waiting"
         && popupCheckpointAt < PRIMAL_WHEEL_POPUP_TIMELINE_MS.show) {
         const remainingPopupMs = PRIMAL_WHEEL_POPUP_TIMELINE_MS.show - popupCheckpointAt;
-        // 传统/手动时钟可能会跨越解析语义示例的 RAF 中的整个弹出窗口。没有真正的障碍，在同一回合中追上，而不需要第二个合成框架。固定承诺故意冻结剩余的撰写动议。
+        // 传统/手动时钟可能会跨越解析语义示例的 RAF 中的整个弹出窗口。没有真正的障碍，在同一回合中追上，而不需要第二个合成框架。固定承诺故意冻结剩余的撰写动议。 / English: Traditional/manual clocks may span the entire popup in the RAF of the parsing semantics example. There's no real obstacle to catching up in the same turn without the need for a second synthetic frame. Fixed commitments intentionally freeze remaining writing motions.
         const elapsedSincePopupStart = Math.max(
           0,
           (performance.now() - popupStartedAt) / safeTimelineScale,
@@ -4196,7 +4242,7 @@ export class FeatureEffects {
       popupVisual = null;
       if (this.destroyed || popupContinue.state === "cancelled") return;
 
-      // 解码后的弹出窗口没有隐藏剪辑。早期的Continue直接去掉。
+      // 解码后的弹出窗口没有隐藏剪辑。早期的Continue直接去掉。 / English: The decoded popup has no hidden clips. The early Continue is removed directly.
       popupClosed = true;
       if (popup) popup.alpha = 0;
       setAuthoredWheelWaiting(authoredPlayback);
@@ -4207,7 +4253,7 @@ export class FeatureEffects {
       this.activeWheelInteraction = interaction;
       interactionReady = true;
 
-      // 就绪门没有超时。它的旋转器不断前进，并且启动采样了这个实时 p0/v0，而不是有上限的弹出时间戳。
+      // 就绪门没有超时。它的旋转器不断前进，并且启动采样了这个实时 p0/v0，而不是有上限的弹出时间戳。 / English: The ready gate has no timeout. Its spinner keeps advancing and starts sampling this real-time p0/v0 instead of the capped pop timestamp.
       const readyBaseElapsedMs = idleElapsedMs;
       const readyStartedAt = performance.now();
       let readySettled = false;
@@ -4255,7 +4301,7 @@ export class FeatureEffects {
       }
       this.assertPresentationCurrent(token);
 
-      // 精确的 GamePrimalWheelBonusFeature 门：无超时且无自动选择。这里需要真正的第二个用户手势。
+      // 精确的 GamePrimalWheelBonusFeature 门：无超时且无自动选择。这里需要真正的第二个用户手势。 / English: Precise GamePrimalWheelBonusFeature gate: no timeouts and no auto-selection. A real second user gesture is needed here.
       await this.awaitPresentation(continuePromise, token);
       this.assertPresentationCurrent(token);
       idleElapsedMs = readyBaseElapsedMs
@@ -4278,9 +4324,9 @@ export class FeatureEffects {
       readyVisual = null;
       if (this.destroyed) return;
 
-      // onWheelSpinStart 已经将角色移至胸重状态。在采样/计划验证之前标记所有权，以便任一故障路径都恢复持久字符，而不是让该循环处于锁定状态。
+      // onWheelSpinStart 已经将角色移至胸重状态。在采样/计划验证之前标记所有权，以便任一故障路径都恢复持久字符，而不是让该循环处于锁定状态。 / English: onWheelSpinStart has moved the character to chest weight state. Mark ownership before sampling/scheduling verification so that either failed path recovers persistent characters rather than leaving the loop in a locked state.
       characterSpinStarted = true;
-      // 仅当第二个就绪手势被接受时，通用微调器才对其函数值停止偏移进行采样。因此，弹出/就绪等待和中止不会消耗装饰 RNG。
+      // 仅当第二个就绪手势被接受时，通用微调器才对其函数值停止偏移进行采样。因此，弹出/就绪等待和中止不会消耗装饰 RNG。 / English: The universal spinner samples its function value stop offset only when the second ready gesture is accepted. Therefore, pop/ready waits and aborts do not consume decoration RNG.
       const stopOffsetSectors = sampleWheelStopOffset(
         this.wheelStopOffsetSource,
         reducedMotion,
@@ -4299,7 +4345,7 @@ export class FeatureEffects {
       ) ?? null;
       renderFrame(0, idleElapsedMs);
 
-      // 选择、停止保留和结果保持使用独立的S时钟。 A 层门在与摘要 `show` 相同的框架上打开。
+      // 选择、停止保留和结果保持使用独立的S时钟。 A 层门在与摘要 `show` 相同的框架上打开。 / English: Select, stop hold and result hold use independent S clocks. The A-level door opens on the same frame as the summary `show`.
       const landedThroughMs = await this.animateWheelContinuation(
         interaction,
         timelineScale,
@@ -4313,7 +4359,7 @@ export class FeatureEffects {
       spinVisual = null;
       if (this.destroyed) return;
 
-      // 权威部分是在精彩部分保持和摘要开始之前提交的。生产中不存在可选的观察者屏障。
+      // 权威部分是在精彩部分保持和摘要开始之前提交的。生产中不存在可选的观察者屏障。 / English: The authoritative section is submitted before the highlight section holds and the summary begins. Optional observer barriers do not exist in production.
       landingVisual = this.visualTelemetry?.start(
         this.visualDescriptor("wheel.landing", event.type),
       ) ?? null;
@@ -4333,7 +4379,7 @@ export class FeatureEffects {
       summaryVisual = this.visualTelemetry?.start(
         this.visualDescriptor("wheel.summary", event.type),
       ) ?? null;
-      // 如果 RAF 在一帧中穿过平台和汇总边界，则在未安装测试场景屏障时保留逻辑超调。真正的检查站承诺故意从精确的着陆姿​​势恢复。
+      // 如果 RAF 在一帧中穿过平台和汇总边界，则在未安装测试场景屏障时保留逻辑超调。真正的检查站承诺故意从精确的着陆姿​​势恢复。 / English: If one RAF crosses the landing and summary boundaries, preserve logical overshoot when no test-scene barrier is installed. A real checkpoint promise deliberately resumes from the exact landing pose.
       const postLandingElapsedMs = landingCheckpointHeld
         ? 0
         : Math.min(
@@ -4404,8 +4450,8 @@ export class FeatureEffects {
       summaryVisual = null;
       if (this.destroyed || summaryContinue.state === "cancelled") return;
 
-      // 玩家关闭面板时只会跳到制作好的隐藏边界。Wheel 隐藏（500ms）、A 层隐藏（666.7ms）
-      // 和一秒转轴淡入淡出保持不变；B 层在此收尾阶段完成交接。
+      // 玩家关闭面板时只会跳到制作好的隐藏边界。Wheel 隐藏（500ms）、A 层隐藏（666.7ms） / English: When the player closes the panel, they will only jump to the hidden boundary. Wheel hidden (500ms), A layer hidden (666.7ms)
+      // 和一秒转轴淡入淡出保持不变；B 层在此收尾阶段完成交接。 / English: and one-second reel fades remain unchanged; Layer B completes the handoff during this finishing phase.
       renderFrame(
         activeSpinTimeline.summaryHideAt,
         idleElapsedMs + activeSpinTimeline.summaryHideAt,
@@ -4424,8 +4470,8 @@ export class FeatureEffects {
         (finish) => taskFinishes.push(finish),
       );
 
-      // 隐藏开始是真正的并行分发点。Wheel 任务本身就是流程栅栏；
-      // 总结和转轴任务返回后仍需保留场景所有权。
+      // 隐藏开始是真正的并行分发点。Wheel 任务本身就是流程栅栏； / English: Hidden start is the true parallel distribution point. The Wheel task itself is a process fence;
+      // 总结和转轴任务返回后仍需保留场景所有权。 / English: Retain scene ownership even after the summary and reel tasks return.
       outroOwnsScene = true;
       outroVisual = this.visualTelemetry?.start(
         this.visualDescriptor("wheel.outro", event.type),
@@ -4497,7 +4543,7 @@ export class FeatureEffects {
       throw error;
     } finally {
       readyAnimation?.finish();
-      // 着陆过程中的外观故障或破坏决不能让循环的重击胸部动画永远被锁定。
+      // 着陆过程中的外观故障或破坏决不能让循环的重击胸部动画永远被锁定。 / English: Cosmetic glitches or damage during landing should never allow a looping chest thumping animation to be locked out forever.
       if ((this.destroyed && interactionReady && interaction.state === "cancelled")
         || shouldAbortWheelPresentation(
           characterSpinStarted || interaction.spinRequestedAtMs !== null,
@@ -4506,7 +4552,7 @@ export class FeatureEffects {
         try {
           this.hooks.onWheelSpinAbort?.();
         } catch {
-          // 即使装饰挂钩失败，持久状态恢复也会继续。
+          // 即使装饰挂钩失败，持久状态恢复也会继续。 / English: Persistent state recovery continues even if the decoration hook fails.
         }
       }
       if (popupInteraction && this.activeWheelPopupContinue === popupInteraction) {
@@ -4554,7 +4600,7 @@ export class FeatureEffects {
     try {
       this.hooks.onWheelSummaryClose?.(reason);
     } catch {
-      // 输入关闭已提交；诊断无法重新打开大门。
+      // 输入关闭已提交；诊断无法重新打开大门。 / English: Input closure committed; diagnostics cannot reopen the gate.
     }
   }
 
@@ -4567,7 +4613,7 @@ export class FeatureEffects {
     try {
       this.hooks.onWheelPopupClose?.(reason);
     } catch {
-      // 输入关闭已提交；诊断无法重新打开大门。
+      // 输入关闭已提交；诊断无法重新打开大门。 / English: Input closure committed; diagnostics cannot reopen the gate.
     }
   }
 
@@ -4580,7 +4626,7 @@ export class FeatureEffects {
     try {
       this.hooks.onFreeSpinSummaryClose?.(reason);
     } catch {
-      // 输入关闭已提交；诊断无法重新打开大门。
+      // 输入关闭已提交；诊断无法重新打开大门。 / English: Input closure submitted; diagnostics cannot reopen the gate.
     }
   }
 
@@ -4612,6 +4658,8 @@ export class FeatureEffects {
   /**
    * 仅推进轮钟的点击后部分。快速停止镜像 Spinner.quickStop()：它跳转到三次停止曲线的末端，然后保留零位移一秒停止保留和每个奖励/总结保留。
    * STOPPING 之后的请求将被忽略。
+   *
+   * 英文 / English: Advance only the post-click portion of the wheel clock. Quick stop mirrors Spinner.quickStop(): it jumps to the end of the triple stop curve, then holds zero displacement for one second stop hold and each bonus/summary hold. Requests after STOPPING will be ignored.
    */
   private animateWheelContinuation(
     interaction: ActiveWheelInteraction,
@@ -4683,7 +4731,7 @@ export class FeatureEffects {
     });
   }
 
-  /** 仅暂停活动的 Rage 级联时钟；每个不相关的 RAF 都会继续。 */
+  /** 仅暂停活动的 Rage 级联时钟；每个不相关的 RAF 都会继续。 / English: Only the active Rage cascade clock is paused; every unrelated RAF continues. */
   private animateRageCascadePlayback(
     durationMs: number,
     onFrame: (progress: number) => void,
@@ -4762,7 +4810,7 @@ export class FeatureEffects {
     });
   }
 
-  /** 仅暂停活动的 Rage 收集时钟；每个不相关的 RAF 都会继续。 */
+  /** 仅暂停活动的 Rage 收集时钟；每个不相关的 RAF 都会继续。 / English: Only the active Rage collection clock is paused; every unrelated RAF continues. */
   private animateRageCollection(
     durationMs: number,
     onFrame: (progress: number) => void,
@@ -4892,7 +4940,7 @@ export class FeatureEffects {
     try {
       scene.destroy({ children: true });
     } catch {
-      // 递归渲染器拆卸可能已经破坏了这个场景。
+      // 递归渲染器拆卸可能已经破坏了这个场景。 / English: Recursive renderer teardown may have broken the scene.
     }
   }
 }

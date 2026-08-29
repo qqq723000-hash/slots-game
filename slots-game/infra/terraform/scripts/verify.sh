@@ -1,5 +1,6 @@
 #!/bin/sh
 # 统一执行不访问 AWS API 的 Terraform 交付门禁。
+# English: Unified enforcement of Terraform delivery gates without access to AWS APIs.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

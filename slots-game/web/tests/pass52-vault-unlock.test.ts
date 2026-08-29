@@ -37,8 +37,8 @@ const unlockEvent = Object.freeze({
   multiplier: 2,
 });
 
-// Pixi 会在创建首个真实 Graphics 实例时延迟创建白色纹理。
-// 这些测试保持在真实 ReelView/ReelSetView 层级，无需引入 jsdom。
+// Pixi 会在创建首个真实 Graphics 实例时延迟创建白色纹理。 / English: Pixi lazily creates the white texture when it creates the first real Graphics instance.
+// 这些测试保持在真实 ReelView/ReelSetView 层级，无需引入 jsdom。 / English: These tests stay at the real ReelView/ReelSetView level without introducing jsdom.
 class TestElement {}
 class TestImageElement extends TestElement {}
 class TestVideoElement extends TestElement {}
@@ -128,7 +128,7 @@ describe("Pass52 Base single-Vault unlock", () => {
       .filter((symbol) => symbol.cell.symbol === "VAULT"))
       .toHaveLength(1);
 
-    // 省略仅供渲染器使用的覆盖值，绝不会污染后续结果网格。
+    // 省略仅供渲染器使用的覆盖值，绝不会污染后续结果网格。 / English: Omitting override values ​​for renderer-only use never pollutes subsequent resulting meshes.
     set.setGrid(grid);
     expect(internals.reels[1]?.symbolViews[0]?.forceLockedVault).toBe(false);
   });

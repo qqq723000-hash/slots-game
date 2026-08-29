@@ -9,12 +9,17 @@ import (
 
 // Router 按已绑定到持久轮次的运营商身份分派钱包操作；路由表构造后不可变，
 // 禁止由未验证请求字段动态选择钱包。
+// English: The Router dispatches wallet operations by operator identity bound to a persistent round; the routing
+// table is constructed immutable and dynamic selection of wallets by unverified request fields is prohibited.
 type Router struct {
 	ports map[string]routedWallet
 }
 
 // routedWallet 要求每个启动期绑定同时交付兼容门面、显式结果协议和新意图准入。
 // Router 不会从旧接口猜测能力，也不会在运行中降级到不明确的资金语义。
+// English: routedWallet requires each startup binding to also deliver a compatible facade, explicit result
+// protocol, and new intent admission. Router will not guess capabilities from the old interface, nor will it
+// degrade to ambiguous funding semantics on the fly.
 type routedWallet interface {
 	rgs.WalletPort
 	rgs.WalletResolutionPort

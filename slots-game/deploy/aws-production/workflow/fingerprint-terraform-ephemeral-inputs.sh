@@ -2,6 +2,8 @@
 # shellcheck disable=SC2016
 
 # 只输出与本次运行绑定的 HMAC 指纹，不输出任何 Terraform ephemeral 变量值。
+# English: Only the HMAC fingerprint bound to this run is output, and no Terraform ephemeral variable values are
+# output.
 set -eu
 
 fail() {

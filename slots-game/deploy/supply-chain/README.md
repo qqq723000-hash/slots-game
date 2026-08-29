@@ -1,9 +1,13 @@
-# 商用供应链门禁
+# Commercial supply-chain gates / 商用供应链门禁
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This directory separates dependency execution, fresh-checkout candidate builds, one-time Web asset approval, and final registry signing into credential domains that do not share release authority. The checked-in vulnerability policy has no exceptions, so reachable Go findings, high-severity npm advisories, secret-scan findings, or high-severity image findings fail the candidate instead of being silently ignored. Repository and CI gates can bind scans, SBOMs, provenance, digests, and signatures to a candidate, but registry policy, protected approvals, external asset rights, live identity configuration, and release acceptance must still be enforced and verified by the adopter.
 
 本目录把“依赖、源码、候选构建、Web 素材审批、Registry 发布和 OIDC 签名”拆成四个
 互不共享凭据的权限域。执行 npm/测试的 job、fresh-checkout 候选构建 job、仅持有一次性

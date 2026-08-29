@@ -151,7 +151,7 @@ describe("BigWinView verified event payload", () => {
       }),
     );
 
-    // AppController.release() 会 abort 事件 signal；成功采用的 GPU owner 不再订阅它。
+    // AppController.release() 会 abort 事件 signal；成功采用的 GPU owner 不再订阅它。 / English: AppController.release() aborts the event signal; the successfully adopted GPU owner no longer subscribes to it.
     controller.abort(new Error("presentation complete"));
     expect(mocks.disposeTexture).not.toHaveBeenCalled();
     expect(texture.baseTexture.destroyed).toBe(false);

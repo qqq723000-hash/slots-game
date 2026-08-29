@@ -289,6 +289,9 @@ func (h *launcher) create(ctx context.Context, input launchInput) (launchResult,
 	}
 	// RGS launch 已成功但尚未把代码交给浏览器；此时先持久化 operator 权威的钱包
 	// 会话绑定，确保任何随后到达的资金命令都不能伪造或串用 walletSessionRef。
+	// English: RGS launch has been successful but the code has not yet been handed to the browser; at this time, the
+	// operator's authoritative wallet session binding is persisted to ensure that any subsequently arriving funding
+	// commands cannot forge or manipulate the walletSessionRef.
 	if !reused {
 		err = h.config.Store.RegisterWalletSession(ctx, walletSessionSeed{
 			OperatorID: h.config.OperatorID, WalletSessionRef: walletSessionID,

@@ -13,6 +13,8 @@ export const REVIEWED_INLINE_SCRUB_CSP_SOURCE =
 /**
  * HTML 标签名不区分大小写，因此候选收集接受 SCRIPT/Script；后续精确小写匹配会
  * 拒绝所有非规范入口，不能让大小写变体从“三个脚本”的计数中消失。
+ *
+ * 英文 / English: HTML tag names are not case-sensitive, so SCRIPT/Script is accepted for candidate collection; subsequent exact lowercase matching will reject all non-canonical entries, preventing uppercase and lowercase variants from disappearing from the "three scripts" count.
  */
 export function verifyReviewedIndexSource(indexSource) {
   if (typeof indexSource !== "string" || indexSource === "") {
@@ -84,6 +86,8 @@ export function verifyReviewedIndexSource(indexSource) {
  * 不用正则表达式模拟 HTML 解析器。先以大小写无关的字面量找出所有脚本开闭
  * 记号，再按文档顺序配对并保留完整标签；任何额外属性、空白、大小写或嵌套
  * 变体都会进入后续规范字节检查并失败关闭。
+ *
+ * 英文 / English: Emulate HTML parser without using regular expressions. First find all script opening and closing tokens as case-independent literals, then pair them in document order and keep the complete tags; any extra attributes, whitespace, case or nested variants will enter subsequent canonical byte checks and fail to close.
  */
 function collectScriptTagCandidates(indexSource) {
   const normalizedSource = indexSource.toLowerCase();

@@ -2616,8 +2616,8 @@ describe("AppController feature orchestration seams", () => {
     expect(resetPanelAnimations).not.toHaveBeenCalled();
     expect(towerState).toBe("mini-highlight");
 
-    // 摘要界面的 Continue/outro 会返回 Base 机台，但在真正的 SPIN_START 之前，
-    // 仍会保留总赢分信息的所有者和 MINI 高亮。
+    // 摘要界面的 Continue/outro 会返回 Base 机台，但在真正的 SPIN_START 之前， / English: Continue/outro of the summary interface will return to the Base machine, but before the real SPIN_START,
+    // 仍会保留总赢分信息的所有者和 MINI 高亮。 / English: Owner and MINI highlighting of total win points information will still be retained.
     renderer.completeWheelPresentation(BASE_FEATURE);
     order.push("returned:base-ready");
     expect(clearWheelBonusRoundSummary).not.toHaveBeenCalled();
@@ -3449,7 +3449,7 @@ describe("AppController feature orchestration seams", () => {
     controller.handleStatus("recovering");
 
     expect(clearWheelBonusRoundSummary).toHaveBeenCalledOnce();
-    // 演出仍负责整体恢复时序，但不再持有过期的 Layer-B 文案。
+    // 演出仍负责整体恢复时序，但不再持有过期的 Layer-B 文案。 / English: The show is still responsible for overall restoration timing, but no longer holds expired Layer-B copy.
     expect(transition).not.toHaveBeenCalled();
   });
 
@@ -3773,7 +3773,7 @@ describe("AppController feature orchestration seams", () => {
         destroyed: false,
         sessionTimedOut: false,
         reducedMotion: false,
-        // IntroDirector 构造完成后，实时偏好发生变化。
+        // IntroDirector 构造完成后，实时偏好发生变化。 / English: After the IntroDirector is constructed, real-time preferences change.
         reducedMotionMedia: { matches: true },
         launch: { phase: "intro" },
         launchIntroWallDeadlineTimer: null,
@@ -4734,13 +4734,13 @@ describe("AppController round ordering", () => {
       expect(controller.audio.playPayoutWin).not.toHaveBeenCalled();
       expect(controller.audio.playWinLossOrEqual).not.toHaveBeenCalled();
 
-      // 被拒绝的请求不会改变已稳定的重复演出和结果。
+      // 被拒绝的请求不会改变已稳定的重复演出和结果。 / English: Rejected requests do not change stable repeat appearances and results.
       controller.requestSpin();
       expect(requestFinish).not.toHaveBeenCalled();
       expect(repeatState.postWinIdleRepeatActive).toBe(true);
       expect(repeatState.postWinIdleRepeatGeneration).toBe(1);
 
-      // 首个被接受的付费 ROUNDSTART 独占唯一一次取消操作。
+      // 首个被接受的付费 ROUNDSTART 独占唯一一次取消操作。 / English: The first accepted paid ROUNDSTART has exclusive access to the only cancellation operation.
       controller.requestSpin();
       expect(commitAcceptedPaidAutoplaySpin).toHaveBeenCalledOnce();
       expect(requestFinish).toHaveBeenCalledOnce();
@@ -4940,8 +4940,8 @@ describe("AppController round ordering", () => {
       chargedBetMinor: "0",
       wins: [],
       totalWinMinor: "0",
-      // 刻意省略捕获到的 Kong Quest 请求来源所要求的前置
-      // grid.expanded 投影。
+      // 刻意省略捕获到的 Kong Quest 请求来源所要求的前置 / English: Deliberately omitting the prefix required by the source of the captured Kong Quest request
+      // grid.expanded 投影。 / English: grid.expanded projection.
       events: [],
       featureState: {
         ...previous,
@@ -5136,8 +5136,8 @@ describe("AppController round ordering", () => {
         await vi.advanceTimersByTimeAsync(1);
         expect(present).toHaveBeenCalledTimes(2);
 
-        // 只完成第二条首次展示记录。后续的就绪态重复演出刻意不设时限，
-        // 由下方专门的调度测试负责。
+        // 只完成第二条首次展示记录。后续的就绪态重复演出刻意不设时限， / English: Only completed the second rollout record. Subsequent repeat performances of the ready state are deliberately not time-limited,
+        // 由下方专门的调度测试负责。 / English: It is the responsibility of the dedicated scheduling test below.
         await vi.advanceTimersByTimeAsync(expectedHold);
         await controller.presentation;
         vi.clearAllTimers();
@@ -5174,8 +5174,8 @@ describe("AppController round ordering", () => {
       ];
 
       controller.handleSpinResult(roundResult({ totalWinMinor: "250", wins: records }));
-      // 即使设置在排队的演出微任务开始前发生变化，被接受的结果仍独占
-      // 一份时钟快照。
+      // 即使设置在排队的演出微任务开始前发生变化，被接受的结果仍独占 / English: Even if the settings change before the queued show microtask starts, the accepted result remains exclusive
+      // 一份时钟快照。 / English: A snapshot of the clock.
       Object.assign(controller as unknown as Record<string, unknown>, { fastPlay: false });
       await controller.presentation;
 
@@ -5280,8 +5280,8 @@ describe("AppController round ordering", () => {
           presentStarts.push(Date.now());
           await onMilestone?.("visible", record, resident());
           if (index === 0) {
-            // 设置仍可动态变化，但这个已接受的回合必须保留排队演出开始前
-            // 采样得到的时钟配置。
+            // 设置仍可动态变化，但这个已接受的回合必须保留排队演出开始前 / English: Settings can still change dynamically, but this accepted round must remain queued before the show starts
+            // 采样得到的时钟配置。 / English: Sampled clock configuration.
             Object.assign(controller as unknown as Record<string, unknown>, {
               fastPlay: !acceptedFastPlay,
             });
@@ -5293,15 +5293,15 @@ describe("AppController round ordering", () => {
           }));
           // 已被取代的所有者绝不能发布迟到的隐藏里程碑。
           // 连续不中断的最终隐藏生命周期归渲染器所有，刻意不纳入此
-          // AppController 交接测试。
+          // AppController 交接测试。 / English: A superseded owner must never post late hidden milestones. The continuous and uninterrupted final hidden life cycle belongs to the renderer and is deliberately not included in this AppController handover test.
         });
 
         controller.handleSpinResult(roundResult({
           totalWinMinor: "200",
           wins: records,
         }));
-        // 300ms 的 Win START 前导，加上两段预设的记录停留。不要使用
-        // runAllTimers：完成后会刻意启动无限的空闲重复演出。
+        // 300ms 的 Win START 前导，加上两段预设的记录停留。不要使用 / English: 300ms Win START preamble, plus two preset record dwells. Do not use
+        // runAllTimers：完成后会刻意启动无限的空闲重复演出。 / English: runAllTimers: After completion, an infinite idle repeat performance will be deliberately started.
         await vi.advanceTimersByTimeAsync(300 + expectedHoldMs * 2);
         await controller.presentation;
 
@@ -5432,8 +5432,8 @@ describe("AppController round ordering", () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(renderer.winCelebration.present).toHaveBeenCalledTimes(2);
 
-      // 只完成第二条 2000ms 的首次展示记录；后续空闲重复演出拥有独立
-      // 生命周期，不能将其计时器无限清空。
+      // 只完成第二条 2000ms 的首次展示记录；后续空闲重复演出拥有独立 / English: Only complete the second 2000ms first display record; subsequent free repeated performances will have independent
+      // 生命周期，不能将其计时器无限清空。 / English: Life cycle, its timer cannot be cleared indefinitely.
       await vi.advanceTimersByTimeAsync(2_000);
       await controller.presentation;
     } finally {
@@ -7011,8 +7011,8 @@ describe("AppController malformed authoritative result boundary", () => {
     await Promise.resolve();
     expect(setRageCollectionPresentationPaused).toHaveBeenLastCalledWith(false);
 
-    // 权威回合可能已经完成，而原本 1.2s 的 Symbol7/轨迹生命周期仍在
-    // 持续发出诊断里程碑。
+    // 权威回合可能已经完成，而原本 1.2s 的 Symbol7/轨迹生命周期仍在 / English: The authoritative round may have completed while the original 1.2s Symbol7/trajectory lifetime is still
+    // 持续发出诊断里程碑。 / English: Diagnostic milestones are issued on an ongoing basis.
     Object.assign(controller, { activePresentationSequence: null });
     observe(milestone("absorbing", 500, true, false, true));
     observe(milestone("source-hidden", 1_016.7, false, true, true));
@@ -7186,7 +7186,7 @@ describe("AppController malformed authoritative result boundary", () => {
         GUARANTEED_RAGE_EVENT,
         { type: "wheel.started" },
         {
-          // 运行时防御：解码后的 Feature Wheel 奖励绝不能持有钱款。
+          // 运行时防御：解码后的 Feature Wheel 奖励绝不能持有钱款。 / English: Runtime Defense: Decoded Feature Wheel rewards must never hold money.
           type: "wheel.awarded",
           outcome: "EXPANSION",
           prize: "KONG_QUEST",

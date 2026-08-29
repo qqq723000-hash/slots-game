@@ -1,4 +1,5 @@
 # 所有工作负载默认拒绝双向流量，后续规则只开放已知调用路径。
+# English: All workloads deny bidirectional traffic by default, and subsequent rules only open known call paths.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -16,6 +17,8 @@ spec:
 ---
 {{- if .Values.web.enabled }}
 # Web 只接受入口控制器访问，静态运行时没有任何主动出口。
+# English: The Web is only accessible by the ingress controller and does not have any active egress when running
+# statically.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -49,6 +52,8 @@ spec:
 {{- end }}
 # RGS 公网面仅允许入口；同一受控来源可在私有 operations 端口执行负载均衡健康检查，
 # 其余运维面仅允许受标记的 Prometheus。
+# English: The RGS public plane only allows ingress; the same controlled source can perform load balancing
+# health checks on the private operations port. The rest of the operations plane only allows tagged Prometheus.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -90,6 +95,8 @@ spec:
           protocol: TCP
 ---
 # Worker 不提供公网端口，只允许受标记的 Prometheus 访问运维端口。
+# English: Worker does not provide public ports and only allows marked Prometheus to access the operations
+# ports.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -114,6 +121,8 @@ spec:
           protocol: TCP
 ---
 # API 与 Worker 只可解析 DNS，并访问外部 PostgreSQL 和钱包的明确网段与端口。
+# English: The API and Worker can only resolve DNS and access explicit network segments and ports for external
+# PostgreSQL and wallets.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -173,6 +182,8 @@ spec:
     {{- end }}
 ---
 # 共享准入出口只属于 API Pod；Worker 不挂载凭据，也不能建立 Valkey 连接。
+# English: The shared access egress only belongs to the API Pod; the Worker does not mount credentials and
+# cannot establish a Valkey connection.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -197,6 +208,8 @@ spec:
           protocol: TCP
 ---
 # 审计出口只属于 Worker，API Pod 不持有或使用审计投递能力。
+# English: The audit egress only belongs to the Worker, and the API Pod does not hold or use the audit delivery
+# capability.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

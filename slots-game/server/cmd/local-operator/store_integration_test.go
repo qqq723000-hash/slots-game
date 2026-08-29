@@ -221,6 +221,8 @@ func TestPostgresWalletStorePersistsConcurrentIdempotency(t *testing.T) {
 		<-start
 		_, applyErr := store.Apply(context.Background(), request)
 		// Apply 先取得共享决策锁时是精确重放；rollback 先取得时，已回滚操作必须冲突。
+		// English: When Apply acquires the shared decision lock first, it is an exact replay; when rollback acquires it
+		// first, the rolled-back operation must conflict.
 		if applyErr != nil && !errors.Is(applyErr, errIdempotencyConflict) {
 			t.Errorf("apply/rollback interleave error = %v", applyErr)
 		}

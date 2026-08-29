@@ -194,7 +194,7 @@ describe("AudioManager", () => {
     expect(backend.oneShots.map(({ cue }) => cue)).toEqual(["ui.click"]);
     expect(backend.startedLoops.map(({ cue }) => cue)).toEqual(["reel.motor"]);
 
-    // Ambient 是明确的场景状态，并非过期的单次音效，因此可以预备播放。
+    // Ambient 是明确的场景状态，并非过期的单次音效，因此可以预备播放。 / English: Ambient is a clear scene state, not an expired single-shot sound effect, so it can be ready to play.
     manager.setAmbientEnabled(true);
     expect(backend.startedLoops.map(({ cue }) => cue)).toEqual(["reel.motor", "ambient.city"]);
     await expect(manager.unlock()).resolves.toBe(true);
@@ -387,7 +387,7 @@ describe("AudioManager", () => {
     expect(backend.naturalFinishCalls).toBe(1);
     expect(backend.stoppedLoops).toEqual([]);
 
-    // 所有权已经释放，因此后续回合可以启动一组新的配对音轨。
+    // 所有权已经释放，因此后续回合可以启动一组新的配对音轨。 / English: Ownership has been released so subsequent rounds can launch a new set of paired tracks.
     manager.startReelMotor();
     expect(backend.startedLoops.filter(({ cue }) => cue === "reel.motor")).toHaveLength(2);
   });
@@ -454,7 +454,7 @@ describe("AudioManager", () => {
     }]);
     expect(backend.baseStemChanges).toEqual([]);
 
-    // 后续自适应转换仍归管理器所有。
+    // 后续自适应转换仍归管理器所有。 / English: Subsequent adaptive transformations remain owned by the manager.
     manager.beginBaseMusicRound("100");
     manager.recordBaseMusicRoundOutcome("200");
     expect(backend.baseStemChanges).toEqual([{ level: 1, fadeMs: 2_000 }]);
@@ -662,7 +662,7 @@ describe("AudioManager", () => {
     });
     vi.spyOn(backend, "unlock").mockImplementation(() => {
       backend.unlockCalls += 1;
-    // resume() 会在获取和解码完成前改变此状态。
+    // resume() 会在获取和解码完成前改变此状态。 / English: resume() will change this state before retrieval and decoding are complete.
       backend.state = "running";
       return pending;
     });
@@ -875,9 +875,9 @@ describe("AudioManager", () => {
     manager.bindUserGestures(target);
     manager.setAmbientEnabled(true);
 
-    // 嵌入式浏览器界面可能在文档仍可见时报告 blur，随后又遗漏对应的
-    // window focus 事件。下一次真实游戏手势仍是合法的浏览器激活操作，
-    // 不得因为过期且仅依据焦点的生命周期状态而被拒绝。
+    // 嵌入式浏览器界面可能在文档仍可见时报告 blur，随后又遗漏对应的 / English: The embedded browser interface may report blur while the document is still visible and subsequently miss the corresponding
+    // window focus 事件。下一次真实游戏手势仍是合法的浏览器激活操作， / English: window focus event. The next real game gesture is still a legal browser activation operation,
+    // 不得因为过期且仅依据焦点的生命周期状态而被拒绝。 / English: Must not be rejected due to expiration and solely based on the focus's lifecycle state.
     page.dispatchEvent(new Event("blur"));
     await flushLifecycle();
     expect(page.hidden).toBe(false);
@@ -891,9 +891,9 @@ describe("AudioManager", () => {
     expect(backend.state).toBe("running");
     expect(backend.startedLoops.map(({ cue }) => cue)).toEqual(["ambient.city"]);
 
-    // 首次解锁后的同一恢复路径会恢复现有的 context/循环所有权；
-    // pointerdown+click 必须合并为一次 resume，且不得从零采样点重新创建
-    // Base 音乐。
+    // 首次解锁后的同一恢复路径会恢复现有的 context/循环所有权； / English: The same recovery path after first unlocking will restore existing context/loop ownership;
+    // pointerdown+click 必须合并为一次 resume，且不得从零采样点重新创建 / English: pointerdown+click must be merged into one resume and must not be re-created from zero sampling point
+    // Base 音乐。 / English: Base music.
     page.dispatchEvent(new Event("blur"));
     await flushLifecycle();
     target.dispatchEvent(new Event("pointerdown"));
@@ -938,23 +938,23 @@ describe("AudioManager", () => {
     manager.setFreeSpinsMusicEnabled(true);
     const starts = [...backend.startedLoops];
 
-    // blur 可能发生在文档进入隐藏状态之前。它必须使用同一暂停路径，
-    // 且不得停止或替换 Feature 音源。
+    // blur 可能发生在文档进入隐藏状态之前。它必须使用同一暂停路径， / English: The blur may occur before the document enters the hidden state. It must use the same pause path,
+    // 且不得停止或替换 Feature 音源。 / English: Feature audio sources may not be stopped or replaced.
     page.dispatchEvent(new Event("blur"));
     await flushLifecycle();
     expect(backend.suspendCalls).toBe(1);
     expect(backend.stoppedLoops).toEqual([]);
 
-    // 静音时恢复：仍允许恢复 context，但静音状态和可见性状态都不得从
-    // 零偏移处创建循环。
+    // 静音时恢复：仍允许恢复 context，但静音状态和可见性状态都不得从 / English: Resume while muted: The context is still allowed to be restored, but neither the muted state nor the visibility state must be restored from
+    // 零偏移处创建循环。 / English: Create a loop at zero offset.
     manager.setMuted(true);
     page.dispatchEvent(new Event("focus"));
     await flushLifecycle();
     expect(backend.unlockCalls).toBe(2);
     expect(backend.startedLoops).toEqual(starts);
 
-    // 合并后的隐藏、显示、隐藏序列会让最终后台状态保持暂停；过期的排队任务
-    // 不能恢复该状态，也不能重新创建音源。
+    // 合并后的隐藏、显示、隐藏序列会让最终后台状态保持暂停；过期的排队任务 / English: The merged hide, show, hide sequence will keep the final background state paused; expired queued tasks
+    // 不能恢复该状态，也不能重新创建音源。 / English: This state cannot be restored, nor can the source be re-created.
     page.setHidden(true);
     page.setHidden(false);
     page.setHidden(true);

@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 只模拟数学定义滚动门禁按 Helm release 标签读取资源，不连接任何集群。
+# English: It only simulates math-definition rollout gate and reads resources according to the Helm release
+# label, without connecting to any cluster.
 set -eu
 
 test "$#" -eq 8

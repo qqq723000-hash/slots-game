@@ -1,9 +1,13 @@
-# Primal Rampage 最终优化与加固状态矩阵
+# Primal Rampage final optimization and hardening status matrix / Primal Rampage 最终优化与加固状态矩阵
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This matrix maps the full-stack hardening checklist to the implementation, repeatable verification, and external release gates visible in the current repository snapshot. It distinguishes repository-verified work, target-environment acceptance, work that is not yet implemented, and explicit safer alternatives, so an interface or document name is never treated as proof of completion. The matrix is not an asset license, real-money approval, independent RNG or mathematics certification, penetration-test report, device-lab acceptance, wallet conformance result, or evidence that the AWS resources have been deployed.
 
 状态日期：2026-08-29
 

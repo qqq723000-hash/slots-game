@@ -44,6 +44,9 @@ func (m Middleware) Wrap(next http.Handler) http.Handler {
 		}
 		// 预认证阶段没有可信网络或租户身份。只使用一个固定进程桶：RemoteAddr 在
 		// ALB 后代表代理节点，X-Forwarded-For 可伪造，二者都会制造错误共享或键轮换。
+		// English: There is no trusted network or tenant identity during the pre-authentication phase. Only use a fixed
+		// process bucket: RemoteAddr represents the agent node after the ALB, and X-Forwarded-For can be forged, both of
+		// which can create false sharing or key rotation.
 		if m.Limiter != nil && !m.Limiter.Allow("public-preauth", started) {
 			closeUnreadBody(r)
 			if m.Metrics != nil {
@@ -60,6 +63,9 @@ func (m Middleware) Wrap(next http.Handler) http.Handler {
 		}
 		// Middleware 可被 rgs-server 以外的入口复用；协议响应保留原 request_id，长期日志
 		// 只保留它的稳定单向摘要、固定方法类别和耗时，绝不记录原始路径、查询串或网络地址。
+		// English: Middleware can be reused by entries other than rgs-server; the protocol response retains the original
+		// request_id, and the long-term log only retains its stable one-way summary, fixed method category and time
+		// consumption, and never records the original path, query string or network address.
 		logMethod := normalizedLogMethod(r.Method)
 		logRequestID := safelog.CorrelationIDDigest(requestID)
 		defer func() {
@@ -86,6 +92,9 @@ func closeUnreadBody(request *http.Request) {
 	if request != nil && request.Body != nil && request.Body != http.NoBody {
 		// 在限流/预检短路前正文尚未读取。HTTP/1 失败响应必须关闭该连接，避免
 		// net/http 为复用而替攻击者继续排空正文；HTTP/2 会在流级停止传输。
+		// English: The text has not been read before the current limit/preflight short circuit. HTTP/1 failure responses
+		// must close the connection to prevent net/http from continuing to empty the body for reuse by the attacker;
+		// HTTP/2 will stop transmission at the stream level.
 		request.Close = true
 	}
 }
@@ -117,6 +126,9 @@ func (m Middleware) applyCORS(w http.ResponseWriter, r *http.Request) {
 
 // ApplyCORSHeaders 统一公开 API 与最外层容量闸门的浏览器响应策略。调用方只能传
 // 启动时已校验的精确来源白名单，绝不能回显任意 Origin 或开启凭据共享。
+// English: ApplyCORSHeaders unifies the exposed API and the browser response strategy of the outermost capacity
+// gate. The caller can only pass the accurate source whitelist that has been verified at startup, and must not
+// echo any Origin or enable credential sharing.
 func ApplyCORSHeaders(w http.ResponseWriter, r *http.Request, allowedOrigins map[string]struct{}) {
 	origin := r.Header.Get("Origin")
 	if origin == "" {

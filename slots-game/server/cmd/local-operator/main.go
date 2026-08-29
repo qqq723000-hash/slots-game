@@ -1,5 +1,8 @@
 // Command local-operator 提供本机集成验收所需的持久化运营商配套服务。
 // 它不是测试夹具：钱包、nonce、审计和日志都在进程重启后保留，且所有信任材料由部署注入。
+// English: Command local-operator provides the persistence operator companion services required for native
+// integration acceptance. It is not a test fixture: wallets, nonces, audits, and logs are all preserved across
+// process restarts, and all trust material is injected by the deployment.
 package main
 
 import (
@@ -38,6 +41,7 @@ func main() {
 func logRuntimeFailure(logger *slog.Logger, err error) {
 	if logger != nil {
 		// 启动错误可能包含数据库地址、秘密文件路径、证书名或监听地址，只记录固定错误族。
+		// Startup errors may contain database addresses, secret-file paths, certificate names, or listener addresses; log only a stable error class.
 		logger.Error("local operator stopped", "error_class", safelog.ErrorClass(err))
 	}
 }
@@ -136,6 +140,9 @@ func serve(getenv func(string) string) error {
 
 	// 本机长期运行仍必须有明确磁盘故障边界：审计保留 512 MiB，脱敏运行日志
 	// 保留 256 MiB。达到上限后 sink 失败闭合，由 RGS outbox/Vector 告警接管。
+	// English: The long-term operation of this machine must still have clear disk failure boundaries: 512 MiB is
+	// reserved for auditing and 256 MiB is reserved for desensitized running logs. After reaching the upper limit, the
+	// sink fails to close, and the RGS outbox/Vector alarm takes over.
 	auditStore, err := openJSONLStore(runtime.Config.AuditFile, 1<<20, 512<<20)
 	if err != nil {
 		return fmt.Errorf("open audit store: %w", err)
@@ -148,6 +155,9 @@ func serve(getenv func(string) string) error {
 	defer logStore.Close()
 	// Alertmanager webhook 采用内容摘要幂等落盘；相同通知重试只保留一条，
 	// 但仍返回 204，避免通知端在本机故障恢复后制造重复风暴。
+	// English: The Alertmanager webhook uses content summary idempotent placement; only one retry of the same
+	// notification is retained, but 204 is still returned to prevent the notification end from creating repeated
+	// storms after the local machine fails.
 	alertStore, err := openDeduplicatingAppendStore(runtime.Config.AlertFile, 1<<20, 64<<20)
 	if err != nil {
 		return fmt.Errorf("open alert store: %w", err)
@@ -216,6 +226,9 @@ func serve(getenv func(string) string) error {
 	readiness := func(ctx context.Context) bool {
 		// 容量水位通过独立指标失败闭合；readiness 只表达服务、DB 和文件句柄
 		// 是否可用，避免容量告警演变成容器重启循环并遮蔽真实原因。
+		// English: The capacity water level is failed to be closed through independent indicators; readiness only
+		// expresses whether the service, DB and file handle are available, preventing the capacity alarm from evolving
+		// into a container restart cycle and obscuring the real cause.
 		return store.Ping(ctx) == nil && auditStore.Ready() == nil &&
 			logStore.Ready() == nil && alertStore.Ready() == nil
 	}
@@ -294,6 +307,9 @@ func shutdownLocalOperatorHTTPServer(ctx context.Context, server localOperatorHT
 		failures := []error{fmt.Errorf("shutdown local operator: %w", err)}
 		// Shutdown 超时后必须先强制断开活动请求，再由上层释放数据库与落盘存储。
 		// 否则仍运行的 handler 会在资源关闭后继续读写并遗留协程或部分响应。
+		// English: After Shutdown times out, active requests must be forcibly disconnected, and then the upper layer
+		// releases the database and disk storage. Otherwise, the still running handler will continue to read and write
+		// after the resource is closed and leave the coroutine or partial response behind.
 		if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, http.ErrServerClosed) {
 			failures = append(failures, fmt.Errorf("force-close local operator: %w", closeErr))
 		}
@@ -312,6 +328,9 @@ func shutdownLocalOperatorAfterServeFailure(
 	}
 	// Listener 在运行期异常退出时，已接收的 handler 仍可能访问数据库和落盘存储。
 	// 必须先完成有界排空或强制断连，再允许 serve 返回并执行上层资源清理 defer。
+	// English: When the Listener exits abnormally during runtime, the received handler may still access the database
+	// and disk storage. Bounded draining or forced disconnection must be completed before serve is allowed to return
+	// and perform upper-layer resource cleanup defer.
 	return errors.Join(
 		fmt.Errorf("serve local operator: %w", serveErr),
 		shutdownLocalOperatorHTTPServer(ctx, server),
@@ -408,10 +427,16 @@ type statusRecorder struct {
 
 // Unwrap 让 http.ResponseController 在访问 Flush、Hijack 或 deadline 能力时继续
 // 检查底层 writer；中间件只观测状态，不能截断标准可选接口。
+// English: Unwrap allows http.ResponseController to continue checking the underlying writer when accessing Flush,
+// Hijack or deadline capabilities; the middleware only observes status and cannot truncate the standard optional
+// interface.
 func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 // FlushError 在底层执行刷新路径后记录已隐式提交的 200，即使网络刷新失败；
 // ErrNotSupported 没有提交响应，不能提前锁死后续 handler 仍可提交的错误状态。
+// English: FlushError records an implicitly committed 200 after the underlying execution refresh path, even if the
+// network refresh fails; ErrNotSupported does not submit a response, and subsequent handlers cannot be locked in
+// advance and can still submit an error status.
 func (r *statusRecorder) FlushError() error {
 	err := http.NewResponseController(r.ResponseWriter).Flush()
 	if !errors.Is(err, http.ErrNotSupported) && r.status == 0 {
@@ -422,6 +447,7 @@ func (r *statusRecorder) FlushError() error {
 
 func (r *statusRecorder) WriteHeader(status int) {
 	// 103 等临时响应可以在最终状态前重复发送；101 协议切换本身是最终提交。
+	// Interim responses such as 103 may repeat before final status; protocol switch 101 is itself the final commit.
 	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
 		if r.status == 0 {
 			r.ResponseWriter.WriteHeader(status)
@@ -472,6 +498,8 @@ func requestMiddleware(logger *slog.Logger, metrics *serviceMetrics, timeout tim
 				metrics.failures.Add(1)
 			}
 			// Vector 会把 stdout 再投递到 /logs；成功日志接收本身禁止产生日志，避免反馈环。
+			// English: Vector will re-deliver stdout to /logs; successful log reception itself prohibits log generation to
+			// avoid feedback loops.
 			if route != "/logs" || status >= http.StatusBadRequest {
 				logger.Info("http request", "method", method, "route", route,
 					"status", status, "duration_ms", time.Since(started).Milliseconds())

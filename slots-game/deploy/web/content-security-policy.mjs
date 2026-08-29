@@ -47,6 +47,9 @@ export const BASE_CONTENT_SECURITY_POLICY = serializeSpecification(BASE_POLICY_S
 
 // 浏览器门禁在文档创建前安装此探针；诊断只保留公开 directive、blocked origin、
 // 同源公开资产 basename、坐标与不含赋值内容的 sink 名，不复制 URL 路径/query/fragment。
+// English: Browser gate installs this probe before document creation; diagnostics only retain public
+// directives, blocked origin, The basename, coordinates and sink name of public assets from the same source
+// without assignment content are not copied. The URL path /query/fragment is not copied.
 export const CONTENT_SECURITY_POLICY_VIOLATION_PROBE_SOURCE = `(() => {
   const violations = [];
   const safeBlockedTarget = (value) => {
@@ -149,6 +152,9 @@ function releaseSpecification(options) {
 
 /**
  * CSP 的指令顺序不影响语义，因此解析后按名称比较；指令和 source 重复一律拒绝，避免
+// English: The order of CSP instructions does not affect the semantics, so it is compared by name after
+// parsing; duplicate instructions and sources are rejected to avoid Compatibility behaviors such as browser
+// "first entry taking effect" cover up configuration drift.
  * 浏览器“首条生效”等兼容行为掩盖配置漂移。
  */
 export function parseContentSecurityPolicy(policy) {
@@ -218,6 +224,8 @@ export function verifyReleaseContentSecurityPolicy(policy, options) {
 }
 
 /** 从 curl 的原始响应头中提取唯一一条 CSP；重复 header 不能由逗号合并后继续验收。 */
+// English: Extract the only CSP from the original response header of curl; duplicate headers cannot be combined
+// by commas and continue to be accepted.
 export function contentSecurityPolicyFromHeaders(rawHeaders) {
   if (typeof rawHeaders !== "string" || Buffer.byteLength(rawHeaders, "utf8") > MAXIMUM_HEADER_BYTES) {
     fail("HTTP response headers are missing or too large");

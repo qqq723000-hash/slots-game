@@ -8,6 +8,10 @@ import (
 // MetricsEndpoint 在每次抓取时计算同一组运行时就绪检查。rgs_ready 表示服务能否
 // 接收业务流量，而抓取本身始终返回 200，让 Prometheus 的 up 只表示传输可达性。
 // 指标无标签且不包含依赖名称或错误文本，避免泄漏内部拓扑与扩大时序基数。
+// English: MetricsEndpoint calculates the same set of runtime readiness checks on every crawl. rgs_ready indicates
+// whether the service can receive business traffic, and the crawl itself always returns 200, letting Prometheus'
+// up only indicate transmission reachability. Metrics are unlabeled and do not contain dependency names or error
+// text to avoid leaking internal topology and expanding time series bases.
 type MetricsEndpoint struct {
 	Metrics   *Metrics
 	Readiness Readiness

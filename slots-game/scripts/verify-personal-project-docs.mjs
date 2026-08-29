@@ -1,6 +1,10 @@
-import { readdir, readFile } from "node:fs/promises";
-import { dirname, relative, resolve, sep } from "node:path";
+import { execFile } from "node:child_process";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export const PERSONAL_PROJECT_NOTICE = `<!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
@@ -12,18 +16,10 @@ const MINIMUM_IDENTITY_DOCUMENTS = 51;
 const IDENTITY_NOTICE_EXCLUSIONS = new Set([
   "slots-game/CHANGELOG.md",
 ]);
-const IGNORED_DIRECTORIES = new Set([
-  ".artifacts",
-  ".git",
-  "coverage",
-  "dist",
-  "node_modules",
-  "output",
-]);
 const REPOSITORY_REFERENCE_SCAN_EXCLUSIONS = new Set([
   "slots-game/scripts/verify-personal-project-docs.mjs",
   "slots-game/scripts/verify-personal-project-docs.test.mjs",
-  // These two files implement and negatively test the production-manifest brand guard itself.
+  // 这两个文件实现并反向测试生产清单的品牌引用门禁。/ These two files implement and negatively test the production-manifest brand guard itself.
   "slots-game/web/scripts/generate-streaming-package-manifests.mjs",
   "slots-game/web/tests/streaming-package-manifests.test.ts",
 ]);
@@ -63,6 +59,38 @@ function countOccurrences(content, needle) {
   return content.split(needle).length - 1;
 }
 
+function proseBlocks(content) {
+  return content
+    .replace(/```[\s\S]*?```/gu, "\n")
+    .split(/\r?\n\s*\r?\n/gu)
+    .map((block) => block.split(/\r?\n/gu).filter((line) => !/^\s*>/u.test(line)).join(" "))
+    .map((block) => block
+      .replace(/<!--.*?-->/gu, " ")
+      .replace(/`[^`]*`/gu, " ")
+      .replace(/https?:\/\/\S+/gu, " ")
+      .replace(/^\s*#{1,6}\s*/u, "")
+      .trim())
+    .filter(Boolean);
+}
+
+export function hasSubstantiveChineseDocumentation(content) {
+  return proseBlocks(content).some((block) => {
+    const chineseCharacters = block.match(/\p{Script=Han}/gu) ?? [];
+    return chineseCharacters.length >= 20;
+  });
+}
+
+export function hasSubstantiveEnglishDocumentation(content) {
+  return proseBlocks(content).some((block) => {
+    if (/\p{Script=Han}/u.test(block)) return false;
+    const words = block.match(/\b[A-Za-z][A-Za-z'-]*\b/gu) ?? [];
+    return (
+      words.length >= 20
+      && /\b(?:and|are|as|before|for|from|is|must|not|only|or|remain|requires?|that|the|this|to|when|with)\b/iu.test(block)
+    );
+  });
+}
+
 export function validateDocumentationContent(documentId, content, { requireIdentityNotice = true } = {}) {
   if (requireIdentityNotice) {
     const markerCount = countOccurrences(content, NOTICE_MARKER);
@@ -76,6 +104,13 @@ export function validateDocumentationContent(documentId, content, { requireIdent
     if (noticeOffset > 1_200) {
       throw new Error(`${documentId}: personal-independent project notice must remain near the document title`);
     }
+  }
+
+  if (!hasSubstantiveChineseDocumentation(content)) {
+    throw new Error(`${documentId}: substantive Chinese documentation is missing`);
+  }
+  if (!hasSubstantiveEnglishDocumentation(content)) {
+    throw new Error(`${documentId}: substantive English documentation is missing`);
   }
 
   for (const rule of FORBIDDEN_REFERENCES) {
@@ -95,44 +130,82 @@ export function isMarkdownDocumentName(name) {
   return name.toLowerCase().endsWith(".md");
 }
 
-async function collectMarkdownFiles(directory, files = []) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue;
-    const entryPath = resolve(directory, entry.name);
-    if (entry.isSymbolicLink() && isMarkdownDocumentName(entry.name)) {
-      throw new Error(`documentation symlink is not allowed: ${entryPath}`);
-    }
-    if (entry.isDirectory()) {
-      await collectMarkdownFiles(entryPath, files);
-    } else if (entry.isFile() && isMarkdownDocumentName(entry.name)) {
-      files.push(entryPath);
-    }
+function resolveTrackedPath(deliveryRoot, documentId) {
+  if (
+    documentId === ""
+    || documentId.startsWith("/")
+    || documentId.split("/").includes("..")
+  ) {
+    throw new Error(`invalid tracked repository path: ${JSON.stringify(documentId)}`);
   }
-  return files;
+  const entryPath = resolve(deliveryRoot, ...documentId.split("/"));
+  const normalizedId = relative(deliveryRoot, entryPath).split(sep).join("/");
+  if (normalizedId !== documentId) {
+    throw new Error(`tracked repository path is not canonical: ${documentId}`);
+  }
+  return entryPath;
 }
 
-async function collectRepositoryTextFiles(directory, deliveryRoot, files = []) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue;
-    const entryPath = resolve(directory, entry.name);
-    if (entry.isDirectory()) {
-      await collectRepositoryTextFiles(entryPath, deliveryRoot, files);
-      continue;
+async function verifyTrackedRegularFile(deliveryRoot, documentId) {
+  const entryPath = resolveTrackedPath(deliveryRoot, documentId);
+  let componentPath = deliveryRoot;
+  const components = documentId.split("/");
+
+  for (const [index, component] of components.entries()) {
+    componentPath = resolve(componentPath, component);
+    const stats = await lstat(componentPath);
+    if (stats.isSymbolicLink()) {
+      throw new Error(`tracked repository path component is a symbolic link: ${documentId}`);
     }
-    if (!entry.isFile()) continue;
-    const documentId = relative(deliveryRoot, entryPath).split(sep).join("/");
-    // Validate every regular-file path before deciding whether its bytes are safe to decode as text.
-    // This closes the binary-filename bypass for forbidden provider assets such as PNG files.
-    validateRepositoryReferenceContent(documentId, "");
-    if (
-      REPOSITORY_REFERENCE_SCAN_EXCLUSIONS.has(documentId)
-      || !REPOSITORY_TEXT_FILE_PATTERN.test(documentId)
-    ) continue;
-    files.push({ documentId, entryPath });
+    if (index < components.length - 1 && !stats.isDirectory()) {
+      throw new Error(`tracked repository parent component is not a directory: ${documentId}`);
+    }
+    if (index === components.length - 1 && !stats.isFile()) {
+      throw new Error(`tracked repository entry is not a regular file: ${documentId}`);
+    }
   }
-  return files;
+
+  const deliveryRootRealPath = await realpath(deliveryRoot);
+  const entryRealPath = await realpath(entryPath);
+  const realRelativePath = relative(deliveryRootRealPath, entryRealPath);
+  if (
+    realRelativePath === ""
+    || realRelativePath === ".."
+    || realRelativePath.startsWith(`..${sep}`)
+    || isAbsolute(realRelativePath)
+  ) {
+    throw new Error(`tracked repository entry escapes the delivery root: ${documentId}`);
+  }
+  return entryPath;
+}
+
+export async function collectTrackedRepositoryFiles(deliveryRoot) {
+  const { stdout } = await execFileAsync(
+    "git",
+    ["-C", deliveryRoot, "ls-files", "-z"],
+    { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 },
+  );
+  const trackedDocumentIds = stdout.split("\0").filter(Boolean).sort();
+  const markdownFiles = [];
+  const repositoryTextFiles = [];
+
+  for (const documentId of trackedDocumentIds) {
+    // 在判断字节能否安全按文本解码前，先校验每个受 Git 跟踪的路径。/ Validate every Git-tracked path before deciding whether its bytes are safe to decode as text.
+    // 这样既关闭二进制文件名绕过，也不会读取无关的未跟踪用户文件。/ This closes the binary-filename bypass without reading unrelated untracked user files.
+    validateRepositoryReferenceContent(documentId, "");
+    const entryPath = await verifyTrackedRegularFile(deliveryRoot, documentId);
+    const markdown = isMarkdownDocumentName(documentId);
+    const repositoryText = REPOSITORY_TEXT_FILE_PATTERN.test(documentId);
+    if (markdown) markdownFiles.push(entryPath);
+    if (
+      repositoryText
+      && !REPOSITORY_REFERENCE_SCAN_EXCLUSIONS.has(documentId)
+    ) {
+      repositoryTextFiles.push({ documentId, entryPath });
+    }
+  }
+
+  return { markdownFiles, repositoryTextFiles };
 }
 
 export function validateRepositoryReferenceContent(documentId, content) {
@@ -143,8 +216,12 @@ export function validateRepositoryReferenceContent(documentId, content) {
   }
 }
 
-export async function verifyPersonalProjectDocumentation(deliveryRoot) {
-  const markdownFiles = await collectMarkdownFiles(deliveryRoot);
+export async function verifyPersonalProjectDocumentation(
+  deliveryRoot,
+  { minimumIdentityDocuments = MINIMUM_IDENTITY_DOCUMENTS } = {},
+) {
+  const { markdownFiles, repositoryTextFiles } =
+    await collectTrackedRepositoryFiles(deliveryRoot);
   const identityDocuments = [];
 
   for (const documentPath of markdownFiles.sort()) {
@@ -155,13 +232,12 @@ export async function verifyPersonalProjectDocumentation(deliveryRoot) {
     if (requireIdentityNotice) identityDocuments.push(documentId);
   }
 
-  if (identityDocuments.length < MINIMUM_IDENTITY_DOCUMENTS) {
+  if (identityDocuments.length < minimumIdentityDocuments) {
     throw new Error(
-      `personal-independent documentation coverage regressed: expected at least ${MINIMUM_IDENTITY_DOCUMENTS}, found ${identityDocuments.length}`,
+      `personal-independent documentation coverage regressed: expected at least ${minimumIdentityDocuments}, found ${identityDocuments.length}`,
     );
   }
 
-  const repositoryTextFiles = await collectRepositoryTextFiles(deliveryRoot, deliveryRoot);
   for (const { documentId, entryPath } of repositoryTextFiles) {
     validateRepositoryReferenceContent(documentId, await readFile(entryPath, "utf8"));
   }

@@ -1,4 +1,4 @@
-// @ts-nocheck -- 仅在 Node 中运行，用于校验冻结版 Jackpot Spine 二进制文件。
+// @ts-nocheck -- 仅在 Node 中运行，用于校验冻结版 Jackpot Spine 二进制文件。 / English: @ts-nocheck -- Runs in Node only, used to check frozen Jackpot Spine binaries.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

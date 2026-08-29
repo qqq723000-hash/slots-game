@@ -1,4 +1,4 @@
-// @ts-expect-error Vitest 在 Node 中运行；浏览器生产版 tsconfig 刻意省略 Node 全局类型。
+// @ts-expect-error Vitest 在 Node 中运行；浏览器生产版 tsconfig 刻意省略 Node 全局类型。 / English: @ts-expect-error Vitest runs in Node; the browser production version tsconfig deliberately omits the Node global type.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {

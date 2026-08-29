@@ -1,6 +1,8 @@
 data_dir: /var/lib/vector
 
 # token 由 Vector 的文件 secret backend 在运行时解析，不进入环境变量或镜像。
+# English: The token is parsed at runtime by Vector's file secret backend and does not enter environment
+# variables or images.
 secret:
   local_files:
     type: directory
@@ -23,6 +25,9 @@ sources:
     type: static_metrics
     # Vector 0.57 的磁盘缓冲在低流量下可能等待下一条事件才提交当前批次；固定心跳
     # 为归档链路提供有界推进事件，同时不承载用户、请求或运行环境数据。
+    # English: Vector 0.57's disk buffer may wait for the next event before submitting the current batch under
+    # low traffic; fixed heartbeat Provides bounded push events for archive links while carrying no user,
+    # request, or runtime environment data.
     interval_secs: 10
     namespace: vector
     metrics:
@@ -43,6 +48,8 @@ transforms:
     inputs: [archive_flush_heartbeat_to_log]
     source: |-
       # 无条件从空对象重建；上游指标名、标签、hostname 或未来新增字段都不能进入归档。
+      # English: Rebuild from an empty object unconditionally; no upstream indicator names, labels, hostnames or
+      # future new fields can be entered into the archive.
       . = {
         "service": "vector",
         "time": now(),
@@ -56,6 +63,9 @@ transforms:
     source: |-
       # Docker fluentd logging driver 把 stdout 正文放在 `log`，Vector fluent source 保留
       # record 原键；`message` 只用于兼容受控的直接 Fluent 生产者。超长/非字符串一律降格。
+      # English: Docker fluentd logging driver puts stdout text in `log`, and Vector fluent source keeps it
+      # record raw key; `message` is only used for compatibility with controlled direct Fluent producers.
+      # Overlong/non-string characters will be downgraded.
       raw = string(.log) ?? string(.message) ?? ""
       if length(raw) <= 65536 {
         app, app_err = parse_json(raw)
@@ -162,6 +172,9 @@ transforms:
     source: |-
       # Fluent 元数据和已解析 JSON 都是不可信输入。最终事件从空对象重建，因此未知
       # 顶层/嵌套字段永远不会因黑名单漏项进入本地长期归档。
+      # English: Both Fluent metadata and parsed JSON are untrusted inputs. The final event is reconstructed
+      # from the empty object and therefore unknown Top-level/nested fields will never enter the local long-term
+      # archive due to blacklisting.
       event = .
       . = { "service": "rgs-server" }
 

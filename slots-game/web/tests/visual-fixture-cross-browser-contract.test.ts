@@ -1,4 +1,4 @@
-// @ts-nocheck -- 浏览器门禁合同会直接执行 Node .mjs 运维辅助模块。
+// @ts-nocheck -- 浏览器门禁合同会直接执行 Node .mjs 运维辅助模块。 / English: @ts-nocheck -- The browser access control contract will directly execute the Node .mjs operation and maintenance auxiliary module.
 import { describe, expect, it, vi } from "vitest";
 
 import workflow from "../../../.github/workflows/frontend-conformance.yml?raw";
@@ -251,7 +251,7 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(isRecoverableCaptureClockPastTarget(firefoxClockError, target + 100, target)).toBe(true);
     expect(isRecoverableCaptureClockPastTarget(webkitClockError, target + 100, target)).toBe(true);
 
-    // 应用 timer 在 pauseAt 推进到目标时刻后才抛错；同文错误也不得被恢复逻辑吞掉。
+    // 应用 timer 在 pauseAt 推进到目标时刻后才抛错；同文错误也不得被恢复逻辑吞掉。 / English: The application timer will not throw an error until pauseAt is advanced to the target time; the same text error must not be swallowed up by the recovery logic.
     expect(isRecoverableCaptureClockPastTarget(directClockError, target + 1, target)).toBe(false);
     expect(isRecoverableCaptureClockPastTarget(directClockError, target, target)).toBe(false);
     expect(isRecoverableCaptureClockPastTarget(chromiumClockError, target, target)).toBe(false);

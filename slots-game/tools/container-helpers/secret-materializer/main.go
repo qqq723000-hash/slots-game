@@ -1,5 +1,7 @@
 // Command secret-materializer 把只读编排 Secret 复制到进程所属的内存卷，
 // 使业务进程最终只从 0400 的绝对路径读取凭据。
+// English: Command secret-materializer copies read-only orchestrator Secrets into a process-owned memory
+// volume, so the application ultimately reads credentials only from absolute paths with mode 0400.
 package main
 
 import (

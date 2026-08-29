@@ -772,8 +772,8 @@ describe("captured Primal symbol skeleton mapping", () => {
       quality: 5,
       repeatEdgePixels: true,
     });
-    // ReelView 将 `quality` 用作 BlurFilter 的处理次数。保持其大于一，可避免
-    // 单次处理的移动条带出现明显色带。
+    // ReelView 将 `quality` 用作 BlurFilter 的处理次数。保持其大于一，可避免 / English: ReelView uses `quality` as the number of passes for the BlurFilter. Keep it greater than one to avoid
+    // 单次处理的移动条带出现明显色带。 / English: Obvious color bands appear in the moving strips processed in a single time.
     expect(PRIMAL_BLURRED_SYMBOL_PLACEHOLDER.quality).toBeGreaterThan(1);
     expect(PRIMAL_SYMBOL_SPINE_KEYS).not.toContain("symbolBlurredDummy");
   });

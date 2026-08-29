@@ -1,9 +1,13 @@
-# 采用方目标集群部署
+# Adopter target-cluster deployment / 采用方目标集群部署
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This directory delivers auditable Kubernetes and Helm source for the RGS API, recovery worker, static Web tier, one-shot database migrator, and their minimum application policies. PostgreSQL remains authoritative for sessions, rounds, wallet outcomes, and `operationId` idempotency, while shared Valkey admission is a fail-closed capacity boundary rather than an economic source of truth. The adopter must supply and validate the database, wallet, audit receiver, ingress, key system, monitoring, cluster add-ons, secrets, immutable images, migration execution, capacity, and disaster-recovery controls in the target cluster.
 
 本目录交付可审计的 Kubernetes/Helm 生产部署源码，只包含 RGS API、RGS Worker、静态 Web、一次性数据库迁移器及它们的最小运行配置。它不会部署 `local-operator`、本机 PostgreSQL、演示钱包或本机观测组件；数据库、钱包、审计接收端、入口网关、密钥系统和监控系统都必须由采用方平台提供。
 

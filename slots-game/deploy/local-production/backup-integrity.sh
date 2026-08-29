@@ -1,10 +1,13 @@
 #!/bin/sh
 # 验证备份输入树与已发布备份集；不启动数据库或接触线上容器。
+# English: Verify the backup input tree against the published backup set; do not start the database or touch the
+# online container.
 set -eu
 LC_ALL=C
 export LC_ALL
 
 # 备份完整性库开始
+# English: Backup Integrity Repository Begins
 fail() {
   printf '%s\n' "backup integrity: $*" >&2
   exit 1
@@ -82,6 +85,8 @@ publish_no_clobber() {
     fail 'published backup directory must be a real directory'
   sync -f "$temporary" || fail "could not flush backup member data: $temporary"
   # 同一 /backups 文件系统内的 link(2) 是原子的，目标已存在时必定失败；随后删除临时名。
+  # English: link(2) within the same /backups filesystem is atomic and must fail if the target already exists;
+  # the temporary name is subsequently deleted.
   ln "$temporary" "$destination" || fail "could not atomically publish: $destination"
   unlink "$temporary" || fail "published member retained its temporary link: $temporary"
   sync -f "$destination_directory" || fail "could not flush backup directory: $destination_directory"
@@ -129,6 +134,9 @@ verify_backup_set() {
 
   # 清单必须精确列出三个公开成员，固定顺序与文件名；禁止漏验真实 dump、追加路径或
   # 通过符号链接把校验引向备份目录之外。
+  # English: The list must accurately list the three public members in a fixed order and file name; it is
+  # forbidden to omit the real dump, append the path or Direct verification outside the backup directory via a
+  # symbolic link.
   awk 'END { exit(NR == 3 ? 0 : 1) }' "$manifest" ||
     fail 'manifest must contain exactly three entries'
   sed -n '1p' "$manifest" |
@@ -153,6 +161,10 @@ verify_operator_archive() {
   require_plain_nonempty_file "$operator_archive"
   # 哨兵必须位于命令替换末尾，避免 shell 吞掉最后一个成员名中的 LF 并把控制字符档案
   # 错认成规范路径；移除哨兵后，保留下来的空行会由下方安全字符规则拒绝。
+  # English: The sentinel must be placed at the end of the command substitution to prevent the shell from
+  # swallowing the LF in the last member name and replacing the control characters in the file Mistaken as a
+  # canonical path; after removing the sentry, the remaining empty lines will be rejected by the safe character
+  # rules below.
   archive_list=$(
     tar -tzf "$operator_archive" || exit 1
     printf '\001'
@@ -188,11 +200,16 @@ verify_operator_archive() {
   test "$archive_count" -eq "$detail_count" || fail 'operator archive listings disagree'
 
   # 去掉目录尾斜杠后每个路径必须唯一，既拒绝重复成员，也拒绝同名文件/目录碰撞。
+  # English: Each path must be unique after removing the trailing slash in the directory. Duplicate members and
+  # file/directory collisions with the same name are rejected.
   duplicate_path=$(printf '%s\n' "$archive_list" | sed 's:/*$::' | LC_ALL=C sort | uniq -d | sed -n '1p')
   test -z "$duplicate_path" || fail "operator archive repeats a path: $duplicate_path"
 
   # tar -t 与 tar -tv 的顺序一致；逐项绑定类型后，目录必须带尾斜杠、普通文件不得带，
   # 且任何普通文件都不能同时充当另一成员的祖先路径。
+  # English: The order of tar -t and tar -tv is the same; after binding types one by one, the directory must
+  # have a trailing slash, and ordinary files must not. And no ordinary file can simultaneously serve as the
+  # ancestor path of another member.
   archive_types=$(printf '%s\n' "$archive_details" | cut -c1)
   {
     printf '%s\n' "$archive_types"
@@ -235,6 +252,7 @@ verify_operator_archive() {
   done
 }
 # 备份完整性库结束
+# English: End of backup integrity library
 
 case "${1:-}" in
   verify-source)

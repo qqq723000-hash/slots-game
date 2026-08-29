@@ -42,7 +42,7 @@ export interface JackpotTierLayout {
   readonly valueWidth: number;
 }
 
-/** 从 1280x720 的原始 1200x900 布局解析精确的桌面转换。 */
+/** 从 1280x720 的原始 1200x900 布局解析精确的桌面转换。 / English: Resolve accurate desktop conversion from native 1200x900 layout at 1280x720. */
 export const JACKPOT_TIER_LAYOUTS: readonly JackpotTierLayout[] = Object.freeze([
   { key: "jackpotGrand", tier: "grand", label: "GRAND", multiplier: 1_000n, x: 244, y: 280, scale: 0.8, minBound: [-135, -350, 1_260, 900], titleWidth: 166.81, valueWidth: 164.76 },
   { key: "jackpotMega", tier: "mega", label: "MEGA", multiplier: 250n, x: 244, y: 367.2, scale: 0.72, minBound: [-150, -510, 1_400, 1_000], titleWidth: 147.46, valueWidth: 164.76 },
@@ -134,7 +134,7 @@ export interface JackpotTierMobileDisplayLayout extends ResponsiveNodeTransform 
   readonly scaleY: number;
 }
 
-/** 844x390 实机证据显示官方横屏父级只把大奖面板沿 X 轴扩展 12%，Y 轴仍保持 canonical minBound 投影。 */
+/** 844x390 实机证据显示官方横屏父级只把大奖面板沿 X 轴扩展 12%，Y 轴仍保持 canonical minBound 投影。 / English: 844x390 actual machine evidence shows that the official horizontal screen parent only expands the jackpot panel by 12% along the X-axis, and the Y-axis still maintains canonical minBound projection. */
 export const JACKPOT_COMPACT_LANDSCAPE_SCALE_X = 1.12;
 
 export function jackpotTierMobileDisplayLayout(
@@ -188,14 +188,14 @@ export type JackpotTier = JackpotTierLayout["tier"];
 
 export const JACKPOT_COLLECTION_REACTION_STEP_MS = 200;
 
-/** Wheel/Vault事件携带的奖品标识符使用预设的等级名称。 */
+/** Wheel/Vault事件携带的奖品标识符使用预设的等级名称。 / English: The prize identifier carried by the Wheel/Vault event uses the preset level name. */
 export function jackpotTierFromAward(value: string | undefined): JackpotTier | null {
   if (value === undefined) return null;
   const match = /^(MINI|MINOR|MAJOR|MEGA|GRAND)(?:_2X)?$/i.exec(value.trim());
   return match?.[1]?.toLowerCase() as JackpotTier | undefined ?? null;
 }
 
-/** GameJackpotController 使用的确切的从下到上的顺序。 */
+/** GameJackpotController 使用的确切的从下到上的顺序。 / English: The exact bottom-to-top order used by GameJackpotController. */
 export function jackpotCollectionReactionPlan(): readonly Readonly<{
   tier: JackpotTier;
   atMs: number;
@@ -212,20 +212,20 @@ export function jackpotCollectionReactionPlan(): readonly Readonly<{
 interface JackpotPanel {
   readonly layout: JackpotTierLayout;
   readonly root: Container;
-  /** 一个原创风格的 Spine 实体拥有每个预设的视觉插槽。 */
+  /** 一个原创风格的 Spine 实体拥有每个预设的视觉插槽。 / English: An original style Spine entity with each preset visual slot. */
   readonly view: Spine;
   readonly title: Text;
   readonly value: Text;
-  /** Y 反射主机放置在预设的标题/值槽容器内。 */
+  /** Y 反射主机放置在预设的标题/值槽容器内。 / English: Y reflection hosts are placed inside preset title/value slot containers. */
   readonly titleHost: Container;
   readonly valueHost: Container;
   readonly titlePoint: Vector2;
   readonly valuePoint: Vector2;
 }
 
-// 提供的原始骨架都使用这个精确的中心创作顺序：基本插槽 0–43 → 标题文本字段 44 → 火 FX 45 → 值文本字段 46 → 前景闪电/烟雾插槽 47+。
-// 标题/值字段是 BoundingBox 附件，因此 Pixi-Spine 在每次更新后隐藏其容器。  我们在姿势更新后仅重新启用这两个容器，
-// 并将本机 Pixi 文本放入其中，保留原始的 one-Spine 顺序。
+// 提供的原始骨架都使用这个精确的中心创作顺序：基本插槽 0–43 → 标题文本字段 44 → 火 FX 45 → 值文本字段 46 → 前景闪电/烟雾插槽 47+。 / English: The original skeletons provided all use this precise central creation order: Base slots 0–43 → Title text field 44 → Fire FX 45 → Value text field 46 → Foreground lightning/smoke slots 47+.
+// 标题/值字段是 BoundingBox 附件，因此 Pixi-Spine 在每次更新后隐藏其容器。  我们在姿势更新后仅重新启用这两个容器， / English: The title/value fields are BoundingBox attachments, so Pixi-Spine hides its container after every update. We only re-enable these two containers after the pose update,
+// 并将本机 Pixi 文本放入其中，保留原始的 one-Spine 顺序。 / English: and puts native Pixi text into it, preserving the original one-spine order.
 const JACKPOT_TITLE_SLOT = 44;
 const JACKPOT_VALUE_SLOT = 46;
 export const JACKPOT_FONT_FAMILY = "KANIT_BOLD";
@@ -255,8 +255,8 @@ function jackpotTextStyle(fontSize: number): TextStyle {
     fill: [...SILVER_GRADIENT],
     fillGradientStops: [...SILVER_STOPS],
     fillGradientType: TEXT_GRADIENT.LINEAR_VERTICAL,
-    // 官方字体 CSS 将其已经粗体的 WOFF 公开为 KANIT_BOLD 家族的专用字体 `normal`。
-    // 在重命名的系列下请求 700 可以在错过匹配面孔的浏览器上合成第二个权重。
+    // 官方字体 CSS 将其已经粗体的 WOFF 公开为 KANIT_BOLD 家族的专用字体 `normal`。 / English: Official font CSS exposes its already bold WOFF as `normal`, a dedicated font of the KANIT_BOLD family.
+    // 在重命名的系列下请求 700 可以在错过匹配面孔的浏览器上合成第二个权重。 / English: Requesting 700 under the renamed series can synthesize a second weight on browsers that miss matching faces.
     fontFamily: `'${JACKPOT_FONT_FAMILY}', 'Primal Kanit', Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif`,
     fontSize,
     fontStyle: "normal",
@@ -268,7 +268,7 @@ function jackpotTextStyle(fontSize: number): TextStyle {
   });
 }
 
-/** 格式化服务器投注预测，而不通过浮点数转换整数货币。 */
+/** 格式化服务器投注预测，而不通过浮点数转换整数货币。 / English: Format server betting predictions without converting integer currencies via floating point numbers. */
 export function jackpotDisplayValue(
   betMinor: MoneyMinor,
   multiplier: bigint,
@@ -280,6 +280,8 @@ export function jackpotDisplayValue(
 
 /**
  * 原来的五面板大奖塔。 Spine 拥有金属、乐队、奖牌和效果； Pixi 文本附加到预设的标题/值边界槽。
+ *
+ * 英文 / English: The original five-panel jackpot tower. Spine has metal, bands, medals and effects; Pixi text is appended to preset title/value border slots.
  */
 export class JackpotTowerView extends Container {
   private readonly panels: JackpotPanel[] = [];
@@ -289,7 +291,7 @@ export class JackpotTowerView extends Container {
   private reactionElapsedMs = 0;
   private reactionCursor = 0;
   private reactionPlan: ReturnType<typeof jackpotCollectionReactionPlan> = [];
-  /** 镜像原始控制器的 `_panelHighlightOn` 复位保护。 */
+  /** 镜像原始控制器的 `_panelHighlightOn` 复位保护。 / English: Mirror the original controller's `_panelHighlightOn` reset protection. */
   private panelHighlightOn = false;
   private visibleInsetX = 0;
   private mobileLayoutContext: Readonly<{
@@ -347,7 +349,7 @@ export class JackpotTowerView extends Container {
           `${layout.tier}Value`,
           JACKPOT_VALUE_SLOT,
         );
-        // 原始引擎将两个动态文本字段存储在预设的 Spine 实例中。这会自动保留标题→火→值→前景顺序，而不会出现重复的前景Spine。
+        // 原始引擎将两个动态文本字段存储在预设的 Spine 实例中。这会自动保留标题→火→值→前景顺序，而不会出现重复的前景Spine。 / English: The original engine stores two dynamic text fields in prefabricated Spine instances. This automatically preserves the Title → Fire → Value → Foreground order without duplicate foreground spines.
         panel.addChild(view);
         this.addChild(panel);
 
@@ -421,12 +423,12 @@ export class JackpotTowerView extends Container {
     const poseDeltaMs = Math.min(64, wallClockDeltaMs);
     const deltaSeconds = poseDeltaMs / 1_000;
     for (const panel of this.panels) this.updatePanelView(panel, deltaSeconds);
-    // Spine 姿势可限幅以避免恢复后台标签页时发生大步跳帧；五档收集顺序属于墙钟语义，不能被同一限幅拖慢。
+    // Spine 姿势可限幅以避免恢复后台标签页时发生大步跳帧；五档收集顺序属于墙钟语义，不能被同一限幅拖慢。 / English: Spine gestures can be clipped to avoid stride frame skipping when restoring background tabs; the five-speed collection sequence belongs to wall clock semantics and cannot be slowed down by the same clipping.
     this.advanceCollectionReaction(wallClockDeltaMs);
     this.syncTextAnchors();
   }
 
-  /** 镜像 GameJackpotController.reactToCollection 的五个 200ms 步骤。 */
+  /** 镜像 GameJackpotController.reactToCollection 的五个 200ms 步骤。 / English: Mirror the five 200ms steps of GameJackpotController.reactToCollection. */
   reactToCollection(): void {
     if (this.panels.length === 0 || this.disposed) return;
     this.reactionPlan = jackpotCollectionReactionPlan();
@@ -435,7 +437,7 @@ export class JackpotTowerView extends Container {
     this.advanceCollectionReaction(0);
   }
 
-  /** 突出显示一项或多项服务器权威大奖。 */
+  /** 突出显示一项或多项服务器权威大奖。 / English: Highlight one or more Server Authority Awards. */
   highlightAwards(tiers: readonly JackpotTier[]): void {
     const won = new Set(tiers);
     this.applyAwardHighlight(won, false);
@@ -444,6 +446,8 @@ export class JackpotTowerView extends Container {
   /**
    * Kong Quest/King Spin 占据了五个累积奖金 IDs 之外的 Wheel 片。
    * 原始版本将其解决为 `win(-1)`：每个板块都会进入黑暗并等待稍后的 FREESPIN_START 重置，而不是突出显示一个层。
+   *
+   * 英文 / English: Kong Quest/King Spin occupies the Wheel slice outside of the five jackpot IDs. The original version solved this as `win(-1)`: instead of highlighting a layer, each plate would go dark and wait for a later FREESPIN_START reset.
    */
   darkenAllPanels(): void {
     this.applyAwardHighlight(new Set(), true);
@@ -481,7 +485,7 @@ export class JackpotTowerView extends Container {
     if (tier) this.highlightAwards([tier]);
   }
 
-  /** Spin/Freespin/Wheel 开始使用捕获的表演剪辑恢复每个板块。 */
+  /** Spin/Freespin/Wheel 开始使用捕获的表演剪辑恢复每个板块。 / English: Spin/Freespin/Wheel starts restoring each plate using the captured performance clip. */
   resetPanelAnimations(): void {
     if (this.disposed || !this.panelHighlightOn) return;
     this.panelHighlightOn = false;
@@ -501,6 +505,8 @@ export class JackpotTowerView extends Container {
   /**
    * 镜像原始渲染器的 `playSpine` 替换边界：在安装下一个预设的动画之前将当前轨道混合到空姿势。 `clearTrack` 仅删除 Pixi-Spine 中的条目，
    * 并且可以在 `show` 夹子后面留下可见的未加密奖励 FX 附件。
+   *
+   * 英文 / English: Mirror the original renderer's `playSpine` replacement bounds: blend the current track to an empty pose before installing the next preset's animation. `clearTrack` only removes entries in Pixi-Spine and can leave visible unencrypted bonus FX attachments behind the `show` clip.
    */
   private replacePanelTrack(
     view: Spine,
@@ -610,7 +616,7 @@ export class JackpotTowerView extends Container {
   }
 
   private repairTextSlotContainers(panel: JackpotPanel): void {
-    // 提供的累积奖金图集将附加的黑色零区域编码。 Pixi-Spine 在每次更新时重新应用插槽混合模式，因此在每个姿势或动画过渡后重新声明源材质。
+    // 提供的累积奖金图集将附加的黑色零区域编码。 Pixi-Spine 在每次更新时重新应用插槽混合模式，因此在每个姿势或动画过渡后重新声明源材质。 / English: The provided Jackpot Atlas will have an additional black zero area coded. Pixi-Spine reapplies the slot blend mode on every update, so the source material is re-declared after every pose or animation transition.
     const { view } = panel;
     enforcePrimalRegionBlendModes(view);
     this.repairTextSlotContainer(view, `${panel.layout.tier}Title`, JACKPOT_TITLE_SLOT);
@@ -619,6 +625,8 @@ export class JackpotTowerView extends Container {
 
   /**
    * 时隙 44/46 是 BoundingBox 字段。 Pixi-Spine 故意隐藏这些通用插槽，因此每次更新后修复其本机插槽容器，以直接托管在其中的 Pixi 替换文本。
+   *
+   * 英文 / English: Slots 44/46 are BoundingBox fields. Pixi-Spine intentionally hides these universal slots and therefore fixes its native slot container after every update to directly host Pixi replacement text within it.
    */
   private repairTextSlotContainer(
     view: Spine,
@@ -633,7 +641,7 @@ export class JackpotTowerView extends Container {
     slotContainer.transform.setFromMatrix(slot.bone.matrix);
     slotContainer.alpha = slot.color.a;
     slotContainer.visible = attachment !== null && slot.color.a > 0.001;
-    // 清除或交换的占位符可以保留其旧的可渲染图集。文本必须是两个 BoundingBox 字段槽中的唯一内容。
+    // 清除或交换的占位符可以保留其旧的可渲染图集。文本必须是两个 BoundingBox 字段槽中的唯一内容。 / English: Placeholders that are cleared or swapped retain their old set of renderable atlases. The text must be the only content in both BoundingBox field slots.
     const renderedSlot = slot as typeof slot & {
       currentSprite?: { renderable: boolean };
       currentMesh?: { renderable: boolean };
@@ -642,7 +650,7 @@ export class JackpotTowerView extends Container {
     if (renderedSlot.currentMesh) renderedSlot.currentMesh.renderable = false;
   }
 
-  /** 在其预设的边界槽的中心附加一个直立的文本宿主。 */
+  /** 在其预设的边界槽的中心附加一个直立的文本宿主。 / English: Attach an upright text host in the center of its preset border slot. */
   private attachTextAtSlot(
     view: Spine,
     text: Text,
@@ -655,7 +663,7 @@ export class JackpotTowerView extends Container {
       throw new Error(`Missing authored Jackpot text slot: ${slotName}`);
     }
     const host = new Container();
-    // Spine 的骨骼矩阵是 Y 向上，而 Pixi 文本是 Y 向下。仅反映主机：其位置仍然是原始作者BoundingBox中心。
+    // Spine 的骨骼矩阵是 Y 向上，而 Pixi 文本是 Y 向下。仅反映主机：其位置仍然是原始作者BoundingBox中心。 / English: Spine's bone matrix is ​​Y up, while Pixi text is Y down. Reflects host only: its location remains the original author's BoundingBox center.
     host.scale.set(1, -1);
     host.addChild(text);
     slotContainer.addChild(host);
@@ -673,7 +681,7 @@ export class JackpotTowerView extends Container {
     const slot = panel.view.skeleton.findSlot(slotName);
     if (!slot) return;
     this.fitText(text, maxWidth);
-    // 宿主已经被活槽骨改造了。将其本地来源保留在作者BoundingBox中心；主机上的 Y 反射仅修正字形方向，不会改变原点。
+    // 宿主已经被活槽骨改造了。将其本地来源保留在作者BoundingBox中心；主机上的 Y 反射仅修正字形方向，不会改变原点。 / English: The host has been transformed by living groove bones. Keeps its local origin at the center of the Author BoundingBox; the Y reflection on the host only corrects the glyph direction and does not change the origin.
     const attachment = slot.getAttachment() as { vertices?: ArrayLike<number> } | null;
     const vertices = attachment?.vertices;
     if (!vertices || vertices.length < 2) {
@@ -695,7 +703,7 @@ export class JackpotTowerView extends Container {
   }
 
   private fitText(text: Text, maxWidth: number): number {
-    // 在应用此帧的实时 Spine 变换之前重置为拟合基线。当尾部从脉冲返回到空闲状态时，这一点至关重要。
+    // 在应用此帧的实时 Spine 变换之前重置为拟合基线。当尾部从脉冲返回到空闲状态时，这一点至关重要。 / English: Resets to the fitted baseline before applying this frame's real-time Spine transform. This is critical when the tail returns from pulse to idle state.
     text.scale.set(1);
     text.rotation = 0;
     if (text.width > maxWidth) text.scale.x = maxWidth / text.width;

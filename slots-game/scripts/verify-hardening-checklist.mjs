@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { PERSONAL_PROJECT_NOTICE } from "./verify-personal-project-docs.mjs";
 
 export const HARDENING_CHECKLIST_TITLE = "# 前后端持续优化加固清单";
+export const HARDENING_CHECKLIST_ENGLISH_SUMMARY_HEADING = "## English summary / 英文摘要";
 export const HARDENING_CHECKLIST_MINIMUM_ITEMS = 933;
 export const HARDENING_CHECKLIST_SECTIONS = Object.freeze([
   "前端架构",
@@ -46,9 +47,26 @@ export function validateHardeningChecklist(source, options = {}) {
   const requiredSections = options.requiredSections ?? HARDENING_CHECKLIST_SECTIONS;
   const minimumItems = options.minimumItems ?? HARDENING_CHECKLIST_MINIMUM_ITEMS;
   const canonicalPreamble = `${HARDENING_CHECKLIST_TITLE}\n\n${PERSONAL_PROJECT_NOTICE}\n\n`;
-  const checklistSource = source.startsWith(canonicalPreamble)
-    ? `${HARDENING_CHECKLIST_TITLE}\n\n${source.slice(canonicalPreamble.length)}`
-    : source;
+  let checklistSource = source;
+  if (source.startsWith(canonicalPreamble)) {
+    let body = source.slice(canonicalPreamble.length);
+    if (body.startsWith(`${HARDENING_CHECKLIST_ENGLISH_SUMMARY_HEADING}\n`)) {
+      const summaryMatch = body.match(
+        /^## English summary \/ 英文摘要\n\n([^\n]+(?:\n[^\n]+)*)\n\n(?=## )/u,
+      );
+      if (summaryMatch === null) {
+        throw new Error("加固清单英文摘要格式不符合固定契约");
+      }
+      const summary = summaryMatch[1];
+      const englishWords = summary.match(/\b[A-Za-z][A-Za-z'-]*\b/gu) ?? [];
+      const sentenceCount = summary.match(/[.!?](?=\s|$)/gu)?.length ?? 0;
+      if (/\p{Script=Han}/u.test(summary) || englishWords.length < 20 || sentenceCount < 3) {
+        throw new Error("加固清单英文摘要必须包含至少三句实质英文说明");
+      }
+      body = body.slice(summaryMatch[0].length);
+    }
+    checklistSource = `${HARDENING_CHECKLIST_TITLE}\n\n${body}`;
+  }
   const lines = checklistSource.split("\n");
   if (lines.at(-1) === "") lines.pop();
   if (lines[0] !== HARDENING_CHECKLIST_TITLE) {

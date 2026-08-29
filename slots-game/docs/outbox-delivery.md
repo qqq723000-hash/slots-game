@@ -1,9 +1,13 @@
-# 事务型发件箱 HTTP 投递
+# Transactional outbox HTTP delivery / 事务型发件箱 HTTP 投递
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+The RGS writes each domain event to `rgs_outbox` in the same PostgreSQL transaction as the authoritative state change, then delivers immutable events through the versioned HTTPS sink with bounded at-least-once semantics. Production configuration fails closed without the required endpoint and signing key, while disabling delivery in development or pre-production does not mark rows as published. This transport contract does not prove that an audit receiver is suitable for production; the selected sink still requires conformance, authentication, retention, access-control, reconciliation, capacity, and failure-injection acceptance.
 
 状态：运行时契约 `rgs-outbox-http-v1`
 最后更新：2026-07-26

@@ -1,4 +1,4 @@
-// @ts-expect-error Vitest 在 Node 中运行；浏览器生产版 tsconfig 刻意省略 Node 全局类型。
+// @ts-expect-error Vitest 在 Node 中运行；浏览器生产版 tsconfig 刻意省略 Node 全局类型。 / English: @ts-expect-error Vitest runs in Node; the browser production version tsconfig deliberately omits the Node global type.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { SessionOpened } from "../src/app/state/types";
@@ -477,7 +477,7 @@ describe("PC, phone, and tablet help layout", () => {
     expect(geometry.projectedWidthPx).toBeLessThanOrEqual(width);
     expect(geometry.scrollWidthPx).toBeLessThanOrEqual(width);
     expect(geometry.projectedHeightPx).toBe(authoredHeight * geometry.scaleY);
-    // 30/40 与 45/60 都留在作者层，绝不按 viewport 改字号或行盒。
+    // 30/40 与 45/60 都留在作者层，绝不按 viewport 改字号或行盒。 / English: 30/40 and 45/60 are kept at the author level, and the font size or line box will never be changed according to the viewport.
     expect(PRIMAL_HELP_AUTHORING.body).toMatchObject({ fontSizePx: 30, lineHeightPx: 40 });
     expect(PRIMAL_HELP_AUTHORING.title).toMatchObject({ fontSizePx: 45, lineHeightPx: 60 });
   });

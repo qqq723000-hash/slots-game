@@ -1,9 +1,13 @@
-# Primal Rampage 三端页面拓扑
+# Primal Rampage cross-device page topology / Primal Rampage 三端页面拓扑
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document defines the shared page topology for desktop, phone, and tablet presentations, including the outer viewport, authored surface, fixed visual layers, controls, status areas, and help overlays. Pixi, DOM, menu, and input layers use one uniformly scaled coordinate system, while letterbox or pillarbox regions remain non-interactive and continuous mobile layouts follow the actual viewport ratio. The topology is a repository implementation baseline rather than proof of real-device compatibility, accessibility sign-off, asset authorization, browser-matrix acceptance, or production visual approval.
 
 ## 外层视口
 

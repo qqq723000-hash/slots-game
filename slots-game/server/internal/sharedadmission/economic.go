@@ -21,6 +21,9 @@ const (
 	// 复用既有 v2 string-token-bucket keyspace，不引入第二套 keyspace/HMAC；
 	// TIME/MSET/PEXPIRE 命令必须先通过受保护的 v2-basic→v2-economic additive
 	// ACL plan 同时扩到 A/B 两个用户，再发布包含启动 canary 的新 runtime。
+	// English: Reuse the existing v2 string-token-bucket keyspace without introducing a second set of keyspace/HMAC;
+	// the TIME/MSET/PEXPIRE command must first be expanded to both users A/B through the protected
+	// v2-basic→v2-economic additive ACL plan, and then a new runtime including startup canary can be released.
 	economicKeyPrefix       = "rgs:shared-admission:v2:"
 	economicOperatorLimited = 1
 	economicBackendLimited  = 2
@@ -30,6 +33,10 @@ const (
 // 后端两个成本桶。同一物理后端的两个 key 使用同一个 HMAC 派生 hash tag，
 // 在 Cluster 模式下落入同一 slot；不同后端可分散到不同 slot。
 // 任一桶不足时不写任何状态；成功时两个桶一起扣除同一 costUnits。
+// English: economicTokenBucketScriptBody approves both the operator and physical wallet backend cost buckets in
+// one Valkey execution. Two keys on the same physical backend use the same HMAC derived hash tag and fall into the
+// same slot in Cluster mode; different backends can be dispersed to different slots. No status is written when
+// either bucket is insufficient; when successful, the same costUnits will be deducted from both buckets.
 const economicTokenBucketScriptBody = `
 local function load_bucket(key, capacity, rate, now_ms)
   if not capacity or not rate or capacity < 1000 or capacity > 1000000000 or
@@ -123,6 +130,9 @@ return {1, 0, 0}
 
 // SHA-1 只用于 Valkey SCRIPT 内容寻址，不作为安全判断。以字节形式
 // 保存公开摘要，避免供应链扫描器将高熵内容地址误识别为密钥。
+// English: SHA-1 is only used for Valkey SCRIPT content addressing and is not used as a security judgment. Save
+// the public digest in bytes to prevent supply chain scanners from misidentifying high-entropy content addresses
+// as keys.
 var economicTokenBucketScriptSHA1 = hex.EncodeToString([]byte{
 	0xab, 0x29, 0xf2, 0x1e, 0x5c, 0xc5, 0x5b, 0xbc, 0xf1, 0xb4,
 	0x9f, 0xf6, 0x37, 0x3d, 0x2e, 0xce, 0x5e, 0xe4, 0x89, 0xa2,
@@ -141,6 +151,9 @@ type EconomicConfig struct {
 // EconomicRoute 来自启动时已批准的 operator -> wallet route 绑定。当前 BackendID
 // 是规范化 route origin（scheme://host:port），不能自动推断多个 DNS alias 是否共享
 // 供应商计费额度；原始值不进入 Valkey key、日志或指标。
+// English: EconomicRoute comes from the operator -> wallet route binding that was approved on startup. The current
+// BackendID is a normalized route origin (scheme://host:port) and cannot automatically infer whether multiple DNS
+// aliases share vendor billing credits; the original value does not enter the Valkey key, logs, or metrics.
 type EconomicRoute struct {
 	OperatorID string
 	BackendID  string
@@ -274,6 +287,9 @@ func economicPolicyArguments(policy EconomicPolicy) ([2]string, error) {
 
 // exactMilliRate 禁止静默舍入共享准入预算。四个 ULP 只吸收 strconv/IEEE-754
 // 在精确 0.001 单位附近的表示噪声；真实包含第四位小数的运营值会在启动时被拒绝。
+// English: exactMilliRate disables silent rounding of shared admission budgets. The four ULPs only absorb
+// strconv/IEEE-754 representation noise around exactly 0.001 units; true operating values containing the fourth
+// decimal place are rejected at startup.
 func exactMilliRate(rate float64) (int64, bool) {
 	scaled := rate * 1_000
 	rounded := math.Round(scaled)
@@ -293,6 +309,9 @@ func economicDigest(key []byte, identity string) string {
 // admitCost 预留固定供应商调用成本单位；当前 Coordinator 只在首次合法、
 // 可持久化的 Spin round 上调用 costUnits=1。成本单位来自受审核运营配置，
 // 不得从 bet 金额或未验证请求字段推断。
+// English: admitCost reserves fixed supplier call cost units; currently the Coordinator only calls costUnits=1 on
+// the first legal, durable Spin round. Cost units are derived from the audited operational configuration and may
+// not be inferred from bet amounts or unvalidated request fields.
 func (admission *EconomicAdmission) admitCost(
 	parent context.Context,
 	operatorID string,
@@ -388,6 +407,9 @@ func (admission *EconomicAdmission) AdmitNewEconomicIntent(
 
 // Check 执行 TTL 约一秒的真实 canary，而不只做 PING；API 接收流量前会验证
 // 生产 ACL 已允许 EVAL/EVALSHA 及 GET/TIME/MSET/PEXPIRE。随机键不含业务身份。
+// English: Check performs a real canary with a TTL of about one second, not just PING; the API will verify that
+// the production ACL has allowed EVAL/EVALSHA and GET/TIME/MSET/PEXPIRE before receiving traffic. Random keys do
+// not contain business identities.
 func (admission *EconomicAdmission) Check(parent context.Context) error {
 	if admission == nil || admission.executor == nil {
 		if admission != nil && admission.metrics != nil {

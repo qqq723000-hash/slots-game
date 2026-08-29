@@ -1,9 +1,15 @@
-# 浏览器支持与验收矩阵
+# 浏览器支持与验收矩阵 / Browser support and acceptance matrix
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document defines the supported browser capability baseline, compile targets, repository test evidence, and adopter acceptance matrix without claiming support for every historical browser.
+Compile targets constrain generated JavaScript and CSS but do not prove runtime compatibility; the classic preflight must fail closed before module loading or session exchange, and release acceptance must exercise real assets and the complete transaction flow.
+Claims for minimum or previous browser versions, real phones and tablets, decoding, WebGL, audio, layout, accessibility, and device performance remain external release gates that require tests on the stated targets.
 
 本项目面向满足下列能力基线的主流现代浏览器，不使用无法验证的“所有历史浏览器”表述。
 JavaScript 与 CSS 的**编译兼容目标**在 `web/vite.config.ts` 中显式固定，升级 Vite 不得静默抬高目标版本；

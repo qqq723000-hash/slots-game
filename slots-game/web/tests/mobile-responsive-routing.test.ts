@@ -1,4 +1,4 @@
-// @ts-nocheck -- 读取官方 JSON 资源并校验运行时投影，Node 内置类型不进入生产 tsconfig。
+// @ts-nocheck -- 读取官方 JSON 资源并校验运行时投影，Node 内置类型不进入生产 tsconfig。 / English: @ts-nocheck -- Read official JSON resources and verify runtime projections. Node built-in types do not enter production tsconfig.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
@@ -120,7 +120,7 @@ describe("mobile renderer projection contracts", () => {
     });
     expect(snapshot.fpsTransforms?.blackOverlay).toEqual({ x: 195, y: 422, scale: 0.39 });
     expect(snapshot.fpsTransforms?.logo).toEqual({ x: 195, y: 227, scale: 0.4875 });
-    // 同一内容最小边界在 gameplayRegion 内会居中到 y=380。
+    // 同一内容最小边界在 gameplayRegion 内会居中到 y=380。 / English: The minimum bounds for the same content will be centered at y=380 within the gameplayRegion.
     expect(snapshot.fpsTransforms?.content.y).not.toBe(380);
   });
 

@@ -26,13 +26,13 @@ import { validateReleaseRgsBuildEnvironment } from "../src/validateReleaseRgsBui
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distributionRoot = distributionRootFromArguments(process.argv.slice(2));
 const bootstrapFailureText = "The game could not start. Please try again.";
-// 该时限覆盖隔离 Chrome 的首次资产解析、WebGL 装配和 200ms 减少动态介绍；
-// 它不是线上启动性能预算。冷缓存机器仍必须在 30 秒内完成，否则门禁失败。
+// 该时限覆盖隔离 Chrome 的首次资产解析、WebGL 装配和 200ms 减少动态介绍； / English: This timeframe covers isolating Chrome's first asset parsing, WebGL assembly, and 200ms reduced dynamic introduction;
+// 它不是线上启动性能预算。冷缓存机器仍必须在 30 秒内完成，否则门禁失败。 / English: It's not an online launch performance budget. The cold cache machine must still complete within 30 seconds or the gate will fail.
 const startupTimeoutMs = 30_000;
 const transactionTimeoutMs = 25_000;
 const commandTimeoutMs = Math.max(startupTimeoutMs, transactionTimeoutMs) + 5_000;
-// 文档创建前只观察 policy 名称是否匹配以及创建次数。探针不保存 createPolicy 的
-// 返回值，也不把 factory、policy 或铸造函数发布到全局对象。
+// 文档创建前只观察 policy 名称是否匹配以及创建次数。探针不保存 createPolicy 的 / English: Before document creation, only observe whether the policy name matches and the number of creation times. Probe does not save createPolicy's
+// 返回值，也不把 factory、policy 或铸造函数发布到全局对象。 / English: Return a value, nor publish factory, policy, or casting functions to the global object.
 const TRUSTED_TYPES_POLICY_OBSERVATION_PROBE_SOURCE = `(() => {
   let staticHtmlPolicyCreateCount = 0;
   let unexpectedPolicyCreateCount = 0;
@@ -145,8 +145,8 @@ const IMAGE_DECODE_OBSERVATION_PROBE_SOURCE = `(() => {
     value: observation,
   });
 })();`;
-// 真实设备尺寸不是白名单。前十三项覆盖主流手机/平板纵横态，末两项专门证明
-// 超出 9:22/22:9 的病态视口只会产生等比黑边，不会拉伸设计域。
+// 真实设备尺寸不是白名单。前十三项覆盖主流手机/平板纵横态，末两项专门证明 / English: Real device sizes are not whitelisted. The first thirteen items cover mainstream mobile phone/tablet vertical and horizontal situations, and the last two items specifically prove
+// 超出 9:22/22:9 的病态视口只会产生等比黑边，不会拉伸设计域。 / English: Pathological viewports beyond 9:22/22:9 will only produce proportional black borders and will not stretch the design domain.
 const CONTINUOUS_VIEWPORTS = Object.freeze([
   Object.freeze({ width: 360, height: 640 }),
   Object.freeze({ width: 375, height: 812 }),
@@ -168,7 +168,7 @@ const DESKTOP_TRANSITION_VIEWPORTS = Object.freeze([
   Object.freeze({ width: 1_024, height: 768 }),
   Object.freeze({ width: 1_366, height: 1_024 }),
   Object.freeze({ width: 1_440, height: 900 }),
-  // 事务截图最终回到原始桌面设计面，避免响应式门禁改变表现截图的基准。
+  // 事务截图最终回到原始桌面设计面，避免响应式门禁改变表现截图的基准。 / English: Transaction screenshots ultimately return to the original desktop design surface, preventing responsive access from changing the baseline of performance screenshots.
   Object.freeze({ width: 1_280, height: 720 }),
 ]);
 const OFFICIAL_HELP_VIEWPORTS = Object.freeze([
@@ -187,7 +187,7 @@ const MOBILE_DESIGN_LONG_EDGE = 844;
 const MOBILE_MIN_DESIGN_ASPECT = 9 / 22;
 const MOBILE_MAX_DESIGN_ASPECT = 22 / 9;
 const TABLET_SHORT_EDGE_MIN = 600;
-// currencyExponent=2 下 int64 最大 minor value 的真实玩家显示值。
+// currencyExponent=2 下 int64 最大 minor value 的真实玩家显示值。 / English: Real player display value of int64 maximum minor value under currencyExponent=2.
 const MAXIMUM_STATUS_VALUE = "92233720368547758.07";
 const PRESENTATION_APPROVED_BINDING = Object.freeze({
   gameId: "iron-colossus",
@@ -435,6 +435,8 @@ process.stdout.write(
  * 浏览器门禁使用一份经批准的真实帮助绑定，同时保留受控事务夹具对其内部
  * browser-gate 绑定的严格断言。双向翻译只发生在隔离 CDP 传输边界；玩家页
  * 看到的 exchange/spin 始终是同一份批准绑定，完整 Spin/ACK 顺序仍由原夹具核验。
+ *
+ * 英文 / English: Browser-gate uses a copy of the approved true helper binding, while retaining the controlled transaction fixture's strict assertions on its internal browser-gate binding. Bidirectional translation only occurs at isolated CDP transport boundaries; the exchange/spin seen by the player page is always the same approved binding, and the complete Spin/ACK sequence is still verified by the original fixture.
  */
 function createPresentationApprovedFixture(fixture) {
   const translateRequest = (parameters) => {
@@ -553,8 +555,8 @@ async function productionModulePaths(root, parent = root) {
     if (entry.isDirectory()) paths.push(...await productionModulePaths(root, path));
     else if (entry.isFile() && entry.name.endsWith(".js")) {
       const releasePath = relative(root, path).split(sep).join("/");
-      // browser-preflight.js 是先于模块入口执行且锁定全局交接的经典脚本；它由
-      // verify-browser-preflight-build 单独做字节/顺序校验，禁止在此用 import() 二次执行。
+      // browser-preflight.js 是先于模块入口执行且锁定全局交接的经典脚本；它由 / English: browser-preflight.js is a classic script that is executed before the module entry and locks the global handover; it is composed of
+      // verify-browser-preflight-build 单独做字节/顺序校验，禁止在此用 import() 二次执行。 / English: verify-browser-preflight-build does byte/sequence verification alone, and it is forbidden to use import() to execute it twice.
       if (releasePath.startsWith("assets/")) paths.push(`/${releasePath}`);
     }
   }
@@ -611,14 +613,14 @@ async function cleanupBrowserResources({ browser, pageSocket: socket, profileDir
   } catch (error) {
     capture(error);
   }
-  // 先终止 Chrome 释放其 HTTP/CDP 连接，再关闭本地静态服务器；各步骤独立失败闭合。
+  // 先终止 Chrome 释放其 HTTP/CDP 连接，再关闭本地静态服务器；各步骤独立失败闭合。 / English: First terminate Chrome to release its HTTP/CDP connection, and then close the local static server; each step fails to close independently.
   try {
     await stopChrome(browser);
   } catch (error) {
     capture(error);
   } finally {
-    // Crashpad 可能在 Chrome 主进程退出后继续继承 stderr 写端；主动销毁本门禁的读端，
-    // 避免孤儿 crashpad 让 Node 的事件循环永久等待管道 EOF。
+    // Crashpad 可能在 Chrome 主进程退出后继续继承 stderr 写端；主动销毁本门禁的读端， / English: Crashpad may continue to inherit the stderr write end after the Chrome main process exits; actively destroy the read end of this access control,
+    // 避免孤儿 crashpad 让 Node 的事件循环永久等待管道 EOF。 / English: Avoid orphan crashpads that make Node's event loop wait forever for pipe EOF.
     browser.stderr?.destroy();
   }
   try {
@@ -627,8 +629,8 @@ async function cleanupBrowserResources({ browser, pageSocket: socket, profileDir
     capture(error);
   }
   try {
-    // Chrome 主进程退出后，Linux 上的短命子进程仍可能在极短时间内关闭配置文件。
-    // 使用有界重试清理专用临时目录，既避免 CI 的 ENOTEMPTY 竞态，也不遗留浏览器状态。
+    // Chrome 主进程退出后，Linux 上的短命子进程仍可能在极短时间内关闭配置文件。 / English: Short-lived child processes on Linux may still close profiles within a very short time after the main Chrome process exits.
+    // 使用有界重试清理专用临时目录，既避免 CI 的 ENOTEMPTY 竞态，也不遗留浏览器状态。 / English: Use bounded retries to clean up dedicated temporary directories to avoid CI's ENOTEMPTY race conditions and not leave behind browser state.
     await rm(profile, {
       recursive: true,
       force: true,
@@ -664,8 +666,8 @@ function findChromeExecutable() {
 }
 
 function launchChrome(executable, profileDirectoryValue) {
-  // Linux CI runner 没有实体 GPU；只对隔离的本地发布字节启用 Chrome 自带软件 WebGL，
-  // macOS 验收仍走真实图形栈，生产浏览器不会继承此参数。
+  // Linux CI runner 没有实体 GPU；只对隔离的本地发布字节启用 Chrome 自带软件 WebGL， / English: The Linux CI runner does not have a physical GPU; Chrome's own software WebGL is only enabled for isolated local release bytes.
+  // macOS 验收仍走真实图形栈，生产浏览器不会继承此参数。 / English: macOS acceptance still uses the real graphics stack, and production browsers will not inherit this parameter.
   const softwareWebglArguments = process.platform === "linux"
     ? ["--enable-unsafe-swiftshader"]
     : [];
@@ -853,7 +855,7 @@ async function verifyBootstrap(
           errorReason: "Failed",
         });
       } catch {
-        // 首个协议失败仍是根因；浏览器调试连接的后续失败不能覆盖它。
+        // 首个协议失败仍是根因；浏览器调试连接的后续失败不能覆盖它。 / English: The first protocol failure is still the root cause; subsequent failures of the browser debug connection cannot override it.
       }
       throw transportFailure;
     }
@@ -870,8 +872,8 @@ async function verifyBootstrap(
       }],
     }),
   ]);
-  // RGS 在后台/隐藏页面上按设计停放一次性 launch code。浏览器验收模拟玩家
-  // 实际打开的活动游戏页，必须先将目标前置，否则只会测到正确的后台保护分支。
+  // RGS 在后台/隐藏页面上按设计停放一次性 launch code。浏览器验收模拟玩家 / English: RGS parks one-time launch code on background/hidden pages by design. Browser acceptance of simulated players
+  // 实际打开的活动游戏页，必须先将目标前置，否则只会测到正确的后台保护分支。 / English: The actual open active game page must have the target in front, otherwise only the correct background protection branch will be detected.
   await send("Page.bringToFront");
   await send("Page.addScriptToEvaluateOnNewDocument", {
     source: TRUSTED_TYPES_POLICY_OBSERVATION_PROBE_SOURCE,
@@ -1043,16 +1045,16 @@ async function verifyBootstrap(
     `,
   });
   await setBrowserProbePhase(send, "opening-overlay");
-  // 冷缓存下模块入口的首个装配快照可能先于重量级渲染器完成。只要模块没有
-  // 明确失败，就由开场 overlay 门禁在自己的有界窗口继续等待并执行真实点击；
-  // 禁止因为一个过早的 rendererReady=false 快照跳过 Continue 后再误报 intro 卡死。
+  // 冷缓存下模块入口的首个装配快照可能先于重量级渲染器完成。只要模块没有 / English: The first assembly snapshot of a module entry under cold cache may be completed before the heavyweight renderer. As long as the module does not
+  // 明确失败，就由开场 overlay 门禁在自己的有界窗口继续等待并执行真实点击； / English: If the clear failure occurs, the opening overlay access control will continue to wait in its own bounded window and perform real clicks;
+  // 禁止因为一个过早的 rendererReady=false 快照跳过 Continue 后再误报 intro 卡死。 / English: It is forbidden to skip Continue due to a premature rendererReady=false snapshot and then falsely report that the intro is stuck.
   const openingOverlayVerification = await verifyOpeningOverlayLayout(
     send,
     transactionFixture,
     () => transportFailure,
   );
   const openingOverlayEvidence = openingOverlayVerification?.evidence ?? null;
-  // 弹层辅助流程可能直接返回已就绪状态；快速返回和慢速轮询都必须先验证导航计数。
+  // 弹层辅助流程可能直接返回已就绪状态；快速返回和慢速轮询都必须先验证导航计数。 / English: The elastic layer auxiliary process may directly return to the ready state; both fast return and slow polling must first verify the navigation count.
   if (executionContextsCleared !== expectedExecutionContextsCleared) {
     throw new Error(`生产浏览器主执行上下文被意外重建：${JSON.stringify({
       executionContextsCleared,
@@ -1083,9 +1085,9 @@ async function verifyBootstrap(
     throw new Error("生产浏览器事务夹具没有启用系统级减少动态效果配置");
   }
 
-  // 资产会话固定为 desktop；显式 launcher 通道也必须让触屏 PC 保持 PC 构图。
-  // 浏览器矩阵只通过更高优先级的 layout= 测试接缝在同一文档切换构图，期间不
-  // 导航、不刷新，也不允许预先消费 Spin/ACK 事务。
+  // 资产会话固定为 desktop；显式 launcher 通道也必须让触屏 PC 保持 PC 构图。 / English: Asset session is fixed to desktop; explicit launcher channel is also required for touch screen PC to maintain PC composition.
+  // 浏览器矩阵只通过更高优先级的 layout= 测试接缝在同一文档切换构图，期间不 / English: The browser matrix only tests seams through higher priority layout= switching compositions in the same document, not during
+  // 导航、不刷新，也不允许预先消费 Spin/ACK 事务。 / English: Navigates, does not refresh, and does not allow pre-consuming Spin/ACK transactions.
   const preTransitionLayout = await readViewportLayout(send);
   if (!preTransitionLayout || preTransitionLayout.frameCount !== 1
     || !preTransitionLayout.nodeIdentityPreserved
@@ -1383,8 +1385,8 @@ async function setTouchLayoutCapability(send, enabled) {
     enabled,
     ...(enabled ? { maxTouchPoints: 5 } : {}),
   });
-  // CDP 会触发 pointer media-query change；给应用一帧机会同步布局通道，首个
-  // setDeviceMetricsOverride 随后仍会等待两次稳定采样，不依赖这个短延迟判绿。
+  // CDP 会触发 pointer media-query change；给应用一帧机会同步布局通道，首个 / English: CDP will trigger pointer media-query change; give the application a frame opportunity to synchronize the layout channel, the first
+  // setDeviceMetricsOverride 随后仍会等待两次稳定采样，不依赖这个短延迟判绿。 / English: setDeviceMetricsOverride will then still wait for two stable samples and does not rely on this short delay to determine green.
   await delay(50);
 }
 
@@ -1423,8 +1425,8 @@ async function setBrowserProbePhase(send, phase) {
 }
 
 async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
-  // 开场预览位于完整预加载之后；真实字体、Spine 与 GPU 首次编译不得被一个
-  // 比正式启动门禁更短的任意 5s 窗口误判为不可达。
+  // 开场预览位于完整预加载之后；真实字体、Spine 与 GPU 首次编译不得被一个 / English: Opening preview after full preload; real fonts, Spine and GPU first compilation must not be
+  // 比正式启动门禁更短的任意 5s 窗口误判为不可达。 / English: Any 5s window shorter than the official activation of access control is mistakenly judged as unreachable.
   const overlayDeadline = Date.now() + startupTimeoutMs;
   let opening = null;
   while (Date.now() < overlayDeadline) {
@@ -1447,8 +1449,8 @@ async function verifyOpeningOverlayLayout(send, fixture, transportFailure) {
   const expectedTransaction = fixture.snapshot();
   const steps = [];
 
-  // URL 中的 channel=desktop 是正式 launcher 合约。即使浏览器暴露 coarse pointer，
-  // Feature Preview 与游戏根也必须先保持 PC 构图，避免桌面资产落入移动坐标域。
+  // URL 中的 channel=desktop 是正式 launcher 合约。即使浏览器暴露 coarse pointer， / English: channel=desktop in the URL is the official launcher contract. Even if the browser exposes the coarse pointer,
+  // Feature Preview 与游戏根也必须先保持 PC 构图，避免桌面资产落入移动坐标域。 / English: Feature Preview and game root must also maintain the PC composition first to prevent desktop assets from falling into the mobile coordinate domain.
   await setTouchLayoutCapability(send, true);
   const desktopTouchViewport = Object.freeze({ width: 1_440, height: 900 });
   await send("Emulation.setDeviceMetricsOverride", {
@@ -1771,8 +1773,8 @@ async function verifyOfficialHelpLayout(send, fixture, options) {
       || help.horizontalOverflowDataset !== "false") {
       throw new Error(`正式浏览器帮助页没有发布单一等比投影契约：${detail()}`);
     }
-    // 作者面保持未缩放的 750px 布局，projection 使用 overflow:clip 封装它；因此
-    // 只把玩家实际可滚动的 viewport 当作溢出边界，不能把内部作者坐标误判成滚动。
+    // 作者面保持未缩放的 750px 布局，projection 使用 overflow:clip 封装它；因此 / English: The author surface remains in an unscaled 750px layout, and the projection wraps it with overflow:clip; therefore
+    // 只把玩家实际可滚动的 viewport 当作溢出边界，不能把内部作者坐标误判成滚动。 / English: Only the player's actual scrollable viewport is regarded as the overflow boundary, and the internal author coordinates cannot be misjudged as scrolling.
     if (help.viewportScrollWidth > help.viewportClientWidth + 1) {
       throw new Error(`正式浏览器帮助页发生水平滚动溢出：${detail()}`);
     }
@@ -1914,8 +1916,8 @@ async function setGameMenuScrollPosition(send, position) {
         })()
       `,
     });
-    // 冷缓存下帮助页素材与投影可能在首次滚动后继续改变 scrollHeight。
-    // 等一帧布局窗口再取样，并要求最大滚动位置连续稳定，避免把旧最大值误判为底边。
+    // 冷缓存下帮助页素材与投影可能在首次滚动后继续改变 scrollHeight。 / English: Help page materials and shadows under cold cache may continue to change scrollHeight after the first scroll.
+    // 等一帧布局窗口再取样，并要求最大滚动位置连续稳定，避免把旧最大值误判为底边。 / English: Wait for one frame of the layout window before sampling again, and require the maximum scroll position to be continuously stable to avoid misjudgment of the old maximum value as the bottom edge.
     await delay(50);
     metrics = await evaluateValue(send, {
       returnByValue: true,
@@ -2486,7 +2488,7 @@ function assertViewportGeometry(snapshot, viewport, surface, channel) {
   if (!matrix || matrix.is2D !== true) {
     throw new Error(`生产布局没有唯一二维缩放矩阵：${detail()}`);
   }
-  // getComputedStyle() 会把 CSS matrix 小数序列化为约 6 位；数据集仍保持完整精度。
+  // getComputedStyle() 会把 CSS matrix 小数序列化为约 6 位；数据集仍保持完整精度。 / English: getComputedStyle() will serialize the CSS matrix decimal to about 6 digits; the dataset still maintains full precision.
   requireNear(matrix.a, expected.scale, 0.000_01, "矩阵 scaleX", detail);
   requireNear(matrix.d, expected.scale, 0.000_01, "矩阵 scaleY", detail);
   requireNear(matrix.b, 0, 0.000_001, "矩阵 skewY", detail);
@@ -2683,7 +2685,7 @@ async function verifyMaximumStatusValues(send, viewport) {
         try {
           panel.dataset.zeroWin = 'false';
           // 直接文本探针绕过 DomOverlay setter，因此必须同时模拟 setter 发布的
-          // 固定低基数布局状态；不伪造或改变 RGS/玩家经济状态。
+          // 固定低基数布局状态；不伪造或改变 RGS/玩家经济状态。 / English: Direct text probes bypass the DomOverlay setter, so must also mock the setter posted Fixed low base layout status; does not fake or change RGS/player economy status.
           panel.dataset.moneyDensity = 'extreme';
           for (const { element } of originals) {
             element.textContent = maximum;

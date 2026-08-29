@@ -1,9 +1,15 @@
-# 前后端核心架构评估
+# 前后端核心架构评估 / Frontend and backend core architecture assessment
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This assessment distinguishes capabilities implemented in the current source tree from planned evolution and evidence that only a formal environment or third party can provide.
+The browser remains presentation-only, the RGS and PostgreSQL model owns economic state and idempotency, Valkey protects admission rather than money, and recovery continues the same persisted intent without rerunning RNG or inferring outcomes from error text.
+Transfer or split-wallet flows and cross-shard authority are not implemented, while third-party wallet certification, real-device validation, production capacity, disaster recovery, cloud infrastructure, and regulatory approval remain external gates.
 
 状态：当前源码架构评估与演进契约
 

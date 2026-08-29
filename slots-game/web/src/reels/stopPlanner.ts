@@ -12,7 +12,7 @@ export interface StopPlanOptions {
 
 export function createStopPlan(reelCount: number, options: StopPlanOptions = {}): ReelStopStep[] {
   if (!Number.isSafeInteger(reelCount) || reelCount <= 0) throw new Error("reelCount must be a positive integer");
-  // 捕获的 Ug 停止序列器：首先在旋转 +1500ms 处制动，随后每 300ms 卷绕一次，然后 300ms 制动加上 350ms 预设的弹跳。
+  // 捕获的 Ug 停止序列器：首先在旋转 +1500ms 处制动，随后每 300ms 卷绕一次，然后 300ms 制动加上 350ms 预设的弹跳。 / English: Captured Ug stop sequencer: first brake at +1500ms of spin, then wind every 300ms, then 300ms of brake plus 350ms of preset bounce.
   const firstDelayMs = options.firstDelayMs ?? PRIMAL_REEL_TIMING_MS.firstBrake;
   const reelGapMs = options.reelGapMs ?? PRIMAL_REEL_TIMING_MS.reelGap;
   const settleMs = options.settleMs

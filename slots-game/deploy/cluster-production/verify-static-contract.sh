@@ -1,5 +1,7 @@
 #!/bin/sh
 # 集群生产契约必须对缺失依赖、宽松网络和可变镜像失败闭合。
+# English: Cluster artifactsion contracts must be closed to missing dependencies, loose networks, and mutable
+# image failures.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -92,6 +94,16 @@ grep -F 'RGS_DATABASE_URL_FILE=/run/cluster-contract/database-url' "$script_dire
   fail '集群镜像动态契约没有验证 Secret 文件正向加载'
 grep -F -- '--entrypoint /secret-materializer' "$script_directory/verify-image-runtime-contract.sh" >/dev/null ||
   fail '集群镜像动态契约没有验证 0400 共享准入凭据物化'
+grep -F 'docker volume create "$materializer_volume"' "$script_directory/verify-image-runtime-contract.sh" >/dev/null ||
+  fail '集群镜像动态契约没有在 Docker named volume 中验证 Linux 凭据权限'
+grep -F 'docker cp "$materializer_container:/run/materializer/destination/secret" -' "$script_directory/verify-image-runtime-contract.sh" >/dev/null ||
+  fail '集群镜像动态契约没有读取容器侧凭据元数据'
+grep -F 'member.mode != 0o400' "$script_directory/verify-image-runtime-contract.sh" >/dev/null ||
+  fail '集群镜像动态契约没有强制容器侧 0400 权限'
+grep -F 'payload != b"materialized-secret\n"' "$script_directory/verify-image-runtime-contract.sh" >/dev/null ||
+  fail '集群镜像动态契约没有验证物化凭据内容'
+grep -F "fail '/secret-materializer 错误覆盖了已有凭据'" "$script_directory/verify-image-runtime-contract.sh" >/dev/null ||
+  fail '集群镜像动态契约没有验证凭据覆盖失败闭合'
 test "$(grep -F -c ':/THIRD_PARTY_NOTICES.txt' "$script_directory/verify-image-runtime-contract.sh" || true)" -eq 2 ||
   fail '集群镜像动态契约没有分别提取两个 Go 第三方许可声明'
 grep -F 'prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893' "$script_directory/verify-prometheus-rule-contract.sh" >/dev/null ||
@@ -159,6 +171,8 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 # 默认值不携带外部 Secret、域名、镜像摘要和出口网段，因此必须拒绝直接渲染。
+# English: The default value does not carry external Secret, domain name, image digest and export network
+# segment, so direct rendering must be rejected.
 if "$helm_binary" template slots "$chart_directory" --namespace slots-production >/dev/null 2>&1; then
   fail '未配置的默认 values 被错误接受'
 fi
@@ -329,6 +343,8 @@ ruby -ryaml -e '
 ' "$rendered_root" "$shared_rotated_root"
 
 # 告警契约必须有明确的红灯变体：删除重放规则或弱化 increase 表达式都必须失败。
+# English: The alert contract must have an explicit red light variant: either removing the replay rule or
+# weakening the increase expression must fail.
 replay_alert_red_root="$rendered_directory/replay-alert-red"
 cp -R "$rendered_root" "$replay_alert_red_root"
 ruby -ryaml -e '
@@ -554,6 +570,8 @@ if grep -F 'local-operator' "$script_directory/Dockerfile.services" >/dev/null; 
 fi
 
 # 关键安全边界的负向变体必须在 schema 或模板校验阶段被拒绝。
+# English: Negative variants of critical security boundaries must be rejected during the schema or template
+# validation phase.
 for override in \
   'unexpected=true' \
   'images.rgs.digest=' \

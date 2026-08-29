@@ -1,9 +1,17 @@
-# PAYTABLE / Game Rules reference parity specification
+# 赔付表与游戏规则参考一致性规范 / PAYTABLE and Game Rules Reference Parity Specification
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## 中文摘要 / Chinese summary
+
+本规范定义赔付表和游戏规则的文案顺序、750 逻辑像素作者画布、滚动状态与无障碍行为，并要求不同视口只做等比投影。顶部和底部的 2500 倍最高奖励文案只能在服务端定义绑定且强制同一上限时显示，客户端不得推测隐藏的转轴权重、RTP 或概率。本地测试可以验证布局和绑定合同，运营方特定条款、商业数学包与认证仍属外部门禁。
+
+## English summary / 英文摘要
+
+This specification fixes the PAYTABLE and Game Rules copy order, the 750-logical-pixel authored surface, independent tab scroll state, and accessible responsive projection. The maximum-win statement may render only when the bound server definition enforces the same 2500-times round cap, and the client must not infer hidden reel weights, RTP, or probabilities. Local tests verify presentation and binding contracts, while operator-specific terms, commercial mathematics packages, rights approval, and certification remain external gates.
 
 ## Evidence boundary
 

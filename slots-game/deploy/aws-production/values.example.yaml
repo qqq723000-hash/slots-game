@@ -1,4 +1,6 @@
 # 该文件只展示 AWS 正式环境字段形状，不包含可部署的账号、域名、摘要或网络参数。
+# English: This file only shows the AWS artifactsion environment field shape and does not contain deployable
+# accounts, domain names, abstracts, or network parameters.
 images:
   rgs:
     repository: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/slots/rgs-runtime
@@ -7,6 +9,8 @@ images:
     repository: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/slots/rgs-migrator
     digest: sha256:2222222222222222222222222222222222222222222222222222222222222222
   # AWS 正式 Web 发布到私有 S3，并由 CloudFront OAC 读取；此镜像字段仅满足通用 Chart 模式，绝不会渲染。
+  # English: AWS artifactsion web publishing to private S3 and read by CloudFront OAC; this image field only
+  # satisfies the generic chart pattern and is never rendered.
   web:
     repository: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/slots/web-unused
     digest: sha256:3333333333333333333333333333333333333333333333333333333333333333
@@ -18,23 +22,31 @@ rgs:
     - https://slots.production.example.com
   runtime:
     # 与 ALB WAF 固定的 8 KiB body 检查窗口保持一致；不得放宽造成边缘检查盲区。
+    # English: Consistent with the ALB WAF's fixed 8 KiB body inspection window; it must not be relaxed to cause
+    # edge inspection blind spots.
     maxRequestBytes: 8192
   sharedAdmission:
     endpointURL: rediss://slots-production.example.cache.amazonaws.com:6379
 
 web:
   # Web 由 S3、CloudFront、OAC 和发布版本标识路由交付，EKS 中禁止创建 Web 工作负载。
+  # English: Web is delivered by S3, CloudFront, OAC, and release identity routing, and web workload creation is
+  # prohibited in EKS.
   enabled: false
 
 ingress:
   className: alb
   # 公网证书由 ACM 绑定到 ALB HTTPS 监听器；Kubernetes TLS Secret 必须关闭。
+  # English: The public certificate is bound to the ALB HTTPS listener by ACM; the Kubernetes TLS Secret must be
+  # turned off.
   tlsSecretEnabled: false
   apiHost: rgs.production.example.com
   apiHealthCheckPath: /healthz
   apiHealthCheckPort: 8081
   webHost: slots.production.example.com
   # 通用 Chart 模式仍要求名称；关闭 tlsSecretEnabled 后它们不得出现在任何渲染资源中。
+  # English: Generic Chart mode still requires names; they must not appear in any rendered resources when
+  # tlsSecretEnabled is turned off.
   apiTLSSecretName: unused-by-aws-alb
   webTLSSecretName: unused-by-s3-cloudfront
   tlsRedirectAnnotationKey: alb.ingress.kubernetes.io/ssl-redirect
@@ -53,6 +65,8 @@ ingress:
     alb.ingress.kubernetes.io/security-groups: sg-00000000000000001
     alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
     # target-type=ip 时业务流量仍走 8080，但健康检查直接访问 Pod 私有 operations 8081。
+    # English: When target-type=ip, business traffic still goes through 8080, but the health check directly
+    # accesses Pod private operations 8081.
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
     alb.ingress.kubernetes.io/healthcheck-port: "8081"
     alb.ingress.kubernetes.io/success-codes: "200"
@@ -68,6 +82,8 @@ externalSecrets:
   operationsBearer:
     name: slots-rgs-operations-bearer-v1
   # 该 Secret 由 Secrets Manager 同步；RGS 不获取 AWS API 身份，也不执行 IAM Valkey 认证。
+  # English: The secret is synchronized by Secrets Manager; RGS does not obtain an AWS API identity and does not
+  # perform IAM Valkey authentication.
   sharedAdmission:
     name: slots-rgs-shared-admission-v1
   apiRuntimeAssets:
@@ -129,6 +145,8 @@ monitoring:
 networkPolicy:
   ingressController:
     # AWS Load Balancer Controller 使用 IP 目标；NetworkPolicy 只接受经审批的 VPC 来源网段。
+    # English: AWS Load Balancer Controller uses IP targets; NetworkPolicy only accepts approved VPC source
+    # segments.
     mode: cidrs
     namespaceSelector:
       matchLabels:
@@ -149,6 +167,8 @@ networkPolicy:
         k8s-app: kube-dns
   egress:
     # RDS 故障转移可能更换地址，因此覆盖三个受控数据子网，并由安全组进一步收窄到 RDS。
+    # English: RDS failover may change addresses, thus covering three controlled data subnets, further narrowed
+    # to RDS by security groups.
     database:
       cidrs:
         - 10.20.10.0/24
@@ -161,6 +181,7 @@ networkPolicy:
       cidrs:
         - 10.40.10.0/24
     # 仅 API Pod 可访问 ElastiCache 私有数据子网；Worker 无该出口。
+    # English: Only API Pods can access the ElastiCache private data subnet; Workers have no such egress.
     sharedAdmission:
       cidrs:
         - 10.50.10.0/24

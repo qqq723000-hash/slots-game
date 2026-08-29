@@ -8,6 +8,9 @@ import (
 
 // StartupReadiness 只记录恢复 worker 是否至少完整完成过一次成功恢复 pass。
 // 一旦成功便不可逆地就绪；后续循环故障由恢复新鲜度指标告警，不能反复摘除副本。
+// English: StartupReadiness only records whether the recovery worker has completed at least one successful
+// recovery pass. Once successful, it is irreversibly ready; subsequent cycle failures are alerted by the recovery
+// freshness indicator, and replicas cannot be removed repeatedly.
 type StartupReadiness struct {
 	succeeded atomic.Bool
 }

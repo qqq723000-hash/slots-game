@@ -1,9 +1,13 @@
-# 安全与合规边界
+# Security and compliance boundary / 安全与合规边界
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document defines the mandatory security and compliance boundary for the repository's production-oriented building blocks. Required production configuration, cryptographic material, database and wallet dependencies, audit delivery, and operational controls fail closed, but source code, images, simulations, tests, and internal review are not evidence of authorization or certification. Real-money release remains prohibited until the exact operator, jurisdiction, game definition, executable images, and infrastructure have the required licensing, independent RNG and mathematics review, security assessment, wallet conformance, privacy controls, responsible-gaming controls, incident response, reconciliation, business continuity, and operational acceptance.
 
 状态：强制生产边界
 最后更新：2026-08-16

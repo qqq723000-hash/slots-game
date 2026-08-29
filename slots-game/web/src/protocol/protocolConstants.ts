@@ -3,6 +3,8 @@
  *
  * 本模块必须保持为无项目内依赖的叶子模块。协议分块会在模块求值时基于这些常量构造
  * Set；若反向依赖应用分块，循环求值可能把尚未初始化的导出快照为空集合。
+ *
+ * 英文 / English: Runtime constants used with protocol decoding and application state. This module must be kept as a leaf module with no dependencies within the project. Protocol chunking will construct a Set based on these constants during module evaluation; if chunking is applied in reverse dependencies, loop evaluation may snapshot uninitialized exports into empty sets.
  */
 export const SYMBOL_IDS = [
   "ORBIT",
@@ -18,7 +20,7 @@ export const SYMBOL_IDS = [
 
 export type SymbolId = (typeof SYMBOL_IDS)[number];
 
-/** 官方锁定 Symbol8 骨架上制作的零时长数值姿态。 */
+/** 官方锁定 Symbol8 骨架上制作的零时长数值姿态。 / English: The official locked zero-duration numerical pose made on the Symbol8 skeleton. */
 export const LOCKED_VAULT_FACES = [
   "x1",
   "x2",
@@ -39,7 +41,7 @@ export const LOCKED_VAULT_FACES = [
 
 export type LockedVaultFace = (typeof LOCKED_VAULT_FACES)[number];
 
-/** 从官方锁定的服务端 ID 17-31 中恢复的精确表现映射。 */
+/** 从官方锁定的服务端 ID 17-31 中恢复的精确表现映射。 / English: Exact performance mapping recovered from officially locked server IDs 17-31. */
 export function lockedVaultFaceForOriginalServerId(serverId: number): LockedVaultFace | null {
   return Number.isInteger(serverId) && serverId >= 17 && serverId <= 31
     ? LOCKED_VAULT_FACES[serverId - 17] ?? null
@@ -59,5 +61,5 @@ export type WheelInstantMultiplier = (
   typeof WHEEL_INSTANT_MULTIPLIER_BY_TIER
 )[WheelJackpotTier];
 
-/** 当前不可变 Primal 数学定义的整场最高赢额倍数。 */
+/** 当前不可变 Primal 数学定义的整场最高赢额倍数。 / English: The current immutable Primal is mathematically defined as the highest winning multiple for the entire game. */
 export const PRIMAL_MAX_WIN_MULTIPLIER = 2_500 as const;

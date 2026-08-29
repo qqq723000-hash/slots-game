@@ -5,6 +5,10 @@ ALTER TABLE rgs_outbox
 -- 本次迁移前，数据库模式已有 lease_owner 与 lease_until 列，但没有围栏令牌，
 -- 也没有能够安全确认这些租约的分发器。释放所有此类未设围栏的旧版租约，
 -- 使识别令牌的分发器能够重新领取。发布状态及尝试次数保持不变。
+-- English: Before this migration, the database schema had lease_owner and lease_until columns, but no fence
+-- token. There is also no distributor that can securely confirm these leases. release all such legacy unfenced
+-- leases, Enables the issuer of the identification token to be reclaimed. The publishing status and number of
+-- attempts remain unchanged.
 UPDATE rgs_outbox
 SET lease_owner = NULL,
     lease_until = NULL

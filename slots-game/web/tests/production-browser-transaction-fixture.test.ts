@@ -1,4 +1,4 @@
-// @ts-nocheck -- 该测试直接验证 Node 侧 Chrome Fetch 夹具，不进入浏览器类型域。
+// @ts-nocheck -- 该测试直接验证 Node 侧 Chrome Fetch 夹具，不进入浏览器类型域。 / English: @ts-nocheck -- This test directly verifies the Node-side Chrome Fetch fixture and does not enter the browser type domain.
 import { describe, expect, it } from "vitest";
 import {
   assertSessionStatusCadence,

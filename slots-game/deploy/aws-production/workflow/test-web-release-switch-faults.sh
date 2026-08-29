@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 纯本地故障夹具：覆盖 KVS 写入结果不确定时的权威回读、补偿与人工处置边界。
+# English: Pure local fault fixture: Covers authoritative readback, compensation, and manual handling boundaries
+# when KVS write results are indeterminate.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

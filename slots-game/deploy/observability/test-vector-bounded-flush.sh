@@ -2,6 +2,10 @@
 
 # 两阶段验证 Vector 低流量磁盘缓冲：A 阶段先制造出口中断并证明业务事件已落入
 # 磁盘；B 阶段先用独立控制面探针证明接收端就绪，再验证在线单事件仅靠安全心跳推进。
+# English: Two-phase verification of Vector low-traffic disk buffering: Phase A first creates egress interrupts
+# and proves that business events have fallen into Disk; Phase B first uses an independent control plane probe
+# to prove that the receiver is ready, and then verifies that the online single event is advanced only by the
+# security heartbeat.
 set -eu
 umask 077
 
@@ -104,6 +108,9 @@ mkdir -m 0700 \
 
 # Ruby 只抽取两份真实配置中完全一致的心跳链路、HTTP 编码、batch 与 disk buffer；
 # TLS、凭据和生产 URI 不进入夹具，三个接收入口都只存在于本次内部 Docker 网络。
+# English: Ruby only extracts the heartbeat links, HTTP encoding, batch and disk buffer that are completely
+# consistent in the two real configurations; TLS, credentials, and artifactsion URIs do not enter the fixture,
+# and all three receive entries exist only within this internal Docker network.
 if ! ruby -ryaml -rjson - \
   deploy/observability/vector.yaml \
   deploy/local-production/vector.yaml \
@@ -447,6 +454,8 @@ archive_is_valid \
   'bounded flush outage business probe' || fail
 
 # B 前置：控制面探针使用独立端口与独立文件；其固定字段不能被业务 marker 计数。
+# English: B front: The control plane probe uses independent ports and independent files; its fixed fields
+# cannot be counted by business markers.
 test "$(docker container inspect --format '{{.State.Running}}' "$receiver_name" 2>/dev/null)" = true || fail
 run_vector \
   "$readiness_sender_name" "$readiness_sender_config" "$readiness_sender_data" || fail
@@ -474,6 +483,8 @@ docker rm --force "$readiness_sender_name" >/dev/null 2>&1 || fail
 
 # B：接收端已经以真实 HTTP→file 事件证明就绪；全新 sender 与 data_dir 只产生一条
 # 在线业务事件，因此这一阶段没有连接失败或旧重试可以推动 disk buffer。
+# English: B: The receiving end is ready with a real HTTP→file event; the new sender and data_dir only generate
+# one Online business events, so no connection failures or old retries can push the disk buffer at this stage.
 online_started_at=$(date +%s 2>/dev/null) || fail
 run_vector "$online_sender_name" "$online_sender_config" "$online_sender_data" || fail
 online_deadline=$((online_started_at + 25))
@@ -489,6 +500,9 @@ sleep 2
 
 # 最终重新读取三个独立文件：两条业务 marker 各自精确一次，控制面事件未混入，
 # 两阶段都至少存在一个固定四字段安全心跳，且任何原始 metric 形状都未越界。
+# English: Finally, three independent files were re-read: the two business markers were each accurate once, and
+# the control plane events were not mixed. There is at least one fixed four-field safe heartbeat in both phases,
+# and none of the original metric shapes are out of bounds.
 archive_is_valid \
   "$receiver_output/outage.ndjson" \
   'vector-bounded-flush-outage-v1' \

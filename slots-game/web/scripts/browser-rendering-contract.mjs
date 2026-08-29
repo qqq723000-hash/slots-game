@@ -16,6 +16,8 @@ const firefoxSoftwareRenderingPreferences = Object.freeze({
  * GitHub 的 Linux Firefox runner 没有硬件显示器或 GPU。仅在该环境中，
  * 使用 Xvfb 运行有界面的 Firefox，并强制选择 Mesa llvmpipe。页面仍必须
  * 创建和查询真实 WebGL 上下文；这里仅选择渲染通道，不生成合成画布证据。
+ *
+ * 英文 / English: GitHub's Linux Firefox runner does not have a hardware monitor or GPU. In this environment only, run Firefox with an interface using Xvfb and force-select Mesa llvmpipe. The page must still create and query the real WebGL context; here only the rendering pass is selected, no synthetic canvas evidence is generated.
  */
 export function resolveBrowserRenderingContract({
   browserName,

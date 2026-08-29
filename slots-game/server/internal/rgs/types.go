@@ -1,4 +1,7 @@
 // rgs 包包含真实货币游戏服务使用的持久轮次协调领域；领域逻辑刻意与具体传输适配器及持久化实现解耦。
+// English: The rgs package contains the persistent round coordination domain used by the real money gaming
+// service; domain logic is deliberately decoupled from specific transport adapters and persistence
+// implementations.
 package rgs
 
 import (
@@ -18,6 +21,9 @@ var (
 	ErrSessionTimeout  = errors.New("rgs: session timed out from inactivity")
 	// ErrSessionIntegrity 与 ErrManualReview 分离，避免协调器在隔离损坏会话
 	// 时重写仍有经济副作用待决的轮次；HTTP 适配器仍将二者统一暴露为 MANUAL_REVIEW。
+	// English: ErrSessionIntegrity is separated from ErrManualReview to prevent the coordinator from overwriting
+	// rounds that still have economic side effects pending when isolating a corrupted session; the HTTP adapter still
+	// exposes both as MANUAL_REVIEW.
 	ErrSessionIntegrity             = errors.New("rgs: session integrity validation failed")
 	ErrRoundNotFound                = errors.New("rgs: round not found")
 	ErrIdempotencyConflict          = errors.New("rgs: idempotency conflict")
@@ -37,11 +43,16 @@ var (
 	ErrEconomicAdmissionUnavailable = errors.New("rgs: economic intent admission unavailable")
 	// ErrStaleWalletClaim 表示调用方持有的 wallet_lease_until 已被续租、调度或终态转换取代。
 	// 收到此错误后只能读取最新轮次，禁止使用旧钱包结果继续写入。
+	// English: ErrStaleWalletClaim indicates that the wallet_lease_until held by the caller has been replaced by lease
+	// renewal, scheduling or final state transition. After receiving this error, only the latest round can be read,
+	// and continued writing using old wallet results is prohibited.
 	ErrStaleWalletClaim = errors.New("rgs: stale wallet claim")
 )
 
 // EconomicAdmissionError 将新经济意图准入的 429/503 语义带到 HTTP 边界，
 // 不包含运营商、钱包、会话或轮次身份。
+// English: EconomicAdmissionError brings the new economic intent admission's 429/503 semantics to HTTP boundaries,
+// without operator, wallet, session or round identities.
 type EconomicAdmissionError struct {
 	Cause      error
 	RetryAfter time.Duration
@@ -91,6 +102,8 @@ const (
 )
 
 // RoundStatus 在每次外部经济副作用前后都必须持久化；MANUAL_REVIEW 轮次会刻意保持会话阻断。
+// English: RoundStatus must be persisted before and after each external economic side effect; MANUAL_REVIEW rounds
+// are deliberately kept session-blocking.
 type RoundStatus string
 
 const (
@@ -104,6 +117,9 @@ const (
 
 // Session 永久绑定一个运营商、钱包主体、币种、游戏及不可变定义版本。
 // Revision 是经济/特性状态的乐观并发令牌；Sequence 是客户端可见的已提交结果顺序。
+// English: Session is permanently bound to an operator, wallet entity, currency, game and immutable definition
+// version. Revision is an optimistic concurrency token of economic/feature state; Sequence is the order of
+// committed results visible to the client.
 type Session struct {
 	OperatorID        string
 	SessionID         string
@@ -120,11 +136,18 @@ type Session struct {
 	ExpiresAt         time.Time
 	// IdleDisconnectAt 是数据库支持的权威截止时间。传输 keepalive、token refresh
 	// 与结果恢复都不能推进它；只有成功接受的新经济轮次或 operator relaunch 可以。
+	// English: IdleDisconnectAt is the authoritative deadline supported by the database. Neither transmitting
+	// keepalives nor token refresh nor result recovery can advance it; only successfully accepted new economic rounds
+	// or operator relaunch can.
 	IdleDisconnectAt time.Time
 	IdleDisconnect   time.Duration
 	// TransportGeneration 隔离每个浏览器 token；relaunch 推进后，旧标签 token 永久失效。
+	// English: TransportGeneration isolates each browser token; after relaunch is advanced, the old label token
+	// becomes permanently invalid.
 	TransportGeneration uint64
 	// ServerTime 是传输生命周期操作返回的瞬时数据库观测值，绝不持久化为经济会话状态。
+	// English: ServerTime is a transient database observation returned by a transport lifecycle operation and is never
+	// persisted as economic session state.
 	ServerTime     time.Time
 	BalanceMinor   int64
 	Revision       uint64
@@ -135,6 +158,8 @@ type Session struct {
 
 // SpinRequest 包含轮次经济身份的全部字段。调用方提供 StartRevision，防止旧客户端
 // 静默使用更新后的特性状态进行求值。
+// English: SpinRequest contains all fields for the economic identity of the spin. The caller provides
+// StartRevision to prevent older clients from silently evaluating with the updated feature state.
 type SpinRequest struct {
 	OperatorID          string
 	SessionID           string
@@ -160,10 +185,15 @@ func (r SpinRequest) Key() RoundKey {
 }
 
 // SpinResult 是可规范重放的结果模型；BalanceMinor 只能在提交时由已验证钱包回执填入。
+// English: SpinResult is a canonical replayable result model; BalanceMinor can only be populated by verified
+// wallet receipts on submission.
 type SpinResult struct {
 	// ResultSchemaVersion 绑定持久化的经济表示。空值专用于在名义奖励与已支付奖励
 	// 拆分前写入的历史结果；所有新准备的结果都必须使用当前模式。
 	// omitempty 可保持历史 JSON 和哈希投影完全不变。
+	// English: ResultSchemaVersion Binds the persistent economic representation. The null value is reserved for
+	// historical results written before the split between nominal and paid rewards; all newly prepared results must
+	// use the current schema. omitempty keeps historical JSON and hash projections completely unchanged.
 	ResultSchemaVersion string `json:",omitempty"`
 	OperatorID          string
 	SessionID           string
@@ -184,6 +214,8 @@ type SpinResult struct {
 	TotalWinMinor       int64
 	// IdleDisconnectAt 是只在 HTTP 边界填充的传输元数据；排除在规范经济 JSON 之外，
 	// 才能保持全部历史 hash 不变。
+	// English: IdleDisconnectAt is transport metadata that is only populated at HTTP boundaries; it is excluded from
+	// canonical economical JSON to keep all historical hashes unchanged.
 	IdleDisconnectAt time.Time `json:"-"`
 	Grid             game.Grid
 	Wins             []game.Win
@@ -193,6 +225,9 @@ type SpinResult struct {
 
 // ResultDelivery 是等待客户端消费回执的权威已提交结果。回执只证明客户端接受了规范载荷，
 // 不证明玩家已经看完表现动画。
+// English: ResultDelivery is the authoritative submitted result waiting for the client's consumption receipt. The
+// receipt only proves that the client accepted the specification payload, but does not prove that the player has
+// finished watching the performance animation.
 type ResultDelivery struct {
 	OperatorID string
 	SessionID  string
@@ -202,11 +237,16 @@ type ResultDelivery struct {
 	Result     SpinResult
 	// OriginFeatureState 是结果对应局次在 RNG 求值前持久化的权威特性状态。
 	// 浏览器本地账本丢失后只能使用该字段恢复，禁止从局后结果或当前会话猜测。
+	// English: OriginFeatureState is the authoritative feature state persisted before RNG evaluation for the
+	// corresponding round of results. After the browser's local ledger is lost, it can only be restored using this
+	// field, and guessing from post-game results or the current session is prohibited.
 	OriginFeatureState game.FeatureState
 	AcknowledgedAt     time.Time
 }
 
 // ResultDeliveryAcknowledgement 将消费回执绑定到完整已提交结果身份；幂等确认要求全部字段存在。
+// English: ResultDeliveryAcknowledgement binds the consumption receipt to the complete submitted result identity;
+// idempotent confirmation requires all fields to be present.
 type ResultDeliveryAcknowledgement struct {
 	OperatorID          string
 	SessionID           string
@@ -217,6 +257,8 @@ type ResultDeliveryAcknowledgement struct {
 }
 
 // RoundRecord 是可恢复聚合；调用 ApplyRound 前必须先写入预备结果与钱包命令。
+// English: RoundRecord is a resumable aggregation; the preparation results and wallet commands must be written
+// before calling ApplyRound.
 type RoundRecord struct {
 	Key         RoundKey
 	Fingerprint string
@@ -224,10 +266,14 @@ type RoundRecord struct {
 	Status      RoundStatus
 	Result      SpinResult
 	// InputFeatureState 与预备结果在同一事务中持久化，是恢复展示的局前权威状态。
+	// English: InputFeatureState is persisted in the same transaction as the prepared results and is the pre-game
+	// authoritative state of the restored display.
 	InputFeatureState game.FeatureState
 	WalletCommand     WalletRound
 	// WalletProfile 与预备结果同事务持久化；恢复必须使用该快照，而不是把旧轮次
 	// 重新解释为发布后适配器临时报告的新能力。
+	// English: WalletProfile and provisioning results are persisted with the transaction; recovery must use this
+	// snapshot rather than reinterpreting old rounds as new capabilities reported ad hoc by the post-release adapter.
 	WalletProfile        Profile
 	WalletReceipt        *WalletReceipt
 	OutcomeHash          string
@@ -296,6 +342,9 @@ func validateSession(session Session) error {
 
 // validatePersistedFeatureState 校验与具体定义无关的不变式。不可变游戏定义会在引擎求值前
 // 应用更严格的奖励上限，但畸形或非规范持久化 JSON 绝不能进入引擎。
+// English: validatePersistedFeatureState validates invariants independent of specific definitions. Immutable game
+// definitions will apply stricter reward caps before engine evaluation, but malformed or non-canonical persistent
+// JSON must never enter the engine.
 func validatePersistedFeatureState(state game.FeatureState) error {
 	if state.RageLevel < game.DefaultRageLevel || state.RageLevel > game.MaxRageCollected ||
 		state.RageCollected < 0 || state.RageCollected > game.MaxRageCollected ||
@@ -323,6 +372,7 @@ func validatePersistedFeatureState(state game.FeatureState) error {
 }
 
 // ValidateSession 应用所有存储库适配器共享的生产会话不变式。
+// English: ValidateSession applies production session invariants shared by all repository adapters.
 func ValidateSession(session Session) error {
 	return validateSession(session)
 }
@@ -361,11 +411,14 @@ func validateSpinRequest(request SpinRequest) error {
 }
 
 // ValidateSpinRequest 应用规范经济请求不变式。
+// English: ValidateSpinRequest applies canonical economic request invariants.
 func ValidateSpinRequest(request SpinRequest) error {
 	return validateSpinRequest(request)
 }
 
 // ValidateResultDeliveryAcknowledgement 应用传输层与存储库共享的规范交付回执身份不变式。
+// English: ValidateResultDeliveryAcknowledgement The canonical delivery receipt identity invariant shared by the
+// application transport layer and the repository.
 func ValidateResultDeliveryAcknowledgement(receipt ResultDeliveryAcknowledgement) error {
 	if !identifierPattern.MatchString(receipt.OperatorID) ||
 		!identifierPattern.MatchString(receipt.SessionID) ||
@@ -380,6 +433,9 @@ func ValidateResultDeliveryAcknowledgement(receipt ResultDeliveryAcknowledgement
 
 // ValidateResultDelivery 校验待交付结果、完整结果哈希与持久化局前状态属于同一局。
 // 恢复方不得使用已推进的会话或局后 FeatureState 反推该输入。
+// English: ValidateResultDelivery verifies that the result to be delivered, the complete result hash and the
+// persisted pre-game state belong to the same round. The recovering party may not use an advanced session or
+// post-game FeatureState to push back this input.
 func ValidateResultDelivery(delivery ResultDelivery) error {
 	result := delivery.Result
 	if err := NormalizePersistedSpinResult(&result); err != nil {

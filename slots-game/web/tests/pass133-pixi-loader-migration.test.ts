@@ -210,7 +210,7 @@ describe("Pass 133 Pixi bitmap-font loader migration", () => {
     const generationA = cachedTexture(PRIMAL_BITMAP_FONT_PAGE_URL);
     const lateTexture = new Promise<typeof generationA>((resolve) => { resolveLateTexture = resolve; });
     const generationB = cachedTexture(PRIMAL_BITMAP_FONT_PAGE_URL);
-    // A 必须在调用 fromURL 时成为 cache 当前值；B 只在立即重试实际发起时覆盖它。
+    // A 必须在调用 fromURL 时成为 cache 当前值；B 只在立即重试实际发起时覆盖它。 / English: A must be cache current when fromURL is called; B only overwrites it when an immediate retry is actually initiated.
     pixi.textureCache[PRIMAL_BITMAP_FONT_PAGE_URL] = generationA;
     pixi.baseTextureCache[PRIMAL_BITMAP_FONT_PAGE_URL] = generationA.baseTexture;
     pixi.fromURL

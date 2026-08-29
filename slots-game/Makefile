@@ -1,4 +1,4 @@
-.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract test-vector-bounded-flush test-local-web-candidate-payload verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-personal-project-docs verify-hardening-checklist verify-hardening-stability-contract verify-hardening-stability-50 verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
+.PHONY: bootstrap web smoke-runtime-operations smoke-runtime-production test test-postgres test-race benchmark-engine profile-http-high-concurrency profile-postgres-high-concurrency profile-valkey-high-concurrency vet build migrate-postgres verify-postgres-schema verify-web-container-contract verify-web-browser-bootstrap verify-observability-contract test-observability-rendered-contract test-vector-bounded-flush test-local-web-candidate-payload verify-observability-release verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-personal-project-docs verify-demo-media verify-hardening-checklist verify-hardening-stability-contract verify-hardening-stability-50 verify-cluster-production verify-aws-production verify-terraform verify-cluster-image-contract verify-cluster-prometheus-rules verify-deployment-contracts build-runtime-image build-migrator-image build-web-release-image verify verify-backend
 
 BROWSER_SMOKE_ENV := VITE_RGS_BASE_URL=https://rgs.ci.invalid VITE_RGS_BET_OPTIONS_MINOR=100,200,500 VITE_RGS_DEFAULT_BET_MINOR=200 VITE_RGS_HOST_ORIGIN=https://operator.ci.invalid
 
@@ -16,7 +16,7 @@ smoke-runtime-production: verify-supply-chain-contract
 
 test:
 	cd server && go test ./...
-	# 发布聚合门禁串行执行 Vitest，避免大型素材 fixture 争用 CPU/内存造成非确定性超时。
+	# 发布聚合门禁串行执行 Vitest，避免大型素材 fixture 争用 CPU/内存造成非确定性超时。/ Run Vitest serially in the aggregate release gate to avoid nondeterministic timeouts from large asset fixtures competing for CPU and memory.
 	cd web && npm test -- --run --fileParallelism=false
 
 test-postgres:
@@ -25,8 +25,8 @@ test-postgres:
 benchmark-engine:
 	cd server && go test ./internal/game -run '^$$' -bench '^BenchmarkEngineSpinRepresentative$$' -benchmem -count=5
 
-# 高并发 profile 必须显式提供隔离环境/批准阈值；生成物写入 ignored .artifacts，
-# 不属于普通快速单测，也不能替代 AWS、第三方钱包或长时间 soak 认证。
+# 高并发 profile 必须显式提供隔离环境与批准阈值；生成物写入 ignored .artifacts。/ High-concurrency profiles require an explicit isolated environment and approved thresholds; artifacts are written under ignored .artifacts.
+# 它们不属于普通快速单测，也不能替代 AWS、第三方钱包或长时间 soak 认证。/ They are not ordinary fast tests and cannot replace AWS, third-party wallet, or long-duration soak certification.
 profile-http-high-concurrency:
 	./server/scripts/http-high-concurrency.sh
 
@@ -48,7 +48,7 @@ build-runtime-image: verify-supply-chain-contract verify-backend-licenses
 build-migrator-image: verify-supply-chain-contract verify-backend-licenses
 	docker build --file deploy/Dockerfile --target migrator --tag slots-rgs-migrator:local .
 
-# 生产发布构建必须使用仓库外管理的审批文件；严禁提交该文件。
+# 生产发布构建必须使用仓库外管理的审批文件；严禁提交该文件。/ Production release builds require an externally managed approval file, which must never be committed.
 build-web-release-image: verify-supply-chain-contract
 	test -n "$${RELEASE_ASSET_APPROVAL_FILE:-}" || { echo "RELEASE_ASSET_APPROVAL_FILE is required" >&2; exit 2; }
 	test -r "$${RELEASE_ASSET_APPROVAL_FILE}" || { echo "RELEASE_ASSET_APPROVAL_FILE must name a readable approval file" >&2; exit 2; }
@@ -81,11 +81,11 @@ verify-observability-contract:
 test-observability-rendered-contract:
 	./deploy/observability/test-rendered-contract.sh
 
-# VECTOR_IMAGE 必须已由调用方按 digest 预载；行为门禁自身禁止访问镜像仓库。
+# VECTOR_IMAGE 必须已由调用方按 digest 预载；行为门禁自身禁止访问镜像仓库。/ The caller must preload VECTOR_IMAGE by digest; the behavior gate itself cannot access an image registry.
 test-vector-bounded-flush:
 	@./deploy/observability/test-vector-bounded-flush.sh
 
-# 固定基础镜像必须已预载；该真实构建门禁不读取或修改本机生产部署状态。
+# 固定基础镜像必须已预载；该真实构建门禁不读取或修改本机生产部署状态。/ Pinned base images must be preloaded; this real-build gate neither reads nor modifies local production deployment state.
 test-local-web-candidate-payload:
 	@./deploy/local-production/test-web-candidate-payload.sh
 
@@ -93,7 +93,7 @@ verify-observability-release:
 	test -n "$${OBSERVABILITY_RENDERED_DIR:-}" || { echo "OBSERVABILITY_RENDERED_DIR is required" >&2; exit 2; }
 	./deploy/observability/verify-static-contract.sh --rendered-dir "$${OBSERVABILITY_RENDERED_DIR}"
 
-verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs
+verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs verify-demo-media
 	node --test deploy/supply-chain/verify-codeql-sarif.test.mjs
 	node --test deploy/supply-chain/verify-release-version.test.mjs
 	node deploy/supply-chain/verify-release-version.mjs
@@ -114,6 +114,10 @@ verify-personal-project-docs:
 	node --test scripts/verify-personal-project-docs.test.mjs
 	node scripts/verify-personal-project-docs.mjs
 
+verify-demo-media:
+	node --test scripts/verify-demo-media.test.mjs
+	node scripts/verify-demo-media.mjs
+
 verify-hardening-checklist:
 	node --test scripts/verify-hardening-checklist.test.mjs
 	node scripts/verify-hardening-checklist.mjs
@@ -122,7 +126,7 @@ verify-hardening-stability-contract:
 	sh -n scripts/verify-hardening-stability-50.sh
 	node --test scripts/summarize-go-test-json.test.mjs
 
-# 修改关键资金、恢复、资源租约或平台契约后手动执行；失败修复后必须重新从第 1 轮计数。
+# 修改关键资金、恢复、资源租约或平台契约后手动执行；失败修复后必须重新从第 1 轮计数。/ Run manually after changing critical money, recovery, resource-lease, or platform contracts; restart counting from round one after any failure.
 verify-hardening-stability-50: verify-hardening-stability-contract
 	HARDENING_STABILITY_ROUNDS=50 ./scripts/verify-hardening-stability-50.sh
 
@@ -157,13 +161,13 @@ build:
 	cd web && $(BROWSER_SMOKE_ENV) npm run build
 
 verify-backend: verify-supply-chain-contract verify-backend-licenses
-	# 全新数据库必须先完成迁移、并发幂等校验和模式验证，才能运行会自动发现 PostgreSQL 的完整测试集。
+	# 全新数据库必须先完成迁移、并发幂等校验和模式验证，才能运行会自动发现 PostgreSQL 的完整测试集。/ A fresh database must pass migration, concurrent-idempotency, and schema checks before the full PostgreSQL-aware test suite runs.
 	$(MAKE) test-postgres
 	cd server && go test ./...
 	cd server && go test -race ./...
 	cd server && go vet ./...
 	cd server && go build ./...
 
-verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test test-race vet build
-	# Node 模拟测试无法发现跨生产分块的浏览器求值错误，必须再执行真实 Chrome 门禁。
+verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-personal-project-docs verify-demo-media verify-hardening-checklist verify-hardening-stability-contract test test-race vet build
+	# Node 模拟测试无法发现跨生产分块的浏览器求值错误，必须再执行真实 Chrome 门禁。/ Node simulation cannot detect cross-chunk browser evaluation failures, so the real Chrome gate remains mandatory.
 	$(MAKE) verify-web-browser-bootstrap

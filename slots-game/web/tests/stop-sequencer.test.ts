@@ -269,7 +269,7 @@ describe("StopSequencer fast-forward", () => {
       slowStopMs: 3_000,
     });
 
-    // 第三个转轴的结果刻意设为与门控无关。
+    // 第三个转轴的结果刻意设为与门控无关。 / English: The results of the third reel are deliberately made independent of gating.
     firstTwoSurges[2] = [{ symbol: "SURGE" }, { symbol: "SURGE" }, { symbol: "SURGE" }];
     expect(createAnticipationTriggerPlan(firstTwoSurges)).not.toBeNull();
     expect(createAnticipationTriggerPlan([

@@ -33,6 +33,10 @@ const (
 	// 这些上限基于公开 schema 的最大字段长度核算。最大合法业务值的紧凑 JSON
 	// 小于 1.1 KiB；即使键和值全部使用合法的 \uXXXX 转义也小于 6.2 KiB。
 	// 8 KiB 与 ALB/WAF 的完整正文检查窗口对齐；兑换请求结构更小，单独限制为 4 KiB。
+	// English: These limits are based on the maximum field length of the exposed schema. The compact JSON for the
+	// largest legal business value is less than 1.1 KiB; even if the keys and values are all escaped using legal
+	// \uXXXX escapes, it is less than 6.2 KiB. 8 KiB aligns with the full body inspection window for ALB/WAF; the
+	// redemption request structure is smaller and individually limited to 4 KiB.
 	maxPublicRequestBytes          = 8 << 10
 	maxSessionExchangeRequestBytes = 4 << 10
 	maxClientRecoveryRequestBytes  = maxPublicRequestBytes
@@ -203,6 +207,9 @@ func consumeEmptyGETBody(request *http.Request) bool {
 	// 反向代理可能为 Content-Length: 0 的请求安装一个只返回 EOF 的包装器。
 	// 仅探测一个字节：立即 EOF 才视为空正文；任何字节、非 EOF 错误或无进展读取
 	// 都失败即关闭连接，避免为了判空而排空攻击者控制的慢速正文。
+	// English: The reverse proxy may install a wrapper for requests with Content-Length: 0 that only returns EOF. Only
+	// detect one byte: an immediate EOF is considered an empty text; any byte, non-EOF error, or no-progress read
+	// fails and the connection is closed to avoid emptying the attacker-controlled slow text for empty detection.
 	var probe [1]byte
 	read, err := request.Body.Read(probe[:])
 	if read != 0 || !errors.Is(err, io.EOF) {
@@ -379,6 +386,9 @@ func (h *Handler) handleClientSessionRefresh(writer http.ResponseWriter, request
 	}
 	// RefreshSession 签发新的 Ed25519 access token；它和随后对 adapter 返回令牌的
 	// 二次校验必须共享同一个许可，避免签发在 bulkhead 外与受限验签并行。
+	// English: RefreshSession issues a new Ed25519 access token; it and the subsequent secondary verification of the
+	// token returned by the adapter must share the same permission to avoid issuance outside the bulkhead in parallel
+	// with restricted verification.
 	releaseCrypto, ok := h.acquireCryptographicCapacity(request.Context(), writer, requestID)
 	if !ok {
 		return
@@ -781,6 +791,11 @@ func (h *Handler) authenticateClientClaims(
 	// 它也必须位于数据库 generation/deadline 校验之前，避免签名有效的旧 token
 	// 绕过请求配额直接消耗恢复连接预算。
 	// 不能使用 RemoteAddr/X-Forwarded-For：反向代理会让无关玩家共享地址，后者又可被伪造。
+	// English: Client-side throttling must be placed after access token verification and bound to the authenticated
+	// operator and session. It must also be located before the database generation/deadline verification to prevent
+	// old tokens with valid signatures from bypassing the request quota and directly consuming the recovery connection
+	// budget. Cannot use RemoteAddr/X-Forwarded-For: Reverse proxies allow unrelated players to share addresses, which
+	// in turn can be forged.
 	if h.clientAdmission != nil && !h.writeAdmissionResult(writer, requestID, h.clientAdmission.Admit(
 		request.Context(), clientAdmissionKey(claims.OperatorID, claims.SessionID), h.now(),
 	)) {
@@ -875,6 +890,8 @@ func (h *Handler) acquireNewIntentCapacity(
 func clientAdmissionKey(operatorID, sessionID string) string {
 	// 合法标识允许冒号，因此必须转义元组的每个分量；反斜杠本身不在合法字符集内，
 	// 可保证 (a:b,c) 与 (a,b:c) 不会误共享限流桶，同时保留常规键的可读形式。
+	// Valid identifiers permit colons, so each tuple component must be escaped; backslashes are not valid identifier characters,
+	// ensuring (a:b,c) and (a,b:c) never share a rate-limit bucket while ordinary keys remain readable.
 	escape := func(value string) string { return strings.ReplaceAll(value, ":", `\:`) }
 	return "client:" + escape(operatorID) + ":" + escape(sessionID)
 }
@@ -923,6 +940,10 @@ func closeUnreadRequestBody(request *http.Request) {
 		// net/http 在 HTTP/1 下可能为复用连接而排空未读正文。拒绝路径不应替攻击者
 		// 继续读取最多数百 KiB；标记关闭让响应后直接释放连接。HTTP/2 不依赖该标记
 		// 回收连接，但流级正文仍受 MaxBytesReader、读取截止时间和并发 gate 限制。
+		// English: net/http under HTTP/1 may drain unread bodies for connection reuse. The deny path should not allow an
+		// attacker to continue reading up to several hundred KiB; marking it off allows the connection to be released
+		// directly after the response. HTTP/2 does not rely on this flag to recycle connections, but the stream-level body
+		// is still subject to MaxBytesReader, read deadlines, and concurrency gates.
 		request.Close = true
 	}
 }
@@ -983,6 +1004,9 @@ func (h *Handler) writeMappedError(writer http.ResponseWriter, requestID string,
 
 // retryAfterHeaderValue 使用除法和余数向上取整，避免对接近 time.Duration 上限的
 // 依赖返回值执行 retryAfter+1s 而发生有符号整数溢出。非正值保持既有的一秒退避语义。
+// English: retryAfterHeaderValue uses division and remainder rounding up to avoid signed integer overflow from
+// executing retryAfter+1s on dependent return values close to the upper limit of time.Duration. Non-positive
+// values maintain the existing one-second backoff semantics.
 func retryAfterHeaderValue(retryAfter time.Duration) string {
 	if retryAfter <= 0 {
 		retryAfter = time.Second
@@ -1118,6 +1142,7 @@ func validateJSONShape(encoded []byte, targetType reflect.Type) error {
 
 func consumeJSONObject(decoder *json.Decoder, depth int) (map[string]struct{}, error) {
 	// 在读取对象并创建去重映射之前先卡住深度，避免小请求构造数千层递归与分配。
+	// Enforce depth before reading the object or allocating its deduplication map, preventing a small request from creating thousands of recursive levels and allocations.
 	if depth > maximumRequestJSONNestingDepth {
 		return nil, errors.New("maximum JSON nesting depth exceeded")
 	}
@@ -1160,6 +1185,7 @@ func consumeJSONValue(decoder *json.Decoder, depth int) error {
 		return nil
 	}
 	// 标量不增加容器深度；对象或数组则必须在任何逐层映射分配与递归前拒绝。
+	// Scalars do not increase container depth; objects and arrays must be rejected before any per-level map allocation or recursion.
 	if depth > maximumRequestJSONNestingDepth {
 		return errors.New("maximum JSON nesting depth exceeded")
 	}
@@ -1290,6 +1316,8 @@ func (h *Handler) flushSignedOperatorResponse(writer http.ResponseWriter, reques
 	if request != nil {
 		// 业务请求超时后，运营商响应仍必须保持签名。保留请求值但不继承取消信号；
 		// 独立短截止时间防止密钥解析器无限延长失败响应路径。
+		// Operator responses must remain signed after the business request times out. Preserve request values without inheriting cancellation;
+		// an independent short deadline prevents the key resolver from extending the failure-response path indefinitely.
 		ctx = context.WithoutCancel(request.Context())
 	}
 	ctx, cancel := context.WithTimeout(ctx, responseSigningLookupTimeout)
@@ -1331,6 +1359,8 @@ func (h *Handler) writeUnsignedSigningFailure(writer http.ResponseWriter, reques
 	}
 	// 签名失败时拒绝释放原运营商响应。此最小传输错误因没有可用租户密钥而无法签名，
 	// 且不得包含适配器或认证细节。
+	// Refuse to release the original operator response when signing fails. This minimal transport error cannot be signed without an available tenant key
+	// and must not contain adapter or authentication details.
 	encoded, _ := json.Marshal(errorEnvelope{
 		Error:     errorBody{Code: "RESPONSE_SIGNING_UNAVAILABLE", Message: "service is temporarily unavailable"},
 		RequestID: requestID,

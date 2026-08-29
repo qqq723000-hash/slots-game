@@ -1,4 +1,4 @@
-// @ts-nocheck -- 该契约测试同时验证 JavaScript 构建门禁。
+// @ts-nocheck -- 该契约测试同时验证 JavaScript 构建门禁。 / English: @ts-nocheck -- This contract test also verifies the JavaScript build gate.
 import { describe, expect, it } from "vitest";
 
 import {
@@ -44,7 +44,7 @@ describe("协议运行时常量边界", () => {
       export * from "./star.js";
       import "./side-effect.js";
       const text = 'import "./string.js"';
-      // 中文注释中的伪导入：import "./comment.js";
+      // 中文注释中的伪导入：import "./comment.js"; / English: Pseudo import in Chinese comments: import "./comment.js";
       void import("./dynamic.js");
     `)).toEqual([
       "./default.js",

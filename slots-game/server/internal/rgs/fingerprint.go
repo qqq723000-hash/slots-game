@@ -14,6 +14,8 @@ import (
 
 // FingerprintFor 返回规范的 v2 经济请求指纹。带标签及长度前缀的值使编码无歧义，
 // 并防止未来模式版本意外与 v1 冲突。
+// English: FingerprintFor Returns the canonical v2 economic request fingerprint. Tagged and length-prefixed values
+// make encoding unambiguous and prevent future schema versions from accidentally conflicting with v1.
 func FingerprintFor(request SpinRequest) string {
 	digest := sha256.New()
 	writeFingerprintField(digest, "schema", "rgs-round-fingerprint-v2")
@@ -32,6 +34,8 @@ func FingerprintFor(request SpinRequest) string {
 
 // OutcomeHashFor 标识完整的规范预备结果。它会在产生任何钱包副作用前随轮次持久化，
 // 并可在重放、导出和审计时进行比较。
+// English: OutcomeHashFor identifies the complete specification preparation result. It is persisted across rounds
+// before any wallet side effects occur, and can be compared upon replay, export, and audit.
 func OutcomeHashFor(result SpinResult) (string, error) {
 	var value any = result
 	switch result.ResultSchemaVersion {
@@ -52,6 +56,10 @@ func OutcomeHashFor(result SpinResult) (string, error) {
 // legacySpinResultHashProjection 是引入已支付奖励事实和 ResultSchemaVersion
 // 之前使用的精确表示。历史哈希不可变：升级会先校验此投影，再在内存中补全
 // paid=nominal，用于展示和结构检查，且不会重写经济身份。
+// English: legacySpinResultHashProjection is the exact representation used before the introduction of the paid
+// rewards fact and ResultSchemaVersion. The history hash is immutable: upgrades will verify this projection before
+// completing paid=nominal in memory for presentation and structure checking, and will not rewrite the economic
+// identity.
 type legacySpinResultHashProjection struct {
 	OperatorID          string
 	SessionID           string
@@ -126,6 +134,9 @@ func makeLegacySpinResultHashProjection(result SpinResult) legacySpinResultHashP
 
 // PreparedOutcomeHashFor 返回产生任何钱包副作用前写入的不可变哈希。已提交结果包含
 // 预备结果时尚不存在的回执派生字段，因此重放及完整性验证时会刻意将其从哈希投影中移除。
+// English: PreparedOutcomeHashFor Returns an immutable hash written before any wallet side effects. The submitted
+// result contains a receipt derived field that does not exist when the result is prepared, so it is intentionally
+// removed from the hash projection during replay and integrity verification.
 func PreparedOutcomeHashFor(result SpinResult) (string, error) {
 	result.WalletTransactionID = ""
 	result.BalanceMinor = 0
@@ -135,6 +146,8 @@ func PreparedOutcomeHashFor(result SpinResult) (string, error) {
 
 // CommittedResultHashFor 标识钱包结算后交付给客户端的确切规范结果。与
 // PreparedOutcomeHashFor 不同，它包含所有回执派生字段。
+// English: CommittedResultHashFor identifies the exact canonical result delivered to the client after settlement
+// by the wallet. Unlike PreparedOutcomeHashFor, it contains all receipt derived fields.
 func CommittedResultHashFor(result SpinResult) (string, error) {
 	return OutcomeHashFor(result)
 }

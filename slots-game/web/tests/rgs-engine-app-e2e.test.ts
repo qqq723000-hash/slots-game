@@ -1,5 +1,5 @@
-// @ts-nocheck -- 此跨运行时 E2E 会刻意控制 Go 测试进程和绑定 CA 的 Node HTTPS
-// 客户端；浏览器 tsconfig 省略了 Node 类型。
+// @ts-nocheck -- 此跨运行时 E2E 会刻意控制 Go 测试进程和绑定 CA 的 Node HTTPS / English: @ts-nocheck -- This cross-runtime E2E deliberately controls the Go test process and the Node HTTPS binding CA
+// 客户端；浏览器 tsconfig 省略了 Node 类型。 / English: Client; browser tsconfig omits Node type.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -29,13 +29,13 @@ import type { LaunchPhase } from "../src/startup/LaunchStateMachine";
 
 const TEST_ORIGIN = "https://game.e2e";
 const SERVER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../server");
-// 全新执行器会在这里完成 Go 夹具的冷编译；进程级超时必须先于 Vitest hook，
-// 避免同步子进程失去控制，同时给受限 CI 留出有界余量。
+// 全新执行器会在这里完成 Go 夹具的冷编译；进程级超时必须先于 Vitest hook， / English: The new executor will complete the cold compilation of the Go fixture here; the process-level timeout must precede the Vitest hook,
+// 避免同步子进程失去控制，同时给受限 CI 留出有界余量。 / English: Avoid synchronized child processes getting out of control while leaving bounded margin for restricted CIs.
 const FIXTURE_BUILD_PROCESS_TIMEOUT_MS = 180_000;
 const FIXTURE_BUILD_HOOK_TIMEOUT_MS = 190_000;
-// 在共享 CI 工作进程上，编译后的 Go 夹具可能排在并发 `go test -race` 之后执行。
-// 启动时间窗口要足以容纳这种资源竞争，但仍需保持有限；下方进程退出和生成错误
-// 仍会立即失败，而不会耗尽全部允许时间。
+// 在共享 CI 工作进程上，编译后的 Go 夹具可能排在并发 `go test -race` 之后执行。 / English: On a shared CI worker process, compiled Go fixtures may be queued for execution after a concurrent `go test -race`.
+// 启动时间窗口要足以容纳这种资源竞争，但仍需保持有限；下方进程退出和生成错误 / English: The startup window needs to be large enough to accommodate this resource contention, but still limited; the underlying process exits and generates an error
+// 仍会立即失败，而不会耗尽全部允许时间。 / English: Still fails immediately without using up the full allowed time.
 const FIXTURE_BOOTSTRAP_TIMEOUT_MS = 15_000;
 
 interface FixtureBootstrap {
@@ -145,8 +145,8 @@ beforeAll(() => {
     {
       cwd: SERVER_ROOT,
       encoding: "utf8",
-      // Vitest 会并行执行文件。应避免跨运行时链接器在小型 CI 执行器上挤占资源，
-      // 导致现有的短超时资源工具测试无法运行。
+      // Vitest 会并行执行文件。应避免跨运行时链接器在小型 CI 执行器上挤占资源， / English: Vitest executes files in parallel. Cross-runtime linkers that crowd resources on small CI executors should be avoided,
+      // 导致现有的短超时资源工具测试无法运行。 / English: Causes existing short timeout resource tool tests to fail to run.
       env: { ...process.env, GOMAXPROCS: "1" },
       timeout: FIXTURE_BUILD_PROCESS_TIMEOUT_MS,
     },
@@ -580,8 +580,8 @@ function createRendererBoundary(ui: ReturnType<typeof createUiBoundary>) {
     activeRows: 3,
     setRows: vi.fn((rows: number) => {
       reels.activeRows = rows;
-      // 等待边界只会在真实 StopSequencer 持有回合后请求公开的快速停止操作。
-      // 其严格钩子仍按生产顺序驱动真实 ReelRoundStateMachine。
+      // 等待边界只会在真实 StopSequencer 持有回合后请求公开的快速停止操作。 / English: The wait boundary will only request an exposed quick stop operation after the true StopSequencer holds the turn.
+      // 其严格钩子仍按生产顺序驱动真实 ReelRoundStateMachine。 / English: Its strict hook still drives the real ReelRoundStateMachine in production order.
       ui.pressFastStop();
     }),
     stopReel: vi.fn(async () => undefined),
@@ -1069,7 +1069,7 @@ function createTrustedFetch(
           if (url.pathname === "/client/v1/spins") {
             spinResponses += 1;
             if (spinResponses === options.dropSpinResponseNumber) {
-          // 完整消费真实的已提交响应，再模拟网络边界与浏览器解码器之间的丢失。
+          // 完整消费真实的已提交响应，再模拟网络边界与浏览器解码器之间的丢失。 / English: Consume the actual submitted response in its entirety, simulating loss between the network boundary and the browser decoder.
               droppedSpinResponses += 1;
               rejectResponse(new TypeError("simulated post-commit response loss"));
               return;

@@ -155,6 +155,8 @@ func TestLevelTwoRandomFlagIsAcceptedAndPreservedOutbound(t *testing.T) {
 			}
 			// AlwaysSample 可把 02 的 sampled 位提升为 1，但 random 位必须保留，
 			// 因而两种输入的 child 出站 flags 都是 03。
+			// English: AlwaysSample can raise the sampled bit of 02 to 1, but the random bit must be retained, so the child
+			// outbound flags of both inputs are 03.
 			if !strings.HasSuffix(forwarded.Get("traceparent"), "-03") {
 				t.Fatalf("outbound random flag was not preserved: %q", forwarded.Get("traceparent"))
 			}
@@ -249,6 +251,9 @@ func TestRemoteKeyedSamplerDefeatsChosenLowTailTraceIDs(t *testing.T) {
 		binary.BigEndian.PutUint64(traceID[:8], index)
 		// 官方 sampler 只看低 63 位，调用方固定为 1 就会全部命中；keyed
 		// sampler 对完整 trace ID 做 HMAC，结果应接近配置比例。
+		// English: The official sampler only looks at the lower 63 bits, and if the caller fixes it to 1, all hits will
+		// occur; the keyed sampler does HMAC on the complete trace ID, and the result should be close to the configured
+		// ratio.
 		binary.BigEndian.PutUint64(traceID[8:], 1)
 		if keyed.ShouldSample(sdktrace.SamplingParameters{TraceID: traceID}).Decision == sdktrace.RecordAndSample {
 			sampled++

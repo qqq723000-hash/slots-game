@@ -134,6 +134,7 @@ func TestGetSessionQuarantinesStrictFeatureFailureExactlyOnce(t *testing.T) {
 	}
 
 	// 即使畸形文档随后被修复，隔离标记仍具有权威性；必须由人工流程明确解除隔离。
+	// The quarantine marker remains authoritative even if the malformed document is later repaired; only an explicit manual process may clear it.
 	fixture.status = string(rgs.SessionBlocked)
 	fixture.featureJSON, _ = json.Marshal(game.EmptyFeatureState())
 	fixture.quarantinedAt = time.Now().UTC()
@@ -464,6 +465,9 @@ type sessionIntegrityWallet struct {
 func (wallet *sessionIntegrityWallet) ProfileFor(string) (rgs.Profile, error) {
 	// 档案解析是无网络、无经济副作用的本地路由读取；Spin 必须先取得它，才能把
 	// 恢复契约与准备记录原子绑定。损坏会话仍不得到达 Submit/Resolve/旧钱包调用。
+	// English: Archive parsing is a local route read with no network and no economical side effects; Spin must obtain
+	// it before it can atomically bind the restore contract to the prepare record. Corrupted sessions still must not
+	// reach Submit/Resolve/old wallet calls.
 	return rgs.AtomicHTTPProfile(rgs.WalletRouteBindingIDForCanonicalTarget(
 		"https://wallet.test.invalid/session-integrity",
 	)), nil

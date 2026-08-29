@@ -35,6 +35,10 @@ type economicLoadReport struct {
 // loopback Valkey。它验证真实 Lua 线性化、同 slot 双桶、NOSCRIPT 恢复和 10k 请求/
 // 1,024 并发
 // 下的硬外呼上界；不证明 TLS、ElastiCache、Multi-AZ 或生产 SLO。
+// English: TestEconomicAdmissionValkeyLoadProfile must point to a loopback Valkey that the caller explicitly
+// proves to be a one-time, empty, exclusive loopback Valkey. It verifies true Lua linearization, same-slot dual
+// buckets, NOSCRIPT recovery, and hard outbound bounds at 10k requests/1,024 concurrency; does not prove TLS,
+// ElastiCache, Multi-AZ, or production SLOs.
 func TestEconomicAdmissionValkeyLoadProfile(t *testing.T) {
 	address := os.Getenv("RGS_ECONOMIC_ADMISSION_LOAD_ADDR")
 	if address == "" {
@@ -156,6 +160,9 @@ func TestEconomicAdmissionValkeyLoadProfile(t *testing.T) {
 
 // verifyEconomicNoEvictionOOM 闭合 Lua 的细微错误边界：脚本通常不会回滚事务，
 // 因此生产脚本用一条 MSET 写两个状态。noeviction OOM 不得改变任一状态，准入必须失败关闭。
+// English: verifyEconomicNoEvictionOOM closes Lua's subtle error boundary: scripts usually don't roll back
+// transactions, so production scripts write two states with one MSET. noeviction OOM must not change any state,
+// and access must fail and close.
 func verifyEconomicNoEvictionOOM(t *testing.T, ctx context.Context, client valkey.Client) {
 	t.Helper()
 	defer func() {

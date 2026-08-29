@@ -106,13 +106,13 @@ export type JackpotTier = "mini" | "minor" | "major" | "mega" | "grand";
 export type PayoutWinLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export interface AudioCueOptions {
-  /** 音频时钟当前时间的延迟。大的/陈旧的延迟是有上限的。 */
+  /** 音频时钟当前时间的延迟。大的/陈旧的延迟是有上限的。 / English: The delay of the audio clock's current time. Large/stale delays are capped. */
   delayMs?: number;
-  /** 立体声位置从最左 (-1) 到最右 (1)。 */
+  /** 立体声位置从最左 (-1) 到最右 (1)。 / English: Stereo position is from far left (-1) to far right (1). */
   pan?: number;
-  /** 装饰响度/权重标量。这绝不代表支付等级。 */
+  /** 装饰响度/权重标量。这绝不代表支付等级。 / English: Ornamentation loudness/weight scalar. This is in no way an indication of payment grade. */
   intensity?: number;
-  /** 缩短密集的程序声音；它绝不意味着静音。 */
+  /** 缩短密集的程序声音；它绝不意味着静音。 / English: Shorten dense program sounds; it is never meant to be silent. */
   reducedMotion?: boolean;
 }
 

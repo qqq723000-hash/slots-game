@@ -149,7 +149,7 @@ describe("Primal panel text geometry", () => {
     expect(setup.scaleY).toBeCloseTo(1, 12);
     expect(setup.scaleY).toBeGreaterThan(0);
 
-    // 在 `show` 动画期间从 wheel_summary_jackpot.skel 捕获。
+    // 在 `show` 动画期间从 wheel_summary_jackpot.skel 捕获。 / English: Captured from wheel_summary_jackpot.skel during `show` animation.
     const animated = readableSpineTextTransform({
       a: 0.806,
       b: 0.012,

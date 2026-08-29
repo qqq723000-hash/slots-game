@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # 发布或检查固定版本的 HMAC 证据取消/完成标记，阻止已结束证据重放。
+# English: Issue or check a fixed version of HMAC evidence cancellation/completion flags, preventing completed
+# evidence replay.
 set -euo pipefail
 
 test "$#" -ge 2 || {

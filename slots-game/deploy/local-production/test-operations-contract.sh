@@ -1,5 +1,7 @@
 #!/bin/sh
 # 本契约先于实现落地：缺少通知落盘、备份状态或容量保护时必须失败闭合。
+# English: This contract is implemented before implementation: it must fail to close when there is no
+# notification of disk placement, backup status or capacity protection.
 # shellcheck disable=SC2016
 set -eu
 
@@ -47,6 +49,8 @@ rendered_dashboard="$rendered_dir/grafana/dashboards/rgs-overview.json"
 
 # Alertmanager 的默认 receiver 必须通过双向受限网络、TLS 主机名校验和文件 Bearer
 # 写入本机运营服务，禁止空 receiver 静默吞掉告警。
+# English: Alertmanager's default receiver must pass bidirectional restricted network, TLS hostname checksum
+# file Bearer Write to the local operation service to prevent empty receivers from silently swallowing alarms.
 require_fixed 'url: https://wallet:8443/alerts' "$alertmanager_file"
 require_fixed 'credentials_file: /run/alertmanager-webhook-secrets/alertmanager.token' "$alertmanager_file"
 require_fixed 'ca_file: /run/alertmanager-webhook-secrets/local-production-root-ca.pem' "$alertmanager_file"
@@ -55,6 +59,8 @@ require_fixed 'send_resolved: true' "$alertmanager_file"
 require_fixed 'LOCAL_OPERATOR_ALERT_FILE: /var/lib/local-operator/alerts/events.jsonl' "$compose_file"
 
 # 每次备份必须原子发布机器可读状态；周期容器同时提供新鲜度健康检查。
+# English: Each backup must publish machine-readable state atomically; periodic containers also provide
+# freshness health checks.
 require_fixed 'write_backup_status failure' "$backup_once_file"
 require_fixed 'write_backup_status success' "$backup_once_file"
 require_fixed '/local/postgres-backup-healthcheck.sh' "$compose_file"
@@ -63,6 +69,7 @@ if grep -F '/local/backup-integrity.sh' "$compose_file" "$backup_once_file" >/de
 fi
 require_fixed 'verify_source_tree /operator-data' "$backup_once_file"
 # 这里核对被测脚本中的字面量变量引用。
+# English: Here the literal variable references in the script under test are checked.
 # shellcheck disable=SC2016
 require_fixed 'verify_operator_archive "$archive_temporary"' "$backup_once_file"
 # shellcheck disable=SC2016
@@ -93,6 +100,8 @@ require_fixed 'LocalProductionBackupStale' "$rendered_rules"
 require_fixed 'LocalProductionBackupFailed' "$rendered_rules"
 
 # 健康检查必须动态接受新鲜成功状态，并拒绝失败、过期和超前时钟状态。
+# English: Health checks must dynamically accept fresh success status and reject failed, expired, and advanced
+# clock status.
 status_file="$rendered_dir/backup-status.json"
 now=$(date -u +%s)
 printf '%s\n' \
@@ -122,6 +131,9 @@ fi
 
 # 备份完整性验证先在纯文件夹具中证明：精确三成员清单可通过，漏验成员、链接输入和
 # 含链接归档必须在启动恢复数据库前被拒绝。
+# English: Backup integrity verification is first demonstrated in a pure file fixture: the exact three-member
+# list passes, missing members, link inputs and Linked archives must be rejected before starting to restore the
+# database.
 backup_fixture="$rendered_dir/backup-fixture"
 backup_timestamp=20260824T000000Z
 mkdir -p "$backup_fixture/archive/audit" "$backup_fixture/archive/logs" \
@@ -143,6 +155,9 @@ tar -C "$backup_fixture/archive" -czf \
 
 # 已有生产容器只挂载 once/loop/health 三个脚本。once 必须在没有新兄弟文件的旧挂载
 # 拓扑中保留同等完整性能力，避免仓库热更新后等待容器重建期间停止备份。
+# English: The existing artifactsion container only mounts three scripts: once/loop/health. once must be on the
+# old mount without new sibling files The same integrity capability is retained in the topology to avoid
+# stopping backup while waiting for container reconstruction after a hot update of the warehouse.
 established_mount_fixture="$rendered_dir/established-backup-mount"
 mkdir -p "$established_mount_fixture"
 cp "$backup_once_file" "$established_mount_fixture/postgres-backup-once.sh"
@@ -465,6 +480,8 @@ fi
 
 # 审计、日志与告警文件必须在达到容量前可观测，并且容量耗尽不得把基础
 # readiness 永久拖入重启循环。
+# English: Audit, log, and alarm files must be observable before capacity is reached, and exhaustion of capacity
+# must not destroy the basic Readiness permanently drags you into a reboot loop.
 for metric in \
   local_operator_audit_store_bytes \
   local_operator_audit_store_capacity_bytes \

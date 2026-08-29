@@ -1,9 +1,41 @@
-# Primal Rampage 个人独立商用级工程交付
+# Primal Rampage 个人独立商用级工程交付 / Independent Commercial-Grade Source Delivery
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+> **Independent-project boundary:** This repository is maintained by an independent developer as a
+> commercial-grade source delivery. Production, operations, platform, security, audit, legal,
+> compliance, and approval roles are responsibilities of the adopting party. Repository evidence
+> does not prove a live deployment, an SLA, commercial or asset rights, or regulatory certification.
+
+## 24 秒本地全栈演示 / 24-second local full-stack demo
+
+[![Primal Rampage 24 秒本地全栈演示海报 / 24-second local full-stack demo poster](docs/media/primal-rampage-local-full-stack-demo-poster.webp)](docs/media/primal-rampage-local-full-stack-demo-24s.mp4)
+
+点击海报播放精确 `24.000` 秒的仓库版 MP4。画面按顺序展示特殊玩法与图标预览、真实本地转轮和
+`0.10` 中奖、同一经济回合的真实 Primal Wheel `MINI / 10.00`，以及该回合在 Go RGS 中的
+`client.spin → client.result_ack` 与 PostgreSQL `COMMITTED / BET 100 / WIN 1000` 只读脱敏证据。
+视频保留系统游戏声；所有新增说明均为中文在前、英文紧邻。数据为本机合成测试数据，不是线上真钱、
+生产容量、高可用、素材授权或监管认证证明。
+
+Click the poster to play the exact `24.000`-second repository MP4. It shows the feature/symbol preview,
+a real local spin and `0.10` win, a real Primal Wheel `MINI / 10.00` result, and sanitized read-only
+evidence for the same economic round: Go RGS `client.spin → client.result_ack` plus PostgreSQL
+`COMMITTED / BET 100 / WIN 1000`. System game audio is retained, and every added caption is presented
+in Chinese and English. All values are local synthetic test data—not proof of real-money production,
+capacity, high availability, asset licensing, or regulatory approval.
+
+GitHub 首屏只加载约 `84 KB` 的静态 WebP 海报；点击后才请求约 `7.0 MB`、带 `faststart` 的
+H.264/AAC MP4，以兼顾仓库浏览速度和可播放证据。/ The GitHub landing page loads only the
+approximately `84 KB` static WebP poster; the approximately `7.0 MB` fast-start H.264/AAC MP4 is
+requested only after a click.
+
+[`docs/media/manifest.json`](docs/media/manifest.json) 固定视频与海报的 SHA-256、精确字节数、时长、
+分辨率和 faststart 顺序；`make verify-demo-media` 会执行回归门禁。/ The media manifest pins the
+video and poster SHA-256 values, exact byte sizes, duration, dimensions, and faststart ordering;
+`make verify-demo-media` enforces them as a regression gate.
 
 本仓库交付 Go RGS 后端、PostgreSQL 迁移器、TypeScript/PixiJS Web、生产容器、Helm Chart、
 可观测性规则与供应链门禁。浏览器只是表现层；会话、余额、RNG、轮次、派彩、特性状态、幂等与
@@ -13,7 +45,7 @@
 Helm Chart 和发布示例一致；正式发布还需要创建同版本受保护 Tag、GitHub Release 说明，并保存
 三个 OCI 制品各自的 SBOM、来源证明、签名和不可变摘要，不能只凭版本文件宣称已经发布。
 
-## 正式生产主线
+## 正式生产主线 / Target production architecture
 
 AWS 是本项目定义的唯一目标生产架构。macOS Docker Compose 只保留为开发、集成和端到端验收环境，
 不得写入生产变更单，也不得作为多可用区、高可用、备份恢复或安全控制已经落地的证据。
@@ -42,7 +74,7 @@ AWS 是本项目定义的唯一目标生产架构。macOS Docker Compose 只保�
 - [通用 Helm 应用交付](deploy/cluster-production/README.md)
 - [浏览器支持与验收矩阵](docs/browser-support-matrix.md)
 
-## 交付边界
+## 交付边界 / Delivery boundaries
 
 | 能力 | 仓库状态 | 正式上线责任 |
 | --- | --- | --- |
@@ -65,7 +97,7 @@ AWS 是本项目定义的唯一目标生产架构。macOS Docker Compose 只保�
 由于当前仓库公开，授权范围还必须覆盖现有源码/LFS 下载分发。取得授权前应由所有者
 选择转私有或移除/替换素材。
 
-## 源码目录
+## 源码目录 / Source layout
 
 - `server/`：`rgs-server`、`rgs-migrator` 以及仅供本机验收的运营商/钱包工具；
 - `web/`：只消费权威 RGS 结果的浏览器表现层；
@@ -81,7 +113,7 @@ AWS 是本项目定义的唯一目标生产架构。macOS Docker Compose 只保�
 前端最低版本、跨引擎自动化与真实设备门禁见
 [浏览器支持与验收矩阵](docs/browser-support-matrix.md)。
 
-## AWS 发布流程摘要
+## AWS 发布流程摘要 / AWS release flow summary
 
 正式发布必须由受保护流水线和独立审批驱动，不得从开发者电脑直接上传生产制品或长期凭据。
 
@@ -113,7 +145,7 @@ helm upgrade --install slots deploy/cluster-production/chart \
 稳定路径必须由 S3/CloudFront 的发布前缀完成版本隔离。完整边界见
 [多副本集群运行契约](docs/cluster-runtime-contract.md)。
 
-## 本地集成验收
+## 本地集成验收 / Local integration acceptance
 
 本机前置环境为 Docker Desktop、Go 1.26.6、Node.js 22.22.0 和 Git LFS 3.7.1。克隆后先执行
 `git lfs install --local && git lfs pull`：
@@ -137,7 +169,7 @@ helm upgrade --install slots deploy/cluster-production/chart \
 `down.sh`；只有明确需要销毁该本地实例持久卷时才执行 `destroy.sh`。完整说明见
 [本地集成验收手册](deploy/local-production/README.md)。
 
-## 源码与交付验证
+## 源码与交付验证 / Source and delivery verification
 
 ```sh
 make bootstrap
@@ -160,7 +192,7 @@ WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
   make build-web-release-image
 ```
 
-## 不可破坏的生产约束
+## 不可破坏的生产约束 / Non-negotiable production invariants
 
 - RGS 是强一致交易边界，金额始终使用最小货币单位的规范十进制字符串，禁止浮点结算；
 - 同一轮次使用稳定 `operationId` 执行一条原子钱包命令，未知结果只查询，不重复 RNG 或扣款；
@@ -174,3 +206,27 @@ WEB_RELEASE_REVISION=0123456789abcdef0123456789abcdef01234567 \
 [最终优化与加固状态矩阵](docs/final-optimization-hardening-status.md)，持续审计范围见
 [前后端持续优化加固清单](docs/full-stack-hardening-checklist.md)，贡献和中文注释规范见
 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## English delivery guide / 英文交付导读
+
+- **Economic authority:** the browser is presentation-only. Session state, balances, RNG, rounds,
+  awards, feature state, idempotency, and recovery belong to the Go RGS and PostgreSQL transaction
+  boundary.
+- **Production target:** AWS is the only defined production architecture. Local Docker Compose is an
+  integration and acceptance environment, not evidence of multi-AZ availability, disaster recovery,
+  production security controls, or regulatory approval.
+- **Release identity:** `VERSION`, the changelog, Web package metadata, Helm metadata, and examples must
+  agree. A production release also requires protected tags, immutable OCI digests, SBOMs, provenance,
+  signatures, and approved deployment evidence.
+- **Fail-closed dependencies:** PostgreSQL, the external wallet, audit delivery, definition approval,
+  and production key material must fail closed. An uncertain wallet result is queried with the stable
+  operation identity; RNG and debit are never repeated.
+- **Secrets and privacy:** launch codes, bearer tokens, private keys, DSNs, raw production logs, player
+  data, and approval artifacts are forbidden from Git, browser storage, image layers, and public build
+  output.
+- **Local verification:** run `bootstrap.sh`, `up.sh`, and `verify.sh` for the local stack. Run
+  `make verify`, `make test-postgres`, and the deployment contract gates before treating a candidate as
+  source-verified.
+- **External gates:** target-account AWS application, DNS/ACM, external wallet and operator systems,
+  capacity evidence, asset rights, incident operations, and regulatory certification remain outside
+  repository proof and must be approved separately by the adopting party.

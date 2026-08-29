@@ -12,6 +12,10 @@ var outcomeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$
 // ValidateOutcomeStructure 是结果可持久化并发送给钱包前的表示层信任边界。它验证不变式，
 // 并证明 TotalWinMinor 等于全部可见中奖及事件奖励之和。使用不可变数学定义的引擎还会调用
 // ValidateOutcomeAgainstConfig 重新计算完整连线结果。
+// English: ValidateOutcomeStructure is the presentation layer trust boundary before the result can be persisted
+// and sent to the wallet. It verifies the invariant and proves that TotalWinMinor is equal to the sum of all
+// visible win and event rewards. Engines using immutable math definitions also call ValidateOutcomeAgainstConfig
+// to recalculate the full wire result.
 func ValidateOutcomeStructure(input SpinInput, outcome SpinOutcome) error {
 	input.Feature = canonicalFeatureState(input.Feature)
 	rows, err := validateOutcomeGrid(outcome.Grid)
@@ -84,6 +88,9 @@ func isMonetaryAwardEvent(eventType string) bool {
 
 // ValidateOutcomeAgainstConfig 闭合内置引擎的数学信任链。每项聚合连线奖励均依据确切格子
 // 修正值及不可变赔付表重新计算；浏览器提供的任何倍数或金额都不会参与结算。
+// English: ValidateOutcomeAgainstConfig Closes the mathematical trust chain of the built-in engine. Each aggregate
+// link reward is recalculated based on the exact grid modifier and immutable pay table; any multipliers or amounts
+// provided by the browser will not be factored into settlement.
 func ValidateOutcomeAgainstConfig(config Config, input SpinInput, outcome SpinOutcome) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("outcome: invalid game definition: %w", err)
@@ -93,6 +100,9 @@ func ValidateOutcomeAgainstConfig(config Config, input SpinInput, outcome SpinOu
 
 // validateOutcomeAgainstValidatedConfig 只供持有不可变、已验证定义的 Engine 热路径使用。
 // 外部调用仍必须经过 ValidateOutcomeAgainstConfig，不能用本函数绕过定义信任边界。
+// English: validateOutcomeAgainstValidatedConfig is only used by Engine hot paths that hold immutable, validated
+// definitions. External calls must still go through ValidateOutcomeAgainstConfig, and this function cannot be used
+// to bypass the defined trust boundary.
 func validateOutcomeAgainstValidatedConfig(config Config, input SpinInput, outcome SpinOutcome) error {
 	if err := config.ValidateBet(input.BetMinor); err != nil {
 		return fmt.Errorf("outcome: invalid bet: %w", err)
@@ -253,6 +263,8 @@ func validateOutcomeGrid(grid Grid) (int, error) {
 
 // validateCellModifier 定义完全由服务器控制的修正值范围。浏览器可以渲染这些字段，
 // 但绝不能自行生成或修改它们。
+// English: validateCellModifier defines a range of modification values that is fully controlled by the server.
+// The browser can render these fields, but it must not generate or modify them itself.
 func validateCellModifier(cell Cell) error {
 	switch cell.Symbol {
 	case SymbolWild:

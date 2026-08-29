@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 在 Helm upgrade 前比对候选数学定义与当前 API、Worker Pod 模板；不读取任何 Secret 值。
+# English: Compare candidate mathematical definitions with current API and Worker Pod templates before Helm
+# upgrade; no Secret values are read.
 set -eu
 
 fail() {

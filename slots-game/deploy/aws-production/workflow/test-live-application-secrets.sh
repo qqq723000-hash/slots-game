@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 使用纯本地 fixture 证明缺 key、可变 Secret 和 delivery 漂移都会在 Helm 前被拒绝。
+# English: Using pure local fixtures to prove that missing keys, mutable secrets, and delivery drifts will all
+# be rejected before Helm.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -97,6 +99,9 @@ done
 
 # Block 阶段必须读取精确 S3 version、核对对象 SHA-256，并验证对象内的环境、ACL、配置、
 # 七天观测、双人审批与回滚 schema。任意内容篡改都必须在接触 WAF 状态前失败关闭。
+# English: The Block phase must read the exact S3 version, check SHA-256 of the object, and verify the
+# environment, ACL, configuration, Seven-day observation, two-person approval and rollback schema. Any content
+# tampering must fail before touching the WAF state.
 evidence_file="$fixture_root/waf-rollout-evidence.json"
 tampered_evidence_file="$fixture_root/waf-rollout-evidence-tampered.json"
 block_delivery="$fixture_root/waf-managed-block-delivery.json"
@@ -205,6 +210,9 @@ MOCK_PLATFORM_MODE=waf-managed-block-evidence-valid \
 
 # 证据有效期约束 Count→Block/配置变更，不租赁已经批准的稳态 Block。应用发布和
 # 无关 Terraform apply 继续重验精确 version、SHA、KMS/Object Lock、schema 与配置绑定。
+# English: The evidence validity period is constrained by Count→Block/configuration changes, and approved
+# steady-state blocks are not leased. Application publishing and Unrelated Terraform apply continues to
+# re-verify the exact version, SHA, KMS/Object Lock, schema and configuration bindings.
 ruby -rjson -rtime -e '
   value = JSON.parse(File.binread(ARGV.fetch(0)))
   ended_at = Time.iso8601(value.fetch("observation").fetch("ended_at"))
@@ -258,6 +266,8 @@ MOCK_PLATFORM_MODE=waf-managed-block-evidence-valid \
 
 # WAF 自定义 429 必须携带浏览器可读的 Retry-After 与固定泛化 marker；否则客户端会把
 # 空 body 误判为未知网络错误并制造重试羊群。
+# English: A custom WAF 429 response must include a browser-readable Retry-After header and a fixed generic
+# marker; otherwise clients may mistake the empty body for an unknown network error and create a retry herd.
 rate_configuration_hash=$(ruby "$evidence_verifier" --configuration-sha256 \
   "$delivery_file" api-rate:launch-rate-limit) || fail '无法生成 launch rate evidence 配置摘要'
 jq --arg configuration_hash "$rate_configuration_hash" '

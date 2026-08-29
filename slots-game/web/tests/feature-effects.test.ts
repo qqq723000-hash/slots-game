@@ -604,19 +604,19 @@ describe("authoritative wheel landing", () => {
     const layers = new ReelAlphaLayers(reels);
     const wheelTail = layers.acquire();
 
-    // 到达 H+500 流程屏障时，一秒的转轴淡出已完成一半。
+    // 到达 H+500 流程屏障时，一秒的转轴淡出已完成一半。 / English: By the time you reach the H+500 process barrier, the one-second reel fade is halfway complete.
     wheelTail.setAlpha(0.5);
     expect(reels.alpha).toBe(0.5);
 
-    // 后续入场必须保留 Wheel 之前的稳定基准值，不能把短暂的 0.5 捕获为
-    // 最终恢复值。
+    // 后续入场必须保留 Wheel 之前的稳定基准值，不能把短暂的 0.5 捕获为 / English: Subsequent entries must retain the stable baseline value before the Wheel, and the short-lived 0.5 cannot be captured as
+    // 最终恢复值。 / English: final recovery value.
     const freeSpinIntro = layers.acquire();
     expect(freeSpinIntro.baseAlpha).toBe(1);
     freeSpinIntro.setAlpha(0.6);
     expect(reels.alpha).toBeCloseTo(0.3, 12);
 
-    // H+1000 只完成并释放 Wheel 所有者。它不能覆盖仍处于活动状态的入场演出，
-    // 后续由入场演出恢复规范基准值。
+    // H+1000 只完成并释放 Wheel 所有者。它不能覆盖仍处于活动状态的入场演出， / English: H+1000 only completes and releases the Wheel owner. It cannot cover admissions that are still active.
+    // 后续由入场演出恢复规范基准值。 / English: Subsequently, the standard baseline value will be restored by the entrance performance.
     wheelTail.setAlpha(1);
     wheelTail.release();
     expect(reels.alpha).toBeCloseTo(0.6, 12);

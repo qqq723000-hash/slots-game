@@ -1,9 +1,13 @@
-# 高并发性能与数据生命周期契约
+# High-concurrency performance and data-lifecycle contract / 高并发性能与数据生命周期契约
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This contract defines the economic, randomness, audit, recovery, and release invariants that performance work must not weaken. PostgreSQL and the durable wallet workflow remain authoritative, Valkey is limited to verified new-intent admission, and asynchronous work must preserve the same stable operation identity and terminal result instead of returning invented success. Repository benchmarks and profiles are engineering evidence only; production thresholds, wallet capacity, database and cache sizing, cloud scaling, retention, failover, controlled load tests, and regulatory performance acceptance must be approved in the target environment.
 
 本文规定性能优化不能突破的资金、随机性、审计与发布边界。任何实现只有同时满足正确性门禁和
 可重复的压测证据，才能进入正式环境；“减少一次数据库访问”本身不是放宽一致性的理由。

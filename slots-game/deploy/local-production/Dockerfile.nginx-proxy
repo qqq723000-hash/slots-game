@@ -3,6 +3,9 @@
 ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30.4-alpine3.24-slim@sha256:bcf91d2c73ab64fa1c4ac7fbac5ac523057c8af7d553ab9251c7aef38c260979
 # 入口与告警代理共用这个仅修补 Alpine OpenSSL 的 nginxinc 运行镜像。固定远端
 # ADD 摘要和离线安装同时避免可变仓库索引、apk upgrade 与架构错配。
+# English: The portal and alert agent share this nginxinc running image that only patches Alpine OpenSSL. fixed
+# remote ADD summaries and offline installations simultaneously avoid mutable repository indexes, apk upgrades,
+# and architecture mismatches.
 FROM scratch AS openssl-patches
 ADD --checksum=sha256:161223a16f042b8e469e9441291e071464fd91d4f4bbe6f496ee8d0abd4e0701 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk /x86_64/libcrypto3.apk
 ADD --checksum=sha256:aca521e5ae4a321322a9d47ed64a1775f5ab1ffd215d1e9fc0433c58f7bfd037 https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk /x86_64/libssl3.apk

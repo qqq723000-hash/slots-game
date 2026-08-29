@@ -82,6 +82,8 @@ func TestEvaluateWaysAppliesEachWildMultiplierToItsOwnPath(t *testing.T) {
 		t.Fatalf("wins = %+v, want one 3-way ORBIT win", wins)
 	}
 	// ORBIT 赔付为总投注的 30/100，直接按单位路径计算为 30*2 + 30*5 + 30*1。
+	// English: The ORBIT payout is 30/100 of the total bet, calculated directly as 30*2 + 30*5 + 30*1 based on the
+	// unit path.
 	if total != 240 || wins[0].AmountMinor != 240 {
 		t.Fatalf("wild award = %d, want 240", total)
 	}
@@ -133,6 +135,7 @@ func TestEvaluateWaysPaysTankAsAnIndependentHighSymbol(t *testing.T) {
 		t.Fatalf("wins = %+v, want one 1-way TANK win", wins)
 	}
 	// TANK 赔付为总投注的 150/100；此直接求值器使用 2 单位投注。
+	// English: TANK payout is 150/100 of the total bet; this direct evaluator uses a 2-unit bet.
 	if wins[0].AmountMinor != 300 || total != 300 {
 		t.Fatalf("TANK amount,total = %d,%d, want 300,300", wins[0].AmountMinor, total)
 	}

@@ -14,6 +14,8 @@ type memoryRecord struct {
 
 // MemoryStore 不存在数据竞争，但仅限当前进程使用。它用于测试和开发；生产副本必须使用
 // 共享的事务型 Store。
+// English: There is no data race in MemoryStore, but it is only used by the current process. It is used for
+// testing and development; production copies must use a shared transactional store.
 type MemoryStore struct {
 	mu      sync.Mutex
 	records map[CodeDigest]memoryRecord
@@ -41,6 +43,7 @@ func (s *MemoryStore) Create(ctx context.Context, request CreateRequest) (Record
 		return Record{}, err
 	}
 	// 创建时间、到期时间、清理和冲突裁决共享锁内唯一一次权威时钟观测。
+	// Creation time, expiry time, cleanup, and conflict resolution share one authoritative clock observation under the lock.
 	now := s.now().UTC()
 	s.purgeIdempotencyExpiredLocked(now)
 	if _, exists := s.records[request.Digest]; exists {
@@ -95,6 +98,8 @@ func (s *MemoryStore) Get(ctx context.Context, digest CodeDigest) (ReplayObserva
 		return ReplayObservation{}, err
 	}
 	// 读取、清理和返回给 Service 的时间必须来自锁内同一次存储时钟观测。
+	// English: The times read, cleaned, and returned to the Service must come from the same storage clock observation
+	// within the lock.
 	now := s.now().UTC()
 	s.purgeIdempotencyExpiredLocked(now)
 	stored, exists := s.records[digest]

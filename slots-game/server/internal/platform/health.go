@@ -22,6 +22,9 @@ type Readiness struct {
 
 // LifecycleReadiness 表示当前副本是否仍可接收新流量。BeginDrain 一旦调用便不可逆，
 // 从而保证终止期间的后续探针不会把正在排空的副本重新加入负载均衡。
+// English: LifecycleReadiness indicates whether the current replica can still receive new traffic. BeginDrain is
+// irreversible once called, ensuring that subsequent probes during termination will not rejoin the draining
+// replica to the load balancer.
 type LifecycleReadiness struct {
 	draining atomic.Bool
 }
@@ -95,6 +98,10 @@ func (ready Readiness) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // rejectUnexpectedBody 让只读运维端点拒绝任何声明或分块传输的正文。响应完成后
 // 立即让该连接的读取失效，避免 net/http 为复用连接而等待攻击者迟迟不发送的正文；
 // Connection: close 同时禁止把异常连接放回长连接池。
+// English: rejectUnexpectedBody causes the read-only operations endpoint to reject the body of any claim or
+// chunked transfer. After the response is completed, immediately invalidate the reading of the connection to
+// prevent net/http from waiting for the attacker's delayed text in order to reuse the connection; Connection:
+// close also prohibits returning the abnormal connection to the long connection pool.
 func rejectUnexpectedBody(w http.ResponseWriter, r *http.Request) bool {
 	if r == nil || (r.ContentLength == 0 && len(r.TransferEncoding) == 0) {
 		return false
@@ -108,6 +115,9 @@ func rejectUnexpectedBody(w http.ResponseWriter, r *http.Request) bool {
 
 // IsReady 为指标抓取复用与 /readyz 完全相同的依赖集合和总超时预算。
 // 它只返回一个布尔值，不暴露检查名称或内部错误，避免监控面泄漏运行细节。
+// English: IsReady reuses the exact same set of dependencies and total timeout budget as /readyz for metric
+// scraping. It only returns a Boolean value and does not expose the check name or internal errors, preventing the
+// monitoring surface from leaking running details.
 func (ready Readiness) IsReady(parent context.Context) bool {
 	ctx, cancel := context.WithTimeout(parent, ready.boundedTimeout())
 	defer cancel()

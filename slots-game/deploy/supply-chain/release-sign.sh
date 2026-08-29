@@ -2,6 +2,9 @@
 
 # 该脚本只签署已存在于 Registry 的不可变 digest。Registry 凭据、受保护发布环境和
 # 审批人均由仓库外配置；缺少任何真实输入时直接失败，不创建本地占位签名或审批记录。
+# English: This script only signs immutable digests that already exist in the Registry. Registry credentials,
+# protected publishing environment, and Approvers are configured outside the warehouse; in the absence of any
+# real input, it fails directly and no local placeholder signature or approval record is created.
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -18,6 +21,8 @@ require_env() {
   variable_name=$1
   eval "variable_value=\${$variable_name-}"
   # 上一行按受控变量名间接取值，ShellCheck 无法追踪 eval 的赋值结果。
+  # English: The previous line indirectly obtains the value by the name of the controlled variable, and
+  # ShellCheck cannot track the assignment result of eval.
   # shellcheck disable=SC2154
   test -n "$variable_value" || fail "$variable_name is required"
 }
@@ -142,6 +147,8 @@ sign_and_verify() {
   image_reference="$SUPPLY_CHAIN_IMAGE_REPOSITORY@$SUPPLY_CHAIN_IMAGE_DIGEST"
 
   # 不传 --key、关闭透明日志或不安全 Registry 参数：使用 GitHub OIDC 的短命身份签名。
+  # English: Without passing --key, turning off transparent logging, or the insecure registry parameter: use
+  # GitHub OIDC's short-lived identity signature.
   run_cosign "$docker_config" sign --yes "$image_reference"
   if ! run_cosign "$docker_config" verify \
     --certificate-identity "$SUPPLY_CHAIN_EXPECTED_CERTIFICATE_IDENTITY" \

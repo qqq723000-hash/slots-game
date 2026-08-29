@@ -1,4 +1,4 @@
-// @ts-nocheck -- 该测试在隔离 VM 中执行 ES5 经典脚本，不进入浏览器类型域。
+// @ts-nocheck -- 该测试在隔离 VM 中执行 ES5 经典脚本，不进入浏览器类型域。 / English: @ts-nocheck -- This test executes an ES5 classic script in an isolated VM, without entering the browser type domain.
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 

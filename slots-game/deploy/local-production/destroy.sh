@@ -1,5 +1,7 @@
 #!/bin/sh
 # 删除本 Compose 的容器和卷；宿主机 state/备份/初始密钥始终保留。
+# English: Delete the container and volume of this Compose; the host state/backup/initial key is always
+# retained.
 set -eu
 # shellcheck source=deploy/local-production/common.sh
 . "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/common.sh"

@@ -27,19 +27,19 @@ const WINBOX_SOURCE_WIDTH = 240;
 const WINBOX_SOURCE_HEIGHT = 160;
 const REDUCED_MOTION_TIME_SCALE = 100;
 
-/** 分派的 MasterWinView 构建了许多可重复使用的 WinBox 框架。 */
+/** 分派的 MasterWinView 构建了许多可重复使用的 WinBox 框架。 / English: The dispatched MasterWinView builds many reusable WinBox frameworks. */
 export const PRIMAL_WINBOX_POOL_SIZE = 24;
 
 let nextResidentInstanceId = 1;
 
-/** 出厂的 WinBox/WinLabel 剪辑在正常的 Spine 时钟上运行。 */
+/** 出厂的 WinBox/WinLabel 剪辑在正常的 Spine 时钟上运行。 / English: Factory WinBox/WinLabel clips run on normal Spine clocks. */
 export const NORMAL_WIN_AUTHORED_EFFECT_TIME_SCALE = 1;
 
 export function normalWinAuthoredEffectTimeScale(reducedMotion: boolean): number {
   return reducedMotion ? REDUCED_MOTION_TIME_SCALE : NORMAL_WIN_AUTHORED_EFFECT_TIME_SCALE;
 }
 
-/** 活动 `.471` GameWinLogicController 记录计时。 */
+/** 活动 `.471` GameWinLogicController 记录计时。 / English: Activity `.471` GameWinLogicController records timing. */
 export const PRIMAL_NORMAL_WIN_RECORD_HOLD_MS = Object.freeze({
   multiPlain: 1_500,
   multiPlainFast: 750,
@@ -48,7 +48,7 @@ export const PRIMAL_NORMAL_WIN_RECORD_HOLD_MS = Object.freeze({
   repeatOrPostBigWinPlain: 2_000,
 } as const);
 
-/** 从提供的 `winlabel.skel` 解码的精确剪辑长度和边界。 */
+/** 从提供的 `winlabel.skel` 解码的精确剪辑长度和边界。 / English: The exact clip length and bounds decoded from the provided `winlabel.skel`. */
 export const WIN_LABEL_AUTHORED_TIMELINE_MS = Object.freeze({
   showDuration: 333.333343,
   mergeStartAt: 333.333343,
@@ -100,7 +100,7 @@ interface WinLabelTextSkeletonSource {
   getAttachment(slotIndex: number, attachmentName: string): unknown | null;
 }
 
-/** 即使设置槽为空，文本边界也会存在于默认皮肤中。 */
+/** 即使设置槽为空，文本边界也会存在于默认皮肤中。 / English: Even if the settings slot is empty, text borders will be present in the default skin. */
 export function resolveWinLabelTextAttachment<T>(
   skeleton: WinLabelTextSkeletonSource,
   slot: WinLabelTextAttachmentSource,
@@ -111,6 +111,8 @@ export function resolveWinLabelTextAttachment<T>(
 
 /**
  * 精确的 winlabel.skel 基础轨道控制器。乘数文本仅来自活动的服务器解析记录； Spine 合并方法仍然是明确的。
+ *
+ * 英文 / English: Accurate winlabel.skel base track controller. The multiplier text only comes from active server parsing records; the Spine merge method is still explicit.
  */
 export class WinLabelAnimationController {
   private multiplierMerged = false;
@@ -152,7 +154,7 @@ export class WinLabelAnimationController {
   private play(animation: WinLabelAnimationName): number {
     if (!this.state.hasAnimation(animation)) return 0;
     const entry = this.state.setAnimation(this.trackIndex, animation, false);
-    // 官方 WinLabel 包装器会覆盖每个基本轨道命令的共享 0.15 秒 Spine 混音。 WinBox 故意保留共享默认值。
+    // 官方 WinLabel 包装器会覆盖每个基本轨道命令的共享 0.15 秒 Spine 混音。 WinBox 故意保留共享默认值。 / English: The official WinLabel wrapper overrides a shared 0.15 second Spine mix for each base track command. WinBox intentionally retains shared defaults.
     entry.mixDuration = 0;
     return entry.animationEnd;
   }
@@ -231,17 +233,17 @@ interface ResidentHideTail {
 export interface WinRecordPlan {
   readonly id: string;
   readonly symbol: SymbolId;
-  /** `-1` 是捕获的无路 BONUS 哨兵。 */
+  /** `-1` 是捕获的无路 BONUS 哨兵。 / English: `-1` is a captured pathless BONUS sentinel. */
   readonly ways: number | undefined;
   readonly multiplier: number;
-  /** 预设的乘数合并之前可见的金额。 */
+  /** 预设的乘数合并之前可见的金额。 / English: The preset multiplier combines the amount visible before. */
   readonly baseAmountMinor: MoneyMinor;
   readonly amountMinor: MoneyMinor;
-  /** 完整服务器记录的独特权威单元。 */
+  /** 完整服务器记录的独特权威单元。 / English: A unique authoritative unit of complete server records. */
   readonly cells: readonly CellAddress[];
 }
 
-/** 仅用于预加载阶段构建常驻视图的内部构造信息。 */
+/** 仅用于预加载阶段构建常驻视图的内部构造信息。 / English: Internal construction information used only during the preload phase to build the resident view. */
 const RESIDENT_PRELOAD_RECORD: Readonly<WinRecordPlan> = Object.freeze({
   id: "resident-preload",
   symbol: "ORBIT",
@@ -261,7 +263,7 @@ export type WinCelebrationMilestone =
   | "hide-start"
   | "hidden";
 
-/** 用于证明常驻对象所有权和零延迟重用的不可变诊断。 */
+/** 用于证明常驻对象所有权和零延迟重用的不可变诊断。 / English: Immutable diagnostics for proving resident object ownership and zero-latency reuse. */
 export interface WinCelebrationResidentFacts {
   readonly generation: number;
   readonly labelInstanceId: number;
@@ -275,7 +277,7 @@ export interface WinCelebrationResidentFacts {
   readonly staleHiddenCount: number;
 }
 
-/** 只读观察缝；回调永远无法控制表现。 */
+/** 只读观察缝；回调永远无法控制表现。 / English: Read-only observation seams; callbacks can never control performance. */
 export type WinCelebrationMilestoneCallback = (
   milestone: WinCelebrationMilestone,
   record: Readonly<WinRecordPlan>,
@@ -289,9 +291,9 @@ function isVoidPromise(value: unknown): value is PromiseLike<void> {
 }
 
 export interface WinCelebrationPlan {
-  /** 直接从权威服务器中奖记录复制的独特单元。 */
+  /** 直接从权威服务器中奖记录复制的独特单元。 / English: Unique units copied directly from authoritative server winning records. */
   readonly cells: readonly CellAddress[];
-  /** 每个服务器记录一个视觉记录； `pathAwards` 永远不会扩展此列表。 */
+  /** 每个服务器记录一个视觉记录； `pathAwards` 永远不会扩展此列表。 / English: One visual record is recorded per server; `pathAwards` never expands this list. */
   readonly records: readonly WinRecordPlan[];
   readonly totalAmountMinor: MoneyMinor;
 }
@@ -318,7 +320,7 @@ export interface WinLabelMergeFrame {
   readonly complete: boolean;
 }
 
-/** 保持动态 WinLabel 字形可读，同时保留预设的倾斜/尺寸。 */
+/** 保持动态 WinLabel 字形可读，同时保留预设的倾斜/尺寸。 / English: Keep dynamic WinLabel glyphs readable while retaining preset slant/size. */
 export function readableWinLabelTextTransform(
   matrix: Readonly<{ a: number; b: number; c: number; d: number }>,
   fitScale: number,
@@ -343,6 +345,8 @@ function hasMultiplierMerge(
 
 /**
  * 捕获正常中奖标签计时。这两个值均由服务器提供；该函数仅选择表现时间，从不计算金钱。
+ *
+ * 英文 / English: Capture normal winning tag timing. Both values ​​are provided by the server; the function only selects performance time, never counting money.
  */
 export function winLabelMergeFrame(
   record: Pick<WinRecordPlan, "multiplier" | "baseAmountMinor" | "amountMinor">,
@@ -413,7 +417,7 @@ function recordMultiplier(value: number | undefined): number {
   return Number.isSafeInteger(value) && (value ?? 0) > 1 ? value! : 1;
 }
 
-/** 镜像主动控制器的单 -> 乘数 -> 重播/BigWin 顺序。 */
+/** 镜像主动控制器的单 -> 乘数 -> 重播/BigWin 顺序。 / English: Mirror the active controller's Single -> Multiplier -> Replay/BigWin sequence. */
 export function primalWinRecordHoldDurationMs(
   record: Pick<Win, "multiplier">,
   context: WinRecordHoldContext,
@@ -447,12 +451,14 @@ function authoritativeBaseAmountMinor(win: Readonly<Win>, multiplier: number): M
   if (win.pathAwards !== undefined && win.pathAwards.length > 0) {
     return sumMinor(win.pathAwards.map((award) => award.baseAmountMinor));
   }
-  // 旧归一化记录没有路径级事实；只在这条兼容路径从 nominal 而非已裁剪 paid 值推导。
+  // 旧归一化记录没有路径级事实；只在这条兼容路径从 nominal 而非已裁剪 paid 值推导。 / English: Old normalized records have no path-level facts; only this compatible path is derived from nominal rather than clipped paid values.
   return baseAmountMinor(win.nominalAmountMinor, multiplier);
 }
 
 /**
  * 将解码的中奖事实转换为视觉事实，无需检查网格、支付线、符号值或任何客户计算的结果。
+ *
+ * 英文 / English: Convert decoded winning facts into visual facts without checking grids, paylines, symbol values ​​or any customer calculated results.
  */
 export function createWinCelebrationPlan(wins: readonly Win[]): WinCelebrationPlan {
   const cells = new Map<string, CellAddress>();
@@ -486,16 +492,16 @@ export function winCelebrationDuration(
   reducedMotion: boolean,
   _record?: Pick<WinRecordPlan, "multiplier" | "baseAmountMinor" | "amountMinor">,
 ): number {
-  // 这只是传统调用者的回退路径方案。活动控制器提供单记录聚合计数器 D 或审核的多记录 HOLD。乘法器绝不能延长任一所属时钟以适应其标签夹。
+  // 这只是传统调用者的回退路径方案。活动控制器提供单记录聚合计数器 D 或审核的多记录 HOLD。乘法器绝不能延长任一所属时钟以适应其标签夹。 / English: This is just a fallback path scenario for traditional callers. The activity controller provides single-record aggregation counter D or audited multi-record HOLD. A multiplier must never stretch any of its associated clocks to fit its tag clip.
   return reducedMotion ? REDUCED_DURATION_MS : NORMAL_DURATION_MS;
 }
 
-/** Primal 使预设的 Spine 显示/合并/隐藏剪辑可见。 */
+/** Primal 使预设的 Spine 显示/合并/隐藏剪辑可见。 / English: Primal Makes the preset Spine show/merge/hide clips visible. */
 export function winCelebrationFrame(): WinCelebrationFrame {
   return { labelAlpha: 1 };
 }
 
-/** 原始 WinLabel 信用格式：带有两位小数的整数小单位。 */
+/** 原始 WinLabel 信用格式：带有两位小数的整数小单位。 / English: Original WinLabel credit format: integer unit with two decimal places. */
 export function winLabelValue(
   amountMinor: MoneyMinor,
   formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
@@ -506,6 +512,8 @@ export function winLabelValue(
 
 /**
  * 从一份服务器解析的记录复制的文本事实。旧记录省略了 Ways 详细信息，因此隐藏了两个预设的元数据字段。
+ *
+ * 英文 / English: A textual fact copied from a server-parsed record. The old record omitted the Ways details, thus hiding the two preset metadata fields.
  */
 export function authoritativeWinLabelText(
   amountMinor: MoneyMinor,
@@ -526,7 +534,7 @@ export function authoritativeWinLabelText(
   });
 }
 
-/** GoldGradient + GoldStroke + GoldDropShadow 来自 config_desktop.json。 */
+/** GoldGradient + GoldStroke + GoldDropShadow 来自 config_desktop.json。 / English: GoldGradient + GoldStroke + GoldDropShadow from config_desktop.json. */
 export function winLabelGoldTextStyle(): TextStyle {
   return new TextStyle({
     align: "center",
@@ -548,7 +556,7 @@ export function winLabelGoldTextStyle(): TextStyle {
   });
 }
 
-/** winLabelInfoStyle 来自 config_desktop.json。 */
+/** winLabelInfoStyle 来自 config_desktop.json。 / English: winLabelInfoStyle from config_desktop.json. */
 export function winLabelInfoTextStyle(): TextStyle {
   return new TextStyle({
     align: "center",
@@ -571,6 +579,8 @@ export function winLabelInfoTextStyle(): TextStyle {
 /**
  * 预设了无路径的正常中奖层。 `winbox.skel` 为每个独特的记录单元提供一个框架，`winlabel.skel` 为每个记录提供一个聚合板。
  * 没有为 Primal 创建支付线显示对象。
+ *
+ * 英文 / English: Normal winning layer with no path is preset. `winbox.skel` provides a frame for each unique record unit, and `winlabel.skel` provides an aggregate slab for each record. No payline display object is created for Primal.
  */
 export class WinCelebration {
   readonly view = new Container();
@@ -596,7 +606,7 @@ export class WinCelebration {
     private readonly visualTelemetry: VisualTelemetryReporter | null = null,
   ) {
     this.hostLayer.addChild(this.view);
-    // 原始 winFrameOverlay 位于固定符号下方，而 WinLabel 保留在卷轴本地前景覆盖中。
+    // 原始 winFrameOverlay 位于固定符号下方，而 WinLabel 保留在卷轴本地前景覆盖中。 / English: The original winFrameOverlay is below the fixed symbol, while the WinLabel remains in the scroll local foreground overlay.
     this.reels.mountWinFrameEffect?.(this.boxView);
   }
 
@@ -615,8 +625,8 @@ export class WinCelebration {
       if (this.destroyed || signal?.aborted) return;
       this.assets = assets;
       try {
-        // MasterWinView 从启动时就拥有一个标签及其完整的 24 帧池。 `loadArtwork()` 仅在这些 Spine 实例存在后才解析，
-        // 因此第一个中奖仅执行重定向/重播工作。
+        // MasterWinView 从启动时就拥有一个标签及其完整的 24 帧池。 `loadArtwork()` 仅在这些 Spine 实例存在后才解析， / English: MasterWinView has a tab and its full 24-frame pool from launch. `loadArtwork()` will only resolve if these Spine instances exist,
+        // 因此第一个中奖仅执行重定向/重播工作。 / English: So the first one only does the redirect/replay work.
         this.ensureResidentScene(
           RESIDENT_PRELOAD_RECORD,
           false,
@@ -667,12 +677,12 @@ export class WinCelebration {
     }
   }
 
-  /** 正常中奖 CONTINUE 门使用的仅表现快速停止。 */
+  /** 正常中奖 CONTINUE 门使用的仅表现快速停止。 / English: Normal jackpot CONTINUE gate use only expresses quick stop. */
   requestFinish(): boolean {
-    // 官方控制器不会快进已经开始的预设退出。它的逻辑 WIN_DONE 接口与 WinLabel/WinBox 333ms 消失无关，因此请保留此常驻尾部。
+    // 官方控制器不会快进已经开始的预设退出。它的逻辑 WIN_DONE 接口与 WinLabel/WinBox 333ms 消失无关，因此请保留此常驻尾部。 / English: The official controller will not fast forward a preset exit that has already been started. Its logical WIN_DONE interface has nothing to do with WinLabel/WinBox disappearing at 333ms, so keep this resident tail.
     if (this.residentHideTail) {
-      // 零延迟切换可能让前一条记录的尾段停留到微任务阶段，而外层循环正在决定是否显示后继记录。
-      // 此处结束该逻辑循环，但不触碰制作好的退场流程。
+      // 零延迟切换可能让前一条记录的尾段停留到微任务阶段，而外层循环正在决定是否显示后继记录。 / English: A zero-latency switch might leave the end of the previous record stuck in the microtask stage while the outer loop is deciding whether to display the subsequent record.
+      // 此处结束该逻辑循环，但不触碰制作好的退场流程。 / English: This ends the logic loop but does not touch the prepared exit process.
       if (this.presenting) this.finishRequested = true;
       return true;
     }
@@ -695,7 +705,7 @@ export class WinCelebration {
     restoreSymbolsAtHoldBoundary = false,
     handoffToNextRecord = false,
   ): Promise<void> {
-    // 该声明属于外部调度程序；即使直接生命周期测试提供 `false`，运行时重用仍保持接管安全。
+    // 该声明属于外部调度程序；即使直接生命周期测试提供 `false`，运行时重用仍保持接管安全。 / English: The declaration belongs to the external scheduler; even if the direct lifecycle test provides `false`, runtime reuse remains safe for takeover.
     void handoffToNextRecord;
     let generation = 0;
     let dimmingGeneration = 0;
@@ -717,15 +727,15 @@ export class WinCelebration {
           ? Promise.resolve(pending).catch(() => undefined)
           : undefined;
       } catch {
-        // 观察故意是非权威的，并且不能破坏比赛。
+        // 观察故意是非权威的，并且不能破坏比赛。 / English: Observations are intentionally non-authoritative and must not spoil the game.
         return;
       }
     };
     try {
       let authoredLoadFailed = false;
       try {
-        // 启动预加载通常会同时提供两种资源。当 Promise 已经兑现时，
-        // 请勿在 START 处插入 Promise 轮次：Box、Label、调光和可见里程碑必须在同一调用堆栈中可观察到。
+        // 启动预加载通常会同时提供两种资源。当 Promise 已经兑现时， / English: Launch preloading usually provides both resources. When the Promise has been fulfilled,
+        // 请勿在 START 处插入 Promise 轮次：Box、Label、调光和可见里程碑必须在同一调用堆栈中可观察到。 / English: Don't insert Promise turns at START: Box, Label, Dimming and Visible Milestone must be observable in the same call stack.
         if (!this.assets) await this.loadArtwork();
       } catch {
         authoredLoadFailed = true;
@@ -742,8 +752,8 @@ export class WinCelebration {
       }
       if (this.destroyed || this.finishRequested) return;
 
-      // 新的 SHOW 会立即接管两个常驻轨道。取消上一条记录的隐藏尾段是同步操作，
-      // 不包含原生等待时间。
+      // 新的 SHOW 会立即接管两个常驻轨道。取消上一条记录的隐藏尾段是同步操作， / English: The new SHOW immediately takes over both resident tracks. Canceling the hidden tail segment of the previous record is a synchronous operation.
+      // 不包含原生等待时间。 / English: Does not include native wait time.
       resident = this.ensureResidentScene(record, reducedMotion, !authoredLoadFailed);
       this.cancelResidentHideTail("takeover");
       generation = ++this.presentationGeneration;
@@ -753,7 +763,7 @@ export class WinCelebration {
       resident.presentationCount += 1;
       resident.activeGeneration = generation;
       resident.pendingCleanupCount = 0;
-      // 这是权威的外部调度程序边界，而不是经过的挂壁时间。 Promise 轮次和 RAF 时间戳绝不能膨胀 H+0。
+      // 这是权威的外部调度程序边界，而不是经过的挂壁时间。 Promise 轮次和 RAF 时间戳绝不能膨胀 H+0。 / English: This is the authoritative external scheduler boundary, not elapsed wall time. Promise rounds and RAF timestamps MUST NOT be inflated by H+0.
       resident.handoffDelayMs = 0;
       resident.scene.visible = true;
       resident.boxScene.visible = true;
@@ -802,10 +812,10 @@ export class WinCelebration {
         });
         visualOperation = null;
       }
-      // `setAnimation()` 立即更改预设状态，但这些手动更新 Spine 视图在下次更新之前不会应用新的轨迹姿势。
-      // 在发布 `visible` 之前提交零时间 START 姿势，以便渲染器、符号、音频和计数器共享一帧。
+      // `setAnimation()` 立即更改预设状态，但这些手动更新 Spine 视图在下次更新之前不会应用新的轨迹姿势。 / English: `setAnimation()` changes the preset state immediately, but these manually updated Spine views will not have the new track pose applied until the next update.
+      // 在发布 `visible` 之前提交零时间 START 姿势，以便渲染器、符号、音频和计数器共享一帧。 / English: Submit a zero-time START pose before publishing `visible` so that renderers, symbols, audio and counters share a frame.
       this.updateAuthored(boxes, label, 0);
-      // GameMasterWinView 在符号衰落之前创建 WinBox 和 WinLabel。
+      // GameMasterWinView 在符号衰落之前创建 WinBox 和 WinLabel。 / English: GameMasterWinView creates the WinBox and WinLabel before the symbol falls.
       this.reels.dimNonWinningCells(record.cells);
       visible = true;
       const visibleCheckpoint = notify("visible");
@@ -817,7 +827,7 @@ export class WinCelebration {
       let mergeEndStarted = false;
       let mergeSettled = false;
 
-      // 交付的中奖后控制器为单个空闲重复记录提供无限语义 HOLD。保护那个哨兵；其他无效值仍会回退到有界的表现持续时间。
+      // 交付的中奖后控制器为单个空闲重复记录提供无限语义 HOLD。保护那个哨兵；其他无效值仍会回退到有界的表现持续时间。 / English: The delivered post-win controller provides unlimited semantic HOLD for a single idle duplicate record. Protect that sentinel; other invalid values ​​will still fall back to the bounded manifestation duration.
       const holdDurationMs = recordHoldDurationMs === Number.POSITIVE_INFINITY
         ? Number.POSITIVE_INFINITY
         : Number.isFinite(recordHoldDurationMs)
@@ -836,7 +846,7 @@ export class WinCelebration {
         this.updateAuthored(boxes, label, nextElapsedMs - authoredElapsedMs);
         authoredElapsedMs = nextElapsedMs;
       };
-      // HOLD 拥有该记录。恰好在 H 处的转换会失败，并且在 H 之后交付的 RAF 可能只能重建 H 之前的预设时序。
+      // HOLD 拥有该记录。恰好在 H 处的转换会失败，并且在 H 之后交付的 RAF 可能只能重建 H 之前的预设时序。 / English: HOLD owns the record. A conversion exactly at H will fail, and a RAF delivered after H may only be able to reconstruct the preset timing before H.
       const boundaryPrecedesHold = (boundaryMs: number): boolean => (
         boundaryMs < holdDurationMs
       );
@@ -852,7 +862,7 @@ export class WinCelebration {
           && boundaryPrecedesHold(showCompleteAt)
           && targetElapsedMs >= showCompleteAt
         ) {
-          // 在 SEPARATE_DELAYED 分配独立乘数之前，WINLABEL_SHOWN 在预设的显示终端位姿上是可观察的。
+          // 在 SEPARATE_DELAYED 分配独立乘数之前，WINLABEL_SHOWN 在预设的显示终端位姿上是可观察的。 / English: WINLABEL_SHOWN is observable in the default display terminal pose before SEPARATE_DELAYED assigns independent multipliers.
           advanceAuthoredTo(showCompleteAt);
           showComplete = true;
           const checkpoint = notify("show-complete");
@@ -864,8 +874,8 @@ export class WinCelebration {
           && !mergeStarted
           && targetElapsedMs >= showCompleteAt
         ) {
-          // 正式的排序是分配 -> WINLABEL_MULTIPLIER_MERGE_START 通知 -> merge_start 命令。回调是观察性的，
-          // 因此异步检查点仅在提交命令后才会暂停。
+          // 正式的排序是分配 -> WINLABEL_MULTIPLIER_MERGE_START 通知 -> merge_start 命令。回调是观察性的， / English: The formal ordering is the assign -> WINLABEL_MULTIPLIER_MERGE_START notification -> merge_start command. The callback is observational,
+          // 因此异步检查点仅在提交命令后才会暂停。 / English: So an asynchronous checkpoint will only pause after the command has been submitted.
           if (label) this.setLabelFacts(label, record, record.baseAmountMinor);
           const checkpoint = notify("merge-start");
           if (label) {
@@ -882,7 +892,7 @@ export class WinCelebration {
           && boundaryPrecedesHold(mergeEndAt)
           && targetElapsedMs >= mergeEndAt
         ) {
-          // 在自己预设的时钟上完成merge_start，然后用merge_end替换赛道；延迟的 RAF 不得跳过此姿势范围。
+          // 在自己预设的时钟上完成merge_start，然后用merge_end替换赛道；延迟的 RAF 不得跳过此姿势范围。 / English: Complete merge_start on its own preset clock, then replace the track with merge_end; delayed RAFs must not skip this pose range.
           advanceAuthoredTo(mergeEndAt);
           if (label) {
             this.setLabelFacts(label, record, record.amountMinor);
@@ -898,7 +908,7 @@ export class WinCelebration {
           && boundaryPrecedesHold(mergeCompleteAt)
           && targetElapsedMs >= mergeCompleteAt
         ) {
-          // 在发布终端里程碑之前提交所有 500 毫秒的预设时序。 updateAuthored 在内部对长增量进行时间切片，因此 Spine 永远不会收到不安全的单个巨步。
+          // 在发布终端里程碑之前提交所有 500 毫秒的预设时序。 updateAuthored 在内部对长增量进行时间切片，因此 Spine 永远不会收到不安全的单个巨步。 / English: Commit all 500 milliseconds of preset timing before releasing the endpoint milestone. updateAuthored internally time-slices long increments so Spine never receives an unsafe single giant step.
           advanceAuthoredTo(mergeCompleteAt);
           mergeSettled = true;
           const checkpoint = notify("merge-settled");
@@ -910,8 +920,8 @@ export class WinCelebration {
 
       if (this.destroyed) return;
       if (this.finishRequested) {
-        // 交付的任务调度程序中的 cancelDelay() 进入记录的下一个处理程序状态。
-        // 在此保留该状态：Continue 开始预设 WinBox 消失 + WinLabel 隐藏/hide_merged，而不是使驻留场景在输入调用堆栈上消失。
+        // 交付的任务调度程序中的 cancelDelay() 进入记录的下一个处理程序状态。 / English: cancelDelay() in the delivered task scheduler enters the recorded next handler state.
+        // 在此保留该状态：Continue 开始预设 WinBox 消失 + WinLabel 隐藏/hide_merged，而不是使驻留场景在输入调用堆栈上消失。 / English: Keep that state here: Continue starts presetting WinBox disappear + WinLabel hide/hide_merged instead of making the resident scene disappear on the input call stack.
         const disappearMs = this.startDisappear(boxes, label, reducedMotion);
         this.reels.clearHighlights();
         this.reels.clearWinDimming(true);
@@ -939,14 +949,14 @@ export class WinCelebration {
       if (holdCheckpoint) await this.holdMilestoneCheckpoint(holdCheckpoint);
       if (this.destroyed || this.finishRequested) return;
 
-      // MasterWinView.hide() 在同一同步边界中在 WinSymbols.hide 之前启动 WinBox/WinLabel 隐藏。
+      // MasterWinView.hide() 在同一同步边界中在 WinSymbols.hide 之前启动 WinBox/WinLabel 隐藏。 / English: MasterWinView.hide() initiates WinBox/WinLabel hiding before WinSymbols.hide in the same sync boundary.
       const disappearMs = this.startDisappear(boxes, label, reducedMotion);
       if (restoreSymbolsAtHoldBoundary) {
         this.reels.clearHighlights();
         this.reels.clearWinDimming(true);
         symbolsRestoredAtHoldBoundary = true;
       }
-      // 外部调度程序从不等待这个预设的隐藏。后继者可以在 H+0 处声明完全相同的对象，并在其名义上的 333.333343ms 隐藏完成之前取消此尾部。
+      // 外部调度程序从不等待这个预设的隐藏。后继者可以在 H+0 处声明完全相同的对象，并在其名义上的 333.333343ms 隐藏完成之前取消此尾部。 / English: The external scheduler never waits for this preset to be hidden. A successor could declare the exact same object at H+0 and cancel this tail before its nominal 333.333343ms hiding completes.
       resident.pendingCleanupCount = 1;
       const hideCheckpoint = notify("hide-start");
       this.startResidentHideTail({
@@ -1067,7 +1077,7 @@ export class WinCelebration {
           !preload,
         );
       } catch (error) {
-        // 在两次分配成功之前，没有任何内容会成为常驻。销毁分离的暂存层还会释放所有部分构建的 Spine 子级，同时将提交的场景留空并可重试。
+        // 在两次分配成功之前，没有任何内容会成为常驻。销毁分离的暂存层还会释放所有部分构建的 Spine 子级，同时将提交的场景留空并可重试。 / English: Nothing becomes permanent until both allocations are successful. Destroying the detached staging layer also releases all partially built Spine children, leaving the committed scene empty and available for retry.
         stagedBoxLayer.destroy({ children: true, texture: false, baseTexture: false });
         stagedLabelLayer.destroy({ children: true, texture: false, baseTexture: false });
         resident.artworkInitializationAttempted = false;
@@ -1401,7 +1411,7 @@ export class WinCelebration {
     if (startShown) animations.show();
 
     const initial = winLabelMergeFrame(record, 0, reducedMotion);
-    // 官方的SEPARATE_DELAYED模式创建基础标签，没有独立的乘数。它在 `show` 之后的合并开始时分配。
+    // 官方的SEPARATE_DELAYED模式创建基础标签，没有独立的乘数。它在 `show` 之后的合并开始时分配。 / English: The official SEPARATE_DELAYED mode creates base tags without independent multipliers. It is allocated at the start of the merge after `show`.
     const facts = authoritativeWinLabelText(
       initial.amountMinor,
       record.ways,
@@ -1569,7 +1579,7 @@ export class WinCelebration {
     deltaMs: number,
   ): void {
     const totalDeltaMs = Number.isFinite(deltaMs) ? Math.max(0, deltaMs) : 0;
-    // 保留每个预设的毫秒，同时限制每个单独的 Spine 更新。每当 RAF 延迟时，在 64ms 之后放弃所有内容都会使挂钟里程碑领先于实际骨架。
+    // 保留每个预设的毫秒，同时限制每个单独的 Spine 更新。每当 RAF 延迟时，在 64ms 之后放弃所有内容都会使挂钟里程碑领先于实际骨架。 / English: Preserve each preset millisecond while limiting each individual Spine update. Whenever RAF is delayed, dropping everything after 64ms puts the wall clock milestone ahead of the actual skeleton.
     if (totalDeltaMs === 0) {
       for (const box of boxes) box.view.update(0);
       if (label) label.view.update(0);
@@ -1667,14 +1677,14 @@ export class WinCelebration {
         });
       };
       const tick = (time: number): void => {
-        // 取消的 requestAnimationFrame 已经可以由主机排队或由确定性时钟重放。它不再拥有这一代，并且不得用 merge_end 覆盖预设的出口。
+        // 取消的 requestAnimationFrame 已经可以由主机排队或由确定性时钟重放。它不再拥有这一代，并且不得用 merge_end 覆盖预设的出口。 / English: Canceled requestAnimationFrame can already be queued by the host or replayed by a deterministic clock. It no longer owns this generation and must not overwrite the default exit with merge_end.
         if (settled) return;
         if (this.destroyed) {
           settle();
           return;
         }
         const wallElapsedMs = Math.max(0, time - startedAt);
-        // HOLD 是权威的。即使浏览器提供了延迟的 RAF，也不要将超过 H 的经过时间暴露给表现回调。
+        // HOLD 是权威的。即使浏览器提供了延迟的 RAF，也不要将超过 H 的经过时间暴露给表现回调。 / English: HOLD is authoritative. Even if the browser provides deferred RAF, do not expose more than H of elapsed time to presentation callbacks.
         const elapsedMs = Math.min(
           safeDurationMs,
           Math.max(previousElapsedMs, wallElapsedMs),

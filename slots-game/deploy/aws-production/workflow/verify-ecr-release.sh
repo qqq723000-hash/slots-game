@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 调用方必须已经通过 GitHub OIDC 取得只读 ECR 临时凭据并完成 ECR 登录。
+# English: The caller must have obtained read-only ECR temporary credentials through GitHub OIDC and completed
+# ECR login.
 set -eu
 umask 077
 

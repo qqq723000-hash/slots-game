@@ -1,5 +1,7 @@
 // outboxruntime 包将与传输层无关的分发器与已配置的 HTTP 审计接收端组合，
 // 并负责其进程生命周期及就绪状态。
+// English: The outboxruntime package combines a transport-layer-independent dispatcher with a configured HTTP
+// audit sink and is responsible for its process lifecycle and readiness status.
 package outboxruntime
 
 import (
@@ -139,6 +141,8 @@ func (runtime *Runtime) Enabled() bool { return runtime != nil && runtime.enable
 
 // Start 立即开始一次分发扫描，随后按配置周期运行。只允许调用一次 Start，
 // 防止两个循环共享同一所有者。
+// English: Start starts a distribution scan immediately and then runs it on a configured cycle. Only one call to
+// Start is allowed, preventing two loops from sharing the same owner.
 func (runtime *Runtime) Start(ctx context.Context) error {
 	if runtime == nil || !runtime.enabled {
 		return nil
@@ -220,6 +224,10 @@ func (runtime *Runtime) Name() string { return "outbox_delivery" }
 // Check 证明循环处于活动状态、其存储及租约扫描足够新，并且没有未发布事件超过配置的
 // 服务目标。它刻意不生成合成审计事件；接收端可达性只由真实不可变事件的投递，
 // 以及由此形成的有界积压时长证明。
+// English: Check proves that the loop is active, that its storage and lease scans are sufficiently current, and
+// that no unpublished events exceed the configured service target. It intentionally does not generate synthetic
+// audit events; receiver reachability is demonstrated only by the delivery of true immutable events and the
+// resulting bounded backlog length.
 func (runtime *Runtime) Check(ctx context.Context) error {
 	if runtime == nil || !runtime.enabled {
 		return outbox.ErrDisabled

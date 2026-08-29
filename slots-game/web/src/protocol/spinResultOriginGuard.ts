@@ -241,7 +241,7 @@ function assertVaultGroup(
   }
 }
 
-/** 针对提交模式镜像 validateVaultEvents/validateKingSpinVaultEvents。 */
+/** 针对提交模式镜像 validateVaultEvents/validateKingSpinVaultEvents。 / English: Mirror validateVaultEvents/validateKingSpinVaultEvents for commit mode. */
 export function validateVaultEventsAgainstOrigin(
   origin: Readonly<FeatureState>,
   result: Readonly<Pick<SpinResult, "grid" | "events" | "betMinor">>,
@@ -512,7 +512,7 @@ export function validateVaultEventsAgainstOrigin(
   }
 }
 
-/** 镜像服务端所有的 Base Rage/PPS 计量条与 Wheel 触发守恒规则。 */
+/** 镜像服务端所有的 Base Rage/PPS 计量条与 Wheel 触发守恒规则。 / English: Mirror all Base Rage/PPS meter bars and Wheel trigger conservation rules on the server. */
 function validateRageEventsAgainstOrigin(
   origin: Readonly<FeatureState>,
   result: Readonly<SpinResult>,
@@ -624,6 +624,8 @@ function validateRageEventsAgainstOrigin(
 /**
  * 把解码结果绑定到实际提交请求的局前状态。v1 线上响应只投影下一状态，因此控制器侧必须补齐
  * 无状态 JSON 解码器无法证明的不变式。
+ *
+ * 英文 / English: Bind the decoding result to the pre-office status of the actual submitted request. The v1 online response only projects the next state, so the controller side must complete invariants that the stateless JSON decoder cannot prove.
  */
 export function validateSpinResultAgainstOrigin(
   origin: Readonly<FeatureState>,

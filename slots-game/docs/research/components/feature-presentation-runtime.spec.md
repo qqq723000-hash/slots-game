@@ -1,9 +1,17 @@
-# Special Feature Presentation Runtime Specification
+# 特殊玩法演示运行时规范 / Special Feature Presentation Runtime Specification
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## 中文摘要 / Chinese summary
+
+本规范定义转轮、免费旋转和巨额奖励等特殊玩法如何按已接受的 RGS 结果加载并播放按需素材。素材只能影响视觉表现，不得改变网格、余额、结算或确认状态，加载失败后还必须释放事件租约并恢复基础场景。仓库内单元与浏览器夹具只证明本地合同，生产 CDN 源站行为、素材权利和交付环境验收仍是外部门禁。
+
+## English summary / 英文摘要
+
+This specification defines how the Wheel, Free Spins, and Big Win presentations acquire and play verified on-demand artwork after an RGS result has been accepted. Streaming assets may change presentation only; they must never alter the authoritative grid, balance, settlement, or acknowledgement, and any failed load must release its lease and restore the base scene. Unit and browser fixtures prove the local runtime contract, while production CDN behavior, asset rights, and delivery-environment acceptance remain external gates.
 
 ## Overview
 

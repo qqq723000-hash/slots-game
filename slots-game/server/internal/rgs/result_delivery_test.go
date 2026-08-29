@@ -27,6 +27,8 @@ func TestCommittedResultDeliveryBlocksOnlyNewRoundsUntilIdempotentAcknowledgemen
 
 	// 发现操作以会话为范围：重新连接无需依赖浏览器保存 roundId，
 	// 即可恢复唯一权威的已提交载荷。
+	// English: Discovery operations are session-scoped: reconnecting recovers the only authoritative submitted payload
+	// without relying on the browser to save the roundId.
 	delivery, err := coordinator.GetPendingResultDelivery(
 		context.Background(), firstRequest.OperatorID, firstRequest.SessionID,
 	)
@@ -46,6 +48,7 @@ func TestCommittedResultDeliveryBlocksOnlyNewRoundsUntilIdempotentAcknowledgemen
 	}
 
 	// 在拒绝创建不同轮次的同时，仍允许精确重放。
+	// Exact replay remains allowed while creation of a different round is rejected.
 	replay, err := coordinator.Spin(context.Background(), firstRequest)
 	if err != nil || !reflect.DeepEqual(replay, firstResult) {
 		t.Fatalf("exact replay = %+v, error %v", replay, err)

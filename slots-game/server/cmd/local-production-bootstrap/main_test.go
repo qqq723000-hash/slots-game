@@ -516,6 +516,8 @@ func TestRotateDefinitionRecoversAnInterruptedTwoFileReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 模拟审批文件已替换、但 definition.json 尚未替换时进程终止。
+	// English: The process terminates when the simulated approval file has been replaced, but definition.json has not
+	// yet been replaced.
 	installSignedApprovalOnly(t, directory, target)
 	if _, _, err := bootstrap.LoadDefinition(
 		filepath.Join(directory, "definition.json"),

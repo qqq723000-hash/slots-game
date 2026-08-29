@@ -16,3 +16,5 @@ datasources:
       timeInterval: 15s
 
 # Grafana 只通过内部 observability 网络访问 Prometheus；禁止浏览器直连数据源。
+# English: Grafana only accesses Prometheus through the internal observability network; the browser is
+# prohibited from directly connecting to the data source.

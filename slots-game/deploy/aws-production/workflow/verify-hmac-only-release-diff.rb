@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 # 验证 HMAC maintenance 候选与当前 Helm release 之间只有 API 共享准入凭据和停机形态差异。
+# English: Verify that only API shared access credentials and downtime patterns differ between the HMAC
+# maintenance candidate and the current Helm release.
 require "yaml"
 require "json"
 require "digest"

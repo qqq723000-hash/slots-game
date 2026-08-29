@@ -13,6 +13,9 @@ type postgresTestURLs struct {
 
 // requirePostgresTestURLs 保持普通开发测试套件可选，同时要求发布一致性路径只有在两套
 // 隔离凭据均可用时才能运行，否则失效即关闭。
+// English: requirePostgresTestURLs keeps the normal development test suite optional, while requiring that the
+// release consistency path can only be run when both sets of isolation credentials are available, otherwise it
+// will be shut down if it fails.
 func requirePostgresTestURLs(t *testing.T) postgresTestURLs {
 	t.Helper()
 

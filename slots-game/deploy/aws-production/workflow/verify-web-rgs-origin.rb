@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
+# Ruby 冻结字符串字面量机器指令。 / English: Ruby frozen-string-literal machine directive.
 
 require "json"
 require "open3"

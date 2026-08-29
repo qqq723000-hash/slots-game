@@ -57,6 +57,8 @@ function boundedFontInteger(
 /**
  * 只接受随当前发行版捕获的单页、无 kerning BMFont 窄语法。这里刻意不使用
  * DOMParser/XML 字符串入口，从而在 `require-trusted-types-for 'script'` 下保持无违规。
+ *
+ * 英文 / English: Only accepts the single-page, non-kerning BMFont narrow syntax captured with the current distribution. The DOMParser/XML string entry is intentionally not used here to remain violation-free under `require-trusted-types-for 'script'`.
  */
 export function parsePrimalBitmapFontDescriptor(descriptor: string): BitmapFontData {
   if (typeof descriptor !== "string"
@@ -126,13 +128,15 @@ let installedPageTexture: Texture | null = null;
 
 export interface PrimalBitmapFontVerifiedInstallResult {
   readonly installed: boolean;
-  /** true 表示 BitmapFont 已接管页面纹理；false 时调用者仍拥有它。 */
+  /** true 表示 BitmapFont 已接管页面纹理；false 时调用者仍拥有它。 / English: true means BitmapFont has taken over the page texture; false means the caller still owns it. */
   readonly adoptedPageTexture: boolean;
 }
 
 /**
  * 用事件租约已验证的描述符与页面纹理安装字体，不再读取描述符/PNG URL。
  * 已存在字体时不会错误接管调用者的新纹理，供共享金币图集继续使用并自行释放。
+ *
+ * 英文 / English: Install fonts with event lease verified descriptors and page textures, no longer reading descriptors/PNG URLs. When the font already exists, it will not mistakenly take over the caller's new texture for the shared gold coin atlas to continue to use and release itself.
  */
 export function installPrimalBitmapFontFromVerifiedDescriptor(
   descriptor: string,
@@ -156,7 +160,7 @@ export function installPrimalBitmapFontFromVerifiedDescriptor(
   }
 }
 
-/** 加载并注册嵌入在捕获的主包中的确切 BMFont。 */
+/** 加载并注册嵌入在捕获的主包中的确切 BMFont。 / English: Load and register the exact BMFont embedded in the captured main package. */
 export function loadPrimalBitmapFont(signal?: AbortSignal): Promise<boolean> {
   if (BitmapFont.available[PRIMAL_BITMAP_FONT_NAME]) return Promise.resolve(true);
   if (typeof document === "undefined") return Promise.resolve(false);
@@ -193,8 +197,8 @@ function subscribeToPrimalBitmapFontLoad(
     };
     const onAbort = (): void => {
       finish(false);
-      // 只有最后一个活跃订阅者离开才取消共享 attempt；先脱离全局槽位，使调用者
-      // 在 abort 后立即重试时创建新代，而不会重新订阅已中止的 Promise。
+      // 只有最后一个活跃订阅者离开才取消共享 attempt；先脱离全局槽位，使调用者 / English: The sharing attempt is canceled only when the last active subscriber leaves; first leave the global slot so that the caller
+      // 在 abort 后立即重试时创建新代，而不会重新订阅已中止的 Promise。 / English: Create a new generation when retrying immediately after abort without resubscribing to aborted Promises.
       if (attempt.consumers.size === 0 && activeLoadAttempt === attempt) {
         activeLoadAttempt = null;
         attempt.controller.abort(primalBitmapFontAbortReason(signal!));
@@ -231,7 +235,7 @@ async function loadAndInstallPrimalBitmapFont(signal: AbortSignal): Promise<bool
       disposePixiTextureAttempt(pageTexture, [installedPageTexture]);
       return false;
     }
-    // `true` 保留 Pixi 6 BitmapFontLoader 所有权：卸载此 BMFont 会处置其页面纹理及其派生的字形纹理。
+    // `true` 保留 Pixi 6 BitmapFontLoader 所有权：卸载此 BMFont 会处置其页面纹理及其派生的字形纹理。 / English: `true` retains ownership of Pixi 6 BitmapFontLoader: unloading this BMFont disposes its page texture and its derived glyph textures.
     BitmapFont.install(fontData, {
       [PRIMAL_BITMAP_FONT_PAGE_FILE]: pageTexture,
     }, true);
@@ -240,8 +244,8 @@ async function loadAndInstallPrimalBitmapFont(signal: AbortSignal): Promise<bool
     else disposePixiTextureAttempt(pageTexture, [installedPageTexture]);
     return installed;
   } catch {
-    // waitForPrimalBitmapFontPage 已按 attempt 对象身份清理加载失败；此处再兜住
-    // BitmapFont.install 同步抛错，并且绝不按 URL 触碰可能属于新代的页面。
+    // waitForPrimalBitmapFontPage 已按 attempt 对象身份清理加载失败；此处再兜住 / English: waitForPrimalBitmapFontPage has failed to clean up and load according to the identity of the attempt object; stop here again
+    // BitmapFont.install 同步抛错，并且绝不按 URL 触碰可能属于新代的页面。 / English: BitmapFont.install throws errors synchronously, and never touches pages that may belong to the new generation by URL.
     disposePixiTextureAttempt(pageTexture, [installedPageTexture]);
     return false;
   }
@@ -252,8 +256,8 @@ function waitForPrimalBitmapFontPage(signal: AbortSignal): Promise<Texture> {
   try {
     attempt = Texture.fromURL(PRIMAL_BITMAP_FONT_PAGE_URL);
   } catch (error) {
-    // Texture.fromURL 会先同步登记 cache 再调用 resource.load；同步异常仍只清理
-    // 这一刻捕获到的具体对象，调用者尚不可能启动下一代。
+    // Texture.fromURL 会先同步登记 cache 再调用 resource.load；同步异常仍只清理 / English: Texture.fromURL will first synchronize the cache and then call resource.load; synchronization exceptions will still only be cleared
+    // 这一刻捕获到的具体对象，调用者尚不可能启动下一代。 / English: For the specific object captured at this moment, it is not yet possible for the caller to start the next generation.
     disposePixiTextureAttempt(
       cachedPixiTextureAttempt(PRIMAL_BITMAP_FONT_PAGE_URL),
       [installedPageTexture],
@@ -281,8 +285,8 @@ function waitForPrimalBitmapFontPage(signal: AbortSignal): Promise<Texture> {
     void attempt.then(
       (texture) => {
         if (settled) {
-          // 底层传输不可取消；晚到完成只处置本 attempt 捕获/返回的对象，绝不按 URL
-          // 驱逐同地址的新代缓存或已安装字体页面。
+          // 底层传输不可取消；晚到完成只处置本 attempt 捕获/返回的对象，绝不按 URL / English: The underlying transfer cannot be canceled; late completion only disposes objects captured/returned by this attempt, never by URL
+          // 驱逐同地址的新代缓存或已安装字体页面。 / English: Evict new generation cache or installed font pages at the same address.
           disposeAttempt(texture);
           return;
         }

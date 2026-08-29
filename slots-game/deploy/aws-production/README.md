@@ -1,9 +1,13 @@
-# AWS 正式交付契约
+# AWS production delivery contract / AWS 正式交付契约
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This directory specializes the generic Helm chart into the executable delivery boundary for the target AWS production environment without committing secrets. Application-specific infrastructure is defined under `infra/terraform`, while the adopter's platform must provide the account, deployment identities, state backend, DNS and certificates, global edge controls, and organization-level security capabilities. Repository rendering and static checks do not prove a live deployment; approved plan and apply runs, immutable image and Web-release evidence, database migration, alarms, backup and restore, operator integration, and platform acceptance must be verified in the target environment.
 
 本目录把通用 Helm Chart 收敛为 AWS 正式环境的可执行发布边界，它不提交 Secret。应用专属的
 VPC、EKS、RDS、Valkey、ECR、Secrets Manager 元数据、S3、CloudFront、KMS、IAM、AMP、CloudWatch、

@@ -81,11 +81,11 @@ export interface DecodedRgsSpin {
   readonly startRevision: string;
   readonly endRevision: string;
   readonly resultHash: string;
-  /** 本次权威轮次提交后更新的服务端空闲断开绝对时间。 */
+  /** 本次权威轮次提交后更新的服务端空闲断开绝对时间。 / English: The absolute idle disconnect time of the server updated after submission of this authoritative round. */
   readonly idleDisconnectAt: string;
 }
 
-/** 仅用于定位旋转响应解码边界，不得携带响应值、标识或异常内容。 */
+/** 仅用于定位旋转响应解码边界，不得携带响应值、标识或异常内容。 / English: It is only used to locate the rotation response decoding boundary and must not carry response values, identifiers or abnormal content. */
 export type RgsSpinDecodeStage =
   | SpinResultProjectionDecodeStage
   | "decode-envelope"
@@ -123,7 +123,7 @@ export interface DecodedPendingResultDelivery {
   readonly roundId: string;
   readonly sequence: number;
   readonly resultHash: string;
-  /** 服务端与轮次同步持久化的 RNG 求值前特性状态。 */
+  /** 服务端与轮次同步持久化的 RNG 求值前特性状态。 / English: The server-side and round-synchronous persistence of the RNG pre-evaluation feature state. */
   readonly originFeatureState: FeatureState;
   readonly result: DecodedRgsSpin;
 }
@@ -443,8 +443,8 @@ export function rgsSessionOpened(
   const decoded = decodeServerMessage({
     type: "session.opened",
     protocolVersion: 1,
-    // 必须使用 RGS 返回的服务端权威版本；共享解码器会严格拒绝
-    // 与当前浏览器构建 ENGINE_RULES_VERSION 不匹配的会话。
+    // 必须使用 RGS 返回的服务端权威版本；共享解码器会严格拒绝 / English: The server-side authoritative version returned by RGS must be used; shared decoders are strictly rejected
+    // 与当前浏览器构建 ENGINE_RULES_VERSION 不匹配的会话。 / English: Session that does not match the current browser build ENGINE_RULES_VERSION.
     engineRulesVersion: exchange.session.engineRulesVersion,
     requestId: exchange.requestId,
     sessionId: exchange.session.binding.sessionId,
@@ -456,7 +456,7 @@ export function rgsSessionOpened(
     featureState: exchange.session.featureState,
   });
   if (decoded.type !== "session.opened") throw new RgsProtocolError("invalid session projection");
-  // 通用消息解码器只负责共享玩法协议；RGS 在其已验证的完整绑定上追加表现规则身份。
+  // 通用消息解码器只负责共享玩法协议；RGS 在其已验证的完整绑定上追加表现规则身份。 / English: The universal message decoder is only responsible for sharing the gameplay protocol; the RGS appends the presentation rule identity to its authenticated full binding.
   return {
     ...decoded,
     idleDisconnectAt: exchange.session.idleDisconnectAt,
@@ -471,6 +471,8 @@ export function rgsSessionOpened(
 /**
  * 会话 FLUSH 的 HTTP 等价物：只读取会话终止状态与服务端时间，绝不携带或更新
  * 余额、轮次、特性、revision 或 sequence。
+ *
+ * 英文 / English: HTTP equivalent of session FLUSH: only reads session termination status and server time, never carries or updates balance, round, features, revision or sequence.
  */
 export function decodeRgsSessionStatus(
   value: unknown,
@@ -843,8 +845,8 @@ function decodedSpinData(
     "feature",
   ] as const;
   exactKeys(decoded, keys, keys, "response.data");
-  // 旋转响应省略会话交换绑定中保持不可变的 exponent/jurisdiction；这里只解码返回的
-  // 经济身份，再由网关与完整会话交换绑定合并并逐项比较。
+  // 旋转响应省略会话交换绑定中保持不可变的 exponent/jurisdiction；这里只解码返回的 / English: Rotating responses omits immutable exponent/jurisdiction in session exchange bindings; here only decodes the returned
+  // 经济身份，再由网关与完整会话交换绑定合并并逐项比较。 / English: The economic identity is then combined and compared side-by-side with the full session exchange binding by the gateway.
   onStage?.("decode-binding");
   const operatorId = identifier(decoded.operatorId, "response.data.operatorId");
   const sessionId = identifier(decoded.sessionId, "response.data.sessionId");

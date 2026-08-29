@@ -56,9 +56,9 @@ const DEFAULT_ACKNOWLEDGEMENT_MAX_ATTEMPTS = 8;
 const DEFAULT_ACKNOWLEDGEMENT_RETRY_WINDOW_MS = 120_000;
 const SESSION_STATUS_MIN_DELAY_MS = 25_000;
 const SESSION_STATUS_MAX_DELAY_MS = 30_000;
-// 当前 RGS HTTP 准入精确收取一个成本单位，并接受最低 0.001 单位/秒回填率，
-// 因此最长合法 token-ready 延迟为 1,000 秒。该传输上限刻意独立于 ACK 退避；
-// 上线加权 HTTP 成本前必须显式修订。
+// 当前 RGS HTTP 准入精确收取一个成本单位，并接受最低 0.001 单位/秒回填率， / English: Currently RGS HTTP admission charges exactly one cost unit and accepts a minimum backfill rate of 0.001 units/second,
+// 因此最长合法 token-ready 延迟为 1,000 秒。该传输上限刻意独立于 ACK 退避； / English: Therefore the maximum legal token-ready delay is 1,000 seconds. This transmission cap is intentionally independent of ACK backoff;
+// 上线加权 HTTP 成本前必须显式修订。 / English: Weighted HTTP costs must be explicitly revised before going live.
 const MAX_ADMISSION_RETRY_AFTER_MS = 1_000_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const IMF_FIXDATE_PATTERN = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), [0-9]{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$/;
@@ -123,8 +123,8 @@ export class JsonRgsRecoveryLedgerStorage implements RgsRecoveryLedgerStorage {
   }
 
   save(ledger: Readonly<RgsRecoveryLedger>): void {
-    // 必须保持显式字段白名单；令牌、启动码、钱包标识、请求体与结果
-    // 均不得进入浏览器持久化。
+    // 必须保持显式字段白名单；令牌、启动码、钱包标识、请求体与结果 / English: Explicit field whitelisting must be maintained; token, activation code, wallet ID, request body and results
+    // 均不得进入浏览器持久化。 / English: None are allowed to enter browser persistence.
     const originFeatureState = persistedLedgerFeatureState(
       ledger.originFeatureState,
       ledger.betMinor,
@@ -161,12 +161,14 @@ export interface RgsGatewayConfig {
   readonly ledgerStorage?: RgsRecoveryLedgerStorage;
   readonly timers?: RgsGatewayTimers;
   readonly now?: () => number;
-  /** 服务端时钟同步后的 elapsed-time 来源；生产使用 performance.now。 */
+  /** 服务端时钟同步后的 elapsed-time 来源；生产使用 performance.now。 / English: Source of elapsed-time after server clock synchronization; use performance.now for production. */
   readonly monotonicNow?: () => number;
   readonly requestId?: () => string;
   /**
    * 仅用于把协议重试分散到时间窗内，不能改变 Retry-After 下界、轮次身份或
    * 最大尝试次数。测试可以注入确定性样本；生产默认使用 Math.random。
+   *
+   * 英文 / English: Only used to spread protocol retries into time windows, and cannot change the Retry-After lower bound, round identity, or maximum number of attempts. Tests can inject deterministic samples; production defaults to Math.random.
    */
   readonly retryJitter?: () => number;
   readonly requestTimeoutMs?: number;
@@ -176,9 +178,9 @@ export interface RgsGatewayConfig {
   readonly acknowledgementRetryMaxDelayMs?: number;
   readonly acknowledgementMaxAttempts?: number;
   readonly acknowledgementRetryWindowMs?: number;
-  /** online + visible 时 25-30 秒 FLUSH 等价探测的确定性测试接缝。 */
+  /** online + visible 时 25-30 秒 FLUSH 等价探测的确定性测试接缝。 / English: Deterministic test seam for 25-30 seconds FLUSH equivalent detection when online + visible. */
   readonly sessionStatusIntervalMs?: () => number;
-  /** 仅供 Vitest 旧计时器夹具；生产构建传入 true 会在构造时失败关闭。 */
+  /** 仅供 Vitest 旧计时器夹具；生产构建传入 true 会在构造时失败关闭。 / English: Vitest old timer fixture only; production builds passing true will fail to close on construction. */
   readonly disableSessionMonitoringForTests?: boolean;
   readonly bindingFingerprint?: (binding: Readonly<RgsBinding>) => Promise<string>;
 }
@@ -221,20 +223,22 @@ interface PendingRound {
   readonly roundKind: Exclude<RgsRoundKind, "BONUS">;
   originFeatureState: Readonly<FeatureState> | null;
   pollAttempts: number;
-  /** 防止前后台恢复事件与已发出的 status 请求并行启动第二次轮询。 */
+  /** 防止前后台恢复事件与已发出的 status 请求并行启动第二次轮询。 / English: Prevent foreground and background recovery events from starting a second poll in parallel with an already issued status request. */
   pollRequestActive: boolean;
   /**
    * 只有可证明本轮尚未进入 RGS 交易边界时，status=404 才能消费此凭证并
    * 复用同一账本身份重提。普通 202/5xx 不得借 404 扩大重试范围。
+   *
+   * 英文 / English: Only when it can be proven that this round has not entered the RGS transaction boundary, status=404 can consume this voucher and reuse the same ledger identity for withdrawal again. Ordinary 202/5xx cannot use 404 to expand the retry range.
    */
   resubmitOnNotFound: boolean;
   blocked: boolean;
   deliveredSequence: number | null;
   deliveredResultHash: string | null;
   acknowledgementInFlight: boolean;
-  /** 当前 ACK HTTP 请求，而不是整个 ACK 恢复周期，是否仍在途。 */
+  /** 当前 ACK HTTP 请求，而不是整个 ACK 恢复周期，是否仍在途。 / English: Whether the current ACK HTTP request, rather than the entire ACK recovery cycle, is still in progress. */
   acknowledgementRequestActive: boolean;
-  /** 暂停/恢复也不能越过上一次 Retry-After + jitter 的绝对最早发包时刻。 */
+  /** 暂停/恢复也不能越过上一次 Retry-After + jitter 的绝对最早发包时刻。 / English: Pause/resume cannot exceed the absolute earliest packet sending time of the last Retry-After + jitter. */
   acknowledgementNotBeforeAtMs: number | null;
   acknowledgementAttempts: number;
   acknowledgementStartedAtMs: number | null;
@@ -258,7 +262,7 @@ class RgsNetworkError extends Error {
   constructor(
     message: string,
     readonly timedOut: boolean,
-    /** 请求关联标识仅供诊断；AppController 永不渲染。 */
+    /** 请求关联标识仅供诊断；AppController 永不渲染。 / English: Requesting the associated ID is for diagnostic purposes only; the AppController never renders. */
     readonly requestId?: string,
   ) {
     super(message);
@@ -306,6 +310,8 @@ function configuredInteger(
  * Retry-After 是不可信网络输入。只接受规范的正整数秒或 IMF-fixdate，且解析后的
  * 延迟必须落在当前服务端单成本单位准入契约上限内。ACK 的退避上限与绝对截止
  * 时间与该输入安全界限独立；负数、零、重复合并值和超大值一律忽略。
+ *
+ * 英文 / English: Retry-After is an untrusted network input. Only canonical positive integer seconds or IMF-fixdate are accepted, and the parsed delay must fall within the current server-side single cost unit admission contract limit. The upper backoff limit and absolute deadline for ACK are independent of the input safety margin; negative numbers, zeros, duplicate merge values, and extremely large values ​​are ignored.
  */
 function safeRetryAfterMs(value: string | null, nowMs: number): number | null {
   if (value === null) return null;
@@ -327,6 +333,8 @@ function safeRetryAfterMs(value: string | null, nowMs: number): number | null {
 /**
  * AWS WAF 的限流响应不经过 RGS JSON envelope。只有精确的受管边缘标记和安全的
  * Retry-After 同时存在时才映射为可重试错误；其余空响应继续按协议损坏失败关闭。
+ *
+ * 英文 / English: AWS WAF's throttling response does not go through the RGS JSON envelope. Only accurate managed edge tags and safe Retry-After are mapped as retryable errors; remaining empty responses continue to be closed on protocol corruption failure.
  */
 function throwIfEdgeRateLimited(
   response: Response,
@@ -516,6 +524,8 @@ function validateConfig(config: RgsGatewayConfig): ValidatedConfig {
 /**
  * 在不早于协议下界的前提下附加最多一秒的抖动。抖动只平滑客户端重试波峰，
  * 不参与任何资金、幂等或状态判断。注入器异常时取区间中点，避免故障恢复本身崩溃。
+ *
+ * 英文 / English: Appends up to one second of jitter no earlier than the lower protocol bound. Jitter only smoothes client retry peaks and does not involve any funds, idempotence or status judgment. When the injector is abnormal, the midpoint of the interval is taken to avoid the failure recovery itself from crashing.
  */
 export function distributedRetryDelayMs(
   exponentialDelayMs: number,
@@ -529,7 +539,7 @@ export function distributedRetryDelayMs(
     const candidate = sample();
     if (Number.isFinite(candidate)) unit = Math.min(1 - Number.EPSILON, Math.max(0, candidate));
   } catch {
-    // 调度抖动不是安全熵源；注入器故障只能退化为确定性中点，不能阻断恢复。
+    // 调度抖动不是安全熵源；注入器故障只能退化为确定性中点，不能阻断恢复。 / English: Scheduling jitter is not a source of safe entropy; injector failures can only degrade to a deterministic midpoint and cannot block recovery.
   }
   const spread = Math.min(1_000, Math.max(1, Math.floor(floor)));
   return Math.min(MAX_TIMER_DELAY_MS, floor + Math.floor(spread * unit));
@@ -824,8 +834,8 @@ function provableLegacyRageOriginForBase(
     };
   }
   if (collection.count !== 3) {
-    // 旧版 v1 账本只保留 BASE 模式；结算一到两个 Rage 时，total-count 能证明旧总数，
-    // 但跨不可变定义的 PPS 边界后，新等级无法证明旧等级。
+    // 旧版 v1 账本只保留 BASE 模式；结算一到两个 Rage 时，total-count 能证明旧总数， / English: The old v1 ledger only retains BASE mode; when settling one or two Rages, total-count can prove the old total.
+    // 但跨不可变定义的 PPS 边界后，新等级无法证明旧等级。 / English: But after crossing the immutably defined PPS boundary, the new level cannot prove the old level.
     throw new RgsProtocolError(
       "committed v1 Base recovery cannot reconstruct a one/two-Rage origin safely",
     );
@@ -957,6 +967,8 @@ export class RgsGateway implements GameGateway {
   /**
    * 安全不重放：RGS 启动码是一次性宿主交接凭据。首会话失败后只能由
    * 运营方重新签发会话，浏览器不得用旧启动码自动重试或建议直接刷新。
+   *
+   * 英文 / English: Secure without replay: The RGS activation code is a one-time host handover credential. After the first session fails, the session can only be re-issued by the operator. The browser must not automatically retry using the old activation code or recommend refreshing directly.
    */
   readonly initialSessionRecoveryMode = "operator-session" as const;
   readonly operatorHostOrigin: string | undefined;
@@ -977,7 +989,7 @@ export class RgsGateway implements GameGateway {
   private generation = 0;
   private readonly activeRequests = new Set<AbortController>();
   private pollTimer: unknown | null = null;
-  /** 页面暂停只取消 timer，不得丢掉 Retry-After + jitter 的绝对下界。 */
+  /** 页面暂停只取消 timer，不得丢掉 Retry-After + jitter 的绝对下界。 / English: Pausing the page only cancels the timer, and the absolute lower bound of Retry-After + jitter must not be lost. */
   private pollNotBeforeAtMs: number | null = null;
   private acknowledgementRetryTimer: unknown | null = null;
   private acknowledgementDeadlineTimer: unknown | null = null;
@@ -985,7 +997,7 @@ export class RgsGateway implements GameGateway {
   private sessionTimeoutTimer: unknown | null = null;
   private sessionStatusTimer: unknown | null = null;
   private sessionStatusRequestActive = false;
-  /** 服务端 epoch 与同一瞬间单调时钟的配对；墙钟后续跳变不影响终止判断。 */
+  /** 服务端 epoch 与同一瞬间单调时钟的配对；墙钟后续跳变不影响终止判断。 / English: Pairing of server-side epoch and monotonic clock at the same instant; subsequent jumps of the wall clock do not affect termination judgment. */
   private serverClockAnchor: Readonly<{
     serverEpochMs: number;
     monotonicAtSync: number;
@@ -997,9 +1009,9 @@ export class RgsGateway implements GameGateway {
   private runtimeOnline = true;
   private runtimeVisible = true;
   private runtimeRecoveryStatusEmitted = false;
-  /** 仅表示 connect 因明确离线/后台而尚未发出；网络不确定失败绝不能自动重放 launch code。 */
+  /** 仅表示 connect 因明确离线/后台而尚未发出；网络不确定失败绝不能自动重放 launch code。 / English: It just means that connect has not yet been issued because it is explicitly offline/background; network unspecified failure must not automatically replay the launch code. */
   private connectParkedForRuntimeAvailability = false;
-  /** 终态通知与宿主退出都必须至多发生一次。 */
+  /** 终态通知与宿主退出都必须至多发生一次。 / English: Both final state notification and host exit must occur at least once. */
   private sessionTimeoutNotified = false;
 
   constructor(config: RgsGatewayConfig) {
@@ -1017,7 +1029,7 @@ export class RgsGateway implements GameGateway {
     try {
       this.callbacks.onResultDeliveryStage?.(stage);
     } catch {
-      // 固定诊断观察不属于传输或权威结果路径。
+      // 固定诊断观察不属于传输或权威结果路径。 / English: Fixed diagnostic observations not part of the transport or authoritative result paths.
     }
   }
 
@@ -1031,7 +1043,7 @@ export class RgsGateway implements GameGateway {
     this.runtimeOnline = availability.online;
     this.runtimeVisible = availability.visible;
     if (this.closed) return;
-    // 后台冻结可以任意延迟 timer；每个浏览器生命周期边界都按服务端绝对时间复核。
+    // 后台冻结可以任意延迟 timer；每个浏览器生命周期边界都按服务端绝对时间复核。 / English: Background freeze can be delayed arbitrarily by timer; each browser life cycle boundary is reviewed based on server-side absolute time.
     if (this.expireSessionAtAuthoritativeDeadline()) return;
 
     const isAvailable = this.runtimeOnline && this.runtimeVisible;
@@ -1042,8 +1054,8 @@ export class RgsGateway implements GameGateway {
     if (!isAvailable) {
       this.clearPollTimer(true);
       this.clearSessionStatusTimer();
-      // 已交付结果的 ACK 恢复不改变控制器轮次阶段；否则重复 SESSION_OPENED
-      // 会把已完成表现误判为一轮新的 requesting。ACK 仍按下方在线状态独立恢复。
+      // 已交付结果的 ACK 恢复不改变控制器轮次阶段；否则重复 SESSION_OPENED / English: ACK recovery of delivered results does not change controller turn phase; otherwise repeat SESSION_OPENED
+      // 会把已完成表现误判为一轮新的 requesting。ACK 仍按下方在线状态独立恢复。 / English: The completed performance will be misjudged as a new round of requesting. ACK Still press the online status below to resume independently.
       if (wasAvailable && (this.connected || this.connecting)
         && (this.pending === null || this.pending.deliveredSequence === null)) {
         this.runtimeRecoveryStatusEmitted = true;
@@ -1174,8 +1186,8 @@ export class RgsGateway implements GameGateway {
     this.proactiveRefreshToken = null;
     for (const controller of this.activeRequests) controller.abort();
     this.activeRequests.clear();
-    // close 只释放本页内存所有权；未 ACK 的权威恢复证据仍留在 ledgerStorage，
-    // 供运营商签发的新会话重新发现，绝不能通过 clearPending() 删除。
+    // close 只释放本页内存所有权；未 ACK 的权威恢复证据仍留在 ledgerStorage， / English: close only releases the memory ownership of this page; the authoritative recovery evidence without ACK remains in ledgerStorage.
+    // 供运营商签发的新会话重新发现，绝不能通过 clearPending() 删除。 / English: For rediscovery of new operator-signed sessions and must not be deleted via clearPending().
     this.pending = null;
     this.lastAppliedSequence = 0;
     this.lastAppliedRoundId = null;
@@ -1194,7 +1206,7 @@ export class RgsGateway implements GameGateway {
     try {
       this.callbacks.onStatus("offline");
     } catch {
-      // close 是资源所有权边界；观察者异常不得中断剩余页面拆卸。
+      // close 是资源所有权边界；观察者异常不得中断剩余页面拆卸。 / English: close is a resource ownership boundary; observer exceptions must not interrupt remaining page teardowns.
     }
     this.callbacks = NULL_CALLBACKS;
   }
@@ -1253,8 +1265,8 @@ export class RgsGateway implements GameGateway {
         ),
         () => this.assertAcknowledgementWindowOpen(pending),
       );
-      // 后台冻结会延迟 deadline timer；响应解码后仍必须重新按绝对时钟校验，
-      // 禁止“定时器尚未回调”被误当作硬窗口仍然开放。
+      // 后台冻结会延迟 deadline timer；响应解码后仍必须重新按绝对时钟校验， / English: Background freezing will delay the deadline timer; after the response is decoded, it must still be verified against the absolute clock.
+      // 禁止“定时器尚未回调”被误当作硬窗口仍然开放。 / English: Disabled "Timer has not yet called back" being mistaken for a hard window still open.
       this.assertAcknowledgementWindowOpen(pending);
       if (!this.isPending(pending)) return;
       this.clearPending(pending);
@@ -1277,8 +1289,8 @@ export class RgsGateway implements GameGateway {
         this.exhaustResultAcknowledgement(pending, error);
         return;
       }
-      // 协议不一致或本地持久存储故障不能盲目循环；保留账本，允许
-      // 受控调用方在修复后以同一元组再次显式提交。
+      // 协议不一致或本地持久存储故障不能盲目循环；保留账本，允许 / English: In case of protocol inconsistency or local persistent storage failure, blind looping is not allowed; the ledger is retained and allowed
+      // 受控调用方在修复后以同一元组再次显式提交。 / English: The controlled caller explicitly commits again with the same tuple after repair.
       pending.acknowledgementInFlight = false;
     } finally {
       if (this.isPending(pending)) pending.acknowledgementRequestActive = false;
@@ -1329,7 +1341,7 @@ export class RgsGateway implements GameGateway {
     );
     const now = this.sessionClockNow();
     const deadline = startedAt + this.config.acknowledgementRetryWindowMs;
-    // 服务端建议只能延后下一次请求，不能延长本页固定窗口；等于截止时间也不再发包。
+    // 服务端建议只能延后下一次请求，不能延长本页固定窗口；等于截止时间也不再发包。 / English: The server recommends that the next request can only be postponed, but the fixed window of this page cannot be extended; no more packets will be sent if it reaches the deadline.
     if (now >= deadline || delay >= deadline - now) {
       this.exhaustResultAcknowledgement(pending, error);
       return;
@@ -1380,7 +1392,7 @@ export class RgsGateway implements GameGateway {
     const notBefore = pending.acknowledgementNotBeforeAtMs;
     const now = this.sessionClockNow();
     if (notBefore !== null && now < notBefore) {
-      // performance.now() 可以含小数；向上取整确保浏览器 timer 绝不早于协议下界。
+      // performance.now() 可以含小数；向上取整确保浏览器 timer 绝不早于协议下界。 / English: performance.now() can contain decimals; rounding up ensures that the browser timer is never earlier than the protocol lower bound.
       this.armAcknowledgementRetry(pending, Math.ceil(notBefore - now));
       return;
     }
@@ -1413,6 +1425,8 @@ export class RgsGateway implements GameGateway {
   /**
    * 终止一个无法在当前页安全恢复的授权上下文。此边界故意保留 pending 与持久账本，
    * 让运营商新会话仍能按同一经济身份查询/交付可能已经提交的结果。
+   *
+   * 英文 / English: Terminates an authorization context that cannot be safely restored on the current page. This boundary intentionally preserves the pending and persistent ledgers, allowing new sessions by the operator to still query/deliver results that may have been submitted under the same economic identity.
    */
   private terminateForOperatorRelaunch(cause: ServerError | Error): void {
     if (this.closed) return;
@@ -1443,18 +1457,18 @@ export class RgsGateway implements GameGateway {
       try {
         this.callbacks.onStatus("offline");
       } catch {
-        // 状态观察者不拥有终止流程；即使 UI 状态回调故障，也必须继续通知诊断与宿主恢复。
+        // 状态观察者不拥有终止流程；即使 UI 状态回调故障，也必须继续通知诊断与宿主恢复。 / English: State observers do not own the termination process; even if the UI state callback fails, they must continue to notify diagnostics and host recovery.
       }
     }
     try {
       this.callbacks.onError(cause);
     } catch {
-      // 诊断观察者与宿主接管相互隔离，禁止前者异常吞掉唯一的恢复通知。
+      // 诊断观察者与宿主接管相互隔离，禁止前者异常吞掉唯一的恢复通知。 / English: Diagnostic observers and host takeovers are isolated from each other, preventing the former from abnormally swallowing the only recovery notification.
     }
     try {
       this.callbacks.onOperatorSessionRequired?.(cause);
     } catch {
-      // 宿主接管通知是旁路；回调异常不能复活旧令牌或解除结果交付栅栏。
+      // 宿主接管通知是旁路；回调异常不能复活旧令牌或解除结果交付栅栏。 / English: Host takeover notification is bypassed; callback exceptions cannot resurrect old tokens or lift result delivery fences.
     }
     this.session = null;
     this.sessionProjectionRequestId = null;
@@ -1467,6 +1481,8 @@ export class RgsGateway implements GameGateway {
   /**
    * 与普通 close 不同，空闲终止必须保留内存 pending 及其持久 ledger，供运营商
    * 新会话恢复可能已经提交的结果；旧 token、请求和下注能力立即失效。
+   *
+   * 英文 / English: Unlike a normal close, idle termination must leave the memory pending and its persistent ledger available for the operator's new session to resume results that may have been committed; old tokens, requests, and the ability to place bets are immediately invalidated.
    */
   private terminateForSessionTimeout(): void {
     if (this.sessionTimeoutNotified || this.closed) return;
@@ -1501,7 +1517,7 @@ export class RgsGateway implements GameGateway {
       try {
         this.callbacks.onStatus("offline");
       } catch {
-        // 状态观察者不拥有终态会话清理。
+        // 状态观察者不拥有终态会话清理。 / English: State observers do not own final session cleanup.
       }
     }
     const timeout: Readonly<GatewaySessionTimeout> = Object.freeze({
@@ -1511,7 +1527,7 @@ export class RgsGateway implements GameGateway {
     try {
       this.callbacks.onSessionTimeout?.(timeout);
     } catch {
-      // UI/宿主通知是旁路；回调故障不能复活旧 token 或解除下注栅栏。
+      // UI/宿主通知是旁路；回调故障不能复活旧 token 或解除下注栅栏。 / English: UI/host notifications are bypassed; callback failures cannot resurrect old tokens or lift staking fences.
     }
     this.session = null;
     this.sessionProjectionRequestId = null;
@@ -1552,8 +1568,8 @@ export class RgsGateway implements GameGateway {
     try {
       monotonicNow = this.config.monotonicNow();
     } catch {
-      // 浏览器单调时钟暂时不可读时冻结在最后一个服务端锚点，绝不因 wall clock
-      // 跳变提前终止。下一次服务端 status 会重新校准或按协议故障关闭。
+      // 浏览器单调时钟暂时不可读时冻结在最后一个服务端锚点，绝不因 wall clock / English: When the browser's monotonic clock is temporarily unreadable, it freezes at the last server anchor point, never due to the wall clock.
+      // 跳变提前终止。下一次服务端 status 会重新校准或按协议故障关闭。 / English: Transition terminated early. Next time the server status will be recalibrated or shut down according to protocol failure.
       return anchor.serverEpochMs;
     }
     if (!Number.isFinite(monotonicNow) || monotonicNow < 0) return anchor.serverEpochMs;
@@ -1663,7 +1679,7 @@ export class RgsGateway implements GameGateway {
       }
       if (error instanceof RgsNetworkError
         || (error instanceof RgsHttpError && retryableHttp(error))) {
-        // 只读 FLUSH 丢包不延长本地绝对截止时间，也不改变轮次状态；下一窗口再探测。
+        // 只读 FLUSH 丢包不延长本地绝对截止时间，也不改变轮次状态；下一窗口再探测。 / English: Read-only FLUSH Packet loss does not extend the local absolute deadline and does not change the round status; detection will occur in the next window.
         return;
       }
       const terminal = error instanceof RgsHttpError
@@ -1681,9 +1697,9 @@ export class RgsGateway implements GameGateway {
       const requestId = this.nextRequestId();
       const launchCode = this.launchCode;
       if (!launchCode) throw new RgsGatewayConfigurationError("RGS launch code is unavailable");
-      // 离线/后台停放发生在 connect()，尚未越过交接边界；一旦准备实际发出
-      // exchange，就必须先在本实例原子消费一次性码。网络不确定、HTTP 错误或
-      // 畸形响应都可能意味着服务端已经消费，当前实例绝不能再次重放。
+      // 离线/后台停放发生在 connect()，尚未越过交接边界；一旦准备实际发出 / English: Offline/background parking occurs in connect() and has not yet crossed the handover boundary; once ready it is actually emitted
+      // exchange，就必须先在本实例原子消费一次性码。网络不确定、HTTP 错误或 / English: exchange, you must first consume the one-time code atomically in this instance. Network uncertainty, HTTP error or
+      // 畸形响应都可能意味着服务端已经消费，当前实例绝不能再次重放。 / English: A malformed response may mean that the server has consumed it, and the current instance must not be replayed again.
       this.launchCode = null;
       const raw = await this.post(
         this.config.exchangeUrl,
@@ -1691,7 +1707,7 @@ export class RgsGateway implements GameGateway {
         requestId,
         null,
       );
-      // 启动码已经越过不可重放边界；此后只解析响应，任何失败都不能恢复它。
+      // 启动码已经越过不可重放边界；此后只解析响应，任何失败都不能恢复它。 / English: The startup code has crossed a non-replayable boundary; only the response is parsed thereafter, and any failure cannot restore it.
       const exchange = decodeRgsExchange(
         raw,
         requestId,
@@ -1718,9 +1734,9 @@ export class RgsGateway implements GameGateway {
           discovered = await this.discoverPendingResult(exchange.session, fingerprint);
         } catch (error) {
           if (!this.isCurrent(generation)) return;
-          // exchange 已消费 launch code 且建立了权威会话；pending 游标若返回畸形或
-          // 外来结果，当前页既不能安全重放 spin，也不能继续接受下注。即使响应尚未
-          // 形成可信 ledger，也必须一次性交给 operator relaunch，由新页重新查询游标。
+          // exchange 已消费 launch code 且建立了权威会话；pending 游标若返回畸形或 / English: Exchange has consumed launch code and established an authoritative session; if the pending cursor returns a malformation or
+          // 外来结果，当前页既不能安全重放 spin，也不能继续接受下注。即使响应尚未 / English: As an extraneous result, the current page can neither replay the spin safely nor continue to accept bets. Even if the response is not yet
+          // 形成可信 ledger，也必须一次性交给 operator relaunch，由新页重新查询游标。 / English: To form a trusted ledger, it must also be handed over to operator relaunch once, and the cursor will be re-queried from the new page.
           this.terminatePendingRecovery(
             null,
             error,
@@ -1818,8 +1834,8 @@ export class RgsGateway implements GameGateway {
           startRevision: ledger.startRevision,
           originFeatureState,
         });
-        // 替换写入成功前旧账本仍是权威证据；在精确请求来源尚未持久化时，
-        // 禁止提交或轮询 revision 为零的旧轮次。
+        // 替换写入成功前旧账本仍是权威证据；在精确请求来源尚未持久化时， / English: The old ledger before the replacement is written successfully is still the authoritative evidence; when the exact source of the request has not been persisted,
+        // 禁止提交或轮询 revision 为零的旧轮次。 / English: Disables committing or polling old rounds with revision zero.
         this.config.ledgerStorage?.save(upgradedLedger);
         ledger = upgradedLedger;
       }
@@ -1828,7 +1844,7 @@ export class RgsGateway implements GameGateway {
       if (session.sequence < 1) {
         throw new RgsProtocolError("committed RGS recovery has no result sequence");
       }
-      // 当前会话交换已包含此已提交结果；轮次状态只能恢复这一条精确 sequence。
+      // 当前会话交换已包含此已提交结果；轮次状态只能恢复这一条精确 sequence。 / English: The current session exchange already contains this committed result; the turn state can only recover this exact sequence.
       this.lastAppliedSequence = session.sequence - 1;
     }
     this.lastAppliedRoundId = null;
@@ -1838,7 +1854,7 @@ export class RgsGateway implements GameGateway {
       originFeatureState,
       pollAttempts: 0,
       pollRequestActive: false,
-      // 浏览器可能在持久化账本后、提交请求前退出；权威状态确认不存在后可精确重提。
+      // 浏览器可能在持久化账本后、提交请求前退出；权威状态确认不存在后可精确重提。 / English: The browser may exit after persisting the ledger but before submitting the request; it can be accurately retried after confirming that the authoritative state does not exist.
       resubmitOnNotFound: revisionDelta === 0n,
       blocked: false,
       deliveredSequence: null,
@@ -1856,7 +1872,7 @@ export class RgsGateway implements GameGateway {
     session: Readonly<DecodedRgsSession>,
     fingerprint: string,
   ): Promise<DecodedPendingResultDelivery | null> {
-    // sequence=0 可证明该会话从未提交结果，因此无需增加一次恢复请求。
+    // sequence=0 可证明该会话从未提交结果，因此无需增加一次恢复请求。 / English: sequence=0 proves that the session never submitted results, so there is no need to add a recovery request.
     if (session.sequence === 0) return null;
     const requestId = this.nextRequestId();
     const delivery = await this.getPendingResult(
@@ -1889,8 +1905,8 @@ export class RgsGateway implements GameGateway {
       );
     }
     validateSpinResultAgainstOrigin(origin, result);
-    // 服务端游标已是跨重载权威；发现路径只在内存恢复账本，不把响应结果或
-    // 令牌写入 sessionStorage。页面再次中断时会重新查询同一条未 ACK 结果。
+    // 服务端游标已是跨重载权威；发现路径只在内存恢复账本，不把响应结果或 / English: The server-side cursor is already authoritative across overloads; the discovery path only restores the ledger in memory and does not store response results or
+    // 令牌写入 sessionStorage。页面再次中断时会重新查询同一条未 ACK 结果。 / English: The token is written to sessionStorage. When the page is interrupted again, the same unACKed result will be queried again.
     const ledger: RgsRecoveryLedger = Object.freeze({
       version: 2,
       bindingFingerprint: fingerprint,
@@ -1923,7 +1939,7 @@ export class RgsGateway implements GameGateway {
 
   private async submitPending(pending: PendingRound): Promise<void> {
     if (!this.isPending(pending) || pending.blocked) return;
-    // 每次请求都必须重新取得 404 重提凭证，禁止沿用上一次响应的授权。
+    // 每次请求都必须重新取得 404 重提凭证，禁止沿用上一次响应的授权。 / English: Each request must re-obtain the 404 reissue certificate, and it is prohibited to use the authorization from the previous response.
     pending.resubmitOnNotFound = false;
     try {
       const decoded = await this.authorizedPost(
@@ -1955,8 +1971,8 @@ export class RgsGateway implements GameGateway {
         && error.status === 409
         && error.code === "ROUND_REJECTED") {
         if (!this.runtimeOnline || !this.runtimeVisible) {
-          // requesting 已因生命周期事件进入 recovering；此时向控制器投递非重试错误
-          // 会被误判为启动失败。保留 ledger，前台会先恢复会话投影再查询权威状态。
+          // requesting 已因生命周期事件进入 recovering；此时向控制器投递非重试错误 / English: requesting has entered recovery due to life cycle events; at this time, a non-retry error is delivered to the controller
+          // 会被误判为启动失败。保留 ledger，前台会先恢复会话投影再查询权威状态。 / English: It will be mistakenly judged as a startup failure. If the ledger is retained, the frontend will first restore the session projection and then query the authoritative status.
           return;
         }
         this.finishRejectedRound(pending, error.code, error.message);
@@ -1964,8 +1980,8 @@ export class RgsGateway implements GameGateway {
       }
       if (error instanceof RgsNetworkError
         || (error instanceof RgsHttpError && retryableHttp(error))) {
-        // WALLET_UNAVAILABLE 明确发生在钱包/RGS 交易前；网络失败则必须先由
-        // 权威状态接口证明轮次不存在。两者都只能复用既有 ledger，不能新建 round。
+        // WALLET_UNAVAILABLE 明确发生在钱包/RGS 交易前；网络失败则必须先由 / English: WALLET_UNAVAILABLE explicitly occurs before wallet/RGS transactions; network failure must first be
+        // 权威状态接口证明轮次不存在。两者都只能复用既有 ledger，不能新建 round。 / English: The authoritative state interface proves that the round does not exist. Both can only reuse existing ledgers and cannot create new rounds.
         pending.resubmitOnNotFound = error instanceof RgsNetworkError
           || error instanceof RgsHttpError && provablyPreTransaction(error);
         this.reportError(error, pending);
@@ -1998,7 +2014,7 @@ export class RgsGateway implements GameGateway {
       8_000,
       this.config.pollDelayMs * 2 ** Math.min(pending.pollAttempts, 5),
     );
-    // 显式 0 仅供启动恢复立即核验；非零 Retry-After 是服务端下限，不能缩短指数退避。
+    // 显式 0 仅供启动恢复立即核验；非零 Retry-After 是服务端下限，不能缩短指数退避。 / English: Explicit 0 is only for immediate verification of startup recovery; non-zero Retry-After is the server's lower limit and cannot shorten the exponential backoff.
     const delay = minimumDelayMs === 0
       ? 0
       : distributedRetryDelayMs(
@@ -2021,7 +2037,7 @@ export class RgsGateway implements GameGateway {
 
   private async pollPending(pending: PendingRound): Promise<void> {
     if (!this.isPending(pending) || pending.blocked || pending.pollRequestActive) return;
-    // 不可用期间不发包也不消耗 maxPollAttempts；恢复事件会以同一 ledger 立即续跑。
+    // 不可用期间不发包也不消耗 maxPollAttempts；恢复事件会以同一 ledger 立即续跑。 / English: During the period of unavailability, no packets will be sent and maxPollAttempts will not be consumed; the recovery event will continue running immediately with the same ledger.
     if (!this.runtimeOnline || !this.runtimeVisible) return;
     pending.pollAttempts += 1;
     pending.pollRequestActive = true;
@@ -2039,14 +2055,14 @@ export class RgsGateway implements GameGateway {
         || status.roundId !== pending.ledger.roundId) {
         throw new RgsProtocolError("round status returned a foreign binding or round");
       }
-      // 一旦权威接口观察到轮次存在，后续 404 就不能再沿用提交阶段的安全重提凭证。
+      // 一旦权威接口观察到轮次存在，后续 404 就不能再沿用提交阶段的安全重提凭证。 / English: Once the authoritative interface observes that the round exists, subsequent 404s can no longer use the safe re-mention credentials of the submission phase.
       pending.resubmitOnNotFound = false;
       switch (status.status) {
         case "COMMITTED":
           if (!status.result) throw new RgsProtocolError("COMMITTED status omitted its result");
           if (!this.runtimeOnline || !this.runtimeVisible) {
-            // 请求在前台发出、结果在后台抵达时，表现层按设计不接收结果；归还这次
-            // 已取得 COMMITTED 的预算，前台恢复后才能以同一 ledger 再做权威查询。
+            // 请求在前台发出、结果在后台抵达时，表现层按设计不接收结果；归还这次 / English: When the request is issued in the foreground and the result arrives in the background, the presentation layer is not designed to receive the result; return this time
+            // 已取得 COMMITTED 的预算，前台恢复后才能以同一 ledger 再做权威查询。 / English: The COMMITTED budget has been obtained. Only after the front desk is restored can the same ledger be used for authoritative query again.
             pending.pollAttempts = Math.max(0, pending.pollAttempts - 1);
             return;
           }
@@ -2058,8 +2074,8 @@ export class RgsGateway implements GameGateway {
           return;
         case "REJECTED":
           if (!this.runtimeOnline || !this.runtimeVisible) {
-            // 与后台 COMMITTED 相同：结果投影被延后时归还本次查询预算，且不得
-            // 清除 ledger；恢复后由同一轮次的 status 再确认一次。
+            // 与后台 COMMITTED 相同：结果投影被延后时归还本次查询预算，且不得 / English: Same as background COMMITTED: the query budget is returned when the result projection is postponed, and must not
+            // 清除 ledger；恢复后由同一轮次的 status 再确认一次。 / English: Clear the ledger; after recovery, confirm again with the status of the same round.
             pending.pollAttempts = Math.max(0, pending.pollAttempts - 1);
             return;
           }
@@ -2078,7 +2094,7 @@ export class RgsGateway implements GameGateway {
           this.exhaustRoundRecovery(pending);
           return;
         }
-        // 消费一次性凭证后，复用字节等价的经济身份；新请求不得创建新轮次或 RNG 身份。
+        // 消费一次性凭证后，复用字节等价的经济身份；新请求不得创建新轮次或 RNG 身份。 / English: After consuming a one-time credential, reuse the byte-equivalent economic identity; new requests may not create new rounds or RNG identities.
         pending.resubmitOnNotFound = false;
         void this.submitPending(pending);
         return;
@@ -2155,8 +2171,8 @@ export class RgsGateway implements GameGateway {
 
   private acceptCommitted(pending: PendingRound, decoded: DecodedRgsSpin): void {
     if (!this.isPending(pending)) return;
-    // 页面不可交互时不把权威结果交给表现层；保留 ledger，恢复后由 status
-    // 重新取得同一 committed 结果，避免后台动画/自动 ACK 发生时序漂移。
+    // 页面不可交互时不把权威结果交给表现层；保留 ledger，恢复后由 status / English: When the page is not interactive, the authoritative results are not handed over to the presentation layer; the ledger is retained and restored by status
+    // 重新取得同一 committed 结果，避免后台动画/自动 ACK 发生时序漂移。 / English: Re-obtain the same committed result to avoid timing drift in background animation/automatic ACK.
     if (!this.runtimeOnline || !this.runtimeVisible) return;
     const session = this.requireSession();
     const binding = session.binding;
@@ -2186,8 +2202,8 @@ export class RgsGateway implements GameGateway {
       throw new RgsProtocolError(`committed RGS result was rejected: ${decision.reason}`);
     }
     if (decision.kind === "duplicate") {
-      // 已交付结果在控制器确认可见展示或兜底提交前必须保持持久；
-      // 重复网络响应不得 ACK 它。
+      // 已交付结果在控制器确认可见展示或兜底提交前必须保持持久； / English: Delivered results must remain persistent until the controller confirms visible display or implicit submission;
+      // 重复网络响应不得 ACK 它。 / English: Duplicate network responses must not ACK it.
       if (pending.deliveredSequence !== result.sequence) this.clearPending(pending);
       this.reportResultDeliveryStage("delivered");
       return;
@@ -2216,8 +2232,8 @@ export class RgsGateway implements GameGateway {
         error,
       );
     }
-    // 该回调是持久交接边界；控制器接受前不得改动恢复账本、
-    // 对应 sequence 或待处理身份。
+    // 该回调是持久交接边界；控制器接受前不得改动恢复账本、 / English: This callback is a persistent handover boundary; the controller must not modify the recovery ledger,
+    // 对应 sequence 或待处理身份。 / English: Corresponds to the sequence or identity to be processed.
     if (!this.isPending(pending)) return;
     this.lastAppliedSequence = result.sequence;
     this.lastAppliedRoundId = result.roundId;
@@ -2370,9 +2386,9 @@ export class RgsGateway implements GameGateway {
     }
     if (refreshed.revision === current.revision
       && refreshed.sequence === current.sequence) {
-      // Revision 是经济/特性状态的乐观并发令牌；相同游标下 refresh 只能
-      // 轮换 access token / expiry，不能借 refresh 静默改写权威投影。
-      // sameFeatureState 按规范化字段比较，不依赖 JSON 对象键顺序。
+      // Revision 是经济/特性状态的乐观并发令牌；相同游标下 refresh 只能 / English: Revision is an optimistic concurrency token of economic/feature status; refresh can only
+      // 轮换 access token / expiry，不能借 refresh 静默改写权威投影。 / English: Rotate the access token / expiry, and you cannot use refresh to silently rewrite the authoritative projection.
+      // sameFeatureState 按规范化字段比较，不依赖 JSON 对象键顺序。 / English: sameFeatureState compares by normalized fields and does not rely on JSON object key order.
       if (refreshed.balanceMinor !== current.balanceMinor
         || !sameFeatureState(refreshed.featureState, current.featureState)) {
         throw new RgsProtocolError(
@@ -2397,9 +2413,9 @@ export class RgsGateway implements GameGateway {
     const refreshedRevision = BigInt(refreshed.revision);
     const revisionDelta = refreshedRevision - currentRevision;
 
-    // 合法并发交错：refresh 在待处理轮次提交前读取 start，响应却在同一轮次的
-    // COMMITTED 结果已经推进本页到 start+1 后抵达。此时只采用新 token/expiry；
-    // 余额、revision、sequence 与特性投影必须保留已经验证的 committed 当前值。
+    // 合法并发交错：refresh 在待处理轮次提交前读取 start，响应却在同一轮次的 / English: Legal concurrent interleaving: refresh reads start before the pending round is submitted, but the response is in the same round
+    // COMMITTED 结果已经推进本页到 start+1 后抵达。此时只采用新 token/expiry； / English: COMMITTED results have been advanced to this page and will arrive after start+1. At this time, only new token/expiry is used;
+    // 余额、revision、sequence 与特性投影必须保留已经验证的 committed 当前值。 / English: Balances, revisions, sequences, and feature projections must retain verified committed current values.
     const staleCommittedOverlap = baselineRevision === startRevision
       && refreshedRevision === startRevision
       && currentRevision === startRevision + 1n
@@ -2411,14 +2427,14 @@ export class RgsGateway implements GameGateway {
       return Object.freeze({
         ...current,
         expiresAt: refreshed.expiresAt,
-        // refresh 在 spin 提交前读取的旧投影可能晚于 committed 结果抵达；
-        // 该交错只采用 token/absolute expiry，不能缩短已续期的空闲截止时间。
+        // refresh 在 spin 提交前读取的旧投影可能晚于 committed 结果抵达； / English: Old projections read by refresh before the spin was committed may arrive later than the committed result;
+        // 该交错只采用 token/absolute expiry，不能缩短已续期的空闲截止时间。 / English: This interleaving only takes token/absolute expiry and cannot shorten the renewed idle deadline.
         idleDisconnectAt: current.idleDisconnectAt,
       });
     }
 
-    // pending 轮次至多提交一次：refresh 可以保持当前游标，或同时推进 revision/sequence 一步。
-    // 已观察到提交后的当前游标绝不能倒退回 startRevision。
+    // pending 轮次至多提交一次：refresh 可以保持当前游标，或同时推进 revision/sequence 一步。 / English: The pending round is submitted at most once: refresh can keep the current cursor, or advance the revision/sequence one step at the same time.
+    // 已观察到提交后的当前游标绝不能倒退回 startRevision。 / English: It has been observed that the current cursor after a commit must never rewind back to startRevision.
     if (refreshedRevision < startRevision
       || refreshedRevision > startRevision + 1n
       || revisionDelta < 0n
@@ -2440,8 +2456,8 @@ export class RgsGateway implements GameGateway {
   private scheduleProactiveRefresh(token: string): void {
     this.clearRefreshTimer();
     this.proactiveRefreshAttempt = 0;
-    // exchange/refresh 已先用响应体 serverTime 建立单调锚点；JWT iat/exp 也是服务端
-    // epoch，禁止再与可被用户修改的浏览器墙钟混用。
+    // exchange/refresh 已先用响应体 serverTime 建立单调锚点；JWT iat/exp 也是服务端 / English: exchange/refresh has first used the response body serverTime to establish a monotonic anchor; JWT iat/exp is also the server side
+    // epoch，禁止再与可被用户修改的浏览器墙钟混用。 / English: epoch, it is forbidden to mix it with the browser wall clock that can be modified by the user.
     const delay = tokenRefreshDelayMs(token, this.sessionClockNow());
     this.proactiveRefreshToken = delay === null ? null : token;
     if (delay === null || this.closed || !this.runtimeOnline) return;
@@ -2473,8 +2489,8 @@ export class RgsGateway implements GameGateway {
             this.config.retryJitter,
           );
           this.proactiveRefreshAttempt += 1;
-          // 主动续期同样把 Retry-After 作为下界，但绝不能延长签名 token 生命周期；
-          // 为最终请求保留一秒，否则失败关闭并要求运营商重新 launch。
+          // 主动续期同样把 Retry-After 作为下界，但绝不能延长签名 token 生命周期； / English: Active renewal also uses Retry-After as the lower bound, but it must not extend the signature token life cycle;
+          // 为最终请求保留一秒，否则失败关闭并要求运营商重新 launch。 / English: One second is reserved for final requests, otherwise it fails to close and requires the operator to relaunch.
           if (remaining > delay + 1_000) {
             this.reportError(error, this.pending ?? undefined);
             this.scheduleProactiveRefreshAttempt(token, delay);
@@ -2824,7 +2840,7 @@ function sameCompleteSessionIdentity(
     && sameCompleteBinding(left.binding, right.binding);
 }
 
-/** 同一 gateway generation 内服务端空闲截止时间只能单调向后移动。 */
+/** 同一 gateway generation 内服务端空闲截止时间只能单调向后移动。 / English: The server idle deadline within the same gateway generation can only move backward monotonically. */
 function laterIdleDisconnectAt(current: string, candidate: string): string {
   return Date.parse(candidate) > Date.parse(current) ? candidate : current;
 }

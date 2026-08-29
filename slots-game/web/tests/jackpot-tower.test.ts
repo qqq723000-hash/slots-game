@@ -1,4 +1,4 @@
-// @ts-nocheck -- 仅在 Node 中运行的真实 Spine 材质与绘制顺序证据校验器。
+// @ts-nocheck -- 仅在 Node 中运行的真实 Spine 材质与绘制顺序证据校验器。 / English: @ts-nocheck -- A true Spine material and draw order evidence checker that only runs in Node.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -611,8 +611,8 @@ describe("authored jackpot tower", () => {
       expect(data.slots.slice(59, 74).every((slot) => slot.blendMode === BLEND_MODES.NORMAL))
         .toBe(true);
 
-      // 数值是注入两个预设边界槽位的原生 Pixi 文本，因此 Spine 自身会保持
-      // 标题 → 火焰 → 数值 → 前景的顺序。
+      // 数值是注入两个预设边界槽位的原生 Pixi 文本，因此 Spine 自身会保持 / English: The values ​​are native Pixi text injected into the two preset boundary slots, so Spine itself will maintain
+      // 标题 → 火焰 → 数值 → 前景的顺序。 / English: The order of title → flame → value → foreground.
       expect(names.slice(44, 47)).toEqual([
         "grandTitle",
         "fire_fx/fire_fx_02",
@@ -634,8 +634,8 @@ describe("authored jackpot tower", () => {
         }
         return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
       };
-      // 这些是新槽位宿主使用的预设局部原点。它们刻意保留在 Spine 局部空间中；
-      // 每次脉冲和倾斜都由实时骨骼矩阵处理，无需用同级节点位置近似。
+      // 这些是新槽位宿主使用的预设局部原点。它们刻意保留在 Spine 局部空间中； / English: These are the default local origins used by new slot hosts. They are intentionally kept in Spine local space;
+      // 每次脉冲和倾斜都由实时骨骼矩阵处理，无需用同级节点位置近似。 / English: Each pulse and tilt is handled by a real-time bone matrix without the need to approximate sibling node positions.
       expect(boundingCentre("grandTitle").x).toBeCloseTo(-1.875, 5);
       expect(boundingCentre("grandTitle").y).toBeCloseTo(1.515, 5);
       expect(boundingCentre("grandValue").x).toBeCloseTo(-4.67, 5);
@@ -698,16 +698,16 @@ describe("authored jackpot tower", () => {
     expect((valueHost.children[0] as { text?: string }).text).toBe("0.00");
     expect(titleHost.parent).toBe(titleSlot);
     expect(valueHost.parent).toBe(valueSlot);
-    // Spine 按骨架绘制顺序更新 `children`，因此火焰槽位 45 始终严格位于
-    // 外部提供的原生标题和数值文本字段之间。
+    // Spine 按骨架绘制顺序更新 `children`，因此火焰槽位 45 始终严格位于 / English: Spine updates `children` in skeleton draw order, so fire slot 45 is always strictly in
+    // 外部提供的原生标题和数值文本字段之间。 / English: Between externally provided native title and numeric text fields.
     expect(base.children.indexOf(titleSlot)).toBeLessThan(base.children.indexOf(fireSlot));
     expect(base.children.indexOf(fireSlot)).toBeLessThan(base.children.indexOf(valueSlot));
     expect(titleHost.scale.y).toBe(-1);
     expect(valueHost.scale.y).toBe(-1);
 
-    // 槽位 44/46 是运行时 BoundingBox 占位符。修复后，其容器仍对文本可见，
-    // 但绝不允许过期的图集切片泄漏到任一字段后方；槽位 45 仍是正常的预设
-    // FX 槽位。
+    // 槽位 44/46 是运行时 BoundingBox 占位符。修复后，其容器仍对文本可见， / English: Slots 44/46 are runtime BoundingBox placeholders. After fixing, its container is still visible to the text,
+    // 但绝不允许过期的图集切片泄漏到任一字段后方；槽位 45 仍是正常的预设 / English: But expired gallery tiles are never allowed to leak behind any field; slot 45 remains the normal default
+    // FX 槽位。 / English: FX slot.
     expect(base.skeleton.slots[44]?.currentSprite.renderable).toBe(false);
     expect(base.skeleton.slots[46]?.currentSprite.renderable).toBe(false);
     expect(base.skeleton.slots[45]?.currentSprite.renderable).toBe(true);
@@ -746,8 +746,8 @@ describe("authored jackpot tower", () => {
     expect(base.skeleton.slots[44]!.currentMesh.renderable).toBe(false);
     expect(base.skeleton.slots[46]!.currentSprite.renderable).toBe(false);
     expect(base.skeleton.slots[46]!.currentMesh.renderable).toBe(false);
-    // 嵌套宿主只抵消 Spine 的 Y 轴镜像。缩放和旋转仍保留在原生槽位矩阵上，
-    // 渲染出的 Text 会继承该矩阵。
+    // 嵌套宿主只抵消 Spine 的 Y 轴镜像。缩放和旋转仍保留在原生槽位矩阵上， / English: Nested hosts only offset Spine's Y-axis mirroring. Scaling and rotation remain on the native slot matrix,
+    // 渲染出的 Text 会继承该矩阵。 / English: The rendered Text will inherit this matrix.
     expect(titleHost.scale.y).toBe(-1);
     expect(valueHost.scale.y).toBe(-1);
     expect((title as { rotation: number }).rotation).toBe(0);

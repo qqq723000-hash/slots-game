@@ -1,9 +1,17 @@
-# Mobile Controls and Menu Specification
+# 移动端控件与菜单规范 / Mobile Controls and Menu Specification
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## 中文摘要 / Chinese summary
+
+本规范约束手机与平板上的旋转按钮、工具控件、状态栏和帮助菜单几何，并将捕获的参考尺寸作为回归检查点。视觉素材与指针命中区分属不同合同，命中目标必须保持至少 44×44 物理像素，且余额、下注和赢分不得被截断。运营方条款包、主机返回接口和多设备实机验收不能由本地界面自行假定，仍需采用方在目标环境中批准与验证。
+
+## English summary / 英文摘要
+
+This specification constrains the spin control, utility controls, status footer, and help-menu geometry across supported phone and tablet viewports, using captured dimensions as regression checkpoints. Visual artwork and pointer targets are separate contracts: hit areas remain at least 44 by 44 physical pixels, and Balance, Bet, and Win values must never be truncated. Operator terms, host-owned exit behavior, and representative physical-device acceptance cannot be invented by the local client and remain target-environment approval gates.
 
 ## Evidence boundary
 

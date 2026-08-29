@@ -144,6 +144,10 @@ async function fetchManifest(url, index, {
 
 /**
  * 该检查必须直连每个待接流量的副本，禁止经过会合并响应的 Service 或 CDN。比较前先
+// English: This check must be directly connected to a copy of each pending traffic, and must not go through a
+// service or CDN that converges and responds. Before comparing Recalculate the list to avoid comparing only the
+// releaseId self-reported by the server. Requests are strictly limited in duration, response body, and
+// redirects.
  * 复算清单，避免仅比较服务端自报的 releaseId。请求严格限制时长、响应体和重定向。
  */
 export async function verifyReplicaConsistency({

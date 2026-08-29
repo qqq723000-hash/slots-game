@@ -109,10 +109,14 @@ jobs:
 
       - name: Run migrator and authenticated operations runtime smoke
         # CI 临时使用 development-only 密钥夹具；它不是生产审批或发布证据。
+        # English: CI temporarily uses the development-only key fixture; it is not artifactsion approval or
+        # release proof.
         run: make smoke-runtime-operations
 
       - name: Run production-configuration fail-closed runtime smoke
         # v2 审批引用、TLS 证书与密钥均为短命 CI-only 材料，不得当作生产/监管证据。
+        # English: v2 approval references, TLS certificates, and keys are short-lived CI-only assets and may not
+        # be considered artifactsion/regulatory evidence.
         env:
           RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: make smoke-runtime-production

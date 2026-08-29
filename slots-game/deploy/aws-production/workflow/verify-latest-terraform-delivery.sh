@@ -1,5 +1,7 @@
 #!/bin/sh
 # 验证应用发布消费的是固定 S3 key 的最新版本，并把对象内容绑定到受保护 metadata。
+# English: Verify that the application release is consuming the latest version of the pinned S3 key and bind the
+# object content to protected metadata.
 set -eu
 
 fail() {

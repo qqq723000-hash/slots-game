@@ -1,4 +1,4 @@
-// @ts-nocheck -- 仅在 Node 中运行的真实 Spine 几何校验器。
+// @ts-nocheck -- 仅在 Node 中运行的真实 Spine 几何校验器。 / English: @ts-nocheck -- A true Spine geometry checker that only runs in Node.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

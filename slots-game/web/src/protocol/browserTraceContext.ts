@@ -23,6 +23,8 @@ function allZero(bytes: Uint8Array): boolean {
 /**
  * 每个浏览器请求生成独立的 W3C Trace Context，不使用玩家、会话、轮次、设备或持久存储。
  * 随机源不可用时只关闭诊断关联；经济请求本身不得因此失败。
+ *
+ * 英文 / English: Each browser request generates an independent W3C Trace Context and does not use players, sessions, rounds, devices or persistent storage. Only diagnostic correlation is turned off when the random source is unavailable; the economic request itself must not fail as a result.
  */
 export function createBrowserTraceParent(
   fillRandom: CryptographicRandomFill = defaultRandomFill,

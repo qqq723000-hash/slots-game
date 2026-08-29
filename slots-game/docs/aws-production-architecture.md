@@ -1,9 +1,15 @@
-# AWS 正式生产架构
+# AWS 正式生产架构 / AWS production architecture
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document defines the repository's sole target production reference architecture and maps application responsibilities and `infra/terraform` modules to the adopter's AWS environment.
+The API and Worker roles use the same versioned RGS artifact and PostgreSQL transaction authority while remaining independently scalable; runtime and migration identities, immutable releases, verified TLS, and secret boundaries must remain separated.
+Source code and Terraform configuration do not prove that resources exist or are production-ready, so protected plan/apply, cloud inventory, operator integration, capacity, backup, disaster-recovery, security, and approval evidence remain external gates.
 
 状态：AWS 目标架构与平台交付契约
 

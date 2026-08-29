@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # HMAC 停机证据测试专用 kubectl；用临时状态文件模拟 API 停机与恢复。
+# English: Special kubectl for HMAC downtime evidence testing; use temporary state files to simulate API
+# downtime and recovery.
 set -euo pipefail
 
 state=$MOCK_HMAC_STATE_DIR

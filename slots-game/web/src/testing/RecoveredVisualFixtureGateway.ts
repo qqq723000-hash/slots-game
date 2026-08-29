@@ -65,6 +65,8 @@ export interface RecoveredVisualFixtureDiagnostics {
 
 /**
  * 仅测试持久恢复对等点。包裹的测试场景计算回合；该装饰器重现了 RGS 排序，其中交换状态已经前进，但提交的结果仍然处于待定状态，直到呈现 ACK。
+ *
+ * 英文 / English: Only test persistent recovery peers. The wrapped test scenario computes rounds; this decorator reproduces an RGS ordering where the exchange state has been advanced but the committed result remains pending until an ACK is presented.
  */
 export class RecoveredVisualFixtureGateway implements GameGateway {
   private readonly delegate = new VisualFixtureGateway(

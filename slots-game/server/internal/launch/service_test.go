@@ -225,6 +225,9 @@ func TestReplayUsesStoreObservedTimeInsteadOfPodClock(t *testing.T) {
 
 	// Pod 快于存储保留边界时，存储仍在窗口内且已越过兑换到期时间；必须返回
 	// historical replay，不能被 Pod 时钟提前裁成冲突。
+	// English: When the Pod is faster than the storage retention boundary, the storage is still within the window and
+	// has passed the redemption expiration time; historical replay must be returned and cannot be cut into conflicts
+	// early by the Pod clock.
 	podClock := original.ExpiresAt.Add(IdempotencyRetention + time.Hour)
 	storeClock = original.ExpiresAt.Add(time.Minute)
 	if !podClock.After(storeClock) {
@@ -249,6 +252,9 @@ func TestReplayUsesStoreObservedTimeInsteadOfPodClock(t *testing.T) {
 
 	// Pod 慢于存储时，不能借慢钟延长墓碑。MemoryStore 在同一次锁内观测到
 	// retention 边界并清理，因此 query-only replay 必须报告不存在。
+	// English: When the Pod is slower than the storage, the tombstone cannot be extended by the slow clock.
+	// MemoryStore observes the retention boundary within the same lock and clears it, so query-only replay must report
+	// its absence.
 	podClock = base.Add(-time.Hour)
 	storeClock = original.ExpiresAt.Add(IdempotencyRetention)
 	if !podClock.Before(storeClock) {
@@ -321,6 +327,8 @@ func TestConsumeUsesStoreAuthorityInsteadOfPodClock(t *testing.T) {
 
 	// Store 权威时钟仍在兑换窗口内，快钟 Pod 不得在 Store 已原子
 	// 消费凭据后把成功改判为 ErrStoreInvariant。
+	// English: The Store authoritative clock is still within the redemption window, and the fast clock Pod must not
+	// change the success judgment to ErrStoreInvariant after the Store has atomically consumed the credentials.
 	storeClock = issued.ExpiresAt.Add(-time.Nanosecond)
 	podClock := issued.ExpiresAt.Add(time.Hour)
 	if !podClock.After(storeClock) {

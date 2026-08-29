@@ -1,6 +1,9 @@
 // ci-runtime-fixture 命令只为 deploy/observability 的容器启动冒烟生成
 // 仅限开发使用的临时信任材料。必须显式设置 RGS_CI_RUNTIME_FIXTURE=1；
 // 这些材料会在 CI 退出时删除，绝不能作为生产审批或发布证据。
+// English: The ci-runtime-fixture command only starts a smoke build for containers with deploy/observability
+// temporary trust material for development use only. RGS_CI_RUNTIME_FIXTURE=1 must be explicitly set; these
+// materials are deleted on CI exit and should never be used as evidence of production approval or release.
 package main
 
 import (
@@ -113,6 +116,9 @@ func generate(directory string, now time.Time, profile string) error {
 	if profile == fixtureProfileProduction {
 		// 只让持续集成走到生产模式的真实失败闭合分支；该身份刻意包含 ci-only 标记，
 		// 且其审批引用全部声明非发布证据，绝不能移入发布配置。
+		// English: Only let continuous integration go to the actual failed closed branch in production mode; this identity
+		// intentionally contains the ci-only flag, and its approval references all declare non-release evidence and must
+		// not be moved into a release configuration.
 		definition.GameID = "iron-colossus-ci-only-contract"
 		definition.DefinitionVersion = "ci-only-contract-2026-08-16"
 	}

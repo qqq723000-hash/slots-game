@@ -1,5 +1,7 @@
 #!/bin/sh
 # 静态证明关键 AWS 边界存在；可传入复制后的目录供危险变体负测。
+# English: Static proof that critical AWS boundaries exist; copied directories can be passed in for negative
+# testing of dangerous variants.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

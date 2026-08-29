@@ -1,5 +1,8 @@
 -- 高额派奖审批是显式启用的持久安全闸门。迁移只扩展可表达状态；未配置策略的
 -- 应用仍只写 PREPARED，因此升级本身不改变任何经济语义。
+-- English: High stakes payout approval is a persistent security gate that is explicitly enabled. Migration only
+-- extends expressible state; no policy is configured Applications still only write PREPARED, so the upgrade
+-- itself does not change any economic semantics.
 ALTER TABLE rgs_rounds DROP CONSTRAINT rgs_rounds_status;
 ALTER TABLE rgs_rounds ADD CONSTRAINT rgs_rounds_status CHECK (status IN (
     'PREPARED', 'RISK_PENDING', 'WALLET_PENDING', 'COMMITTED', 'REJECTED',
@@ -90,11 +93,16 @@ CREATE INDEX rgs_risk_reviews_expiry
 
 -- 签名 Idempotency-Key 在同一运营商审批端点内只能标识一个业务决定；禁止误把同一键
 -- 用于不同轮次并分别生效。PENDING 行尚无键，因此不参与唯一性判断。
+-- English: Signature Idempotency-Key can only identify one business decision within the same operator approval
+-- endpoint; it is prohibited to mistakenly use the same key Used in different rounds and take effect
+-- separately. The PENDING row does not yet have a key, so it does not participate in the uniqueness
+-- determination.
 CREATE UNIQUE INDEX rgs_risk_reviews_operator_idempotency
     ON rgs_risk_reviews (operator_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
 -- RISK_PENDING 必须保留钱包命令摘要，但绝不能处于可领取状态。
+-- English: RISK_PENDING The wallet command digest must be retained but must never be claimable.
 ALTER TABLE rgs_rounds ADD CONSTRAINT rgs_rounds_risk_pending_wallet_gate CHECK (
     status <> 'RISK_PENDING'
     OR (wallet_phase = '' AND next_attempt_at IS NULL AND wallet_lease_until IS NULL

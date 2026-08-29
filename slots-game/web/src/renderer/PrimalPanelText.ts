@@ -26,7 +26,7 @@ export interface AuthoredPanelLayout {
   readonly minBound: SpineTextBounds;
 }
 
-/** 从 layout_desktop.json 恢复的桌面包含布局转换。 */
+/** 从 layout_desktop.json 恢复的桌面包含布局转换。 / English: The desktop restored from layout_desktop.json contains layout transformations. */
 export const PRIMAL_PANEL_LAYOUT = Object.freeze({
   freeSpinIntro: Object.freeze({
     x: 640,
@@ -62,7 +62,7 @@ export interface PrimalPanelTextField {
   readonly bounds: SpineTextBounds;
   readonly text: string;
   readonly style: PrimalPanelTextStyle;
-  /** 介绍文本槽没有附件；他们的动画老虎机阿尔法是权威的。 */
+  /** 介绍文本槽没有附件；他们的动画老虎机阿尔法是权威的。 / English: There are no attachments for the intro text slot; their animated slot Alpha is authoritative. */
   readonly attachmentRequired: boolean;
   readonly wrap: boolean;
 }
@@ -260,14 +260,14 @@ export function freeSpinIntroTextFields(
     : PRIMAL_PANEL_TEXT_SLOTS.kongQuestIntro;
   const values = kingSpin
     ? [
-      // 捕获的King Spin配置将此字段与固定的`8`绑定；服务器事件仍然拥有功能状态和剩余旋转计数。
+      // 捕获的King Spin配置将此字段与固定的`8`绑定；服务器事件仍然拥有功能状态和剩余旋转计数。 / English: The captured King Spin configuration binds this field to a fixed `8`; the server event still has the feature status and remaining spin count.
       "8 FREE SPINS awarded!",
       "All VAULT BONUS are unlocked in KING SPIN!",
       "All VAULT BONUS can upgrade up to GRAND!",
       "PRESS SPIN TO BEGIN",
     ]
     : [
-      // 两个捕获的桌面介绍实体都将此区域设置参数绑定到 8。
+      // 两个捕获的桌面介绍实体都将此区域设置参数绑定到 8。 / English: Both captured desktop presentation entities have this locale parameter bound to 8.
       "8 FREE SPINS awarded!",
       "Reels can expand in KONG QUEST!",
       "Unlock FREE SPINS to retrigger!",
@@ -300,7 +300,7 @@ export function wheelSummaryTextFields(
       prize,
     ]);
   }
-  // GamePrimalWheelBonusFeature 在此绑定 `_totalCoins`。乘数是一个不同的服务器事实，当权威金额不存在时，决不能将乘数提升到钱槽中。
+  // GamePrimalWheelBonusFeature 在此绑定 `_totalCoins`。乘数是一个不同的服务器事实，当权威金额不存在时，决不能将乘数提升到钱槽中。 / English: GamePrimalWheelBonusFeature binds `_totalCoins` here. The multiplier is a different server fact and the multiplier can never be promoted to the money slot when the authoritative amount does not exist.
   const value = event.amountMinor !== undefined
     ? formatPrimalPanelAmount(event.amountMinor, formatter)
     : "";
@@ -347,6 +347,8 @@ export interface ReadableSpineTextTransform {
  *
  * Spine 的 Y 向上到 Pixi 的 Y 向下转换使提供的面板骨骼具有负行列式（通常为 `d === -1`）。区域附件需要该反射，
  * 但将其应用于同级 Pixi 文本会镜像每个字形。动态文本遵循骨骼的动画旋转和缩放幅度，同时故意丢弃坐标系反射。
+ *
+ * 英文 / English: Explode a Spine bone matrix into readable Pixi text fields. Spine's Y-up to Pixi's Y-down conversion causes the supplied panel bone to have a negative determinant (usually `d === -1`). Region attachments require this reflection, but applying it to sibling Pixi text will mirror each glyph. Dynamic text follows the bones' animated rotation and scale magnitudes, while intentionally discarding coordinate system reflections.
  */
 export function readableSpineTextTransform(
   matrix: Readonly<{ a: number; b: number; c: number; d: number }>,
@@ -364,7 +366,7 @@ class SpineTextBindingView extends Container {
   }
 
   override updateTransform(): void {
-    // AuthoredPanel在此视图之前添加Spine。因此，Pixi 首先推进 Spine 子项，然后此回调在 Text 子项计算其世界变换之前对同一渲染帧进行采样。
+    // AuthoredPanel在此视图之前添加Spine。因此，Pixi 首先推进 Spine 子项，然后此回调在 Text 子项计算其世界变换之前对同一渲染帧进行采样。 / English: AuthoredPanel adds Spine before this view. So, Pixi advances the Spine child first, and then this callback samples the same render frame before the Text child computes its world transform.
     this.syncBeforeTransform();
     super.updateTransform();
   }
@@ -372,6 +374,8 @@ class SpineTextBindingView extends Container {
 
 /**
  * 运行时文本字段是原始引擎中单独的 Pixi 对象。这个桥将它们保持在提供的 Spine 插槽的活骨矩阵和 alpha 上；边界框附件提供精确的动画中心（如果可用）。
+ *
+ * 英文 / English: Runtime text fields are separate Pixi objects in the original engine. This bridge keeps them on the live bone matrix and alpha of the provided Spine slot; the bounding box attachment provides precise animation centering (if available).
  */
 export class SpineTextBinding {
   readonly view: Container;
@@ -407,8 +411,8 @@ export class SpineTextBinding {
         continue;
       }
 
-      // 介绍文本槽故意没有设置附件。他们预设的边界仍然存在于 `bounds` 下的默认皮肤中，而显示/隐藏剪辑则对插槽 alpha 进行动画处理。解析该附件而不将其分配给插槽，
-      // 以便 Pixi Spine 永远不会尝试渲染诊断边界多边形。
+      // 介绍文本槽故意没有设置附件。他们预设的边界仍然存在于 `bounds` 下的默认皮肤中，而显示/隐藏剪辑则对插槽 alpha 进行动画处理。解析该附件而不将其分配给插槽， / English: The intro text slot intentionally does not have attachments set. Their preset bounds are still present in the default skin under `bounds`, while show/hide clipping animates the slot alpha. Parse the attachment without assigning it to a slot,
+      // 以便 Pixi Spine 永远不会尝试渲染诊断边界多边形。 / English: So that Pixi Spine never attempts to render diagnostic bounding polygons.
       const attachment = (slot.getAttachment()
         ?? skeleton.getAttachment(slot.data.index, "bounds")) as {
         worldVerticesLength?: number;

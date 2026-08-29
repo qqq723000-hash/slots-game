@@ -46,8 +46,12 @@ type FeatureConfig struct {
 	MaxExpansionSpins int `json:"maxExpansionSpins"`
 	// VaultUnlockChanceBP 会在基础游戏或金刚任务结果中为全部锁定保险库统一判定一次。
 	// 王者旋转始终解锁全部保险库。
+	// English: VaultUnlockChanceBP will be determined once for all locked vaults in the base game or King Kong mission
+	// results. King Spin always unlocks the entire vault.
 	VaultUnlockChanceBP int `json:"vaultUnlockChanceBP"`
 	// VaultFreeSpinWeight 仅在金刚任务期间向普通保险库奖励表加入免费旋转奖励。
+	// English: VaultFreeSpinWeight adds a free spins bonus to the normal vault reward table only during King Kong
+	// missions.
 	VaultFreeSpinWeight      int             `json:"vaultFreeSpinWeight"`
 	KingSpinUpgradeChanceBP  int             `json:"kingSpinUpgradeChanceBP"`
 	KingSpinMaxUpgradeRounds int             `json:"kingSpinMaxUpgradeRounds"`
@@ -63,6 +67,9 @@ type Config struct {
 	EngineRulesVersion string `json:"engineRulesVersion"`
 	// MaxWinMultiplier 是以触发时总投注为基准表示的权威整场最高赢取上限。
 	// 一次基础旋转及其触发的所有免费旋转共享同一预算；所有结算运算均使用整数最小货币单位。
+	// English: MaxWinMultiplier is the authoritative maximum winning limit for the entire game based on the total bet
+	// at the time of triggering. A base spin and all free spins it triggers share the same budget; all settlement
+	// calculations use integer minimum currency units.
 	MaxWinMultiplier     int64               `json:"maxWinMultiplier"`
 	Bet                  BetConfig           `json:"bet"`
 	Reels                [3][]WeightedSymbol `json:"reels"`
@@ -74,6 +81,8 @@ type Config struct {
 }
 
 // DemoConfig 是为净室演示实现原创且刻意未经认证的数学配置，并非复制自任何商业游戏。
+// English: DemoConfig is an original and intentionally uncertified mathematical configuration implemented for
+// clean room demonstrations and is not copied from any commercial game.
 func DemoConfig() Config {
 	return Config{
 		GameID:             "iron-colossus-demo",
@@ -90,6 +99,8 @@ func DemoConfig() Config {
 		},
 		// 每列权重总和为 100。TANK 是稀有高价值符号，其 6/5/6 权重由
 		// CIRCUIT 的 9/9/10 权重平衡，而不是通过增加总停靠权重实现。
+		// English: Each column weight sums to 100. TANK is a rare high-value symbol whose 6/5/6 weight is balanced by
+		// CIRCUIT's 9/9/10 weight, rather than by increasing the total dock weight.
 		Reels: [3][]WeightedSymbol{
 			{
 				{SymbolOrbit, 22}, {SymbolPrism, 21}, {SymbolPulse, 19},
@@ -109,12 +120,16 @@ func DemoConfig() Config {
 			// 已采集资源中每条具体连线相对于 100 最小货币单位参考投注的赔付为：
 			// Q 为 0.1 倍、K 为 0.3 倍、头盔为 0.8 倍、无线电为 1 倍、
 			// 坦克为 1.5 倍、喷气机为 2 倍。
+			// In the captured resources, each concrete way pays against a 100-minor-unit reference bet as follows:
+			// Q pays 0.1x, K 0.3x, helmet 0.8x, radio 1x, tank 1.5x, and jet 2x.
 			SymbolPrism: 10, SymbolOrbit: 30, SymbolPulse: 80,
 			SymbolNova: 100, SymbolTank: 150, SymbolCircuit: 200,
 		},
 		WildMultipliers: []WeightedInt{
 			// 已采集资源区分普通 WILD（值为 0，实际按 1 倍计算）与明确的 X1 图案。
 			// 这些权重仍为净室实现数值。
+			// English: Collected resources differentiate between normal WILD (value 0, actually calculated as 1x) and explicit
+			// X1 patterns. These weights are still cleanroom realization values.
 			{0, 30}, {1, 25}, {2, 24}, {3, 10}, {5, 6}, {10, 3}, {25, 1}, {50, 1}, {100, 1},
 		},
 		VaultMultipliers: []WeightedInt{
@@ -133,6 +148,8 @@ func DemoConfig() Config {
 			MaxExpansionSpins: 30,
 			// 采集结果证明保险库组并非必然解锁，但十四次旋转不足以还原商业概率。
 			// 在已审批数学定义提供真实数值前，保留一个明显非必然的净室实现数值。
+			// Captured outcomes prove that a Vault group is not guaranteed to unlock, but fourteen spins are insufficient to recover commercial probabilities.
+			// Keep an explicitly non-guaranteed clean-room value until an approved mathematics definition supplies the real value.
 			VaultUnlockChanceBP:      2_500,
 			VaultFreeSpinWeight:      8,
 			KingSpinUpgradeChanceBP:  2_800,
@@ -143,6 +160,8 @@ func DemoConfig() Config {
 			},
 			// 已采集到累计 12 时进入第 2 级。客户端包含六个已制作的视觉等级；
 			// 更高阈值仍是明确的净室实现占位值，不代表商业数学规则。
+			// The captured client enters level two at a cumulative value of 12 and contains six authored visual levels;
+			// higher thresholds remain explicit clean-room placeholders and do not represent commercial mathematics rules.
 			RageLevelThresholds: []int{0, 12, 24, 36, 48, 60},
 			Wheel: []WeightedWheel{
 				{Kind: WheelInstant, Multiplier: 10, Weight: 35},
@@ -337,6 +356,11 @@ func (c Config) Validate() error {
 // 汇总边界会特意合并 Ways 最大结果、八个中轴 Vault 奖励和一次即时 Wheel 奖励。
 // 这些最大值不可能同时出现在同一实际模式中，但已签名定义绝不能把溢出发现
 // 推迟到罕见 RNG 路径或未来功能实现变更时。
+// English: validateSpinArithmeticBounds proves at definition load time that all supported eight-line Ways
+// intermediate values and the full spin total before applying a cap will not exceed int64. The rollup boundary
+// intentionally incorporates Ways maximum results, eight Axis Vault rewards, and one Instant Wheel reward. These
+// maximums are unlikely to occur simultaneously in the same actual schema, but signed definitions must not defer
+// discovery of overflows to rare RNG paths or future feature implementation changes.
 func (c Config) validateSpinArithmeticBounds() error {
 	maxWildMultiplier := int64(1)
 	for _, item := range c.WildMultipliers {

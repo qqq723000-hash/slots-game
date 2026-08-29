@@ -249,7 +249,7 @@ describe("CityBackdrop authored palette retirement", () => {
     const foreground = createMockSpine("foreground", true);
     attachAuthoredSpines(backdrop, background, foreground);
 
-    // 预置 Free Spins 在轨道 3..12 上留下的精确火焰调色板。
+    // 预置 Free Spins 在轨道 3..12 上留下的精确火焰调色板。 / English: Preset Free Spins leaves the exact flame palette on track 3..12.
     backdrop.restoreAuthoredPalette("fire");
     background.state.setAnimation.mockClear();
     background.state.setEmptyAnimation.mockClear();

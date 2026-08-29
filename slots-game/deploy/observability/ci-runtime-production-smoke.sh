@@ -25,11 +25,15 @@ cleanup() {
   exit_code=$?
   if [ -n "$runtime_container" ] && docker container inspect "$runtime_container" >/dev/null 2>&1; then
     # 原始 stderr 可能包含第三方库错误文本，只留在短命目录并随 secret 一起删除，绝不上传。
+    # English: The raw stderr may contain third-party library error text and is only left in the ephemeral
+    # directory and deleted with the secret, never uploaded.
     docker logs "$runtime_container" >"$fixture_root/runtime-production-ci-only.raw.log" 2>&1 || true
     docker rm -f "$runtime_container" >/dev/null 2>&1 || true
   fi
   if [ -n "$valkey_container" ] && docker container inspect "$valkey_container" >/dev/null 2>&1; then
     # Valkey 原始日志同样只留在短命目录；ACL、证书和客户端错误不得进入 artifact。
+    # English: Valkey raw logs are also left in the ephemeral directory; ACLs, certificates, and client errors
+    # are not allowed into the artifact.
     docker logs "$valkey_container" >"$fixture_root/valkey-production-ci-only.raw.log" 2>&1 || true
     docker rm -f "$valkey_container" >/dev/null 2>&1 || true
   fi
@@ -71,6 +75,10 @@ command -v openssl >/dev/null 2>&1 || {
 # Go 夹具使用 Ed25519 签发通用测试证书，但部分 libpq/OpenSSL 组合无法完成该证书的
 # TLS 握手。数据库链改用短命 RSA-3072/SHA-256 专用 CA；仍须通过 verify-full、SAN
 # 主机名校验和 pg_stat_ssl.ssl=true，不能回退为 require、verify-ca 或明文连接。
+# English: The Go fixture uses Ed25519 to issue universal test certificates, but some libpq/OpenSSL combinations
+# cannot complete this certificate TLS handshake. Database chain uses short-lived RSA-3072/SHA-256 private CA;
+# still must pass verify-full, SAN Hostname checksum pg_stat_ssl.ssl=true, no fallback to require, verify-ca or
+# clear text connection.
 generate_postgres_tls_fixture() {
   local postgres_ca_key postgres_csr postgres_certificate_text valkey_csr valkey_certificate_text
   local postgres_certificate_key_digest postgres_private_key_digest
@@ -120,6 +128,9 @@ generate_postgres_tls_fixture() {
 
   # Valkey 使用同一短命 CI 根 CA，但必须有独立 RSA 私钥和证书，避免测试夹具把
   # 数据库与准入服务的服务端身份错误折叠为同一个密钥主体。
+  # English: Valkey uses the same ephemeral CI root CA, but must have independent RSA private keys and
+  # certificates to avoid test fixtures The server identities of the database and admission service are
+  # incorrectly folded into the same key subject.
   valkey_csr="$fixture_root/valkey-server.csr"
   openssl req -new -newkey rsa:3072 -nodes -sha256 \
     -subj '/CN=localhost' \
@@ -165,6 +176,9 @@ fi
 
 # 共享准入必须走真实 TLS、ACL 与 Lua 命令能力。密码/HMAC、ACL 和配置均只存在于
 # 短命目录；运行镜像按摘要固定，测试退出后容器和材料一并删除。
+# English: Shared access must use real TLS, ACL and Lua command capabilities. Password/HMAC, ACL and
+# configuration are only present in Short-lived directory; the running image is fixed by digest, and the
+# container and assets are deleted after the test exits.
 openssl rand -hex 32 >"$fixture_dir/valkey-password"
 openssl rand -base64 32 >"$fixture_dir/admission-hmac.key"
 valkey_password=''
@@ -367,6 +381,8 @@ migrator_image="${RGS_RUNTIME_SMOKE_MIGRATOR_IMAGE:-slots-rgs-migrator:conforman
 mkdir -p "$artifact_dir"
 
 # 先确保 schema 与 runtime grants 已存在；migrator 的 DDL DSN 永不传给 runtime 容器。
+# English: First ensure that the schema and runtime grants exist; the migrator's DDL DSN is never passed to the
+# runtime container.
 docker run --rm --network host --read-only --cap-drop ALL --security-opt no-new-privileges:true \
   -e RGS_MIGRATOR_DATABASE_URL="$RGS_POSTGRES_MIGRATOR_TEST_URL" \
   -e RGS_RUNTIME_DATABASE_ROLE=rgs_runtime -e RGS_MIGRATION_TIMEOUT=2m \
@@ -378,6 +394,9 @@ docker run --rm --network host --read-only --cap-drop ALL --security-opt no-new-
 
 # GitHub service PostgreSQL 默认未启 TLS。只在短命 CI service container 内安装临时证书并
 # reload，随后 production runtime 必须用 verify-full 和独立 CA 文件连接。
+# English: GitHub service PostgreSQL does not enable TLS by default. Only install temporary certificates within
+# the short-lived CI service container and reload, then the artifactsion runtime must be connected with
+# verify-full and a standalone CA file.
 postgres_data_dir="$(docker exec "$RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER" sh -ceu 'printf %s "$PGDATA"')"
 printf '%s' "$postgres_data_dir" | grep -E '^/[A-Za-z0-9._/-]+$' >/dev/null || {
   printf '%s\n' 'production smoke: unsafe PostgreSQL data directory' >&2
@@ -404,6 +423,11 @@ docker exec --user postgres "$RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER" \
 # reload 返回不代表新连接已经使用 TLS。先从 runner 以与 runtime 相同的 DML 角色、
 # verify-full 和独立 CA 建立真实连接，并由 pg_stat_ssl 证明当前 backend 的 ssl=true；
 # 只有该 barrier 成功后才进入负向 gates，避免把数据库尚未生效误判成配置拒绝。
+# English: Returning from reload does not mean that the new connection has used TLS. Start with runner with the
+# same DML role as runtime, verify-full establishes a real connection with the independent CA, and uses
+# pg_stat_ssl to prove that the current backend's ssl=true; Only after the barrier is successful will the
+# negative gates be entered to avoid misjudgment that the database has not yet taken effect as a configuration
+# rejection.
 runner_tls_database_url="${RGS_POSTGRES_TEST_URL/sslmode=disable/sslmode=verify-full}"
 postgres_tls_probe_log="$fixture_root/postgres-tls-barrier.raw.log"
 postgres_tls_ready=0
@@ -423,6 +447,8 @@ if [ "$postgres_tls_ready" != 1 ]; then
   printf '%s\n' 'production smoke: PostgreSQL verify-full TLS barrier timed out' >&2
   if [ -s "$postgres_tls_probe_log" ]; then
     # 只输出隐藏连接凭据后的最后一条错误；原始诊断随短命目录清除且不上传。
+    # English: Only the last error after the connection credentials are hidden is output; the original diagnosis
+    # is cleared with the ephemeral directory and not uploaded.
     tail -n 1 "$postgres_tls_probe_log" | \
       sed -E 's#(postgres(ql)?://)[^@[:space:]]+@#\1[credentials-redacted]@#g' >&2
   fi
@@ -471,6 +497,11 @@ runtime_security=(
 # 生产启动日志只允许固定低基数信封。负向 gate 已由输入夹具精确限定，运行态既要退出，
 # 也不能为了测试重新暴露配置原文、文件路径或第三方错误。精确原因由同一工作流先前的
 # Go 配置/审批单测覆盖；这里验证真实进程边界的退出和脱敏合同。
+# English: artifactsion startup logs only allow fixed low-cardinality envelopes. The negative gate has been
+# precisely defined by the input fixture, and the running state needs to egress. Nor can the original
+# configuration text, file paths, or third-party errors be re-exposed for testing purposes. Precise cause by
+# same workflow previous Go configuration/approval single test coverage; this verifies egress and
+# desensitization contracts at real process boundaries.
 verify_safe_startup_failure() {
   startup_log=$1
   failure_case=$2
@@ -510,6 +541,8 @@ PYEOF
 }
 
 # 负向 1：production 即使绑定 loopback，也不能缺少独立 operations token 文件。
+# English: Negative 1: artifactsion Even if loopback is bound, an independent operations token file cannot be
+# missing.
 missing_token_log="$fixture_root/missing-token.log"
 if docker run --rm "${runtime_security[@]}" \
   --mount "type=bind,src=$fixture_dir,dst=/run/rgs-production-smoke,readonly" \
@@ -520,6 +553,8 @@ fi
 verify_safe_startup_failure "$missing_token_log" 'missing-operations-token'
 
 # 负向 2：development v1/demo approval 即使被放进其余 production 配置，也必须拒绝启动。
+# English: Negative 2: development v1/demo approval must be refused to start even if it is put into the rest of
+# the artifactsion configuration.
 cp -R "$fixture_dir" "$negative_fixture_dir"
 cp "$development_fixture_dir/definition.json" "$negative_fixture_dir/definition.json"
 cp "$development_fixture_dir/definition-approval.json" "$negative_fixture_dir/definition-approval.json"
@@ -537,6 +572,8 @@ fi
 verify_safe_startup_failure "$v1_log" 'development-definition-approval'
 
 # 本地 TLS sink 只验证 production HTTPS/CA 配置与 outbox readiness；没有事件时不会伪造审计记录。
+# English: The local TLS sink only verifies artifactsion HTTPS/CA configuration with outbox readiness; no audit
+# records will be forged when there are no events.
 openssl s_server -accept 18443 -cert "$fixture_dir/audit-server.pem" \
   -key "$fixture_dir/audit-server-key.pem" -quiet -www \
   >"$fixture_root/audit-sink.log" 2>&1 &

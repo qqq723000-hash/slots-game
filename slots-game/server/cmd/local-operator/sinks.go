@@ -271,6 +271,8 @@ func (s *appendStore) rebuildState() error {
 }
 
 // JSONLSegments 返回不可变归档和当前活动文件；路径、类型与符号链接均失败闭合。
+// English: JSONLSegments returns an immutable archive and the currently active file; paths, types, and symbolic
+// links all fail to be closed.
 func JSONLSegments(path string) ([]string, error) {
 	pattern := strings.TrimSuffix(path, ".jsonl") + ".*.jsonl"
 	archives, err := filepath.Glob(pattern)
@@ -329,6 +331,8 @@ func (s *auditJSONLStore) Append(eventID string, encoded []byte) (bool, error) {
 	}
 	// 活动段达到阈值时先原子改名为只读归档，再创建全新的 0600 文件。
 	// 归档仍计入总配额并参与启动时幂等索引重建，绝不为“腾空间”删除审计证据。
+	// When the active segment reaches its threshold, atomically rename it to a read-only archive before creating a new 0600 file.
+	// Archives still count toward the total quota and participate in startup idempotency-index rebuilding; audit evidence is never deleted merely to free space.
 	if start > 0 && start+int64(len(line)) > s.segment {
 		if err := rotateJSONLSegment(&s.file, s.path); err != nil {
 			return false, fmt.Errorf("rotate audit segment: %w", err)
@@ -337,6 +341,9 @@ func (s *auditJSONLStore) Append(eventID string, encoded []byte) (bool, error) {
 	}
 	// 总配额与 readiness 解耦：达到上限时仅拒绝 sink 写入，让 RGS outbox
 	// 保留待投递事件；服务本身继续响应指标和告警，避免无意义重启循环。
+	// English: The total quota is decoupled from readiness: only sink writes are rejected when the upper limit is
+	// reached, allowing the RGS outbox to retain events to be delivered; the service itself continues to respond to
+	// indicators and alarms to avoid meaningless restart cycles.
 	if int64(len(line)) > s.fileLimit-s.total {
 		return false, errors.New("audit store capacity is exhausted")
 	}
@@ -420,6 +427,8 @@ func (s *appendStore) appendLocked(encoded []byte, uniqueKey string) (bool, erro
 	if int64(len(encoded)) > s.fileLimit-s.total && s.prune {
 		// 运行日志允许删除至少 24 小时前的最旧只读段；新的活动段和当天日志
 		// 始终保留，避免与六小时备份归档竞争。
+		// Runtime logs may delete the oldest read-only segment only after it is at least 24 hours old; the new active segment and current-day logs
+		// are always retained so pruning does not compete with the six-hour backup archive.
 		if err := s.pruneArchivedSegments(int64(len(encoded)), time.Now().UTC().Add(-24*time.Hour)); err != nil {
 			return false, err
 		}
@@ -531,6 +540,9 @@ func (s *appendStore) Close() error { return s.file.Close() }
 
 // writeFileFull 只接受已安全打开的普通文件；将参数收窄到 *os.File
 // 防止今后误把客户端提交内容写回 HTTP ResponseWriter。
+// English: writeFileFull only accepts ordinary files that have been opened safely; narrowing the parameters to
+// *os.File prevents the client from accidentally writing content submitted back to the HTTP ResponseWriter in the
+// future.
 func writeFileFull(writer *os.File, encoded []byte) error {
 	for len(encoded) > 0 {
 		written, err := writer.Write(encoded)

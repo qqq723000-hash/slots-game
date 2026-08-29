@@ -1005,6 +1005,8 @@ func TestRepeatedIntegrityQuarantineIsIdempotentAndEmitsNoDuplicateOutboxEvent(t
 			}
 			// 未设置 UPDATE 或 INSERT 预期也使 sqlmock 能够证明，持久标记会抑制重复的
 			// ROUND_INTEGRITY_FAILED 事件。
+			// English: Not setting UPDATE or INSERT expectations also enables sqlmock to demonstrate that persistent markers
+			// suppress repeated ROUND_INTEGRITY_FAILED events.
 			assertRepositoryExpectations(t, mock)
 		})
 	}
@@ -1054,6 +1056,8 @@ func TestPrepareRoundExpiryUsesLockedDatabaseClock(t *testing.T) {
 	podNow := time.Now().UTC()
 	// 模拟该 Pod 慢两小时：按进程时钟会错误接受会话，但同一事务返回的
 	// PostgreSQL 时钟已经越过会话到期点。
+	// English: Simulate that the pod is two hours slow: the session is incorrectly accepted by the process clock, but
+	// the same transaction returns a PostgreSQL clock that has passed the session expiration point.
 	expiresAt := podNow.Add(time.Hour)
 	databaseNow := podNow.Add(2 * time.Hour)
 

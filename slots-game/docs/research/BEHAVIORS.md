@@ -1,9 +1,13 @@
-# Primal Rampage 三端行为基线
+# Primal Rampage cross-device behavior baseline / Primal Rampage 三端行为基线
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This baseline records behavior parameters cross-checked from the external reference runtime, archived mobile reference configuration, and local archives without placing raw captures, runtime packages, or screenshots in the release. Desktop, phone, and tablet layouts share one continuous coordinate model, preserve the defined timing and layer behavior, and must not reload resources or change game state merely because the viewport or input mode changes. These measurements support implementation and regression testing, but they do not establish asset rights, external-source authorization, real-device performance, accessibility acceptance, or production visual approval.
 
 本文件只记录从外部参考版本运行页、已归档移动参考配置和本地归档中交叉验证出的行为参数；原始抓包、运行包和截图留在忽略目录 `.artifacts/`，不进入发布物。
 

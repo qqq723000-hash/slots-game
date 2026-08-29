@@ -1,9 +1,15 @@
-# 轮次幂等性与故障恢复
+# 轮次幂等性与故障恢复 / Round idempotency and failure recovery
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document defines how persistent round state, idempotent economic commands, leases, and fencing prevent duplicate effects across retries, concurrent replicas, crashes, database failover, and ambiguous wallet responses without claiming distributed exactly-once delivery.
+`PREPARED` persists the immutable request, result, hash, and wallet command before any external funds effect; recovery never reruns RNG or invents a new operation, and only a validated `COMMITTED` state can expose a payable result while integrity conflicts enter `MANUAL_REVIEW`.
+External wallet capability and signature conformance, reconciliation, operator procedures, incident handling, failover and disaster-recovery exercises, and final production approval remain external gates.
 
 状态：生产协议设计
 最后更新：2026-08-22

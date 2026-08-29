@@ -1,4 +1,4 @@
-// @ts-nocheck -- Node 夹具用于验证仓库资源门禁的失败关闭行为。
+// @ts-nocheck -- Node 夹具用于验证仓库资源门禁的失败关闭行为。 / English: @ts-nocheck -- Node fixture is used to verify the failed closing behavior of warehouse resource access control.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";

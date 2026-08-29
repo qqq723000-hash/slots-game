@@ -137,6 +137,9 @@ func reconcileDatabaseRoles(
 		`ALTER ROLE ` + quotedRuntime + ` LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD ` + quoteSQLLiteral(runtimePassword),
 		// 迁移 SQL 创建未限定 schema 的业务表，因此 owner 只在受控迁移连接中把 public 放首位；
 		// runtime 无 DDL 权限并保持 pg_catalog 优先，避免业务 schema 遮蔽内置函数。
+		// English: Migration SQL creates business tables with undefined schema, so owner only puts public first in
+		// controlled migration connections; runtime does not have DDL permissions and keeps pg_catalog priority to avoid
+		// business schema from covering built-in functions.
 		`ALTER ROLE ` + quotedOwner + ` SET search_path TO public, pg_catalog`,
 		`ALTER ROLE ` + quotedRuntime + ` SET search_path TO pg_catalog, public`,
 		`REVOKE TEMPORARY ON DATABASE ` + quotedDatabase + ` FROM PUBLIC`,
