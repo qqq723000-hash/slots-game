@@ -1497,6 +1497,7 @@ if (!isVisualFixtureScenario(scenario)) {
         presentationObserver,
         audioManager: createPresentationOnlyFixtureAudioManager(),
         skipFeaturePreview: true,
+        suppressPostWinIdleRepeat: true,
         vaultUnlockCaptureEnabled: pass52VaultUnlockCaptureEnabled,
         characterCollectRandomSource: scenario === "base-single-rage-no-wheel"
           || scenario === "base-two-rage-no-wheel"

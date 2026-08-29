@@ -9,6 +9,7 @@ import type {
   AppPresentationTrace,
   AppSemanticPresentationState,
 } from "../src/app/AppController";
+import productionMain from "../src/main.ts?raw";
 import fixtureMain from "../src/testing/visualFixturesMain.ts?raw";
 import {
   applyNormalWinContinueControlClick,
@@ -66,6 +67,13 @@ describe("visual fixture entry source contract", () => {
     expect(fixtureMain).not.toContain("localStorage");
     expect(fixtureMain).not.toContain("sessionStorage");
     expect(fixtureMain).not.toContain("wheelPresentationTimelineScale");
+  });
+
+  it("suppresses only the fixture idle replay so terminal visual quiescence remains observable", () => {
+    expect(fixtureMain).toContain("suppressPostWinIdleRepeat: true");
+    expect(fixtureMain).toContain("audioManager: createPresentationOnlyFixtureAudioManager()");
+    expect(fixtureMain).toContain("presentationObserver,");
+    expect(productionMain).not.toContain("suppressPostWinIdleRepeat");
   });
 
   it("derives ready and failure from controller lifecycle callbacks", () => {

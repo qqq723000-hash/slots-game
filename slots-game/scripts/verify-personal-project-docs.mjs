@@ -84,7 +84,6 @@ export function validateDocumentationContent(documentId, content, { requireIdent
     }
   }
 
-  if (!requireIdentityNotice) return;
   for (const rule of FORBIDDEN_PROJECT_IDENTITY) {
     if (rule.pattern.test(content)) {
       throw new Error(`${documentId}: contains ${rule.label}`);

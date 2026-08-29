@@ -73,6 +73,17 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).not.toContain("VITE_RGS_BASE_URL");
   });
 
+  it("separates the fixture idle replay from strict terminal and destroy resource assertions", () => {
+    expect(fixtureMain).toContain("suppressPostWinIdleRepeat: true");
+    expect(fixtureBrowserGate).toContain(
+      "const terminalQuiescence = await waitForTerminalVisualQuiescence",
+    );
+    expect(fixtureBrowserGate).toContain("snapshot.activeVisualOperations.length !== 0");
+    expect(fixtureBrowserGate).toContain("const lifecycle = await destroyFixtureDocument");
+    expect(fixtureBrowserGate).toContain("evidence.retainedPayloadBytes !== 0");
+    expect(fixtureBrowserGate).toContain("evidence.visualActiveCount !== 0");
+  });
+
   it("runs current Chrome, Firefox, WebKit and Edge engines from explicit CI commands", () => {
     const scripts = JSON.parse(packageJson) as { scripts: Record<string, string> };
     expect(scripts.scripts["test:visual-fixtures-browser-matrix"])

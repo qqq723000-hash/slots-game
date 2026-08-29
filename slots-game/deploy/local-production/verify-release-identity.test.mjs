@@ -132,14 +132,14 @@ test("verifies every static payload byte and rejects extra or replaced files", a
     expectedReleaseId: fixture.releaseManifest.releaseId,
   })).releaseId, fixture.releaseManifest.releaseId);
 
-  writeFileSync(resolve(fixture.root, "backdoor.js"), "unlisted\n", "utf8");
+  writeFileSync(resolve(fixture.root, "50x.html"), "inherited upstream default\n", "utf8");
   await assert.rejects(() => verifyLocalReleasePayload({
     staticRoot: fixture.root,
     expectedVersion: version,
     expectedRevision: revision,
     expectedReleaseId: fixture.releaseManifest.releaseId,
   }), /file outside release-manifest/u);
-  rmSync(resolve(fixture.root, "backdoor.js"));
+  rmSync(resolve(fixture.root, "50x.html"));
 
   writeFileSync(resolve(fixture.root, "assets", "app.js"), "replaced payload\n", "utf8");
   await assert.rejects(() => verifyLocalReleasePayload({

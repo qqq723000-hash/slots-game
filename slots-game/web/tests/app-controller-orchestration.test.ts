@@ -4756,6 +4756,47 @@ describe("AppController round ordering", () => {
     }
   });
 
+  it("suppresses the post-win idle repeat only when the deterministic visual fixture seam is injected", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = prototypeHarness();
+      const present = vi.fn(async () => undefined);
+      Object.assign(controller, {
+        destroyed: false,
+        suppressPostWinIdleRepeat: true,
+        renderer: {
+          winCelebration: {
+            present,
+            requestFinish: vi.fn(),
+          },
+        },
+        postWinIdleRepeatTimer: null,
+        postWinIdleRepeatGeneration: 0,
+        postWinIdleRepeatActive: false,
+      });
+      const [record] = roundResult().wins;
+      expect(record).toBeDefined();
+
+      controller.schedulePostWinIdleRepeat(
+        roundResult({ wins: [record!], events: [] }),
+        BASE_FEATURE,
+        false,
+        false,
+      );
+      await vi.advanceTimersByTimeAsync(PRIMAL_POST_WIN_IDLE_INTRO_MS * 2);
+
+      expect(present).not.toHaveBeenCalled();
+      expect(controller).toMatchObject({
+        postWinIdleRepeatTimer: null,
+        postWinIdleRepeatGeneration: 0,
+        postWinIdleRepeatActive: false,
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("does not schedule an ordinary post-win repeat when Wheel Layer-B owns the returned record", async () => {
     vi.useFakeTimers();
     try {

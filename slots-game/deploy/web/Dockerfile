@@ -103,6 +103,9 @@ RUN --network=none \
     apk add --no-network --no-cache --repositories-file /dev/null "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk" && \
     apk info -e 'libcrypto3=3.5.8-r0' >/dev/null && \
     apk info -e 'libssl3=3.5.8-r0' >/dev/null
+# Docker COPY 会合并目录；整体重建可同时清除上游默认页和隐藏文件。
+RUN --network=none rm -rf /usr/share/nginx/html && \
+    install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html
 USER 101:101
 LABEL org.opencontainers.image.title="CI_ONLY_STATIC_CONFORMANCE" \
       org.opencontainers.image.description="CI-only unprivileged static image; not an approved release" \
@@ -131,6 +134,9 @@ RUN --network=none \
     apk add --no-network --no-cache --repositories-file /dev/null "/patches/$openssl_patch_arch/libcrypto3.apk" "/patches/$openssl_patch_arch/libssl3.apk" && \
     apk info -e 'libcrypto3=3.5.8-r0' >/dev/null && \
     apk info -e 'libssl3=3.5.8-r0' >/dev/null
+# Docker COPY 会合并目录；整体重建可同时清除上游默认页和隐藏文件。
+RUN --network=none rm -rf /usr/share/nginx/html && \
+    install -d -o 0 -g 0 -m 0755 /usr/share/nginx/html
 USER 101:101
 ARG WEB_RELEASE_VERSION
 ARG WEB_RELEASE_REVISION
