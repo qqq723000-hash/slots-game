@@ -266,7 +266,7 @@ jobs:
           sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/workflow/validate-environment.sh" artifact-verify
 
       - name: 通过 GitHub OIDC 获取制品只读角色临时凭据
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.AWS_ARTIFACT_VERIFY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -528,7 +528,7 @@ jobs:
           sh "$DEPLOYMENT_SOURCE/slots-game/deploy/aws-production/workflow/validate-environment.sh" application-deploy
 
       - name: 通过 GitHub OIDC 获取应用部署角色临时凭据
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.AWS_APPLICATION_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
