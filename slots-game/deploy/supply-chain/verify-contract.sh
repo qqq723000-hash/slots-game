@@ -744,8 +744,10 @@ require_line '            job_timeout_minutes: 35' "$frontend_workflow"
 require_line '          - browser: webkit' "$frontend_workflow"
 require_fixed '  verify-edge:' "$frontend_workflow"
 require_fixed '    runs-on: windows-latest' "$frontend_workflow"
-require_line '    # Windows 软件渲染截图受脚本 32 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' "$frontend_workflow"
-require_line '    timeout-minutes: 40' "$frontend_workflow"
+require_line '    # Windows 软件渲染截图受脚本 35 分钟硬截止，作业保留 45 分钟；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' "$frontend_workflow"
+require_line '    # English: Windows software-rendered screenshots have a 35-minute scripted hard cutoff and a 45-minute job budget;' "$frontend_workflow"
+require_line '    # the extra time only covers installation, production builds, and Edge transaction gates.' "$frontend_workflow"
+require_line '    timeout-minutes: 45' "$frontend_workflow"
 require_line '        run: npx playwright install --with-deps firefox webkit' "$frontend_workflow"
 require_fixed 'SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1' "$frontend_workflow"
 require_fixed 'LIBGL_ALWAYS_SOFTWARE=true' "$frontend_workflow"
@@ -758,15 +760,41 @@ require_fixed 'npm run test:visual-fixtures-browser-matrix -- --browser "${{ mat
 require_line '        run: npm run test:visual-fixtures-browser-matrix -- --browser msedge' "$frontend_workflow"
 
 require_line 'const chromiumDesktopKongScenarioDeadlineMs = 360_000;' "$visual_fixture_browser_gate"
-require_line 'const edgeCapSummaryScenarioDeadlineMs = 300_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeDesktopExtendedScenarioDeadlineMs = 180_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeKingScenarioDeadlineMs = 300_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeDesktopKongScenarioDeadlineMs = 360_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeCapSummaryScenarioDeadlineMs = 360_000;' "$visual_fixture_browser_gate"
 require_line 'const slowKongScenarioDeadlineMs = 270_000;' "$visual_fixture_browser_gate"
 require_line 'const slowBrowserDeadlineMs = 32 * 60_000;' "$visual_fixture_browser_gate"
-require_line 'const edgeBrowserDeadlineMs = 32 * 60_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeBrowserDeadlineMs = 35 * 60_000;' "$visual_fixture_browser_gate"
 require_line 'const slowMaximumBrowserBudgetMs = 33 * 60_000;' "$visual_fixture_browser_gate"
-require_line 'const edgeMaximumBrowserBudgetMs = 33 * 60_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeMaximumBrowserBudgetMs = 36 * 60_000;' "$visual_fixture_browser_gate"
 node - "$visual_fixture_browser_gate" <<'NODE'
 const { readFileSync } = require("node:fs");
 const source = readFileSync(process.argv[2], "utf8");
+const edgeDesktopExtendedBranch = [
+  '  if (browserName === "msedge"',
+  '    && surface.id === "desktop-1440x900"',
+  '    && contract.motion === "normal"',
+  '    && (contract.scenario === "big-win"',
+  '      || contract.scenario === "wheel-mini-flow")) {',
+  "    return edgeDesktopExtendedScenarioDeadlineMs;",
+  "  }",
+].join("\n");
+const edgeKingBranch = [
+  '  if (browserName === "msedge"',
+  '    && surface.id === "desktop-1440x900"',
+  '    && contract.scenario === "king-flow") {',
+  "    return edgeKingScenarioDeadlineMs;",
+  "  }",
+].join("\n");
+const edgeDesktopKongBranch = [
+  '  if (browserName === "msedge"',
+  '    && surface.id === "desktop-1440x900"',
+  '    && contract.scenario === "kong-flow") {',
+  "    return edgeDesktopKongScenarioDeadlineMs;",
+  "  }",
+].join("\n");
 const chromiumDesktopKongBranch = [
   '  if (browserName === "chromium"',
   '    && surface.id === "desktop-1440x900"',
@@ -795,6 +823,15 @@ const sharedSlowExtendedBranch = [
   "  }",
 ].join("\n");
 const count = (value) => source.split(value).length - 1;
+if (count(edgeDesktopExtendedBranch) !== 1) {
+  throw new Error("Edge normal-motion desktop extended timing tuple drifted");
+}
+if (count(edgeKingBranch) !== 1) {
+  throw new Error("Edge desktop King timing tuple drifted");
+}
+if (count(edgeDesktopKongBranch) !== 1) {
+  throw new Error("Edge desktop Kong timing tuple drifted");
+}
 if (count(chromiumDesktopKongBranch) !== 1) {
   throw new Error("Chromium desktop Kong timing tuple drifted");
 }
@@ -806,6 +843,11 @@ if (count(edgeCapSummaryBranch) !== 1) {
 }
 if (count(sharedSlowExtendedBranch) !== 1) {
   throw new Error("shared slow extended timing tuple drifted");
+}
+if (source.indexOf(edgeDesktopExtendedBranch) >= source.indexOf(edgeKingBranch)
+    || source.indexOf(edgeKingBranch) >= source.indexOf(edgeDesktopKongBranch)
+    || source.indexOf(edgeDesktopKongBranch) >= source.indexOf(edgeCapSummaryBranch)) {
+  throw new Error("Edge desktop timing tuples must retain the reviewed order");
 }
 if (source.indexOf(chromiumDesktopKongBranch) >= source.indexOf(sharedSlowKongBranch)) {
   throw new Error("Chromium desktop Kong timing tuple must precede the shared slow tuple");
@@ -905,7 +947,7 @@ ruby -ryaml -e '
     },
     "verify-edge" => {
       "runs-on" => "windows-latest",
-      "timeout-minutes" => 40,
+      "timeout-minutes" => 45,
       "defaults" => {
         "run" => { "shell" => "bash", "working-directory" => "slots-game/web" },
       },

@@ -131,8 +131,8 @@ describe("non-production special-feature browser fixture contract", () => {
       workflow.indexOf("  verify-edge:"),
       workflow.indexOf("  verify-web-static-image:"),
     );
-    expect(edgeJob).toContain("timeout-minutes: 40");
-    expect(edgeJob).toContain("脚本 35 分钟硬截止");
+    expect(edgeJob).toContain("timeout-minutes: 45");
+    expect(edgeJob).toContain("脚本 35 分钟硬截止，作业保留 45 分钟");
     expect(frontendJob).not.toContain("test:visual-fixtures-browser-matrix");
   });
 
@@ -720,6 +720,9 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain(
       "const chromiumDesktopKongScenarioDeadlineMs = 360_000",
     );
+    expect(fixtureBrowserGate).toContain(
+      "const edgeDesktopExtendedScenarioDeadlineMs = 180_000",
+    );
     expect(fixtureBrowserGate).toContain("const edgeKingScenarioDeadlineMs = 300_000");
     expect(fixtureBrowserGate).toContain("const edgeDesktopKongScenarioDeadlineMs = 360_000");
     expect(fixtureBrowserGate).toContain("const edgeCapSummaryScenarioDeadlineMs = 360_000");
@@ -765,6 +768,9 @@ describe("non-production special-feature browser fixture contract", () => {
     const edgeDesktopKongIndex = deadlineResolver.indexOf(
       "return edgeDesktopKongScenarioDeadlineMs",
     );
+    const edgeDesktopExtendedIndex = deadlineResolver.indexOf(
+      "return edgeDesktopExtendedScenarioDeadlineMs",
+    );
     const edgeCapSummaryIndex = deadlineResolver.indexOf(
       "return edgeCapSummaryScenarioDeadlineMs",
     );
@@ -772,6 +778,11 @@ describe("non-production special-feature browser fixture contract", () => {
       "return chromiumDesktopKongScenarioDeadlineMs",
     );
     const sharedSlowKongIndex = deadlineResolver.indexOf("return slowKongScenarioDeadlineMs");
+    expect(edgeDesktopExtendedIndex).toBeGreaterThan(-1);
+    expect(edgeDesktopExtendedIndex).toBeLessThan(
+      deadlineResolver.indexOf("const extendedDesktopScenario"),
+    );
+    expect(deadlineResolver).toContain('contract.motion === "normal"');
     expect(edgeDesktopKongIndex).toBeGreaterThan(-1);
     expect(edgeDesktopKongIndex).toBeLessThan(sharedSlowKongIndex);
     expect(edgeCapSummaryIndex).toBeGreaterThan(-1);
@@ -821,8 +832,11 @@ describe("non-production special-feature browser fixture contract", () => {
       maximumBrowserScenarioBudgetMs: 1_770_000,
       scenarioDeadlineMsByRun: chromiumScenarioDeadlineMsByRun,
     })).toEqual({ maximumBrowserScenarioBudgetMs: 1_770_000 });
-    const edgeScenarioDeadlineMsByRun = [150_000, 150_000, 300_000, 360_000,
+    const edgeScenarioDeadlineMsByRun = [180_000, 180_000, 300_000, 360_000,
       360_000, 150_000, 240_000, 270_000];
+    expect(edgeScenarioDeadlineMsByRun[0]).toBe(180_000);
+    expect(edgeScenarioDeadlineMsByRun[1]).toBe(180_000);
+    expect(edgeScenarioDeadlineMsByRun[5]).toBe(150_000);
     expect(edgeScenarioDeadlineMsByRun[3]).toBe(360_000);
     expect(edgeScenarioDeadlineMsByRun[4]).toBe(360_000);
     expect(edgeScenarioDeadlineMsByRun[7]).toBe(270_000);
@@ -830,9 +844,23 @@ describe("non-production special-feature browser fixture contract", () => {
       ...validBudget,
       browserDeadlineMs: 35 * 60_000,
       maximumBrowserBudgetMs: 36 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_980_000,
+      maximumBrowserScenarioBudgetMs: 2_040_000,
       scenarioDeadlineMsByRun: edgeScenarioDeadlineMsByRun,
-    })).toEqual({ maximumBrowserScenarioBudgetMs: 1_980_000 });
+    })).toEqual({ maximumBrowserScenarioBudgetMs: 2_040_000 });
+    expect(() => validateVisualFixtureTimingBudget({
+      ...validBudget,
+      browserDeadlineMs: 34 * 60_000,
+      maximumBrowserBudgetMs: 36 * 60_000,
+      maximumBrowserScenarioBudgetMs: 2_040_000,
+      scenarioDeadlineMsByRun: edgeScenarioDeadlineMsByRun,
+    })).toThrow("必须为浏览器启动与清理保留时间");
+    expect(() => validateVisualFixtureTimingBudget({
+      ...validBudget,
+      browserDeadlineMs: 35 * 60_000,
+      maximumBrowserBudgetMs: 35 * 60_000,
+      maximumBrowserScenarioBudgetMs: 2_040_000,
+      scenarioDeadlineMsByRun: edgeScenarioDeadlineMsByRun,
+    })).toThrow("浏览器级墙钟截止必须小于总预算");
     expect(() => validateVisualFixtureTimingBudget({
       ...validBudget,
       browserDeadlineMs: 1_140_000,

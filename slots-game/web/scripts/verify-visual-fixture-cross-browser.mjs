@@ -53,6 +53,7 @@ const extendedScenarioDeadlineMs = 150_000;
 const largeScenarioDeadlineMs = 180_000;
 const chromiumKingScenarioDeadlineMs = 210_000;
 const chromiumDesktopKongScenarioDeadlineMs = 360_000;
+const edgeDesktopExtendedScenarioDeadlineMs = 180_000;
 const edgeKingScenarioDeadlineMs = 300_000;
 const edgeDesktopKongScenarioDeadlineMs = 360_000;
 const edgeCapSummaryScenarioDeadlineMs = 360_000;
@@ -439,6 +440,13 @@ function requireFeatureScenario(capability) {
 
 function resolveScenarioDeadlineMs(browserName, contract, surface) {
   const slowBrowser = browserName === "chromium" || browserName === "msedge";
+  if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.motion === "normal"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow")) {
+    return edgeDesktopExtendedScenarioDeadlineMs;
+  }
   if (browserName === "msedge"
     && surface.id === "desktop-1440x900"
     && contract.scenario === "king-flow") {

@@ -161,10 +161,10 @@ jobs:
 
   verify-edge:
     runs-on: windows-latest
-    # Windows 软件渲染截图受脚本 35 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。
-    # English: Windows software rendering screenshots are subject to a scripted 35-minute hard cutoff;
-    # additional budget only covers installation, production builds, and Edge transaction gates.
-    timeout-minutes: 40
+    # Windows 软件渲染截图受脚本 35 分钟硬截止，作业保留 45 分钟；额外预算只覆盖安装、生产构建与 Edge 事务门禁。
+    # English: Windows software-rendered screenshots have a 35-minute scripted hard cutoff and a 45-minute job budget;
+    # the extra time only covers installation, production builds, and Edge transaction gates.
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash

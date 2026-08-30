@@ -934,8 +934,80 @@ replace_once 'const slowKongScenarioDeadlineMs = 270_000;' \
 expect_rejected 'shared tablet Kong deadline expanded without evidence'
 
 reset_fixture
-replace_once 'const edgeCapSummaryScenarioDeadlineMs = 300_000;' \
-  'const edgeCapSummaryScenarioDeadlineMs = 240_000;' \
+replace_once 'const edgeDesktopExtendedScenarioDeadlineMs = 180_000;' \
+  'const edgeDesktopExtendedScenarioDeadlineMs = 150_000;' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge normal-motion desktop extended scenario deadline regressed'
+
+reset_fixture
+replace_literal_once \
+  'if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.motion === "normal"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow"))' \
+  'if (browserName === "chromium"
+    && surface.id === "desktop-1440x900"
+    && contract.motion === "normal"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow"))' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge normal-motion desktop extended timing tuple changed browser'
+
+reset_fixture
+replace_literal_once \
+  'if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.motion === "normal"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow"))' \
+  'if (browserName === "msedge"
+    && surface.id === "tablet-1024x768"
+    && contract.motion === "normal"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow"))' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge normal-motion desktop extended timing tuple changed surface'
+
+reset_fixture
+replace_literal_once \
+  'if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.motion === "normal"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow"))' \
+  'if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.motion === "reduced"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow"))' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge normal-motion desktop extended timing tuple changed motion mode'
+
+reset_fixture
+replace_literal_once \
+  'if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.motion === "normal"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow"))' \
+  'if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
+    && contract.motion === "normal"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "cap-summary"))' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge normal-motion desktop extended timing tuple changed scenario set'
+
+reset_fixture
+replace_once 'const edgeKingScenarioDeadlineMs = 300_000;' \
+  'const edgeKingScenarioDeadlineMs = 240_000;' \
+  "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
+expect_rejected 'Edge desktop King deadline regressed'
+
+reset_fixture
+replace_once 'const edgeCapSummaryScenarioDeadlineMs = 360_000;' \
+  'const edgeCapSummaryScenarioDeadlineMs = 300_000;' \
   "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
 expect_rejected 'Edge desktop cap-summary deadline regressed'
 
@@ -974,26 +1046,32 @@ replace_once 'const slowMaximumBrowserBudgetMs = 33 * 60_000;' \
 expect_rejected 'Chromium maximum browser budget regressed'
 
 reset_fixture
-replace_once 'const edgeBrowserDeadlineMs = 32 * 60_000;' \
-  'const edgeBrowserDeadlineMs = 31 * 60_000;' \
+replace_once 'const edgeBrowserDeadlineMs = 35 * 60_000;' \
+  'const edgeBrowserDeadlineMs = 34 * 60_000;' \
   "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
 expect_rejected 'Edge browser deadline lost startup and cleanup headroom'
 
 reset_fixture
-replace_once 'const edgeMaximumBrowserBudgetMs = 33 * 60_000;' \
-  'const edgeMaximumBrowserBudgetMs = 32 * 60_000;' \
+replace_once 'const edgeMaximumBrowserBudgetMs = 36 * 60_000;' \
+  'const edgeMaximumBrowserBudgetMs = 35 * 60_000;' \
   "$fixture/web/scripts/verify-visual-fixture-cross-browser.mjs"
 expect_rejected 'Edge maximum browser budget regressed'
 
 reset_fixture
-replace_once '    timeout-minutes: 40' '    timeout-minutes: 33' "$fixture/.github/workflows/frontend-conformance.yml"
+replace_once '    timeout-minutes: 45' '    timeout-minutes: 40' "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'Edge browser matrix lost its build and cleanup budget'
 
 reset_fixture
-replace_once '    # Windows 软件渲染截图受脚本 32 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
-  '    # Windows 软件渲染截图受脚本 20 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
+replace_once '    # Windows 软件渲染截图受脚本 35 分钟硬截止，作业保留 45 分钟；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
+  '    # Windows 软件渲染截图受脚本 34 分钟硬截止，作业保留 45 分钟；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' \
   "$fixture/.github/workflows/frontend-conformance.yml"
 expect_rejected 'Edge browser matrix timing contract drifted from the reviewed script budget'
+
+reset_fixture
+replace_once '    # English: Windows software-rendered screenshots have a 35-minute scripted hard cutoff and a 45-minute job budget;' \
+  '    # English: Windows software-rendered screenshots have a 34-minute scripted hard cutoff and a 45-minute job budget;' \
+  "$fixture/.github/workflows/frontend-conformance.yml"
+expect_rejected 'Edge browser matrix English timing contract drifted from the reviewed script budget'
 
 reset_fixture
 replace_once '  npm run test:visual-fixtures-browser-matrix -- --browser "${{ matrix.browser }}"' \
