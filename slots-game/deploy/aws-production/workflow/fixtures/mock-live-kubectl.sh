@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 只模拟平台实时门禁读取的 Kubernetes 对象，不连接任何集群。
+# English: It only simulates the Kubernetes object read by the platform's live gate and does not connect to any
+# cluster.
 set -eu
 
 fail() {

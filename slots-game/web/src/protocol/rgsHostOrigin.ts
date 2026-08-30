@@ -3,6 +3,8 @@ const HOST_ORIGIN_ERROR = "RGS host origin must be an exact credential-free HTTP
 /**
  * 只接受 URL 标准序列化后的精确 HTTPS 来源。拒绝通配符、凭据、路径及
  * query/hash，避免恢复通知被发送到构建配置之外的宿主。
+ *
+ * 英文 / English: Only accept exact HTTPS origins serialized to URL standards. Reject wildcards, credentials, paths, and query/hash to prevent recovery notifications from being sent to hosts outside of the build configuration.
  */
 export function parseExactHttpsHostOrigin(value: string | undefined): string | null {
   if (value === undefined) return null;

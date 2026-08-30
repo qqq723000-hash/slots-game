@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 纯本地负向夹具：已签名 Web 配置只能指向当前 Helm release 的唯一 API Ingress Origin。
+# English: Purely local negative fixture: The signed web configuration can only point to the only API Ingress
+# Origin of the current Helm release.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

@@ -1,4 +1,6 @@
 // application 包将与传输层无关的 RGS 领域能力组合为生产用例。
+// English: The application package combines transport layer-independent RGS domain capabilities into production
+// use cases.
 package application
 
 import (
@@ -139,6 +141,9 @@ func (m *LaunchManager) CreateLaunch(
 	// 相同交接幂等身份的查询重试必须在 durable session 的创建、读取或终态
 	// 裁决之前返回已持久化的原始响应。它只重放 handoff 响应；exchange 仍按
 	// 当前 durable 状态拒绝，不会创建或复活会话。
+	// English: Query retries with the same handoff idempotent identity must return the persisted original response
+	// before the durable session's creation, read, or final state determination. It only replays the handoff response;
+	// the exchange is still rejected in the current durable state, and the session is not created or revived.
 	replayed, found, replayErr := m.launches.FindCodeReplay(ctx, claims, code)
 	if errors.Is(replayErr, launch.ErrDigestExists) {
 		return rgsapi.LaunchResult{}, rgs.ErrIdempotencyConflict
@@ -167,6 +172,9 @@ func (m *LaunchManager) CreateLaunch(
 	}
 	// 当前定义与 access-token issuer 只约束新的 handoff。已认证请求的 exact
 	// replay 必须跨定义/issuer 滚动继续返回原响应，且不会因此恢复兑换能力。
+	// English: The current definition and access-token issuer only constrain new handoffs. An exact replay of an
+	// authenticated request must roll across definitions/issuers to continue returning the original response, and will
+	// not thereby restore redeemability.
 	if command.GameID != m.gameID || command.DefinitionVersion != m.version ||
 		command.DefinitionHash != m.hash {
 		return rgsapi.LaunchResult{}, rgs.ErrInvalidRequest
@@ -211,6 +219,9 @@ func (m *LaunchManager) CreateLaunch(
 		// GetSession 保留稳定的身份冲突语义；absolute expiry 与终态必须随后在
 		// 同一次权威存储观测中裁决。idle 超时仍允许 relaunch，并只在 exchange
 		// 阶段通过 ResetSessionTransport 推进浏览器隔离代际。
+		// English: GetSession preserves stable identity conflict semantics; absolute expiry and final state must be
+		// subsequently adjudicated in the same authoritative storage observation. The idle timeout still allows relaunch
+		// and advances the browser isolation generation via ResetSessionTransport only during the exchange phase.
 		if _, authorizeErr := m.repository.AuthorizeSessionRelaunch(
 			ctx, command.OperatorID, command.SessionID,
 		); authorizeErr != nil {
@@ -220,6 +231,11 @@ func (m *LaunchManager) CreateLaunch(
 		// 绝对过期时间仍是权威值；新的浏览器交接绝不能重置或延长持久会话状态。
 		// 预检与 exchange 都不使用 Pod 时钟；最终 ResetSessionTransport 仍在
 		// 兑换时原子重检，覆盖签发交接码后才跨越 absolute expiry 的竞态。
+		// English: balanceMinor and sessionTTL are only used when creating a session for the first time. When launched
+		// again, the persistent balance and absolute expiration time remain authoritative values; a new browser handover
+		// must not reset or extend the persistent session state. Neither preflight nor exchange uses Pod clock; in the
+		// end, ResetSessionTransport is still atomically rechecked during exchange, and the absolute expiry race condition
+		// is crossed only after overwriting the issuance handover code.
 	}
 	issued, err := m.launches.IssueCode(ctx, claims, code)
 	if errors.Is(err, launch.ErrDigestExists) {
@@ -357,6 +373,9 @@ func (m *LaunchManager) launchCode(operatorID, sessionID, idempotencyKey string)
 	digest := hmac.New(sha256.New, m.hmacKey)
 	// 对首次交接使用 sessionId 作为幂等键的既有集成保留原始派生方式。
 	// 不同的已签名幂等键使用 v2，为同一持久会话生成新的伪随机凭据。
+	// English: Existing integrations that use sessionId as an idempotent key for first handover retain the original
+	// derivation method. Different signed idempotent keys use v2 to generate new pseudo-random credentials for the
+	// same persistent session.
 	if idempotencyKey == sessionID {
 		writeLaunchField(digest, "schema", "rgs-launch-code-v1")
 		writeLaunchField(digest, "operator", operatorID)

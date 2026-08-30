@@ -1,9 +1,13 @@
-# Web 多副本生产交付契约
+# Web multi-replica production delivery contract / Web 多副本生产交付契约
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This directory delivers a stateless, non-privileged, read-only static Web container whose public configuration and release identity are fixed during one controlled build. The deterministic `release-manifest.json`, immutable OCI identity, runtime whitelist, and Nginx contract must change together whenever the public files or configured identity change, and no token, approval record, personal data, or secret may be placed in public build metadata. Production release still requires external per-asset authorization, immutable registry and CDN publication, cache and byte-integrity checks, edge configuration, browser and device acceptance, and an approved rollback path.
 
 本目录交付的是无状态、非特权、只读静态 Web 容器。容器不保存会话、不写业务数据，
 也不在启动时读取环境变量改写前端或 Nginx 配置。RGS 地址、运营商父页面 origin、公开

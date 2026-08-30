@@ -22,7 +22,7 @@ const WIN_LABEL_SOURCE_WIDTH = 240;
 const WIN_LABEL_SOURCE_HEIGHT = 160;
 const CANONICAL_MONEY_MINOR = /^(0|[1-9]\d*)$/;
 
-/** 捕获 GameMasterWinView 显示/保持姿势/隐藏合同。 */
+/** 捕获 GameMasterWinView 显示/保持姿势/隐藏合同。 / English: Capture the GameMasterWinView show/hold pose/hide contract. */
 export const WHEEL_BONUS_WIN_LABEL_TIMELINE_MS = Object.freeze({
   show: 333.333,
   hide: 333.333,
@@ -37,6 +37,8 @@ export type WheelBonusWinLabelState =
 
 /**
  * Pixi/Spine 视图使用的纯生命周期。 `holding` 故意不受限制：只有稍后的旋转、取消或渲染器拆卸可能会留下官方固定网格 BONUS 板。
+ *
+ * 英文 / English: Pure lifecycle used by Pixi/Spine views. `holding` is intentionally unrestricted: only later rotation, cancellation or renderer removal may leave the official fixed grid BONUS board.
  */
 export class WheelBonusWinLabelLifecycle {
   private elapsedMs = 0;
@@ -89,7 +91,7 @@ export class WheelBonusWinLabelLifecycle {
   }
 }
 
-/** `paywaysWon === -1` 映射到捕获的客户端中的 IDS_PR_BONUSWON。 */
+/** `paywaysWon === -1` 映射到捕获的客户端中的 IDS_PR_BONUSWON。 / English: `paywaysWon === -1` maps to IDS_PR_BONUSWON in the captured client. */
 export function wheelBonusWinLabelText(
   amountMinor: MoneyMinor | undefined,
   formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
@@ -121,6 +123,8 @@ interface WinLabelTextSkeletonSource {
 /**
  * winlabel 的文本槽故意没有设置附件。它们的几何体位于 `bounds` 下的默认皮肤中，与 Free Spins 介绍插槽完全相同。因此，
  * 需要 `slot.getAttachment()` 隐藏每个运行时字符串。
+ *
+ * 英文 / English: The text slot of winlabel intentionally does not have attachments set. Their geometry is in the default skin under `bounds` and is exactly the same as the Free Spins intro slot. Therefore, `slot.getAttachment()` is required to hide each runtime string.
  */
 export function resolveWheelBonusTextAttachment<T>(
   skeleton: WinLabelTextSkeletonSource,
@@ -139,6 +143,8 @@ interface ActiveWheelBonusLabel {
 
 /**
  * 独立后Wheel主胜层。它重复使用捕获的 `Spine_winlabel` 及其三个运行时文本槽，而无需输入正常的支付线/方式数学或更改底部总赢计数器。
+ *
+ * 英文 / English: After independence, Wheel became the main winning layer. It reuses the captured `Spine_winlabel` and its three runtime text slots without having to enter normal payline/way math or change the bottom total win counter.
  */
 export class WheelBonusWinLabel {
   readonly view = new Container();
@@ -200,9 +206,9 @@ export class WheelBonusWinLabel {
     return true;
   }
 
-  /** 在下一次权威旋转时启动捕获的 333.333ms 隐藏。 */
+  /** 在下一次权威旋转时启动捕获的 333.333ms 隐藏。 / English: 333.333ms hidden to start capture on next authority spin. */
   hide(reducedMotion = false): boolean {
-    // 资产承诺尚未解决的节目也会失效。
+    // 资产承诺尚未解决的节目也会失效。 / English: Shows with unresolved asset commitments will also lapse.
     this.generation += 1;
     const active = this.active;
     if (!active || !this.lifecycle.hide(reducedMotion)) {
@@ -215,7 +221,7 @@ export class WheelBonusWinLabel {
     return true;
   }
 
-  /** 取消回合后立即进行故障关闭拆解。 */
+  /** 取消回合后立即进行故障关闭拆解。 / English: Fail-closed teardown immediately after canceling the round. */
   cancel(): void {
     this.generation += 1;
     this.lifecycle.cancel();
@@ -412,7 +418,7 @@ export class WheelBonusWinLabel {
       const scaleX = Math.hypot(a, b);
       const scaleY = Math.hypot(c, d);
       field.text.rotation = Math.atan2(b, a);
-      // Spine 的坐标桥反映区域附件的 Y。运行时 Pixi 文本必须保持大小，同时丢弃反射或现在可见的字形渲染颠倒。
+      // Spine 的坐标桥反映区域附件的 Y。运行时 Pixi 文本必须保持大小，同时丢弃反射或现在可见的字形渲染颠倒。 / English: Spine's coordinate bridge reflects the Y of the region's attachment. Pixi text must maintain size at runtime while discarding reflections or glyph rendering inversions that are now visible.
       field.text.scale.set(fitScale * scaleX, fitScale * scaleY);
       field.text.alpha = slot.color.a * skeleton.color.a;
       field.text.visible = field.text.alpha > 0.001;

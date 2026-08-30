@@ -1,4 +1,4 @@
-// @ts-nocheck -- 仅在 Node 中运行的源码与 CSS 契约测试。
+// @ts-nocheck -- 仅在 Node 中运行的源码与 CSS 契约测试。 / English: @ts-nocheck -- Source code and CSS contract tests that only run in Node.
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";

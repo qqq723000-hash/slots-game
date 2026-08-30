@@ -71,7 +71,7 @@ describe("captured base-music pot state machine", () => {
       pendingTickMs: 0,
     });
 
-    // 降至第 0 级会重新开始五秒的延迟停留。
+    // 降至第 0 级会重新开始五秒的延迟停留。 / English: Dropping to level 0 restarts the five-second delay.
     machine.tick(4_000);
     expect(machine.potMinor).toBe("190");
     machine.tick();

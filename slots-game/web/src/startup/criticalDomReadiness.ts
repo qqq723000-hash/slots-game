@@ -25,13 +25,13 @@ export interface CriticalDomReadinessProgress {
   readonly progress: number;
 }
 
-/** `document.fonts` 和确定性测试共享的最小结构表面。 */
+/** `document.fonts` 和确定性测试共享的最小结构表面。 / English: Minimal structural surface shared by `document.fonts` and deterministic tests. */
 export interface CriticalFontFaceSet {
   load?(font: string, text?: string): PromiseLike<readonly unknown[]>;
   readonly ready?: PromiseLike<unknown>;
 }
 
-/** `HTMLElement`、`Document`和`DocumentFragment`均满足该合同。 */
+/** `HTMLElement`、`Document`和`DocumentFragment`均满足该合同。 / English: `HTMLElement`, `Document` and `DocumentFragment` all satisfy this contract. */
 export type CriticalDomRoot = Pick<ParentNode, "querySelectorAll"> & {
   readonly ownerDocument?: Document | null;
 };
@@ -42,6 +42,8 @@ export interface CriticalDomReadinessOptions {
   readonly fontDescriptors?: readonly string[];
   /**
    * 测试/嵌入接口。省略使用`root.ownerDocument.fonts`；当主机故意没有 FontFaceSet 实现时，传递 `null`。
+   *
+   * 英文 / English: Test/embed interface. Omit use of `root.ownerDocument.fonts`; pass `null` when the host intentionally does not have a FontFaceSet implementation.
    */
   readonly fontSet?: CriticalFontFaceSet | null;
 }
@@ -63,6 +65,8 @@ export class CriticalDomResourceError extends Error {
  * 仅在 `root` 下面的每个图像已加载/解码并且每个请求的文档字体加上 `document.fonts.ready` 已解决后才解决。
  *
  * 该函数不会启动场景构建。它是一个独立的启动屏障，可以组成加权应用程序门。
+ *
+ * 英文 / English: Resolved only after every image below `root` has been loaded/decoded and every requested document font plus `document.fonts.ready` has been resolved. This function does not start scene building. It is an independent launch barrier that can form a weighted application gate.
  */
 export async function waitForCriticalDomReadiness(
   root: CriticalDomRoot,
@@ -90,8 +94,8 @@ export async function waitForCriticalDomReadiness(
       )));
       publishImageReadinessDiagnostic(diagnosticHost, "decoding", 0, images.length);
 
-      // 冷缓存 Chromium 会在网络 load 结算的同一微任务内卡住一部分并发 decode Promise。
-      // 先让事件循环完成图片状态提交，再用小型工作池解码，避免 40 多张界面图同时争用解码器。
+      // 冷缓存 Chromium 会在网络 load 结算的同一微任务内卡住一部分并发 decode Promise。 / English: Cold caching Chromium will block a portion of the concurrent decode Promise within the same microtask where the network load is resolved.
+      // 先让事件循环完成图片状态提交，再用小型工作池解码，避免 40 多张界面图同时争用解码器。 / English: Let the event loop complete the picture status submission first, and then use a small working pool to decode to avoid more than 40 interface pictures competing for the decoder at the same time.
       if (images.length > 0) await nextTask(signal);
       await forEachWithConcurrency(images, CRITICAL_IMAGE_DECODE_CONCURRENCY, async (image, index) => {
         await decodeRequiredImage(image, imageSources[index]!, signal);
@@ -242,8 +246,8 @@ async function decodeRequiredImage(
       if (primaryOutcome.kind === "success") return;
       if (primaryOutcome.kind === "failure") throw primaryOutcome.error;
 
-      // Chrome 冷缓存下偶发出现 complete=true 但首个 decode Promise 永不落定。
-      // 第二次调用使用同一已加载 DOM 图像；任一调用成功即可继续，二者都不会成为未处理拒绝。
+      // Chrome 冷缓存下偶发出现 complete=true 但首个 decode Promise 永不落定。 / English: Complete=true occasionally appears under Chrome's cold cache, but the first decode Promise never settles.
+      // 第二次调用使用同一已加载 DOM 图像；任一调用成功即可继续，二者都不会成为未处理拒绝。 / English: The second call uses the same loaded DOM image; either call succeeds and neither becomes an unhandled rejection.
       await nextTask(signal);
       const retry = Promise.resolve().then(() => image.decode!());
       const retryOutcome = await observeDecode(
@@ -253,9 +257,9 @@ async function decodeRequiredImage(
       );
       if (retryOutcome.kind === "success") return;
       if (retryOutcome.kind === "failure") throw retryOutcome.error;
-      // decode() 是无闪烁优化而不是资源完整性边界。Chromium 若把两次调用都留在
-      // pending，而 load 已成功且自然尺寸仍有效，就交由首次绘制完成最终解码；
-      // 网络/格式错误仍会在上面的 load、naturalWidth 或显式 decode 拒绝处失败关闭。
+      // decode() 是无闪烁优化而不是资源完整性边界。Chromium 若把两次调用都留在 / English: decode() is a flicker-free optimization not a resource integrity bound. If Chromium leaves both calls in
+      // pending，而 load 已成功且自然尺寸仍有效，就交由首次绘制完成最终解码； / English: pending, and the load has been successful and the natural size is still valid, it is handed over to the first drawing to complete the final decoding;
+      // 网络/格式错误仍会在上面的 load、naturalWidth 或显式 decode 拒绝处失败关闭。 / English: Network/format errors will still fail to close on load, naturalWidth or explicit decode rejections above.
       if (image.complete && image.naturalWidth > 0) return;
       throw new Error("DOM image decode did not settle after a bounded retry");
     } catch (error) {
@@ -264,7 +268,7 @@ async function decodeRequiredImage(
     }
   }
 
-  // jsdom 和旧版 WebKit 可能会省略 `decode`。上面的加载屏障已经验证自然尺寸。
+  // jsdom 和旧版 WebKit 可能会省略 `decode`。上面的加载屏障已经验证自然尺寸。 / English: jsdom and older versions of WebKit may omit `decode`. The loading barrier above has verified natural dimensions.
 }
 
 type DecodeOutcome = Readonly<
@@ -355,7 +359,7 @@ async function waitForRequiredImageLoad(
     image.addEventListener("error", onError, { once: true });
     signal.addEventListener("abort", onAbort, { once: true });
 
-    // 关闭初始检查和侦听器之间的缓存图像竞争。
+    // 关闭初始检查和侦听器之间的缓存图像竞争。 / English: Turn off cached image contention between initial checks and listeners.
     if (signal.aborted) onAbort();
     else if (image.complete) {
       if (image.naturalWidth > 0) settle();
@@ -399,7 +403,7 @@ function weightedProgress(
   totalFonts: number,
 ): number {
   const imageProgress = totalImages === 0 ? 1 : clamp01(completedImages / totalImages);
-  // 零大小字体阶段由下面的显式兼容性事件完成。在此之前，它不得为图像进步贡献 20% 的权重。
+  // 零大小字体阶段由下面的显式兼容性事件完成。在此之前，它不得为图像进步贡献 20% 的权重。 / English: The zero-size font phase is completed by the explicit compatibility event below. Until then, it must not contribute 20% weight to image advancement.
   const fontProgress = totalFonts === 0 ? 0 : clamp01(completedFonts / totalFonts);
   return imageProgress * CRITICAL_DOM_PROGRESS_WEIGHTS.images
     + fontProgress * CRITICAL_DOM_PROGRESS_WEIGHTS.fonts;

@@ -81,6 +81,9 @@ func TestLaunchManagerIdempotentlyCreatesAndExchangesOnce(t *testing.T) {
 
 	// 模拟应用 Pod 时钟比存储时钟快两小时；按存储库时钟，持久会话仍有近一小时。
 	// exchange/relaunch 不得因偏移的进程时钟烧掉 launch code 并错误拒绝。
+	// English: The simulated app pod clock is two hours ahead of the storage clock; by the repository clock, the
+	// persistent session is still nearly an hour away. exchange/relaunch must not burn launch code and reject with
+	// error due to offset process clock.
 	now = now.Add(2 * time.Hour)
 	exchanged, err := manager.ExchangeSession(context.Background(), rgsapi.ExchangeCommand{
 		LaunchCode: first.LaunchCode, OperatorID: command.OperatorID,

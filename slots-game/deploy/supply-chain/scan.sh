@@ -2,6 +2,10 @@
 
 # 所有扫描器运行在固定 digest 的容器中。源码与镜像归档只读挂载；除下载漏洞库、
 # Trivy checks、npm advisory 和 Go 漏洞数据库外，实际解析阶段关闭网络，减少扫描器权限面。
+# English: All scanners run in containers with a fixed digest. Source code and image archives are read-only
+# mounted; in addition to downloading vulnerability libraries, In addition to trivy checks, npm advisory, and Go
+# vulnerability database, the actual parsing phase closes the network and reduces the scanner's permission
+# surface.
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -28,6 +32,9 @@ sanitize_trivy_image_report() {
 
   # Trivy 会遮蔽命中的 Match，但 JSON 的 Code 上下文仍可能携带邻近业务值。对外留档前
   # 删除所有 secret finding 的原文/上下文字段，只保留规则、位置、严重级别等审计信息。
+  # English: Trivy will mask Match hits, but the JSON's Code context may still carry adjacent business values.
+  # Before leaving files to the outside world Delete all original text/context fields of secret finding, and
+  # only retain audit information such as rules, locations, and severity levels.
   docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \
@@ -46,6 +53,8 @@ test -f "$tool_file" || fail 'missing tool-images.env'
 test -x "$trivy_asset_verifier" || fail 'missing executable verify-trivy-assets.sh'
 test -f "$trivy_report_sanitizer" || fail 'missing sanitize-trivy-report.mjs'
 # 该文件由静态门禁逐行校验，不接受调用方通过环境变量替换扫描器镜像。
+# English: This file is verified line by line by static gate, and the caller is not allowed to replace the
+# scanner image through environment variables.
 # shellcheck disable=SC1090
 . "$tool_file"
 
@@ -68,6 +77,8 @@ prepare_trivy_database() {
   cache_dir=$(CDPATH='' cd -- "$cache_dir" && pwd)
 
   # CI runner 为短命环境；每个作业先联网取得当次数据库，再让实际扫描离线执行。
+  # English: CI runner is a short-lived environment; each job is first connected to the Internet to obtain the
+  # current database, and then the actual scan is executed offline.
   docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \
@@ -92,6 +103,8 @@ prepare_gitleaks_canary() {
   evidence_dir=$2
 
   # 运行时分段拼出 GitHub classic PAT 形状的假凭据，源码与日志中均不保存完整值。
+  # English: Fake credentials in the shape of GitHub classic PAT are pieced together during runtime, and the
+  # complete value is not saved in the source code or logs.
   gitleaks_canary_secret='ghp_'
   gitleaks_canary_secret="${gitleaks_canary_secret}A1b2C3d4E5f6G7h8I9"
   gitleaks_canary_secret="${gitleaks_canary_secret}j0K1l2M3n4P5q6R7s8"
@@ -130,6 +143,8 @@ prepare_trivy_checks() {
   canary_dir=$3
 
   # 该故意不安全的 Pod 只用于证明 checks bundle 已下载且真实执行；它不是发布配置。
+  # English: This intentionally unsafe Pod is only used to prove that the checks bundle was downloaded and
+  # actually executed; it is not a release configuration.
   printf '%s\n' \
     'apiVersion: v1' \
     'kind: Pod' \
@@ -143,6 +158,8 @@ prepare_trivy_checks() {
     '        privileged: true' > "$canary_dir/privileged-pod.yaml"
 
   # 此步骤故意联网且不传 --skip-check-update；后续真实扫描才会断网并锁为只读。
+  # English: This step deliberately connects to the Internet and does not pass --skip-check-update; subsequent
+  # real scans will disconnect the network and lock it as read-only.
   if docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \
@@ -214,6 +231,9 @@ run_source_scan() {
   mkdir -p "$scanner_canary_root/gitleaks" "$scanner_canary_root/trivy" "$terraform_input_dir"
   # Git 以 NUL 分隔精确列出当前提交所跟踪的 Terraform 源文件；后续隔离容器逐项拒绝
   # 异常路径与符号链接，避免未跟踪残留、目录逃逸或链接目标混入生产 IaC 证据。
+  # English: Git provides a NUL-separated list of the exact Terraform source files tracked by the current
+  # commit; subsequent quarantine containers reject them one by one Exception paths and symbolic links to avoid
+  # untracked carryover, directory escapes, or link targets getting mixed into artifactsion IaC evidence.
   git -C "$git_root" ls-files -z -- \
     "$terraform_pathspec" \
     "$terraform_git_prefix/environments/dev/terraform.tfvars.example" \
@@ -236,6 +256,8 @@ run_source_scan() {
   status=0
 
   # govulncheck 通过 Go module checksum database 校验固定模块版本，并按可达调用链报告漏洞。
+  # English: govulncheck verifies the fixed module version through the Go module checksum database and reports
+  # vulnerabilities according to the reachable call chain.
   if ! docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \
@@ -263,6 +285,8 @@ run_source_scan() {
   fi
 
   # 完整依赖树与生产依赖树分别留档；任一 HIGH/CRITICAL advisory 都阻断发布。
+  # English: The complete dependency tree and the artifactsion dependency tree are archived separately; any
+  # HIGH/CRITICAL advisory blocks release.
   if ! docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \
@@ -286,6 +310,9 @@ run_source_scan() {
 
   # 当前发布提交可达历史与工作树分别扫描；HEAD 边界排除检出时附带的无关远端引用，
   # 禁用仓库 ignore/allow，防止发布范围内的检查被静默收窄。
+  # English: The current release commit reachability history and working tree are scanned separately; the HEAD
+  # boundary excludes irrelevant remote references attached to the checkout. Disable repository ignore/allow to
+  # prevent release-wide checks from being silently narrowed.
   if ! docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \
@@ -315,6 +342,8 @@ run_source_scan() {
   fi
 
   # 双标准 SBOM 固定具体 schema 版本，避免工具升级后格式静默漂移。
+  # English: Dual-standard SBOM fixes the specific schema version to avoid silent format drift after tool
+  # upgrades.
   if ! docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \
@@ -333,8 +362,12 @@ run_source_scan() {
   fi
 
   # 离线前再次验证动态 DB/checks 身份；完整 Git 根包含父级 .github 发布工作流。
+  # English: Dynamic DB/checks identity again before going offline; full Git root containing parent .github
+  # release workflow.
   "$trivy_asset_verifier" "$trivy_cache" "$output_dir" >/dev/null
   # 依赖漏洞与生产配置分开扫描，避免把 Docker ignore 文件误当成 Dockerfile。
+  # English: Dependency vulnerabilities are scanned separately from artifactsion configurations to avoid
+  # mistaking Docker ignore files for Dockerfiles.
   if ! docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \
@@ -355,6 +388,9 @@ run_source_scan() {
 
   # 只复制正式 Dockerfile、使用有效生产值渲染的 Helm Chart，以及 Git 跟踪的 Terraform
   # 源文件；输入清单由后置契约逐项核验，任何缺失或额外结果都会失败关闭。
+  # English: Copy only the production Dockerfile, the Helm chart rendered with valid production values, and
+  # Git-tracked Terraform sources. A downstream contract verifies every input; any missing or extra result
+  # fails closed.
   if ! docker run --rm \
     --user "$host_uid:$host_gid" \
     --read-only \

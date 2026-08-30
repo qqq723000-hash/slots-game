@@ -25,6 +25,8 @@ import (
 
 // legacyTokenBucketScriptBody 仅保留生产 v1 脚本作为可复现的压测基线，
 // 运行时代码绝不能选择这个脚本。
+// English: legacyTokenBucketScriptBody only retains the production v1 script as a reproducible stress test
+// baseline, and runtime code must not select this script.
 const legacyTokenBucketScriptBody = `
 local clock = redis.call('TIME')
 local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
@@ -173,6 +175,10 @@ func (runner *loadScriptRunner) record(values []int64, err error) {
 // TestSharedAdmissionLoadProfile 必须显式启用，因为它要求隔离且可销毁的 Valkey 端点，
 // 并会主动施加高并发负载。测试为每个变体和场景输出一个 JSON 对象；当
 // RGS_SHARED_ADMISSION_LOAD_REPORT_PATH 为绝对路径时，还会原子写入稳定报告。
+// English: TestSharedAdmissionLoadProfile must be explicitly enabled because it requires an isolated and
+// destroyable Valkey endpoint and actively imposes high concurrency load. The test outputs a JSON object for each
+// variant and scenario; stability reports are also written atomically when RGS_SHARED_ADMISSION_LOAD_REPORT_PATH
+// is an absolute path.
 func TestSharedAdmissionLoadProfile(t *testing.T) {
 	address := os.Getenv("RGS_SHARED_ADMISSION_LOAD_ADDR")
 	if address == "" {
@@ -225,6 +231,8 @@ func TestSharedAdmissionLoadProfile(t *testing.T) {
 		{name: "many_identity", keys: requests, capacityMilli: 40_000, rateMilli: 20_000, firstWorkers: 64},
 		// many_identity 与 deny_storm 使用同一 20/s、burst 40 配额；前者模拟旧的
 		// session 分桶，后者模拟按 operator 聚合后的爆款流量。
+		// English: many_identity and deny_storm use the same 20/s, burst 40 quota; the former simulates old session
+		// bucketing, and the latter simulates hot traffic aggregated by operator.
 		{name: "deny_storm", keys: 1, capacityMilli: 40_000, rateMilli: 20_000, firstWorkers: 64},
 		{name: "failover_noscript", keys: 4096, capacityMilli: allowedCapacityMilli, rateMilli: 100_000_000, firstWorkers: 64, flushAtMidpoint: true},
 	}
@@ -368,6 +376,9 @@ func requireDisposableLoadTarget(
 	}
 	// 此时客户端包含一条基础 mux socket 和第一条延迟创建的同步业务 socket；
 	// 出现第三条连接说明另有客户端正在访问本应独占的破坏性测试目标。
+	// English: At this time, the client contains a basic mux socket and the first delayed creation of the
+	// synchronization service socket; the appearance of the third connection indicates that another client is
+	// accessing the destructive test target that should be exclusive.
 	if connected := parseInfoInteger(clientsInfo, "connected_clients"); connected != 2 {
 		t.Fatalf("destructive Valkey load target is not exclusively held: connected_clients=%d want=2", connected)
 	}
@@ -583,6 +594,8 @@ func verifyOptimizedScriptIntegrity(t *testing.T, ctx context.Context, client va
 	}
 	// 安全的速率变更必须读取持久化的 TTL 基准，不能把旧桶误判为损坏，
 	// 也不能用 Pod 的墙上时钟推导已经流逝的时间。
+	// English: Safe rate changes must read a persistent TTL baseline, not misidentify old buckets as corrupted, and
+	// not use the Pod's wall clock to deduce elapsed time.
 	if values, err := evaluate("40000", "10000"); err != nil || len(values) != 2 || values[0] != 1 {
 		t.Fatalf("rate-transition optimized state = %v, %v", values, err)
 	}
@@ -637,6 +650,8 @@ func runLoadScenario(
 	if variant == "optimized_v2" {
 		// 使用与生产完全相同的执行器，覆盖感知截止时间的 NOSCRIPT 重载合并，
 		// 而不是只在基准测试中使用近似实现。
+		// English: Use the exact same executor as in production, overriding the NOSCRIPT overload merging of aware
+		// deadlines, rather than just using an approximate implementation in the benchmark.
 		runner.production = newValkeyExecutor(client)
 	}
 	args := []string{strconv.FormatInt(scenario.capacityMilli, 10), strconv.FormatInt(scenario.rateMilli, 10)}

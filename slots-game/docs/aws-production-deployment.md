@@ -1,9 +1,15 @@
-# AWS 正式生产部署
+# AWS 正式生产部署 / AWS production deployment
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document is the implementation and acceptance runbook for delivering the repository into an adopter-controlled AWS target environment.
+Production and non-production identities, secrets, data, immutable artifacts, database roles, migration order, release evidence, and rollback boundaries must remain separated, and the runtime must never receive migration authority.
+The adopter must provide and validate the account baseline, deployment identity, state, DNS, certificates, edge controls, protected plan/apply, real resource inventory, capacity evidence, operator integration, and final release approval; repository infrastructure code alone is not deployment evidence.
 
 状态：正式环境实施与验收手册
 

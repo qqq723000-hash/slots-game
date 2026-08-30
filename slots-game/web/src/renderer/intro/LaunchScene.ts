@@ -28,6 +28,8 @@ import { resolveResponsiveMinBound } from "../ResponsiveLayout";
 export const CHARACTER_IDLE_LOOP_MS = PRIMAL_CHARACTER_ANIMATION_MS.idleStateLoop;
 /**
  * 捕获的游戏中的桌面 `ppsApe` 节点有自己预设的阶段变换。  它不得继承箱体的响应式合成比例：嵌套的 Spine 已带有其测量的 0.72 比例和 y=360 偏移量。
+ *
+ * 英文 / English: The captured in-game desktop `ppsApe` node has its own preset phase transition. It must not inherit the cabinet's responsive composition scale: the nested Spine already comes with its measured scale of 0.72 and y=360 offset.
  */
 export const PRIMAL_DESKTOP_CHARACTER_HOST_SCALE = 1;
 export const PRIMAL_DESKTOP_CHARACTER_SKELETON_TRANSFORM = Object.freeze({
@@ -35,7 +37,7 @@ export const PRIMAL_DESKTOP_CHARACTER_SKELETON_TRANSFORM = Object.freeze({
   y: 360,
   scale: 0.72,
 });
-/** 从 mobile/config/config_mobile.json 恢复的 `transition` 节点边界。 */
+/** 从 mobile/config/config_mobile.json 恢复的 `transition` 节点边界。 / English: `transition` node boundaries restored from mobile/config/config_mobile.json. */
 export const PRIMAL_MOBILE_TRANSITION_MIN_BOUNDS: Readonly<
   Record<MobileLayoutProfile, ResponsiveMinBound>
 > = Object.freeze({
@@ -44,7 +46,7 @@ export const PRIMAL_MOBILE_TRANSITION_MIN_BOUNDS: Readonly<
   iPad_pt: Object.freeze({ left: -600, top: -250, width: 1_200, height: 900 }),
 });
 
-/** 将官方 transition 根节点等比 contain 到完整移动视口。 */
+/** 将官方 transition 根节点等比 contain 到完整移动视口。 / English: Contain the official transition root node proportionally to the complete mobile viewport. */
 export function resolveLaunchTransitionLayout(
   viewportRegion: ResponsiveRendererRegion,
   profile: MobileLayoutProfile,
@@ -54,19 +56,19 @@ export function resolveLaunchTransitionLayout(
     PRIMAL_MOBILE_TRANSITION_MIN_BOUNDS[profile],
   );
 }
-/** 从桌面/移动捆绑包中恢复了官方 Character 调度程序节奏。 */
+/** 从桌面/移动捆绑包中恢复了官方 Character 调度程序节奏。 / English: Restored the official Character scheduler cadence from the desktop/mobile bundle. */
 export const WHEEL_CHEST_POUND_SCHEDULER_FPS = 30;
-/** Float32 从权威 character.skel 解码的持续时间。 */
+/** Float32 从权威 character.skel 解码的持续时间。 / English: Float32 Duration decoded from authoritative character.skel. */
 export const WHEEL_CHEST_POUND_DECODED_DURATION_SECONDS = 3.8333334922790527;
-/** `playSpineData` 在调度之前将解码的 3.833333492 s 剪辑置底。 */
+/** `playSpineData` 在调度之前将解码的 3.833333492 s 剪辑置底。 / English: `playSpineData` Bottoms the decoded 3.833333492 s clip before dispatching. */
 export const WHEEL_CHEST_POUND_FLOORED_TASK_MS = Math.floor(
   WHEEL_CHEST_POUND_DECODED_DURATION_SECONDS * 1_000,
 );
-/** `timeToTick(3833)` 是 `ceil(3833 * 30 / 1000)`，或 115 个调度程序刻度。 */
+/** `timeToTick(3833)` 是 `ceil(3833 * 30 / 1000)`，或 115 个调度程序刻度。 / English: `timeToTick(3833)` is `ceil(3833 * 30 / 1000)`, or 115 scheduler ticks. */
 export const WHEEL_CHEST_POUND_TASK_TICKS = Math.ceil(
   WHEEL_CHEST_POUND_FLOORED_TASK_MS * WHEEL_CHEST_POUND_SCHEDULER_FPS / 1_000,
 );
-/** 任务从蜱虫转换回来后的权威自我状态期。 */
+/** 任务从蜱虫转换回来后的权威自我状态期。 / English: Authoritative self-state duration after converting the task duration to ticks and back. */
 export const WHEEL_CHEST_POUND_REENTRY_MS = (
   WHEEL_CHEST_POUND_TASK_TICKS / WHEEL_CHEST_POUND_SCHEDULER_FPS
 ) * 1_000;
@@ -79,7 +81,7 @@ const WHEEL_CHEST_POUND_CAPTURE_TARGETS_MS = Object.freeze([
   WHEEL_CHEST_POUND_REENTRY_MS + 150,
   WHEEL_CHEST_POUND_REENTRY_MS * 2,
 ] as const);
-/** 恢复的状态调度程序层预设了 Spine 秒到整数毫秒。 */
+/** 恢复的状态调度程序层预设了 Spine 秒到整数毫秒。 / English: The restored state scheduler layer is preset from Spine seconds to an integer number of milliseconds. */
 export const CHARACTER_INTRO_TASK_MS = Math.floor(PRIMAL_CHARACTER_ANIMATION_MS.intro);
 const CHARACTER_CAPTURE_MAX_STEP_MS = 64;
 
@@ -135,7 +137,7 @@ export type CharacterAnimationContext = "state" | "collect-random" | "idle-break
 
 export interface CharacterAnimationEvent {
   readonly animation: string;
-  /** 区分确定性 STATE_START 音频和随机 ANIM_START 音频。 */
+  /** 区分确定性 STATE_START 音频和随机 ANIM_START 音频。 / English: Distinguish between deterministic STATE_START audio and random ANIM_START audio. */
   readonly context: CharacterAnimationContext;
 }
 
@@ -144,11 +146,11 @@ export interface CharacterTrackDiagnostic {
   readonly animation: string | null;
   readonly trackTime: number | null;
   readonly mixingFrom: string | null;
-  /** 运行时交叉淡入淡出持续时间，仅针对只读捕获证据公开。 */
+  /** 运行时交叉淡入淡出持续时间，仅针对只读捕获证据公开。 / English: Runtime crossfade duration, only exposed for read-only capture evidence. */
   readonly mixDuration?: number | null;
 }
 
-/** 确定性浏览器捕获测试夹具使用的只读证据接口。 */
+/** 确定性浏览器捕获测试夹具使用的只读证据接口。 / English: A read-only evidence interface used by the deterministic browser capture test fixture. */
 export interface CharacterIntroLifecycleDiagnostics {
   readonly introActive: boolean;
   readonly introElapsedMs: number;
@@ -192,7 +194,7 @@ interface WheelChestPoundTask {
 
 export type CharacterAnimationListener = (event: CharacterAnimationEvent) => void;
 
-/** 匹配原始的等概率 Math.floor(random * 3) 选择器。 */
+/** 匹配原始的等概率 Math.floor(random * 3) 选择器。 / English: Matches the original equal-probability Math.floor(random * 3) selector. */
 export function characterIdleBreakerForRandom(random: number): CharacterIdleBreaker {
   const normalized = Number.isFinite(random) ? Math.min(0.999_999, Math.max(0, random)) : 0;
   return CHARACTER_IDLE_BREAKERS[Math.floor(normalized * CHARACTER_IDLE_BREAKERS.length)]?.animation
@@ -201,7 +203,7 @@ export function characterIdleBreakerForRandom(random: number): CharacterIdleBrea
 
 export type CharacterCollectAnimation = (typeof CHARACTER_COLLECT_ANIMATIONS)[number];
 
-/** 原装COLLECT状态统一选择这三个机身夹之一。 */
+/** 原装COLLECT状态统一选择这三个机身夹之一。 / English: In the original COLLECT state, select one of these three body clips. */
 export function characterCollectAnimationForRandom(random: number): CharacterCollectAnimation {
   const normalized = Number.isFinite(random) ? Math.min(0.999_999, Math.max(0, random)) : 0;
   return CHARACTER_COLLECT_ANIMATIONS[Math.floor(normalized * CHARACTER_COLLECT_ANIMATIONS.length)]
@@ -352,7 +354,7 @@ export class LaunchScene {
     this.camera.actorLayer.addChild(this.monsterHost, this.monsterMist);
     this.camera.foregroundLayer.addChild(this.foreground);
     this.camera.fxLayer.addChild(this.shockwave);
-    // 桌面时间线继续以 1280×720 坐标写 logo；移动端只变换这个独立根节点。
+    // 桌面时间线继续以 1280×720 坐标写 logo；移动端只变换这个独立根节点。 / English: The desktop timeline continues to write the logo with 1280×720 coordinates; the mobile terminal only transforms this independent root node.
     this.transitionHost.pivot.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2);
     this.transitionHost.position.set(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2);
     this.transitionHost.addChild(this.logo);
@@ -403,7 +405,7 @@ export class LaunchScene {
 
     this.monsterHost.alpha = frame.colossusAlpha;
     this.actorBaseY = 0;
-    // `character.skel/intro`拥有整个1、504px下跌、压缩和反弹。移动该主机将应用该动作两次。
+    // `character.skel/intro`拥有整个1、504px下跌、压缩和反弹。移动该主机将应用该动作两次。 / English: `character.skel/intro` has the entire 1,504px drop, compression and bounce. Moving the host will apply the action twice.
     if (this.mobileCharacterTransform) {
       const ratio = this.mobileCharacterTransform.scale / 0.8
         * (this.mobileLayoutProfile === "ls" ? 1.2 : 1);
@@ -446,7 +448,7 @@ export class LaunchScene {
       : 0;
 
     this.reels.alpha = Math.min(1, Math.max(0, frame.reelProgress));
-    // 原始内阁已经处于其最终几何形状，并且仅随着主/菜单/状态栏而消失。它没有合成的下降或弹跳变换。
+    // 原始内阁已经处于其最终几何形状，并且仅随着主/菜单/状态栏而消失。它没有合成的下降或弹跳变换。 / English: The original cabinet is already in its final geometry and only disappears with the main/menu/status bar. It has no synthetic drop or bounce transformations.
     if (this.mobileViewportRegion) {
       this.reels.setMobileLayout(this.mobileViewportRegion, this.mobileLayoutProfile);
     }
@@ -504,7 +506,7 @@ export class LaunchScene {
     this.mobileViewportRegion = null;
     this.mobileLayoutProfile = "ls";
     this.responsiveCompositionScale = Math.max(0.8, Math.min(1.1, scale));
-    // 与机柜不同的是，原来的桌面ppsApe是一个独立的根节点。在这里缩放它复合了预设的 Spine 比例，并将其脚趾推过 1280×720 的状态栏边界。
+    // 与机柜不同的是，原来的桌面ppsApe是一个独立的根节点。在这里缩放它复合了预设的 Spine 比例，并将其脚趾推过 1280×720 的状态栏边界。 / English: Unlike the cabinet, the original desktop ppsApe is an independent root node. Scaling it here combines the preset Spine proportions and pushes its toe past the status bar bounds of 1280×720.
     this.monsterHost.scale.set(PRIMAL_DESKTOP_CHARACTER_HOST_SCALE);
     this.reels.setResponsiveComposition(this.responsiveCompositionScale);
   }
@@ -512,6 +514,8 @@ export class LaunchScene {
   /**
    * 重投影启动转场，不触碰 IntroDirector/Spine 时间、轨道、可见性或透明度。
    * blackout 独立覆盖整个渲染器，因此状态栏区域也不会在淡入期间露底。
+   *
+   * 英文 / English: Reproject starts the transition without touching IntroDirector/Spine time, track, visibility or transparency. Blackout independently covers the entire renderer, so the status bar area is not exposed during fade-in.
    */
   setResponsiveTransitionLayout(
     viewportRegion: ResponsiveRendererRegion,
@@ -538,7 +542,7 @@ export class LaunchScene {
     this.transitionHost.scale.set(1);
   }
 
-  /** 使用角色节点和 Base Reel 的独立画布锚点。 */
+  /** 使用角色节点和 Base Reel 的独立画布锚点。 / English: Independent canvas anchor using character node and Base Reel. */
   setMobileNodeTransforms(
     character: ResponsiveNodeTransform,
     profile: MobileLayoutProfile,
@@ -560,7 +564,7 @@ export class LaunchScene {
     this.characterAnimationListener = listener;
   }
 
-  /** 原始轨迹控制器使用的确切收集目标：头骨。 */
+  /** 原始轨迹控制器使用的确切收集目标：头骨。 / English: The exact collection target used by the original trajectory controller: skulls. */
   getCharacterCollectTarget(relativeTo: Container): Point {
     const monster = this.authoredMonster;
     const head = monster?.skeleton.findBone("head");
@@ -570,7 +574,7 @@ export class LaunchScene {
     return relativeTo.toLocal(this.monsterHost.toGlobal(new Point(0, 118)));
   }
 
-  /** 预设的 Rage 跟踪目标的运行时后置条件。 */
+  /** 预设的 Rage 跟踪目标的运行时后置条件。 / English: Runtime postconditions for preset Rage tracking targets. */
   get hasCharacterCollectBone(): boolean {
     return Boolean(this.authoredMonster?.skeleton.findBone("head"));
   }
@@ -584,7 +588,7 @@ export class LaunchScene {
     this.shockwave.visible = !active;
   }
 
-  /** 启动本机启动轨道而不添加主机级动作/音频。 */
+  /** 启动本机启动轨道而不添加主机级动作/音频。 / English: Launch a native launch track without adding host-level actions/audio. */
   startAuthoredIntro(): void {
     this.cancelWheelChestPoundReentry();
     const monster = this.authoredMonster;
@@ -615,17 +619,17 @@ export class LaunchScene {
         hiddenEntry.mixDuration = 0;
         monster.update(0);
       }
-      // `playSpineData` 分离 INTRO 之前的临时隐藏条目。如果没有这个清除，
-      // Spine 会将 `hidden`（或较早的预加载空闲）保留在 `mixingFrom` 中，即使 INTRO 本身声明零交叉淡入淡出。
+      // `playSpineData` 分离 INTRO 之前的临时隐藏条目。如果没有这个清除， / English: `playSpineData` Temporarily hidden entry before detaching INTRO. Without this clear,
+      // Spine 会将 `hidden`（或较早的预加载空闲）保留在 `mixingFrom` 中，即使 INTRO 本身声明零交叉淡入淡出。 / English: Spine will keep `hidden` (or earlier preloaded idle) in `mixingFrom` even if the INTRO itself declares a zero crossfade.
       monster.state.clearTrack(PRIMAL_CHARACTER_TRACK.body);
       const introEntry = monster.state.setAnimation(PRIMAL_CHARACTER_TRACK.body, "intro", false);
-      // 官方INTRO明确声明了crossFadeTime：0。
+      // 官方INTRO明确声明了crossFadeTime：0。 / English: The official INTRO explicitly states crossFadeTime: 0.
       introEntry.mixDuration = 0;
       this.characterIntroActive = true;
       monster.update(0);
       this.authoredIntroTimelineControlled = true;
     } else if (monster) {
-      // 捆绑的字符始终包含 INTRO。如果损坏/自定义资产在启动控制器显式启动此状态之前未打开主体门而忽略了回退行为，请保持回退行为可用。
+      // 捆绑的字符始终包含 INTRO。如果损坏/自定义资产在启动控制器显式启动此状态之前未打开主体门而忽略了回退行为，请保持回退行为可用。 / English: Bundled characters always contain INTRO. If a broken/custom asset ignores the fallback behavior by not opening the body door before the launch controller explicitly initiates this state, keep the fallback behavior available.
       this.characterBodyReleased = true;
       this.applyPersistentBody(monster);
     }
@@ -643,7 +647,7 @@ export class LaunchScene {
     }
   }
 
-  /** 从过渡的权威时间推进角色和介绍标志。 */
+  /** 从过渡的权威时间推进角色和介绍标志。 / English: Advance the character and intro logo from the transition's authoritative time. */
   seekAuthoredIntro(timeMs: number): void {
     if (!this.authoredIntroTimelineControlled || !Number.isFinite(timeMs)) return;
     const targetMs = Math.max(this.authoredIntroTimeMs, Math.max(0, timeMs));
@@ -655,13 +659,13 @@ export class LaunchScene {
     if (this.characterIntroActive) this.advanceCharacterIntroTask(deltaSeconds * 1_000);
   }
 
-  /** 镜像捕获的过渡的搜索到结束跳过分支。 */
+  /** 镜像捕获的过渡的搜索到结束跳过分支。 / English: Mirror captures the search-to-end skip branch of the transition. */
   completeAuthoredIntro(skipped: boolean): void {
     this.cancelWheelChestPoundReentry();
     this.authoredIntroTimelineControlled = false;
     this.authoredIntroTimeMs = 0;
     if (this.characterIntroActive && skipped) {
-      // INTRO_SKIPPED 查找创作剪辑的确切结尾，然后立即输入 LOOP。自然铬完成被故意排除：8.066701 s 字符状态比 5 s UI 转换寿命更长。
+      // INTRO_SKIPPED 查找创作剪辑的确切结尾，然后立即输入 LOOP。自然铬完成被故意排除：8.066701 s 字符状态比 5 s UI 转换寿命更长。 / English: INTRO_SKIPPED Finds the exact end of the authoring clip and immediately enters the LOOP. Natural Chromium completion was intentionally excluded: 8.066701 s character state lasts longer than 5 s UI transition life.
       this.finishCharacterIntroToLoop();
       this.releaseAuthoredIntroAura();
     }
@@ -679,7 +683,7 @@ export class LaunchScene {
     const artworkLoad = this.performArtworkLoad(signal);
     this.artworkLoad = artworkLoad;
     void artworkLoad.catch(() => {
-      // 暂时的提取失败可以重试，但成功的并发预加载绝不能多次附加预设的角色。
+      // 暂时的提取失败可以重试，但成功的并发预加载绝不能多次附加预设的角色。 / English: Temporary extraction failures can be retried, but successful concurrent preloading must not attach a preset character more than once.
       if (this.artworkLoad === artworkLoad) this.artworkLoad = null;
     });
     return artworkLoad;
@@ -723,7 +727,7 @@ export class LaunchScene {
       let logo: Spine | null = null;
       try {
         monster = createSpineView(data.character);
-        // 原始桌面ppsApe布局：中心（640,360），比例0.72。父级仍然是时间线驱动的，但没有缩放；孩子携带完整预设的桌面舞台变换。
+        // 原始桌面ppsApe布局：中心（640,360），比例0.72。父级仍然是时间线驱动的，但没有缩放；孩子携带完整预设的桌面舞台变换。 / English: Original desktop ppsApe layout: center (640,360), scale 0.72. The parent is still timeline-driven, but without scaling; the child carries a full set of preset desktop stage transformations.
         monster.position.set(
           PRIMAL_DESKTOP_CHARACTER_SKELETON_TRANSFORM.x,
           PRIMAL_DESKTOP_CHARACTER_SKELETON_TRANSFORM.y,
@@ -758,7 +762,7 @@ export class LaunchScene {
       }
     });
 
-    // 即使一个分支被拒绝，也要等待两个分支，因此较慢的同级分支永远无法稍后完成并泄漏无主的分阶段 Spine 视图。
+    // 即使一个分支被拒绝，也要等待两个分支，因此较慢的同级分支永远无法稍后完成并泄漏无主的分阶段 Spine 视图。 / English: Even if one branch is rejected, both branches are waited for, so the slower sibling branch never completes later and leaks the unowned staged spine view.
     const [bitmapResult, authoredResult] = await Promise.allSettled([bitmapLoad, authoredLoad]);
     const failure = signal?.aborted
       ? signal.reason ?? new Error("Launch artwork load was aborted")
@@ -856,8 +860,8 @@ export class LaunchScene {
       } else if (!loop && hasBodyContinuation) {
         this.idleSchedulerActive = false;
         this.idleLoopElapsedMs = 0;
-        // 官方 Character 状态任务将预设的 Spine 持续时间限制为整数毫秒。特别是，
-        // win 的 Float32 1.500000119 秒的持续时间恰好在 1,500 毫秒处传递。
+        // 官方 Character 状态任务将预设的 Spine 持续时间限制为整数毫秒。特别是， / English: The official Character status task limits the preset Spine duration to an integer number of milliseconds. in particular,
+        // win 的 Float32 1.500000119 秒的持续时间恰好在 1,500 毫秒处传递。 / English: win's Float32 has a duration of 1.500000119 seconds delivered at exactly 1,500 milliseconds.
         this.idleResumeRemainingMs = Math.max(1, Math.floor(entry.animationEnd * 1_000));
         this.idleResumeToBase = continuation === CHARACTER_BODY_CONTINUATION_ANIMATION.base
           && this.persistentPresentation.body === "base";
@@ -881,7 +885,7 @@ export class LaunchScene {
     return true;
   }
 
-  /** PPS 收集叠加在轨道 0 上狂暴，而随机身体反应在轨道 1 上运行。 */
+  /** PPS 收集叠加在轨道 0 上狂暴，而随机身体反应在轨道 1 上运行。 / English: PPS collection stacks up on track 0 for rage, while random body reactions run on track 1. */
   playCharacterCollect(random = Math.random()): boolean {
     const bodyPlayed = this.playCharacterAnimation(
       characterCollectAnimationForRandom(random),
@@ -913,6 +917,8 @@ export class LaunchScene {
   /**
    * 仅供最终特性退出屏障调用。正常状态变化仍走 150 毫秒混合；这里先撤销全部旧特性
    * TrackEntry，再从设置姿势无混合地重放已提交的 Base 持久表现，保证退出 Promise 的首帧干净。
+   *
+   * 英文 / English: Called only for the final feature-exit barrier. Normal state changes still use the 150 ms mix; here every stale feature TrackEntry is revoked first, then the committed persistent Base presentation is replayed from setup pose with no mix so the exit Promise produces a clean first frame.
    */
   settleFeatureExit(): void {
     const monster = this.authoredMonster;
@@ -947,8 +953,8 @@ export class LaunchScene {
       && body !== "feature"
       && this.idleResumeRemainingMs > 0
       && this.idleResumeToFeature) {
-      // 仅连续功能退出必须撤销 WIN_FEATURE 的挂起任务，即使它故意留下当前的 TrackEntry。否则，
-      // 稍后切换回功能可能会让过时的计时器通过 LOOP_FEATURE 回收轨道 1。
+      // 仅连续功能退出必须撤销 WIN_FEATURE 的挂起任务，即使它故意留下当前的 TrackEntry。否则， / English: Only continuous feature exits must undo WIN_FEATURE's pending task, even if it intentionally leaves the current TrackEntry behind. otherwise,
+      // 稍后切换回功能可能会让过时的计时器通过 LOOP_FEATURE 回收轨道 1。 / English: Switching back to functionality later may allow the stale timer to recycle track 1 via LOOP_FEATURE.
       this.idleResumeRemainingMs = 0;
       this.idleResumeToBase = false;
       this.idleResumeToFeature = false;
@@ -957,7 +963,7 @@ export class LaunchScene {
     if (restart) this.applyPersistentBody();
   }
 
-  /** EVOLVE 仅更改曲目 2/3；身体和特征颜色继续发挥作用。 */
+  /** EVOLVE 仅更改曲目 2/3；身体和特征颜色继续发挥作用。 / English: EVOLVE only changes track 2/3; body and feature colors continue to play a role. */
   setCharacterAuraLevel(level: number | null): void {
     const auraLevel = level === null ? null : Math.max(1, Math.min(6, Math.floor(level)));
     this.persistentPresentation = { ...this.persistentPresentation, auraLevel };
@@ -971,7 +977,7 @@ export class LaunchScene {
     this.applyPersistentBody();
   }
 
-  /** INTRO_HIDE 释放持久的 PPS 轨道而不触及身体时间。 */
+  /** INTRO_HIDE 释放持久的 PPS 轨道而不触及身体时间。 / English: INTRO_HIDE releases persistent PPS tracks without touching body time. */
   releaseAuthoredIntroAura(): void {
     if (this.characterAuraReleased) return;
     this.characterAuraReleased = true;
@@ -981,7 +987,7 @@ export class LaunchScene {
     monster.update(0);
   }
 
-  /** 预设的 INTRO 镀铬后尾部的减少运动切换。 */
+  /** 预设的 INTRO 镀铬后尾部的减少运动切换。 / English: Preset INTRO chromed rear rear for reduced motion switching. */
   completeActiveCharacterIntroForReducedMotion(): boolean {
     if (!this.characterIntroActive) return false;
     this.authoredIntroTimelineControlled = false;
@@ -993,6 +999,8 @@ export class LaunchScene {
 
   /**
    * 仅测试保留。时间线搜索仍然具有权威性，而时间线后的角色和空闲时钟可以冻结在精确的捕获帧上。
+   *
+   * 英文 / English: Only testing reserved. Timeline searches remain authoritative, while characters and idle clocks behind the timeline can be frozen at the exact captured frame.
    */
   setCharacterIntroCapturePaused(paused: boolean): boolean {
     if (!this.authoredMonster) return false;
@@ -1000,7 +1008,7 @@ export class LaunchScene {
     return true;
   }
 
-  /** 在渲染器拆卸之前取消主机拥有的 Character 时钟。 */
+  /** 在渲染器拆卸之前取消主机拥有的 Character 时钟。 / English: Cancels the host-owned Character clock before renderer teardown. */
   cancelCharacterStateTasks(): void {
     this.cancelWheelChestPoundReentry();
     this.characterIntroCapturePaused = false;
@@ -1014,6 +1022,8 @@ export class LaunchScene {
   /**
    * 浏览器测试夹具用于精确推进 Base WIN 转换。正常 RAF 播放无法进入此接口，
    * 因为它要求原生 Character 已暂停，并且时钟必须是 Pass53 白名单中的三种之一。
+   *
+   * 英文 / English: Browser test fixtures are used to accurately drive Base WIN conversions. Normal RAF playback cannot enter this interface as it requires the native Character to be paused and the clock to be one of the three in the Pass53 whitelist.
    */
   advanceBaseWinCharacterCapture(elapsedMs: number): boolean {
     const monster = this.authoredMonster;
@@ -1031,8 +1041,8 @@ export class LaunchScene {
 
     let remainingMs = elapsedMs;
     while (remainingMs > 0) {
-      // 切勿让一个步骤跨越待处理的 1,500 毫秒任务边界。这使得 1,650 毫秒路线恰好为 "1,500 then 150"，
-      // 而每个 Spine 更新仍保持在渲染器的普通 64 毫秒追赶范围内。
+      // 切勿让一个步骤跨越待处理的 1,500 毫秒任务边界。这使得 1,650 毫秒路线恰好为 "1,500 then 150"， / English: Never allow a step to cross the 1,500 ms boundary of a pending task. This makes the 1,650 millisecond route exactly "1,500 then 150",
+      // 而每个 Spine 更新仍保持在渲染器的普通 64 毫秒追赶范围内。 / English: And each Spine update remains within the renderer's normal 64ms catch-up range.
       const handoffBoundaryMs = this.idleResumeRemainingMs > 0
         ? this.idleResumeRemainingMs
         : remainingMs;
@@ -1047,7 +1057,7 @@ export class LaunchScene {
       this.updateCharacterIdle(stepMs, true);
       remainingMs = Math.max(0, remainingMs - stepMs);
     }
-    // Spine 在应用期间释放完全消耗的 mixingFrom 链接。最终的零增量应用使得精确的 150 毫秒混合完成姿势可观察到。
+    // Spine 在应用期间释放完全消耗的 mixingFrom 链接。最终的零增量应用使得精确的 150 毫秒混合完成姿势可观察到。 / English: Spine releases fully consumed mixingFrom links during application. The final zero-increment application makes an exact 150 millisecond blend finish observable.
     monster.update(0);
     enforcePrimalRegionBlendModes(monster);
     return true;
@@ -1057,6 +1067,8 @@ export class LaunchScene {
    * 浏览器测试夹具用于精确推进 Wheel WIN_FEATURE。生产入口无法到达此接口：
    * 制作好的播放必须已暂停，轨道 1 必须持有待处理的特性 WIN 任务，
    * 并且请求的时钟必须是 Pass54 的三个冻结着陆相对边界之一。
+   *
+   * 英文 / English: The browser test fixture is used to precisely advance the Wheel WIN_FEATURE. This interface cannot be reached by the production portal: the produced playback must be paused, track 1 must hold a pending feature WIN task, and the requested clock must be one of Pass54's three freeze landing relative boundaries.
    */
   advanceWheelWinFeatureCharacterCapture(elapsedMs: number): boolean {
     const monster = this.authoredMonster;
@@ -1076,7 +1088,7 @@ export class LaunchScene {
 
     let remainingMs = elapsedMs;
     while (remainingMs > 0) {
-      // 完全按照官方规定的 1,500 毫秒状态任务边界进行分割。这可以防止 1,650 毫秒的捕获跨越切换，并使每个 Spine 更新保持在普通渲染器追赶范围内。
+      // 完全按照官方规定的 1,500 毫秒状态任务边界进行分割。这可以防止 1,650 毫秒的捕获跨越切换，并使每个 Spine 更新保持在普通渲染器追赶范围内。 / English: Split exactly according to the official 1,500 ms state task boundary. This prevents the 1,650 millisecond capture span switch and keeps each Spine update within normal renderer catch-up range.
       const handoffBoundaryMs = this.idleResumeRemainingMs > 0
         ? this.idleResumeRemainingMs
         : remainingMs;
@@ -1099,6 +1111,8 @@ export class LaunchScene {
   /**
    * FEATURE_CHEST_LOOP 的仅浏览器固定步骤。它只能从真实的、暂停的 S0 所有者条目开始，并接受四个冻结的 Pass55 检查点。
    * 生产RAF播放时无法通过此缝进行寻道。
+   *
+   * 英文 / English: Browser-only fixed steps for FEATURE_CHEST_LOOP. It can only start with a real, suspended S0 owner entry and accept four frozen Pass55 checkpoints. Production RAF playback cannot seek through this seam.
    */
   advanceWheelChestPoundCapture(elapsedMs: number): boolean {
     const monster = this.authoredMonster;
@@ -1148,8 +1162,8 @@ export class LaunchScene {
       || WHEEL_CHEST_POUND_REENTRY_MS - exactTaskElapsedMs < WHEEL_CHEST_POUND_TICK_EPSILON
       ? 0
       : exactTaskElapsedMs;
-    // Spine 在添加当前增量之前检查先前的混合。因此，重复 30 Hz 浮动步骤可以留下 150 ms，表示为 0.14999999999999886 s。仅关闭亚纳秒捕获缺陷，
-    // 然后再次应用，以便精确的 150 毫秒边界释放 mixingFrom。
+    // Spine 在添加当前增量之前检查先前的混合。因此，重复 30 Hz 浮动步骤可以留下 150 ms，表示为 0.14999999999999886 s。仅关闭亚纳秒捕获缺陷， / English: Spine checks the previous mix before adding the current increment. Therefore, repeating the 30 Hz float step leaves 150 ms, expressed as 0.14999999999999886 s. Only sub-nanosecond capture defects are turned off,
+    // 然后再次应用，以便精确的 150 毫秒边界释放 mixingFrom。 / English: Then apply again so that mixingFrom is released on an exact 150 millisecond boundary.
     const bodyEntry = monster.state.getCurrent(PRIMAL_CHARACTER_TRACK.body);
     if (elapsedMs === WHEEL_CHEST_POUND_REENTRY_MS + 150
       && bodyEntry?.mixingFrom
@@ -1162,18 +1176,18 @@ export class LaunchScene {
         enforcePrimalRegionBlendModes(monster);
       }
     }
-    // 运行时在应用期间释放完全消耗的 mixingFrom 链接。
+    // 运行时在应用期间释放完全消耗的 mixingFrom 链接。 / English: The runtime releases fully consumed mixingFrom links during application.
     monster.update(0);
     enforcePrimalRegionBlendModes(monster);
     return true;
   }
 
-  /** 第一个 Pass55 测试场景转发器使用的兼容性拼写。 */
+  /** 第一个 Pass55 测试场景转发器使用的兼容性拼写。 / English: Compatibility spelling used by the first Pass55 test scenario transponder. */
   advanceWheelChestPoundCharacterCapture(elapsedMs: number): boolean {
     return this.advanceWheelChestPoundCapture(elapsedMs);
   }
 
-  /** 确定性 Pass55 装置的冻结、只读状态/任务证据。 */
+  /** 确定性 Pass55 装置的冻结、只读状态/任务证据。 / English: Deterministic Pass55 device's frozen, read-only state/mission evidence. */
   getWheelChestPoundDiagnostics(): WheelChestPoundCaptureDiagnostics {
     const task = this.wheelChestPoundTask;
     const current = this.authoredMonster?.state.getCurrent(PRIMAL_CHARACTER_TRACK.body) ?? null;
@@ -1199,12 +1213,12 @@ export class LaunchScene {
     });
   }
 
-  /** 第一个 Pass55 测试场景转发器使用的兼容性拼写。 */
+  /** 第一个 Pass55 测试场景转发器使用的兼容性拼写。 / English: Compatibility spelling used by the first Pass55 test scenario transponder. */
   getWheelChestPoundCaptureDiagnostics(): WheelChestPoundCaptureDiagnostics {
     return this.getWheelChestPoundDiagnostics();
   }
 
-  /** 冻结浏览器测试夹具的只读证据；值永远不会提供呈现状态。 */
+  /** 冻结浏览器测试夹具的只读证据；值永远不会提供呈现状态。 / English: Freezes the browser test fixture for read-only evidence; the value never provides rendering state. */
   getCharacterIntroLifecycleDiagnostics(): CharacterIntroLifecycleDiagnostics {
     return Object.freeze({
       introActive: this.characterIntroActive,
@@ -1222,6 +1236,8 @@ export class LaunchScene {
    * 在不改变游戏逻辑的情况下为确定性截图准备场景。官方 Base 控制器不监听 SPIN_START：
    * 其 10 秒 LOOP/BREAK 调度器仍独立于转轴运动。
    * 一旦预设的介绍释放了身体轨迹，捕获页面可以请求中性零混合姿势，然后仅冻结随机空闲调度程序。
+   *
+   * 英文 / English: Prepare scenes for deterministic screenshots without changing game logic. The official Base controller does not listen to SPIN_START: its 10 second LOOP/BREAK scheduler is still independent of axis movement. Once the preset's introduction releases the body track, the capture page can request a neutral zero-blend pose and then freeze only the random idle scheduler.
    */
   prepareNeutralBaseCapture(): boolean {
     const monster = this.authoredMonster;
@@ -1238,9 +1254,9 @@ export class LaunchScene {
     this.idleResumeRemainingMs = 0;
     this.idleResumeToBase = true;
     this.idleResumeToFeature = false;
-    // 仅零混合持续时间仍将前面的 TrackEntry 保留为 `mixingFrom`，直到 AnimationState 前进。
-    // 捕获调节在此渲染回合中需要字面上的第一个 Base 空闲姿势。首先恢复预设的设置值，因为即使在主体 TrackEntry 分离后，
-    // 未加密的 INTRO 骨骼/插槽仍会保留其最后的值。
+    // 仅零混合持续时间仍将前面的 TrackEntry 保留为 `mixingFrom`，直到 AnimationState 前进。 / English: A zero mixing duration alone still leaves the previous TrackEntry as `mixingFrom` until the AnimationState advances.
+    // 捕获调节在此渲染回合中需要字面上的第一个 Base 空闲姿势。首先恢复预设的设置值，因为即使在主体 TrackEntry 分离后， / English: Capture conditioning requires literally the first Base idle pose in this rendering round. First restore the default setting values, because even after the body TrackEntry is detached,
+    // 未加密的 INTRO 骨骼/插槽仍会保留其最后的值。 / English: Unencrypted INTRO bones/slots still retain their last values.
     monster.skeleton.setToSetupPose();
     monster.state.clearTrack(PRIMAL_CHARACTER_TRACK.body);
     const entry = monster.state.setAnimation(
@@ -1253,7 +1269,7 @@ export class LaunchScene {
     return true;
   }
 
-  /** 只读浏览器测试夹具的只读证据；值永远不会提供呈现状态。 */
+  /** 只读浏览器测试夹具的只读证据；值永远不会提供呈现状态。 / English: Read-only evidence for the read-only browser test fixture; the value never provides rendering state. */
   getCharacterTrackDiagnostics(): readonly CharacterTrackDiagnostic[] {
     const state = this.authoredMonster?.state;
     if (!state) return [];
@@ -1307,7 +1323,7 @@ export class LaunchScene {
     const auraLevel = this.persistentPresentation.auraLevel;
     const aura = auraLevel === null ? null : `aura_${auraLevel}`;
     if (!aura || !monster.state.hasAnimation(aura)) {
-      // 官方 stopLayer 路径与空动画混合 150 毫秒。 clearTrack() 并不等效：Spine 故意将关键帧骨骼、附件和颜色冻结在上次应用的姿势中。
+      // 官方 stopLayer 路径与空动画混合 150 毫秒。 clearTrack() 并不等效：Spine 故意将关键帧骨骼、附件和颜色冻结在上次应用的姿势中。 / English: Official stopLayer path blends with empty animation for 150 milliseconds. clearTrack() is not equivalent: Spine intentionally freezes keyframe bones, attachments, and colors in the last applied pose.
       this.mixOutCharacterTrack(monster, PRIMAL_CHARACTER_TRACK.aura);
       this.mixOutCharacterTrack(monster, PRIMAL_CHARACTER_TRACK.particles);
       return;
@@ -1344,7 +1360,7 @@ export class LaunchScene {
     }
   }
 
-  /** 独立于 Spine 回调推进恢复状态任务。 */
+  /** 独立于 Spine 回调推进恢复状态任务。 / English: Advance the restore state task independently of Spine callbacks. */
   private advanceCharacterIntroTask(deltaMs: number): void {
     if (!this.characterIntroActive || deltaMs <= 0) return;
     this.characterIntroElapsedMs = Math.min(
@@ -1357,6 +1373,8 @@ export class LaunchScene {
 
   /**
    * INTRO_SKIP/可访问完成寻求确切的结束；自然任务在其 8,066 毫秒边界上进入 LOOP，无需等待 Spine 完成回调（预设的动画为 8,066.701 毫秒）。
+   *
+   * 英文 / English: INTRO_SKIP/Accessible Completion seeks an exact end; the natural task enters a LOOP on its 8,066 millisecond boundary without waiting for the Spine completion callback (the default animation is 8,066.701 milliseconds).
    */
   private finishCharacterIntroToLoop(seekToEnd = true): void {
     const monster = this.authoredMonster;
@@ -1378,7 +1396,7 @@ export class LaunchScene {
     this.applyPersistentBody(monster);
   }
 
-  /** 从这次调用开始，结果/特征动画拥有主体轨迹 1。 */
+  /** 从这次调用开始，结果/特征动画拥有主体轨迹 1。 / English: Starting from this call, the result/feature animation has body track 1. */
   private releaseCharacterBodyForTakeover(): void {
     if (this.characterIntroActive) this.authoredIntroTimelineControlled = false;
     this.characterIntroActive = false;
@@ -1406,13 +1424,13 @@ export class LaunchScene {
       this.idleResumeRemainingMs = Math.max(0, this.idleResumeRemainingMs - elapsed);
       if (this.idleResumeRemainingMs === 0
         && (this.idleResumeToBase || this.idleResumeToFeature)) {
-        // BREAK 和 Base WIN 拥有其完整剪辑的身体轨迹。 WIN_FEATURE 遵循 LOOP_FEATURE 之前相同的任务规则。仅在完整持续时间后才开始持久循环；
-        // Spine 的延迟 = 0 队列会提前将其混合到一个默认混合（150 毫秒）中。
+        // BREAK 和 Base WIN 拥有其完整剪辑的身体轨迹。 WIN_FEATURE 遵循 LOOP_FEATURE 之前相同的任务规则。仅在完整持续时间后才开始持久循环； / English: BREAK and Base WIN have their fully edited body tracks. WIN_FEATURE follows the same task rules as before LOOP_FEATURE. The persistence loop only starts after the full duration;
+        // Spine 的延迟 = 0 队列会提前将其混合到一个默认混合（150 毫秒）中。 / English: Spine's delay = 0 queue will be blended early into a default blend (150 milliseconds).
         this.applyPersistentBody(this.authoredMonster);
       }
       return;
     }
-    // 减少运动会冻结姿势回放，而不是状态/结果时钟。因此，上面未决的显式切换仍然只完成一次，而随机的十秒空闲中断时钟在这里保持暂停。
+    // 减少运动会冻结姿势回放，而不是状态/结果时钟。因此，上面未决的显式切换仍然只完成一次，而随机的十秒空闲中断时钟在这里保持暂停。 / English: Reducing motion freezes pose playback, not the status/result clock. Therefore, the pending explicit switch above still only completes once, while the random ten-second idle interrupt clock remains paused here.
     if (this.reducedMotion) return;
     if (!this.idleSchedulerActive) return;
     this.idleLoopElapsedMs += elapsed;
@@ -1439,6 +1457,8 @@ export class LaunchScene {
   /**
    * 官方的 FEATURE_CHEST_LOOP 状态会在每个预设的 115 个周期任务中重新进入一次，而不是仅依赖于 Spine 的内部循环标志。
    * 每一代所有者都与其安装的 TrackEntry 绑定。
+   *
+   * 英文 / English: The official FEATURE_CHEST_LOOP state is re-entered once per preset 115-cycle task, rather than relying solely on Spine's internal loop flags. Each generation owner is bound to its installed TrackEntry.
    */
   private updateWheelChestPound(deltaMs: number, allowCaptureStep = false): void {
     const task = this.wheelChestPoundTask;
@@ -1474,7 +1494,7 @@ export class LaunchScene {
     task.elapsedTicks += elapsedTicks;
     if (task.elapsedTicks < WHEEL_CHEST_POUND_TASK_TICKS) return;
 
-    // 5 个刻度的追赶上限小于 1 个 115 个刻度的任务周期，因此一次渲染器更新永远不会发出多个过时的自状态条目。
+    // 5 个刻度的追赶上限小于 1 个 115 个刻度的任务周期，因此一次渲染器更新永远不会发出多个过时的自状态条目。 / English: The catch-up cap of 5 ticks is less than 1 task cycle of 115 ticks, so a renderer update will never emit multiple stale self-state entries.
     task.elapsedTicks -= WHEEL_CHEST_POUND_TASK_TICKS;
     task.taskElapsedMs %= WHEEL_CHEST_POUND_REENTRY_MS;
     if (task.taskElapsedMs < WHEEL_CHEST_POUND_TICK_EPSILON

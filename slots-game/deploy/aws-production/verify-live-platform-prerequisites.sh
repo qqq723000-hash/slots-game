@@ -1,5 +1,7 @@
 #!/bin/sh
 # 在 VPC 内受保护执行器上验证集群 add-on；本脚本不会安装或修改任何资源。
+# English: Verify the cluster add-on on a protected executor within the VPC; this script does not install or
+# modify any resources.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -1229,6 +1231,9 @@ cloudfront_distribution_id=$(json_value cloudfront_distribution_id)
 
 # X-Frame-Options 会先于精确 CSP frame-ancestors 阻断跨源运营商 iframe；
 # 生产 Response Headers Policy 必须让制品提取出的单一 CSP 成为嵌入授权源。
+# English: X-Frame-Options will block cross-origin operator iframes before precise CSP frame-ancestors;
+# artifactsion Response Headers Policy must enable the single CSP extracted by the artifact to be the embedded
+# authorization source.
 cloudfront_response_headers_policy_id=$(json_value cloudfront_response_headers_policy_id)
 "$aws_binary" cloudfront get-response-headers-policy-config \
   --id "$cloudfront_response_headers_policy_id" \
@@ -1256,6 +1261,9 @@ cloudfront_response_headers_policy_id=$(json_value cloudfront_response_headers_p
 
 # delivery 中的私有源站声明不能代替真实 S3 执行面。四项 Public Access
 # Block 必须同时开启；否则攻击者可以绕过 CloudFront/WAF 直读源站并制造成本。
+# English: Private origin declarations in delivery are not a substitute for the real S3 execution surface. Four
+# Public Access Block must be turned on at the same time; otherwise an attacker can bypass CloudFront/WAF and
+# directly read the origin site and create costs.
 web_bucket_name=$(json_value web_bucket_name)
 aws_account_id=$(json_value aws_account_id)
 "$aws_binary" s3api get-public-access-block \
@@ -1276,6 +1284,9 @@ aws_account_id=$(json_value aws_account_id)
 
 # Public Access Block 不会阻止策略向某个具体外部 AWS principal 授权；继续
 # 精确回读 bucket policy，确保唯一读取 Allow 仍绑定当前 CloudFront distribution。
+# English: Public Access Block does not prevent the policy from authorizing a specific external AWS principal;
+# continue read-back the bucket policy accurately to ensure that the only read Allow is still bound to the
+# current CloudFront distribution.
 "$aws_binary" s3api get-bucket-policy \
   --bucket "$web_bucket_name" \
   --expected-bucket-owner "$aws_account_id" \

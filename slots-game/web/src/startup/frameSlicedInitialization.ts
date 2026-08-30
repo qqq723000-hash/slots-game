@@ -10,6 +10,8 @@ export interface FrameSlicedInitializationOptions {
 
 /**
  * 仅在动画帧边界之后运行有界同步构造工作。调用者拥有实际对象；该助手保证没有任何调用超过 `batchSize` 并且取消会阻止突变。
+ *
+ * 英文 / English: Bounded sync construction work is run only after animation frame boundaries. The caller owns the actual object; the helper guarantees that no calls exceed `batchSize` and cancellation will prevent mutations.
  */
 export async function runFrameSlicedInitialization(
   total: number,
@@ -46,7 +48,7 @@ export async function runFrameSlicedInitialization(
   }
 }
 
-/** 两个 rAF 边界保证调用者插入的 DOM 绘制一次。 */
+/** 两个 rAF 边界保证调用者插入的 DOM 绘制一次。 / English: Two rAF bounds guarantee that the DOM inserted by the caller is drawn once. */
 export function waitForPaintedFrame(
   requestFrame: FrameRequest = defaultFrameRequest,
 ): Promise<void> {
@@ -62,14 +64,14 @@ function defaultFrameRequest(): Promise<void> {
       clearTimeout(fallback);
       resolve();
     };
-    // 浏览器在后台选项卡中暂停 rAF。当 rAF 可用时，有界计时器保留取消/超时语义，而不与可见帧竞争。
+    // 浏览器在后台选项卡中暂停 rAF。当 rAF 可用时，有界计时器保留取消/超时语义，而不与可见帧竞争。 / English: Browser pauses rAF in background tab. When rAF is available, bounded timers preserve cancellation/timeout semantics without competing with visible frames.
     const fallback = setTimeout(finish, 50);
     if (typeof requestAnimationFrame === "function") {
       try {
         requestAnimationFrame(finish);
         return;
       } catch {
-        // Polyfill 可以在窗口/计时器主机准备就绪之前公开 rAF。有界定时器仍然是权威的兼容性路径。
+        // Polyfill 可以在窗口/计时器主机准备就绪之前公开 rAF。有界定时器仍然是权威的兼容性路径。 / English: Polyfill can expose rAF before the window/timer host is ready. Bounded timers remain the authoritative compatibility path.
       }
     }
   });

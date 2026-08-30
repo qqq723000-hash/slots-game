@@ -1,6 +1,8 @@
 #!/usr/bin/env ruby
 
 # 该门禁校验正式 values 的实际 Helm 输出，不接受示例域名、宽松网络或未绑定摘要的镜像。
+# English: This gate validates the actual Helm output from production values and rejects example domains,
+# permissive networks, and images that are not digest-bound.
 require "json"
 require "yaml"
 

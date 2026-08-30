@@ -1,4 +1,4 @@
-// @ts-expect-error Vitest 在 Node 中运行，而浏览器 tsconfig 故意不声明 Node 全局类型。
+// @ts-expect-error Vitest 在 Node 中运行，而浏览器 tsconfig 故意不声明 Node 全局类型。 / English: @ts-expect-error Vitest runs in Node, and the browser tsconfig intentionally does not declare the Node global type.
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -197,8 +197,8 @@ describe("fluid mobile DOM layout", () => {
         scheduleObservedLayoutSync: () => void;
       }).scheduleObservedLayoutSync.bind(overlay);
 
-      // ResizeObserver 与 window.resize 共用此路径；两种通知都不能在回调中
-      // 同步修改任一被观察的布局表面。
+      // ResizeObserver 与 window.resize 共用此路径；两种通知都不能在回调中 / English: ResizeObserver shares this path with window.resize; neither notification can be in a callback
+      // 同步修改任一被观察的布局表面。 / English: Synchronously modify any observed layout surface.
       schedule();
       schedule();
 

@@ -1,9 +1,17 @@
-# ViewportLetterbox Specification
+# 视口等比留黑边规范 / Viewport Letterbox Specification
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## 中文摘要 / Chinese summary
+
+本规范定义桌面端对称裁剪与移动端等比包含的连续视口投影，超出作者画布的区域必须为黑色且不可交互。渲染器、DOM 覆盖层、命中区和帮助界面必须共用同一坐标系和统一缩放因子，单纯调整视口不得触发状态、下注、演示或素材重载。仓库测试覆盖常见参考尺寸和方向往返，但真实浏览器安全区、设备像素比变化与目标终端验收仍需交付环境证据。
+
+## English summary / 英文摘要
+
+This specification defines continuous viewport projection with symmetric desktop cropping and isotropic mobile containment, while every region outside the authored surface stays black and non-interactive. The renderer, DOM overlay, hit areas, and help surface must share one coordinate system and one uniform scale, and resize alone must not reload state, wagers, presentation, or assets. Repository tests cover reference sizes and orientation round trips, while real-browser safe areas, device-pixel-ratio changes, and target-device acceptance still require delivery-environment evidence.
 
 ## Overview
 

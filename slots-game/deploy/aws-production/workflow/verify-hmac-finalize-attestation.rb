@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 # 验证私网 runner 对过期原停机证据所做的短时实时复证，并绑定同一 delivery、lock 与 target 轮换。
+# English: Verify the private runner's short-term real-time verification of the expired original outage
+# evidence, and bind the same delivery, lock and target rotation.
 require "digest"
 require "json"
 require "time"

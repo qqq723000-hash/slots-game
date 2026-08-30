@@ -14,7 +14,7 @@ import { createSpineView, type Spine } from "./spine/SpineAdapter";
 import { loadPrimalSpineData } from "./spine/PrimalSpineAssets";
 import { LOGICAL_WIDTH } from "./theme";
 
-/** 捕获的 `GameReelSuspenseView` 使用的精确轨道和剪辑。 */
+/** 捕获的 `GameReelSuspenseView` 使用的精确轨道和剪辑。 / English: The exact track and clip used by the captured `GameReelSuspenseView`. */
 export const PRIMAL_ANTICIPATION_TRACK = Object.freeze({
   loop: 0,
   transition: 1,
@@ -35,16 +35,20 @@ export const PRIMAL_ANTICIPATION_ANIMATION_MS = Object.freeze({
 /**
  * 来自 1200x900 `main.json` 的原始转轴悬念根节点偏移。集成方通常将此视图安装在制作好的转轴叠层原点，
  * 并选择 Primal Rampage 的三卷轴游戏的第三个条目。
+ *
+ * 英文 / English: Original pivot root node offset from 1200x900 `main.json`. Integrators typically install this view at the origin of the prepared reel stack and select the third entry of Primal Rampage's three-reel game.
  */
 export const PRIMAL_ANTICIPATION_REEL_X = Object.freeze([-202.25, 0, 244] as const);
 
-/** 悬念根节点在未缩放的三行转轴合成中使用的原生缩放。 */
+/** 悬念根节点在未缩放的三行转轴合成中使用的原生缩放。 / English: The native scaling used by the suspense root node in an unscaled three-row reel composition. */
 export const PRIMAL_ANTICIPATION_BASE_SCALE = 0.8;
 
 /**
  * 悬念 Spine 原本位于转轴影片片段下方，并已继承桌面舞台适配。我们的 Pixi 视图作为同级节点安装，
  * 因此需要补上舞台适配和明确测量的根节点偏移。这些值让实时 ADD 轮廓与官方 Pass45 的 06-16 帧对齐，
  * 同时不更改制作好的动画及其 333ms 隐藏过程。
+ *
+ * 英文 / English: The Suspense Spine was originally located below the reel movie clip and has been inherited from the tabletop stage adaptation. Our Pixi view is installed as a sibling node, so it needs to be patched with stage adaptation and an explicitly measured root node offset. These values ​​align the real-time ADD outline with frames 06-16 of the official Pass45, while not changing the finished animation and its 333ms hidden process.
  */
 export const PRIMAL_ANTICIPATION_RUNTIME_FIT = Object.freeze({
   scaleX: 0.855,
@@ -76,6 +80,8 @@ export interface PrimalReelPresentationTransform {
 /**
  * 将制作好的第三轴悬念根节点连接到实时机台。参考 x 偏移量使用悬念骨架的 0.8x 舞台空间，
  * y 原点位于转轴窗口中心线。
+ *
+ * 英文 / English: Connect the prepared third-axis suspense root node to the real-time machine. The reference x offset uses the 0.8x stage space of the suspense arm, and the y origin is at the pivot window centerline.
  */
 export function primalAnticipationTransform(
   reelCompositionScale: number,
@@ -104,6 +110,8 @@ export function primalAnticipationTransform(
 /**
  * 将悬念 Spine 附加到实时转轴窗口，而不是固定的 1280x720 制作舞台。转轴与悬念在游戏摄像机中是同级节点，
  * 因此卷轴的当前变换和稳定的本地呈现边界是此处所需的完整投影。这也遵循行调整大小几何形状，而不将效果与桌面常量耦合。
+ *
+ * 英文 / English: Attach the suspense spine to the live reel window instead of the fixed 1280x720 production stage. Reels and suspense are sibling nodes in the game camera, so the current transform of the reels and the stable local rendering bounds are the full projection required here. This also respects the row resize geometry without coupling the effect to desktop constants.
  */
 export function primalAnticipationTransformFromReel(
   reel: PrimalReelPresentationTransform,
@@ -139,7 +147,7 @@ export function primalAnticipationTransformFromReel(
 }
 
 export interface AnticipationViewOptions {
-  /** 测试/主机时钟接口；默认为浏览器调度程序。 */
+  /** 测试/主机时钟接口；默认为浏览器调度程序。 / English: Test/host clock interface; defaults to browser scheduler. */
   readonly schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly cancelSchedule?: (handle: ReturnType<typeof setTimeout>) => void;
 }
@@ -173,6 +181,8 @@ export interface AnticipationPerspectiveDiagnostics
 
 /**
  * 预期发光帧位于不透明的 RGB 图集页面上：黑色是附加零值，不是可见背景。在序列附件交换后重新断言 Spine 插槽和实时 Pixi 可渲染。
+ *
+ * 英文 / English: The expected glow frame is on an opaque RGB gallery page: black is the additional zero value, not the visible background. Re-assert Spine slots and real-time Pixi renderables after sequence attachment swapping.
  */
 export function enforceAnticipationAdditiveSlots(view: Spine | null): number {
   if (!view) return 0;
@@ -185,8 +195,8 @@ export function enforceAnticipationAdditiveSlots(view: Spine | null): number {
     const attachment = slot.getAttachment() as null | {
       region?: null | { name?: string };
     };
-    // 资产图集通过区域路径编码叠加材质。此序列的二进制槽元数据为 NORMAL，
-    // 因此仅检查 slot.data.blendMode 会将不透明的 RGB 页面公开为黑色矩形。
+    // 资产图集通过区域路径编码叠加材质。此序列的二进制槽元数据为 NORMAL， / English: Asset Atlas overlays materials via area path encoding. The binary slot metadata for this sequence is NORMAL,
+    // 因此仅检查 slot.data.blendMode 会将不透明的 RGB 页面公开为黑色矩形。 / English: So just checking slot.data.blendMode will expose the opaque RGB page as a black rectangle.
     const atlasBlend = attachment?.region?.name?.startsWith("add/")
       ? BLEND_MODES.ADD
       : slot.data.blendMode;
@@ -200,6 +210,8 @@ export function enforceAnticipationAdditiveSlots(view: Spine | null): number {
 
 /**
  * 原生 Spine 第三卷预期。轨道 0 拥有不间断循环；轨道 1 拥有 `in` 和 `hide`，与捕获的控制器完全相同。
+ *
+ * 英文 / English: Native Spine Volume 3 anticipated. Track 0 has a non-stop loop; Track 1 has `in` and `hide`, exactly like the captured controller.
  */
 export class AnticipationView extends Container {
   private readonly schedule: NonNullable<AnticipationViewOptions["schedule"]>;
@@ -236,13 +248,13 @@ export class AnticipationView extends Container {
     this.perspectiveFilter.setCoordinateScale(coordinateScale);
   }
 
-  /** 绑定真实的ReelSet主机；不存在独立猜测的舞台配合。 */
+  /** 绑定真实的ReelSet主机；不存在独立猜测的舞台配合。 / English: Bind to the real ReelSet host; there is no independently guessed stage coordination. */
   syncToReelHost(host: Pick<ReelSetView, "getAnticipationHostProjection">): void {
     this.reelHost = host;
     this.applyReelHostProjection(host.getAnticipationHostProjection());
   }
 
-  /** 确定性浏览器证据的只读物理通行事实。 */
+  /** 确定性浏览器证据的只读物理通行事实。 / English: Read-only physical access facts for deterministic browser evidence. */
   getPerspectiveDiagnostics(): AnticipationPerspectiveDiagnostics {
     const angle = this.perspectiveFilter.uniforms.uAngle as ArrayLike<number>;
     return Object.freeze({
@@ -313,6 +325,8 @@ export class AnticipationView extends Container {
   /**
    * 普通转轴撞击会播放原生的 333ms 隐藏动画。快速停止/取消的调用方传入 `true`，
    * 确保不会有悬念帧泄漏到下一轮。
+   *
+   * 英文 / English: Normal reel collision plays the native 333ms hidden animation. Callers of quick stop/cancel pass `true` to ensure no suspense frames are leaked to the next round.
    */
   stop(immediate = false): void {
     if (this.disposed) return;
@@ -339,7 +353,7 @@ export class AnticipationView extends Container {
     this.stop(true);
   }
 
-  /** 在子 Spine 更新此帧后重新应用预设的混合。 */
+  /** 在子 Spine 更新此帧后重新应用预设的混合。 / English: Reapplies the preset's blend after the child spine updates this frame. */
   override updateTransform(): void {
     if (this.reelHost) {
       this.applyReelHostProjection(this.reelHost.getAnticipationHostProjection());
@@ -411,7 +425,7 @@ export class AnticipationView extends Container {
     this.rotation = host.rotation;
     this.alpha = host.alpha;
     this.renderable = host.renderable;
-    // 不要仅仅因为 desiredActive 已经是 false 就折叠预设的 333ms 隐藏。隐藏柜可能会立即压制通行证；否则，过渡轨道仍然是其可见性所有者。
+    // 不要仅仅因为 desiredActive 已经是 false 就折叠预设的 333ms 隐藏。隐藏柜可能会立即压制通行证；否则，过渡轨道仍然是其可见性所有者。 / English: Don't collapse the default 333ms hide just because desiredActive is already false. A hidden cabinet may immediately suppress a pass; otherwise, the transition track remains its visibility owner.
     if (!host.visible) this.visible = false;
     else if (this.desiredActive) this.visible = true;
     this.perspectiveFilter.setCoordinateScale(projection.perspectiveResolution);

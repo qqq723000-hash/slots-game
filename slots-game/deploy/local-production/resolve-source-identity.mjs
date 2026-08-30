@@ -49,6 +49,9 @@ function optionalGeneratedInput(path, kind, label) {
 /**
  * Vite 会在项目根目录自动读取 .env、.env.local、.env.[mode] 等文件。它们通常
  * 被 Git 忽略，因此不能只依赖工作区 clean 检查。任何 .env* 条目（包括符号链接）
+// English: Vite will automatically read .env, .env.local, .env.[mode] and other files in the project root
+// directory. They usually Ignored by Git, so cannot rely solely on workspace clean checks. Any .env* entry
+// (including symlinks) All must be explicitly exited before the native candidate can be built.
  * 都必须在本机正式候选构建前显式退出。
  */
 export function assertNoViteEnvironmentFiles(projectRoot) {
@@ -74,6 +77,10 @@ export function assertNoViteEnvironmentFiles(projectRoot) {
 /**
  * Git clean 不报告 ignored 文件，但 Dockerfile.services 会把 server/** 纳入上下文，
  * Vite 也会读取 web 下的源码与 public 文件。仅允许 npm ci、Vite 和 Nginx 渲染器会
+// English: Git clean does not report ignored files, but Dockerfile.services will include server/** into the
+// context, Vite will also read source code and public files on the web. Only npm ci, Vite and Nginx renderers
+// are allowed Three paths for deterministic reconstruction; remaining ignored server/web bytes will fail and
+// close.
  * 确定性重建的三个路径；其余 ignored server/web 字节一律失败关闭。
  */
 export function assertNoIgnoredBuildInputs(projectRoot, runner = spawnSync) {
@@ -165,6 +172,9 @@ function readHead(projectRoot, runner) {
 
 /**
  * 固定本机生产候选的唯一源码身份。显式 override 只是对 HEAD 的逐字节断言，不能
+// English: Fixed unique source identity for native artifactsion candidates. Explicit override is only a
+// byte-by-byte assertion of HEAD and cannot Rewrite the identity; failure in any step of HEAD, status or review
+// will result in immediate failure and shutdown.
  * 改写身份；HEAD、status 或复核任一步骤失败都会立即失败关闭。
  */
 export function resolveLocalSourceIdentity(
@@ -195,6 +205,8 @@ export function resolveLocalSourceIdentity(
   assertNoIgnoredBuildInputs(resolvedProjectRoot, runner);
 
   // 被忽略的 .env* 可能在 status 之后出现；HEAD 二次读取同时关闭 ref/status 竞态。
+  // English: The ignored .env* may appear after status; HEAD is read twice and the ref/status race condition is
+  // closed at the same time.
   assertNoViteEnvironmentFiles(resolvedProjectRoot);
   const secondHead = readHead(resolvedProjectRoot, runner);
   if (secondHead.output !== firstHead.output) fail("Git HEAD changed while source identity was resolved");

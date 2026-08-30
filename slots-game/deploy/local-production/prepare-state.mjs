@@ -41,6 +41,8 @@ function writeDerived(name, contents) {
     if (required(name) === contents.trim()) return;
   }
   // 派生 DSN/环境文件可在同一代初始材料上原子式重渲染；原始密钥从不经过此函数。
+  // English: Derived DSN/environment files can be atomically re-rendered on the same generation of the original
+  // assets; the original key never goes through this function.
   const temporary = resolve(
     secretsRoot,
     `.${name}.${process.pid}.${randomBytes(12).toString("hex")}.tmp`,
@@ -103,6 +105,8 @@ if (operators.schema !== "rgs-operators-v2" || !configuredOperator?.operatorId) 
 }
 
 // 镜像元数据由 bootstrap 在构建前注入；这里先拒绝伪造格式或带凭据的来源地址。
+// English: Image metadata is injected by bootstrap before building; here, forged or credentialed source
+// addresses are rejected.
 const imageCreated = requiredEnvironment(
   "LOCAL_PRODUCTION_IMAGE_CREATED",
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,

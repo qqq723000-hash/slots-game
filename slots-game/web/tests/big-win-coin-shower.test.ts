@@ -239,7 +239,7 @@ describe("captured Big Win coin shower", () => {
     await runBigWinCoinPoolInitialization(
       (start, count) => batches.push({ frame, start, count }),
       {
-    // 调用方无法意外覆盖生产环境的帧预算。
+    // 调用方无法意外覆盖生产环境的帧预算。 / English: Callers cannot accidentally override the production environment's frame budget.
         batchSize: 1_000,
         requestFrame: async () => { frame += 1; },
         onProgress: (fraction) => progress.push(fraction),
@@ -319,8 +319,8 @@ describe("captured Big Win coin shower", () => {
     await flushUntil(() => frameResolvers.length === 1);
     expect(frameResolvers).toHaveLength(1);
 
-    // 第二帧被阻塞时，一批 25 个 Sprite 只存在于本地对象池中。销毁所有者时，
-    // 必须取消并清理全部六个本地对象池。
+    // 第二帧被阻塞时，一批 25 个 Sprite 只存在于本地对象池中。销毁所有者时， / English: When the second frame is blocked, a batch of 25 sprites only exist in the local object pool. When destroying the owner,
+    // 必须取消并清理全部六个本地对象池。 / English: All six local object pools must be canceled and cleaned up.
     owner.destroy();
     expect(shower.destroyed).toBe(true);
     expect(shower.parent).toBeNull();

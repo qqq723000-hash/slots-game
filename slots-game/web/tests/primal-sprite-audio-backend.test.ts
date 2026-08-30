@@ -431,7 +431,7 @@ describe("PrimalSpriteAudioBackend", () => {
     await expect(manager.unlock()).resolves.toBe(true);
     await backend.whenBackgroundReady();
     expect(manager.isUnlocked).toBe(true);
-    // 先发出四个初始主请求，再为失败的资源包重试一次，随后进入延迟加载。
+    // 先发出四个初始主请求，再为失败的资源包重试一次，随后进入延迟加载。 / English: First make four initial main requests, then retry once for the failed resource package, and then enter lazy loading.
     expect(fetcher).toHaveBeenCalledTimes(6);
     expect(recording.decodeAudioData).toHaveBeenCalledTimes(6);
   });
@@ -577,7 +577,7 @@ describe("PrimalSpriteAudioBackend", () => {
     expect(fallback.oneShots).toEqual([]);
     expect(fallback.loops).toEqual([]);
 
-    // 后续解锁会复用所有已解码的资源包。
+    // 后续解锁会复用所有已解码的资源包。 / English: Subsequent unlocks will reuse all decoded resource packages.
     await expect(backend.unlock()).resolves.toBe(true);
     expect(fetcher).toHaveBeenCalledTimes(5);
     expect(recording.decodeAudioData).toHaveBeenCalledTimes(5);
@@ -611,8 +611,8 @@ describe("PrimalSpriteAudioBackend", () => {
     backend.playOneShot("normal-win.counter-tail", { intensity: 0.6 });
     expect(fallback.oneShots).toEqual([]);
 
-    // context 运行后 AudioManager 通常会直接返回。其延迟加载钩子仍允许后续
-    // 用户手势解锁恰好重新预备一批重试任务，而无需再次恢复 context 或降级方案。
+    // context 运行后 AudioManager 通常会直接返回。其延迟加载钩子仍允许后续 / English: AudioManager will usually return directly after the context is run. Its lazy loading hook still allows subsequent
+    // 用户手势解锁恰好重新预备一批重试任务，而无需再次恢复 context 或降级方案。 / English: User gesture unlocking just re-prepares a batch of retry tasks without having to restore the context again or downgrade the scheme.
     const retry = manager.unlock();
     const concurrentRetry = manager.unlock();
     await expect(Promise.all([retry, concurrentRetry])).resolves.toEqual([true, true]);
@@ -698,7 +698,7 @@ describe("PrimalSpriteAudioBackend", () => {
     expect(starts[6]).toBeCloseTo(185);
     expect(starts[7]).toBeCloseTo(235);
     expect(starts[8]).toBeCloseTo(101);
-    // Wheel_Spin 是捕获到的多提示音编排，并非单个通用片段。
+    // Wheel_Spin 是捕获到的多提示音编排，并非单个通用片段。 / English: Wheel_Spin is a captured multi-spin arrangement, not a single generic clip.
     expect(starts.slice(9, 17)).toEqual([
       219.5, 224, 214, 235, 81.5, 85, 88.5, 88.4,
     ]);
@@ -1646,7 +1646,7 @@ describe("PrimalSpriteAudioBackend", () => {
     expect(recording.sources[5]?.stop.mock.calls[0]?.[0]).toBeCloseTo(3.21);
     backend.stopLoop("reel.motor", 0);
 
-    // 源端 randomexclusive 策略允许 ReelStart 重复播放。
+    // 源端 randomexclusive 策略允许 ReelStart 重复播放。 / English: The source-side randomexclusive policy allows ReelStart to be played repeatedly.
     expect(playbackOffsets(recording).filter((_, index) => index % 2 === 0)).toEqual([21.5, 21.5, 21.5]);
   });
 
@@ -1711,7 +1711,7 @@ describe("PrimalSpriteAudioBackend", () => {
     backend.setBaseMusicStemLevel(1, 2_000);
     expect(baseLevel1Gain?.linearRampToValueAtTime.mock.calls.at(-1)).toEqual([0, 4]);
     expect(baseLevel2Gain?.linearRampToValueAtTime.mock.calls.at(-1)).toEqual([0.34, 4]);
-    // 对接只会改变增益：两个源节点会继续保持同相运行。
+    // 对接只会改变增益：两个源节点会继续保持同相运行。 / English: Docking only changes the gain: the two source nodes continue to operate in phase.
     backend.setBaseMusicStemLevel(null, 2_000);
     expect(baseLevel1Gain?.linearRampToValueAtTime.mock.calls.at(-1)).toEqual([0, 4]);
     expect(baseLevel2Gain?.linearRampToValueAtTime.mock.calls.at(-1)).toEqual([0, 4]);
@@ -1910,8 +1910,8 @@ describe("PrimalSpriteAudioBackend", () => {
       fallback,
     });
 
-    // 无操作契约在样本就绪前后均适用；既不能播放程序化降级音效，也不能播放
-    // 临近的捕获切片。
+    // 无操作契约在样本就绪前后均适用；既不能播放程序化降级音效，也不能播放 / English: The no-op contract applies both before and after the sample is ready; neither programmed degraded sound effects nor
+    // 临近的捕获切片。 / English: Proximal capture slices.
     backend.playOneShot("symbol.wild");
     backend.playOneShot("free-spins.music-end");
     backend.playOneShot("wheel.king-spin-won");
@@ -1936,8 +1936,8 @@ describe("PrimalSpriteAudioBackend", () => {
       fallback,
     });
 
-    // 程序化降级音效无法替代预设的 10.086s 入场音效，因此原生 sprite 解码失败时，
-    // 不得将启动门控释放为就绪状态。
+    // 程序化降级音效无法替代预设的 10.086s 入场音效，因此原生 sprite 解码失败时， / English: The programmatic downgraded sound cannot replace the default 10.086s entrance sound, so when native sprite decoding fails,
+    // 不得将启动门控释放为就绪状态。 / English: The start gate must not be released to the ready state.
     await expect(backend.unlock()).resolves.toBe(false);
     expect(recording.decodeAudioData).toHaveBeenCalledTimes(4);
     expect(() => backend.playOneShot("ui.click", { intensity: 0.4 })).not.toThrow();

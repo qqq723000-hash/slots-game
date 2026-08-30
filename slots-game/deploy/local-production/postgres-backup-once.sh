@@ -1,12 +1,17 @@
 #!/bin/sh
 # 依次导出两个业务库和外部审计/日志文件，并以同一时间标记原子发布完整备份集。
 # 发布原子性不表示三个来源具有同一时点快照；需要跨存储一致性时必须先静默写入或使用平台快照。
+# English: Export the two business libraries and external audit/log files in sequence, and atomically publish
+# the full backup set with the same time stamp. Release atomicity does not mean that the three sources have the
+# same point-in-time snapshot; when cross-storage consistency is required, you must first write silently or use
+# a platform snapshot.
 set -eu
 umask 077
 LC_ALL=C
 export LC_ALL
 
 # 备份完整性库开始
+# English: Backup Integrity Repository Begins
 fail() {
   printf '%s\n' "backup integrity: $*" >&2
   exit 1
@@ -84,6 +89,8 @@ publish_no_clobber() {
     fail 'published backup directory must be a real directory'
   sync -f "$temporary" || fail "could not flush backup member data: $temporary"
   # 同一 /backups 文件系统内的 link(2) 是原子的，目标已存在时必定失败；随后删除临时名。
+  # English: link(2) within the same /backups filesystem is atomic and must fail if the target already exists;
+  # the temporary name is subsequently deleted.
   ln "$temporary" "$destination" || fail "could not atomically publish: $destination"
   unlink "$temporary" || fail "published member retained its temporary link: $temporary"
   sync -f "$destination_directory" || fail "could not flush backup directory: $destination_directory"
@@ -131,6 +138,9 @@ verify_backup_set() {
 
   # 清单必须精确列出三个公开成员，固定顺序与文件名；禁止漏验真实 dump、追加路径或
   # 通过符号链接把校验引向备份目录之外。
+  # English: The list must accurately list the three public members in a fixed order and file name; it is
+  # forbidden to omit the real dump, append the path or Direct verification outside the backup directory via a
+  # symbolic link.
   awk 'END { exit(NR == 3 ? 0 : 1) }' "$manifest" ||
     fail 'manifest must contain exactly three entries'
   sed -n '1p' "$manifest" |
@@ -155,6 +165,10 @@ verify_operator_archive() {
   require_plain_nonempty_file "$operator_archive"
   # 哨兵必须位于命令替换末尾，避免 shell 吞掉最后一个成员名中的 LF 并把控制字符档案
   # 错认成规范路径；移除哨兵后，保留下来的空行会由下方安全字符规则拒绝。
+  # English: The sentinel must be placed at the end of the command substitution to prevent the shell from
+  # swallowing the LF in the last member name and replacing the control characters in the file Mistaken as a
+  # canonical path; after removing the sentry, the remaining empty lines will be rejected by the safe character
+  # rules below.
   archive_list=$(
     tar -tzf "$operator_archive" || exit 1
     printf '\001'
@@ -190,11 +204,16 @@ verify_operator_archive() {
   test "$archive_count" -eq "$detail_count" || fail 'operator archive listings disagree'
 
   # 去掉目录尾斜杠后每个路径必须唯一，既拒绝重复成员，也拒绝同名文件/目录碰撞。
+  # English: Each path must be unique after removing the trailing slash in the directory. Duplicate members and
+  # file/directory collisions with the same name are rejected.
   duplicate_path=$(printf '%s\n' "$archive_list" | sed 's:/*$::' | LC_ALL=C sort | uniq -d | sed -n '1p')
   test -z "$duplicate_path" || fail "operator archive repeats a path: $duplicate_path"
 
   # tar -t 与 tar -tv 的顺序一致；逐项绑定类型后，目录必须带尾斜杠、普通文件不得带，
   # 且任何普通文件都不能同时充当另一成员的祖先路径。
+  # English: The order of tar -t and tar -tv is the same; after binding types one by one, the directory must
+  # have a trailing slash, and ordinary files must not. And no ordinary file can simultaneously serve as the
+  # ancestor path of another member.
   archive_types=$(printf '%s\n' "$archive_details" | cut -c1)
   {
     printf '%s\n' "$archive_types"
@@ -237,6 +256,7 @@ verify_operator_archive() {
   done
 }
 # 备份完整性库结束
+# English: End of backup integrity library
 
 run_backup_integrity_command() {
   test "$#" -ge 1 || fail 'backup integrity command is required'
@@ -281,6 +301,7 @@ fi
 test "$#" -eq 0 || fail 'usage: postgres-backup-once.sh [integrity COMMAND ARGUMENTS]'
 
 # 同一时刻只允许一个周期任务或手工任务写入备份集。
+# English: Only one periodic task or manual task is allowed to write to the backup set at the same time.
 exec 9>/backups/.backup.lock
 flock -n 9 || {
   printf '%s\n' '另一个备份任务正在运行，本次不重叠执行。' >&2
@@ -358,6 +379,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # 秒级时间戳的顺序任务也不得覆盖先前备份；发布阶段还会用原子 no-clobber link 再防竞态。
+# English: Sequential tasks with second-level timestamps must not overwrite previous backups; atomic no-clobber
+# links are also used during the release phase to prevent race conditions.
 assert_set_absent /backups "$timestamp"
 
 for database in rgs local_operator; do
@@ -369,16 +392,22 @@ done
 
 output_archive="/backups/operator-files-${timestamp}.tar.gz"
 # 归档前拒绝符号链接、FIFO、socket 和设备节点；恢复验证也会再次检查归档成员类型。
+# English: Symbolic links, FIFOs, sockets, and device nodes are rejected before archiving; restore validation
+# also checks archive member types again.
 verify_source_tree /operator-data
 tar -C /operator-data -czf "$archive_temporary" audit logs alerts
 verify_operator_archive "$archive_temporary"
 
 # 只有三个临时成员都通过本地校验后才用原子 no-clobber link 公开文件名。
+# English: Only use the atomic no-clobber link to expose the file name after all three temporary members pass
+# local verification.
 publish_no_clobber "$rgs_temporary" "/backups/rgs-${timestamp}.dump"
 publish_no_clobber "$operator_temporary" "/backups/local_operator-${timestamp}.dump"
 publish_no_clobber "$archive_temporary" "$output_archive"
 
 # 校验清单最后原子发布；它的存在表示三个成员均已写完。
+# English: The check list is finally published atomically; its presence indicates that all three members have
+# been written.
 (
   cd /backups
   sha256sum "rgs-${timestamp}.dump" "local_operator-${timestamp}.dump" \
@@ -390,6 +419,8 @@ find /backups -type f \( -name 'rgs-*.dump' -o -name 'local_operator-*.dump' \
   -o -name 'operator-files-*.tar.gz' -o -name 'backup-set-*.sha256' \) -mtime +14 -delete
 
 # 成功状态只能在三个成员、校验清单和保留期维护全部完成之后发布。
+# English: Success status can only be released after all three members, check list, and retention period
+# maintenance have been completed.
 write_backup_status success
 backup_completed=1
 unset PGPASSWORD backup_password

@@ -33,7 +33,7 @@ const authoredSymbolData = new Map<PrimalSymbolSpineKey, SpineData>();
 let symbolLoadPromise: Promise<void> | null = null;
 let authoredSymbolLoadPromise: Promise<void> | null = null;
 
-// 复刻的转轴控制器在 240x160 源格子中制作每个符号，再应用转轴独立的 X/Y 缩放。沿用相同源尺寸可以保留机台美术刻意略微压扁的效果。
+// 复刻的转轴控制器在 240x160 源格子中制作每个符号，再应用转轴独立的 X/Y 缩放。沿用相同源尺寸可以保留机台美术刻意略微压扁的效果。 / English: The replica reels controller produces each symbol in a 240x160 source grid, then applies reel-independent X/Y scaling. Using the same source size preserves the deliberately slightly flattened effect of the machine art.
 const AUTHORED_SYMBOL_WIDTH = 240;
 const AUTHORED_SYMBOL_HEIGHT = 160;
 
@@ -63,8 +63,8 @@ export function loadSymbolTextures(): Promise<void> {
       const texture = await Texture.fromURL(url);
       return [url, texture] as const;
     } catch (error) {
-      // Pixi 6 可以把失败的 URL 留在 Texture/BaseTexture cache。失败启动必须继续
-      // 向 PreloadGate 传播，同时释放拒绝缓存，允许显式的后续启动重新获取资源。
+      // Pixi 6 可以把失败的 URL 留在 Texture/BaseTexture cache。失败启动必须继续 / English: Pixi 6 can leave failed URLs in the Texture/BaseTexture cache. Failed startup must continue
+      // 向 PreloadGate 传播，同时释放拒绝缓存，允许显式的后续启动重新获取资源。 / English: Propagated to PreloadGate, also releasing the reject cache, allowing explicit subsequent launches to re-fetch the resource.
       const cachedTexture = Texture.removeFromCache(url);
       cachedTexture?.destroy(true);
       const cachedBaseTexture = BaseTexture.removeFromCache(url);
@@ -72,8 +72,8 @@ export function loadSymbolTextures(): Promise<void> {
       throw error;
     }
   })).then((entries) => {
-    // Promise.all 会 fail-fast，而同批的其他 Pixi 请求无法取消。只有整批成功才原子发布，
-    // 因而失败 attempt 的晚到完成既不会留下半套业务纹理，也不会与下一次重试交叉写入。
+    // Promise.all 会 fail-fast，而同批的其他 Pixi 请求无法取消。只有整批成功才原子发布， / English: Promise.all will fail-fast, and other Pixi requests in the same batch cannot be canceled. Only when the entire batch is successful will it be released atomically.
+    // 因而失败 attempt 的晚到完成既不会留下半套业务纹理，也不会与下一次重试交叉写入。 / English: Therefore, the late completion of the failed attempt will neither leave half a set of business textures nor interleave writes with the next retry.
     for (const [url, texture] of entries) symbolTextures.set(url, texture);
   });
   symbolLoadPromise = attempt;
@@ -83,7 +83,7 @@ export function loadSymbolTextures(): Promise<void> {
   return attempt;
 }
 
-/** 通过共享符号图集加载所有十个原始符号状态。 */
+/** 通过共享符号图集加载所有十个原始符号状态。 / English: Load all ten original symbol states via a shared symbol atlas. */
 export function loadAuthoredSymbolSpines(): Promise<void> {
   if (authoredSymbolData.size === PRIMAL_SYMBOL_SPINE_KEYS.length) return Promise.resolve();
   if (authoredSymbolLoadPromise) return authoredSymbolLoadPromise;
@@ -93,7 +93,7 @@ export function loadAuthoredSymbolSpines(): Promise<void> {
   });
   authoredSymbolLoadPromise = attempt;
   void attempt.catch(() => {
-    // 使失败的资源请求在稍后的渲染器启动时可重试。如果设备策略禁用预设的 Spine，静态捕获仍然可见。
+    // 使失败的资源请求在稍后的渲染器启动时可重试。如果设备策略禁用预设的 Spine，静态捕获仍然可见。 / English: Make failed resource requests retryable on a later renderer start. If device policy disables preset Spine, static capture is still visible.
     if (authoredSymbolLoadPromise === attempt) authoredSymbolLoadPromise = null;
   });
   return attempt;
@@ -132,6 +132,8 @@ export interface AuthoredSymbolClipValidationOptions {
 
 /**
  * 只有停止时间土地和支付符号中奖片段是无条件的启动要求。 Rage/Vault 功能剪辑是有条件的，并在实际激活它们的里程碑处同步验证。
+ *
+ * 英文 / English: Only stopping time lands and winning clips of paying symbols are unconditionally required to start. Rage/Vault feature clips are conditional and validated simultaneously at the milestone where they are actually activated.
  */
 export function authoredSymbolRequiredClipGaps(
   hasAnimation: (
@@ -147,6 +149,8 @@ export function authoredSymbolRequiredClipGaps(
 
 /**
  * 为有界切片中提供的每个符号构造一个临时实例，然后在报告准备情况之前证明所需的剪辑存在。
+ *
+ * 英文 / English: Constructs a temporary instance for each symbol provided in the bounded slice, then proves that the required clip exists before reporting readiness.
  */
 export async function validateAuthoredSymbolRequiredClips(
   options: AuthoredSymbolClipValidationOptions = {},
@@ -199,12 +203,12 @@ export function authoredSymbolRestAnimation(_symbol: SymbolId): "stop" {
   return "stop";
 }
 
-/** 空闲是由全局空闲控制器一次性选择的，而不是休息循环。 */
+/** 空闲是由全局空闲控制器一次性选择的，而不是休息循环。 / English: Idle is selected once by the global idle controller, rather than in a rest loop. */
 export function authoredSymbolIdleAnimation(symbol: SymbolId): "idle" | null {
   return primalSymbolIdleClip(PRIMAL_CLIENT_SYMBOL_ID_BY_SERVER_ID[symbol])?.animation ?? null;
 }
 
-/** 当权威的 Vault 已打开时，包括 Symbol9。 */
+/** 当权威的 Vault 已打开时，包括 Symbol9。 / English: Includes Symbol9 when the authoritative vault is open. */
 export function authoredCellIdleAnimation(cell: GridCell): "idle" | null {
   const key = authoredSymbolSpineKeyForCell(cell);
   return primalSymbolIdleClip(Number(key.slice("symbol".length)))?.animation ?? null;
@@ -215,7 +219,7 @@ export function authoredCellIdleDurationMs(cell: GridCell): number | null {
   return primalSymbolIdleClip(Number(key.slice("symbol".length)))?.durationMs ?? null;
 }
 
-/** 仅功能符号不会伪造支付线中奖动画。 */
+/** 仅功能符号不会伪造支付线中奖动画。 / English: Feature symbols alone do not fake payline winning animations. */
 export function authoredSymbolWinAnimation(symbol: SymbolId): "win" | null {
   if (symbol === "SURGE" || symbol === "VAULT") return null;
   return "win";
@@ -230,7 +234,7 @@ const AUTHORED_VAULT_PRIZES = new Set([
   "mini_2x", "minor_2x", "major_2x", "mega_2x", "free_spin",
 ]);
 
-/** 打开金库使用Symbol9；无值锁定的 Vault 仍为 Symbol8。 */
+/** 打开金库使用Symbol9；无值锁定的 Vault 仍为 Symbol8。 / English: Opening a vault uses Symbol9; a vault locked without a value remains Symbol8. */
 export function authoredSymbolSpineKeyForCell(cell: GridCell): PrimalSymbolSpineKey {
   if (cell.symbol === "VAULT" && cell.lockedVaultFace !== undefined) return "symbol8";
   if (cell.symbol === "VAULT" && (cell.prize !== undefined || cell.multiplier !== undefined)) {
@@ -239,7 +243,7 @@ export function authoredSymbolSpineKeyForCell(cell: GridCell): PrimalSymbolSpine
   return PRIMAL_SYMBOL_SPINE_KEY_BY_SERVER_ID[cell.symbol];
 }
 
-/** 瞬态锁定 Vault 适配器使用的纯表现选择器。 */
+/** 瞬态锁定 Vault 适配器使用的纯表现选择器。 / English: Purely expressive selector used by the Transient Lock Vault adapter. */
 export function authoredSymbolSpineKeyForPresentation(
   cell: Readonly<GridCell>,
   forceLockedVault = false,
@@ -249,7 +253,7 @@ export function authoredSymbolSpineKeyForPresentation(
     : authoredSymbolSpineKeyForCell(cell);
 }
 
-/** 精确的零持续时间值会叠加在预设的符号主体上。 */
+/** 精确的零持续时间值会叠加在预设的符号主体上。 / English: An exact zero duration value is superimposed on the preset symbol body. */
 export function authoredCellVariantAnimation(cell: GridCell): string | null {
   if (cell.symbol === "WILD") {
     const animation = cell.multiplier === undefined ? "x_nomulti" : `x${cell.multiplier}`;
@@ -257,7 +261,7 @@ export function authoredCellVariantAnimation(cell: GridCell): string | null {
   }
   if (cell.symbol !== "VAULT") return null;
   if (cell.lockedVaultFace !== undefined) return cell.lockedVaultFace;
-  // 规范无值VAULT是官方服务器符号17：在Symbol8上锁定x1。选择其零持续时间姿势会保留 X1 铭牌；打开/承载价值的金库继续使用下面的 Symbol9。
+  // 规范无值VAULT是官方服务器符号17：在Symbol8上锁定x1。选择其零持续时间姿势会保留 X1 铭牌；打开/承载价值的金库继续使用下面的 Symbol9。 / English: Canonical valueless VAULT is official server symbol 17: x1 locked on Symbol8. Selecting its zero duration pose retains the X1 nameplate; opening/carrying value vaults continues using Symbol9 below.
   if (cell.prize === undefined && cell.multiplier === undefined) return "x1";
   if (cell.prize !== undefined) {
     const normalized = cell.prize.toLowerCase();
@@ -272,6 +276,8 @@ export function authoredCellVariantAnimation(cell: GridCell): string | null {
 
 /**
  * Symbol9 的 `feature_activation` 剪辑仅属于 Vault，该 Vault 会奖励额外的免费 Spin。头奖/价值金库保持其价值姿态并赢得中奖。
+ *
+ * 英文 / English: Symbol9's `feature_activation` clip belongs exclusively to the Vault, which awards additional free Spins. The Jackpot/Value Vault maintains its value stance and wins the jackpot.
  */
 export function authoredVaultFreeSpinActivation(cell: GridCell): "feature_activation" | null {
   return cell.symbol === "VAULT" && cell.prize?.toLowerCase() === "free_spin"
@@ -279,7 +285,7 @@ export function authoredVaultFreeSpinActivation(cell: GridCell): "feature_activa
     : null;
 }
 
-/** 仅当提供的 Spine/静态艺术没有匹配的姿势时才使用文本。 */
+/** 仅当提供的 Spine/静态艺术没有匹配的姿势时才使用文本。 / English: Text is only used if the supplied Spine/Static Art has no matching pose. */
 export function cellVariantFallbackLabel(cell: GridCell): string | null {
   if (cell.symbol === "WILD") {
     return cell.multiplier === undefined ? null : `×${cell.multiplier}`;
@@ -300,11 +306,13 @@ export interface SymbolContentVisibility {
 }
 
 export interface SymbolCellPresentationOptions {
-  /** 将权威的 Wild 倍增器隐藏起来，直到其露出夹子。 */
+  /** 将权威的 Wild 倍增器隐藏起来，直到其露出夹子。 / English: Hide the authoritative Wild multiplier until it reveals the clip. */
   readonly deferWildVariant?: boolean;
   /**
    * 在锁定的Symbol8身上保留一个权威的、有价值的Vault，直到`vault.unlocked`完成。
    * 这只是表现状态：复制的 `GridCell` 在整个停止过程中仍然是最终的服务器单元。
+   *
+   * 英文 / English: Keep an authoritative, valuable Vault on the locked Symbol8 until `vault.unlocked` completes. This is just presentation: the replicated `GridCell` remains the final server cell throughout the stop process.
    */
   readonly forceLockedVault?: boolean;
 }
@@ -315,6 +323,8 @@ const BASE_VAULT_JACKPOT_PRIZES = new Set([
 
 /**
  * 将最终的 Vault 值投影到在 Symbol8 上实际预设的姿势上。锁定的骨架上不存在双倍累积奖金板，因此它们的基本累积奖金名称将保留，直到 Symbol9 替换整个实例。
+ *
+ * 英文 / English: Project the final Vault value onto the actual preset pose on Symbol8. Double jackpot boards do not exist on locked skeletons, so their base jackpot names will remain until Symbol9 replaces the entire instance.
  */
 export function lockedVaultPresentationCell(cell: Readonly<GridCell>): GridCell {
   const projected: GridCell = { ...cell };
@@ -350,7 +360,7 @@ export interface SymbolDimStep {
   readonly complete: boolean;
 }
 
-/** 来自捕获的双向 SymbolFader 的一个精确调度程序滴答。 */
+/** 来自捕获的双向 SymbolFader 的一个精确调度程序滴答。 / English: An exact scheduler tick from a captured bidirectional SymbolFader. */
 export function nextSymbolTintStep(
   progress: number,
   fromTint: number,
@@ -382,7 +392,7 @@ export function nextSymbolRestoreStep(
   return nextSymbolTintStep(progress, fromTint, SYMBOL_FULL_COLOUR_TINT);
 }
 
-/** Rage 提取和单元测试使用的纯第 2 层/第 3 层投影。 */
+/** Rage 提取和单元测试使用的纯第 2 层/第 3 层投影。 / English: Pure layer 2/layer 3 projection used by Rage extraction and unit testing. */
 export function symbolContentVisibility(
   hasAuthoredView: boolean,
   featureHidden: boolean,
@@ -399,6 +409,8 @@ export function symbolContentVisibility(
 
 /**
  * 单个服务端寻址格子的表现适配器。停稳格子可以使用原始 Spine 骨架，装饰性的滚动条格子则保留轻量静态纹理。
+ *
+ * 英文 / English: Presentation adapter for a single server-side addressing grid. The parking lattice can use the original Spine skeleton, while the decorative scroll bar lattice retains the lightweight static texture.
  */
 export class SymbolView extends Container {
   private readonly cellGlass = new Graphics();
@@ -406,6 +418,8 @@ export class SymbolView extends Container {
   private readonly authoredLayer = new Container();
   /**
    * 仅用于表现的双胞胎安装在 ReelSetView 的过滤树外部。它的父级由 ReelView/ReelSetView 所有，而不是由该容器所有。
+   *
+   * 英文 / English: The presentation-only twin is mounted outside the ReelSetView's filter tree. Its parent is owned by ReelView/ReelSetView, not the container.
    */
   private readonly winningAdditiveRoot = new Container();
   private readonly variantLabel = new Text("", new TextStyle({
@@ -429,6 +443,8 @@ export class SymbolView extends Container {
   private additiveCompositeActive = false;
   /**
    * 一次完成后，外部 ADD 姿势可以保持冻结状态。将此时钟标志与渲染所有权分开，这样固定的发光帧不会使每个池化的 3x8 符号永远前进第二个 Spine。
+   *
+   * 英文 / English: Once completed, external ADD poses can remain frozen. Separate this clock flag from render ownership so that the fixed glow frame doesn't make each pooled 3x8 symbol advance the second spine forever.
    */
   private additivePlaybackRunning = false;
   private activeAdditiveAttachmentCount = 0;
@@ -443,7 +459,7 @@ export class SymbolView extends Container {
   private featureHidden = false;
   private deferredWildVariant = false;
   private forceLockedVault = false;
-  /** 仅测试夹具视觉保持；如果没有外部观察者，永远不会启用。 */
+  /** 仅测试夹具视觉保持；如果没有外部观察者，永远不会启用。 / English: Tests fixture visual retention only; never enabled without an outside observer. */
   private authoredPlaybackPaused = false;
   private authoredResumeTimeScale = 1;
 
@@ -461,7 +477,7 @@ export class SymbolView extends Container {
     this.addChild(this.cellGlass, this.art, this.authoredLayer, this.variantLabel, this.scan);
   }
 
-  /** 外部渲染通道节点；所有权仍归 SymbolView 所有。 */
+  /** 外部渲染通道节点；所有权仍归 SymbolView 所有。 / English: External render pass node; ownership remains with SymbolView. */
   get winningAdditiveDisplay(): Container {
     return this.winningAdditiveRoot;
   }
@@ -505,6 +521,8 @@ export class SymbolView extends Container {
 
   /**
    * 冻结当前制作好的姿态，而不重建符号或轨道。这是确定性截图使用的观察接口；正常游戏逻辑绝不会调用，因此能够保留复刻时间点。
+   *
+   * 英文 / English: Freezes the currently made pose without rebuilding symbols or tracks. This is the observation interface used for deterministic screenshots; normal game logic will never be called, so the reproduction time point can be preserved.
    */
   setAuthoredPlaybackPaused(active: boolean): void {
     if (this.authoredPlaybackPaused === active) return;
@@ -524,8 +542,8 @@ export class SymbolView extends Container {
   }
 
   setHighlighted(active: boolean): boolean {
-    // 每条首秀中奖记录都会调用官方符号 `win()` 命令，包括当两个连续记录共享同一单元格时。清除是幂等的，但显式的活动命令必须重新启动轨道 0，
-    // 而不是将该单元格冻结在前一个记录的终端位姿上。
+    // 每条首秀中奖记录都会调用官方符号 `win()` 命令，包括当两个连续记录共享同一单元格时。清除是幂等的，但显式的活动命令必须重新启动轨道 0， / English: The official notation `win()` command is called for every debut winning record, including when two consecutive records share the same cell. Clearing is idempotent, but an explicit active command must restart track 0,
+    // 而不是将该单元格冻结在前一个记录的终端位姿上。 / English: Instead of freezing the cell at the previously recorded terminal pose.
     if (!active && this.highlighted === active) return true;
     this.highlighted = active;
     if (active) {
@@ -559,6 +577,8 @@ export class SymbolView extends Container {
 
   /**
    * 开始原始帧步进暗淡。除非普通的单记录 HOLD 拆卸明确选择恢复，否则清除将立即进行。
+   *
+   * 英文 / English: Start the original frame step dim. Unless a normal single-record HOLD teardown explicitly selects recovery, the purge will occur immediately.
    */
   setDimmed(active: boolean, progressiveRestore = false): void {
     if (active) {
@@ -586,12 +606,12 @@ export class SymbolView extends Container {
     this.applyPresentationTint();
   }
 
-  /** 收集的 Rage 符号保留在网格中，但在替换之前被排除。 */
+  /** 收集的 Rage 符号保留在网格中，但在替换之前被排除。 / English: Collected Rage symbols remain in the grid but are excluded before replacement. */
   setIdleBlocked(active: boolean): void {
     this.idleBlocked = active;
   }
 
-  /** 经过权威的 Rage 收集后，将喷砂玻璃室留空。 */
+  /** 经过权威的 Rage 收集后，将喷砂玻璃室留空。 / English: After the authoritative Rage collection, the sandblasted glass chamber was left empty. */
   setFeatureHidden(active: boolean): void {
     if (this.featureHidden === active) return;
     this.featureHidden = active;
@@ -602,7 +622,7 @@ export class SymbolView extends Container {
     return this.currentCell;
   }
 
-  /** 用于确定性 Vault 屏幕截图的冻结纯数据投影。 */
+  /** 用于确定性 Vault 屏幕截图的冻结纯数据投影。 / English: Frozen data-only projection for deterministic vault screenshots. */
   getVaultCaptureDiagnostics(): Readonly<SymbolVaultCaptureDiagnostics> {
     const track = (index: number): Readonly<SymbolSpineTrackCaptureDiagnostics> | null => {
       const entry = this.authoredView?.state.getCurrent(index);
@@ -624,6 +644,8 @@ export class SymbolView extends Container {
 
   /**
    * 仅将此测试场景暂停的 Spine 提前指定的精确持续时间。正常的游戏逻辑永远不会调用此接口，并继续使用 Pixi 的股票驱动时钟。
+   *
+   * 英文 / English: Only this test scenario pauses Spine for the exact duration specified in advance. Normal game logic never calls this interface and continues to use Pixi's stock driven clock.
    */
   advanceAuthoredPlaybackForCapture(deltaMs: number): void {
     const view = this.authoredView;
@@ -641,6 +663,8 @@ export class SymbolView extends Container {
 
   /**
    * 仅取消瞬时 Symbol8 主体覆盖。复制的目标单元将不加更改地重新应用，因此没有协议/结果字段可以保留该标志。
+   *
+   * 英文 / English: Cancels only transient Symbol8 body overrides. Copied target units will be reapplied unchanged, so no protocol/result fields can retain this flag.
    */
   clearForcedLockedVaultPresentation(): boolean {
     if (!this.forceLockedVault) return false;
@@ -648,7 +672,7 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 捕获 Rage 预期：轨道 0 上的身体前奏/循环和轨道 1 上的眼睛。 */
+  /** 捕获 Rage 预期：轨道 0 上的身体前奏/循环和轨道 1 上的眼睛。 / English: Capturing Rage Anticipation: Body Intro/Loop on Track 0 and Eyes on Track 1. */
   startRageAnticipationAnimation(): boolean {
     if (this.currentCell.symbol !== "SURGE") return false;
     if (!this.prepareDynamicAdditiveComposite("wait_in", "wait", "eye_loop")) return false;
@@ -664,7 +688,7 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 结束 Rage 预期，停止其眼睛层，然后返回停止姿势。 */
+  /** 结束 Rage 预期，停止其眼睛层，然后返回停止姿势。 / English: End Rage Anticipation, stop its eye layer, and then return to the stopping pose. */
   endRageAnticipationAnimation(): boolean {
     if (this.currentCell.symbol !== "SURGE") return false;
     const restingAnimation = authoredSymbolRestAnimation(this.currentCell.symbol);
@@ -706,7 +730,7 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 原始级联使用制作好的爆炸效果销毁每个非 Rage 格子。 */
+  /** 原始级联使用制作好的爆炸效果销毁每个非 Rage 格子。 / English: The original cascade uses a crafted explosion to destroy every non-Rage tile. */
   playExplosionAnimation(): boolean {
     if (this.currentCell.symbol === "SURGE") return false;
     if (!this.prepareDynamicAdditiveComposite("explosion")) return false;
@@ -717,7 +741,7 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 每卷临时 Rage 叠加在最后一磅之前进入。 */
+  /** 每卷临时 Rage 叠加在最后一磅之前进入。 / English: Each roll of temporary Rage stacks in before the last pound. */
   playRageShowAnimation(): boolean {
     if (this.currentCell.symbol !== "SURGE") return false;
     if (!this.prepareDynamicAdditiveComposite("show")) return false;
@@ -732,7 +756,7 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 最终的 Rage 激活始终将捕获的隐藏剪辑排队，从不空闲。 */
+  /** 最终的 Rage 激活始终将捕获的隐藏剪辑排队，从不空闲。 / English: The final Rage activation always queues the captured hidden clip and is never idle. */
   playRageTriggerAnimation(): boolean {
     if (this.currentCell.symbol !== "SURGE") return false;
     if (!this.prepareDynamicAdditiveComposite("feature_activation", "hide")) {
@@ -777,7 +801,7 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 捕获的 Vault 预期：tease_in → tease_loop → tease_out，无混合。 */
+  /** 捕获的 Vault 预期：tease_in → tease_loop → tease_out，无混合。 / English: Captured Vault Expected: tease_in → tease_loop → tease_out, no mixing. */
   playVaultTeaseAnimation(): boolean {
     if (this.currentCell.symbol !== "VAULT") return false;
     if (!this.prepareDynamicAdditiveComposite("tease_in", "tease_loop", "tease_out")) {
@@ -797,7 +821,7 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 原始跳过仅将 tease_out 加速到 1.25×。 */
+  /** 原始跳过仅将 tease_out 加速到 1.25×。 / English: Raw skipping only speeds up tease_out to 1.25×. */
   skipVaultTeaseAnimation(): boolean {
     if (this.currentCell.symbol !== "VAULT") return false;
     if (!this.prepareDynamicAdditiveComposite("tease_out")) return false;
@@ -841,13 +865,13 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 当最后一个卷轴进入其单元格时，会播放原始的停止动画。 */
+  /** 当最后一个卷轴进入其单元格时，会播放原始的停止动画。 / English: The original stop animation plays when the last reel enters its cell. */
   playLandAnimation(mode: ReelStopMode = "NORMAL"): boolean {
     const variant = authoredCellVariantAnimation(this.currentCell);
     const revealsWild = this.currentCell.symbol === "WILD"
       && this.currentCell.multiplier !== undefined
       && variant !== null;
-    // FAST/SLOW 抑制通用地，但 GameSymbol.wildLand() 在显示之前仍然拥有其精确的半秒普通 Wild 门。
+    // FAST/SLOW 抑制通用地，但 GameSymbol.wildLand() 在显示之前仍然拥有其精确的半秒普通 Wild 门。 / English: FAST/SLOW suppresses universal lands, but GameSymbol.wildLand() still has its exact half-second normal wild gate before displaying it.
     if (mode !== "NORMAL" && !revealsWild) return true;
     if (!this.authoredView) return false;
     const requiredAnimations = [
@@ -878,7 +902,7 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 控制器对每个可见单元格进行洗牌后使用的资格。 */
+  /** 控制器对每个可见单元格进行洗牌后使用的资格。 / English: The controller shuffles each visible cell using the qualifications. */
   canPlayIdleAnimation(): boolean {
     const view = this.authoredView;
     return !this.highlighted
@@ -888,7 +912,7 @@ export class SymbolView extends Container {
       && Boolean(view?.state.hasAnimation("idle"));
   }
 
-  /** 只播放一个空闲剪辑，与 GameIdleController.playIdle() 匹配。 */
+  /** 只播放一个空闲剪辑，与 GameIdleController.playIdle() 匹配。 / English: Only plays an idle clip, matching GameIdleController.playIdle(). */
   playIdleAnimation(): boolean {
     if (!this.canPlayIdleAnimation()
       || !this.prepareDynamicAdditiveComposite("idle")) return false;
@@ -931,7 +955,7 @@ export class SymbolView extends Container {
     this.cellGlass.lineStyle(1, 0xd8d4cb, 0.12).moveTo(4, 2).lineTo(width - 5, 2);
     this.cellGlass.lineStyle(1, 0x020202, 0.76).moveTo(3, height - 2).lineTo(width - 3, height - 2);
 
-    // 非常微弱的玻璃划痕仅保留在静态回退路径艺术品后面。
+    // 非常微弱的玻璃划痕仅保留在静态回退路径艺术品后面。 / English: Very faint glass scratches remain only behind the static fallback path artwork.
     this.scan.lineStyle(1, 0x9da09b, 0.07);
     this.scan.moveTo(width * 0.12, height * 0.17).lineTo(width * 0.48, height * 0.58);
     this.scan.moveTo(width * 0.72, height * 0.08).lineTo(width * 0.42, height * 0.36);
@@ -1039,7 +1063,7 @@ export class SymbolView extends Container {
       this.presentationOverlayOnly,
     );
     this.authoredLayer.visible = visibility.authoredLayer;
-    // Rage 提取只隐藏第 3 层符号内容。机台已在此视图下方提供稳定的转轴玻璃；若露出回退底板，会产生新的暗色块并错误染色背景。
+    // Rage 提取只隐藏第 3 层符号内容。机台已在此视图下方提供稳定的转轴玻璃；若露出回退底板，会产生新的暗色块并错误染色背景。 / English: Rage extraction hides only layer 3 symbol content. The machine has provided a stable rotating glass under this view; if the retraction bottom plate is exposed, new dark blocks will be generated and the background will be incorrectly stained.
     this.cellGlass.visible = visibility.cellGlass;
     this.art.visible = visibility.staticArt;
     this.scan.visible = visibility.scan;
@@ -1059,7 +1083,7 @@ export class SymbolView extends Container {
 
   private playWinAnimation(): boolean {
     const animation = authoredSymbolWinAnimation(this.currentCell.symbol);
-    // 特意突出显示纯功能符号，没有支付线剪辑；这不是缺少必需的动画。
+    // 特意突出显示纯功能符号，没有支付线剪辑；这不是缺少必需的动画。 / English: Pure feature symbols are intentionally highlighted, with no payline clipping; this is not a lack of required animations.
     if (!animation) return true;
     if (!this.authoredPassesHaveAnimations(animation)) return false;
     this.forEachAuthoredPass((view) => {
@@ -1145,10 +1169,10 @@ export class SymbolView extends Container {
     }
   }
 
-  /** 附件交换发生在 Spine.update 内部，因此之后进行分区。 */
+  /** 附件交换发生在 Spine.update 内部，因此之后进行分区。 / English: Attachment exchange happens inside Spine.update, so partitioning occurs afterwards. */
   private refreshAuthoredPassMaterials(): void {
     enforcePrimalRegionBlendModes(this.authoredView);
-    // 切勿将不透明的黑色为零 ADD 附件放回卷轴的屏幕外透视滤镜下方。即使一条忘记启动外部孪生的路径也一定会失败，因为缺少辉光，而不是黑色矩形。
+    // 切勿将不透明的黑色为零 ADD 附件放回卷轴的屏幕外透视滤镜下方。即使一条忘记启动外部孪生的路径也一定会失败，因为缺少辉光，而不是黑色矩形。 / English: Never place the opaque black zero ADD attachment back under the off-screen see-through filter of the reel. Even a path that forgets to start the outer twin is bound to fail due to a missing glow instead of a black rectangle.
     partitionPrimalAdditiveSlots(this.authoredView, "normal");
     if (this.additiveCompositeActive) {
       this.syncAuthoredPassPresentation();
@@ -1181,6 +1205,8 @@ export class SymbolView extends Container {
   /**
    * 在第一个动态命令之前将两个实例置于精确的冻结 `stop + value` 原点。
    * 如果休眠双胞胎在稍后的空闲/着陆/显示、爆炸、Rage、Vault 或 WIN 剪辑之前最后重置，则从一个规范设置开始可以避免 150ms 混合链不匹配。
+   *
+   * 英文 / English: Place both instances at the exact frozen `stop + value` origin before the first dynamic command. Starting with a canonical setting avoids the 150ms mix chain mismatch if the dormant twin is last reset before a later idle/landing/display, blast, rage, vault or WIN clip.
    */
   private primeAdditiveCompositePasses(): boolean {
     const source = this.authoredView;
@@ -1203,6 +1229,8 @@ export class SymbolView extends Container {
   /**
    * 为每个预设的动态剪辑（而不仅仅是 WIN）启动 Pixi-6 兼容性通道。已经激活的通道保留其确切的先前终端/排队姿势，
    * 这是 Wild 显示和 Rage/Vault 多步流所需要的。
+   *
+   * 英文 / English: Enable Pixi-6 compatibility channel for every preset dynamic clip (not just WIN). Already activated lanes retain their exact previous terminal/queue pose, which is required for Wild display and Rage/Vault multi-step flows.
    */
   private prepareDynamicAdditiveComposite(...animations: readonly string[]): boolean {
     const source = this.authoredView;
@@ -1210,7 +1238,7 @@ export class SymbolView extends Container {
     if (!source || !animations.every((animation) => source.state.hasAnimation(animation))) {
       return false;
     }
-    // 独立的回退路径或格子调用方可能只提供一个制作好的实例。NORMAL 在此降级路径中保持安全隔离；生产预加载始终创建配对的外部 ADD 实例。
+    // 独立的回退路径或格子调用方可能只提供一个制作好的实例。NORMAL 在此降级路径中保持安全隔离；生产预加载始终创建配对的外部 ADD 实例。 / English: Standalone fallback paths or lattice callers may only provide a crafted instance. NORMAL maintains safe isolation in this downgrade path; production preloading always creates paired external ADD instances.
     if (!target) return true;
     if (!animations.every((animation) => target.state.hasAnimation(animation))) return false;
     if (!this.additiveCompositeActive && !this.primeAdditiveCompositePasses()) return false;
@@ -1219,7 +1247,7 @@ export class SymbolView extends Container {
     return true;
   }
 
-  /** 停止外部时钟/根，而不恢复过滤器下面的 ADD。 */
+  /** 停止外部时钟/根，而不恢复过滤器下面的 ADD。 / English: Stop the external clock/root without restoring ADD below the filter. */
   private suspendAdditiveComposite(): void {
     this.additiveCompositeActive = false;
     this.additivePlaybackRunning = false;
@@ -1229,6 +1257,8 @@ export class SymbolView extends Container {
 
   /**
    * 最终姿势在视觉上仍由外部通道拥有，但一旦每个预设的轨道稳定，就不会提前第二个 Spine 时钟。
+   *
+   * 英文 / English: The final pose is still visually owned by the outer channel, but does not advance the second Spine clock once each preset's track is stable.
    */
   private additiveTracksAreSettled(): boolean {
     const tracks = this.authoredAdditiveView?.state.tracks as readonly ({
@@ -1246,7 +1276,7 @@ export class SymbolView extends Container {
     ));
   }
 
-  /** 一次性拆解；之后，休眠双胞胎不进行任何帧工作。 */
+  /** 一次性拆解；之后，休眠双胞胎不进行任何帧工作。 / English: A one-time teardown; after that, the dormant twin doesn't do any frame work. */
   private resetDormantAdditivePass(): void {
     const view = this.authoredAdditiveView;
     if (!view) return;
@@ -1258,16 +1288,16 @@ export class SymbolView extends Container {
     view.update(0);
     enforcePrimalRegionBlendModes(view);
     this.activeAdditiveAttachmentCount = partitionPrimalAdditiveSlots(view, "additive");
-    // 一些官方停止/值姿势已经包含 ADD 材质（例如头盔绳灯）。将冻结的姿势保持在滤镜之外。
+    // 一些官方停止/值姿势已经包含 ADD 材质（例如头盔绳灯）。将冻结的姿势保持在滤镜之外。 / English: Some official stop/value poses already contain ADD materials (e.g. helmet rope light). Keep the frozen pose outside of the filter.
     this.additiveCompositeActive = this.activeAdditiveAttachmentCount > 0;
     this.additivePlaybackRunning = false;
     this.syncWinningAdditiveDisplayTransform();
   }
 
-  /** 将已确定的 SymbolView 变换镜像到其外部渲染通道。 */
+  /** 将已确定的 SymbolView 变换镜像到其外部渲染通道。 / English: Mirror the determined SymbolView transform to its outer render pass. */
   syncWinningAdditiveDisplayTransform(): void {
     const root = this.winningAdditiveRoot;
-    // 少数隔离单元线束通过其原型构建 SymbolView 来执行状态逻辑，而无需分配 Pixi 容器。
+    // 少数隔离单元线束通过其原型构建 SymbolView 来执行状态逻辑，而无需分配 Pixi 容器。 / English: A handful of isolated cell harnesses build SymbolViews through their prototypes to perform stateful logic without allocating a Pixi container.
     if (!root) return;
     root.position.copyFrom(this.position);
     root.scale.copyFrom(this.scale);

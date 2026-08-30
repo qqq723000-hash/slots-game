@@ -1,0 +1,23 @@
+{
+  "manifestVersion": 1,
+  "descriptionZh": "24 秒本地全栈游戏演示：玩法图标、真实转轮中奖、特殊转盘，以及同回合 Go RGS 与 PostgreSQL 结算证据。",
+  "descriptionEn": "A 24-second local full-stack game demo showing feature symbols, a real reel win, the bonus wheel, and same-round Go RGS and PostgreSQL settlement evidence.",
+  "video": {
+    "file": "primal-rampage-local-full-stack-demo-24s.mp4",
+    "sha256": "ef9185922c5bd116880e1401b07b479b5df1a2b6383ebed22ba1d6e6c5d069c8",
+    "bytes": 7340242,
+    "durationSeconds": 24,
+    "width": 1920,
+    "height": 1080,
+    "videoCodec": "H.264",
+    "audioCodec": "AAC",
+    "fastStart": true
+  },
+  "poster": {
+    "file": "primal-rampage-local-full-stack-demo-poster.webp",
+    "sha256": "0e88d59d580714e3658a3495413433a43e650bfbe20f542d413eed9911929e9e",
+    "bytes": 85960,
+    "width": 1280,
+    "height": 720
+  }
+}

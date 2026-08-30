@@ -1,5 +1,7 @@
 /**
  * 非权威视觉保真度遥测。事件有意仅包含表示身份：绝不下注、奖励、余额、凭证或解码结果有效负载。
+ *
+ * 英文 / English: Non-authoritative visual fidelity telemetry. Events intentionally only contain identity representation: never bet, reward, balance, voucher or decoded result payloads.
  */
 export const VISUAL_TELEMETRY_SCHEMA_VERSION = 1 as const;
 
@@ -65,7 +67,7 @@ export interface VisualTelemetryDescriptor {
   readonly id: VisualTelemetryId;
   readonly requirement: VisualTelemetryRequirement;
   readonly mode: VisualTelemetryMode;
-  /** 仅限稳定公共资产标识符/URLs；没有解码的服务器事实。 */
+  /** 仅限稳定公共资产标识符/URLs；没有解码的服务器事实。 / English: Stable public asset identifiers/URLs only; no decoded server facts. */
   readonly assets?: readonly string[];
   readonly clips?: readonly string[];
   readonly sourceEvent?: string;
@@ -85,7 +87,7 @@ interface VisualTelemetryEventBase extends VisualTelemetryDescriptor {
 
 export interface VisualTelemetryLoadEvent extends VisualTelemetryEventBase {
   readonly kind: "load";
-  /** 仅在解析、构造和后置条件之后才会发出加载事件。 */
+  /** 仅在解析、构造和后置条件之后才会发出加载事件。 / English: Load events are emitted only after parsing, construction and postconditions. */
   readonly constructible: true;
 }
 
@@ -168,6 +170,8 @@ function snapshotFailure(
 
 /**
  * 渲染视图使用的小型故障打开报告器。侦听器在当前调用堆栈中运行，永远不会等待，并且无法更改呈现时间。
+ *
+ * 英文 / English: Small fail-open reporter used by rendering views. Its listener runs on the current call stack, is never awaited, and cannot alter presentation timing.
  */
 export class VisualTelemetryReporter {
   private listener: VisualTelemetryListener | null = null;
@@ -183,7 +187,7 @@ export class VisualTelemetryReporter {
     this.contextProvider = provider;
   }
 
-  /** 记录完全解码/解析的、可构造的视图及其后置条件。 */
+  /** 记录完全解码/解析的、可构造的视图及其后置条件。 / English: Document fully decoded/parsed, constructible views and their postconditions. */
   loaded(descriptor: VisualTelemetryDescriptor): number {
     const operationId = this.allocateOperationId();
     const details = snapshotDescriptor(descriptor);
@@ -199,7 +203,7 @@ export class VisualTelemetryReporter {
     return operationId;
   }
 
-  /** 在预设的操作开始之前记录失败。 */
+  /** 在预设的操作开始之前记录失败。 / English: Logging failure before scheduled operation starts. */
   failedToStart(
     descriptor: VisualTelemetryDescriptor,
     failure: VisualTelemetryFailure,
@@ -219,7 +223,7 @@ export class VisualTelemetryReporter {
     return operationId;
   }
 
-  /** 为每次启动/重试分配一个新的单调操作 ID。 */
+  /** 为每次启动/重试分配一个新的单调操作 ID。 / English: Assign a new monotonic operation ID to each start/retry. */
   start(descriptor: VisualTelemetryDescriptor): VisualTelemetryOperation {
     const operationId = this.allocateOperationId();
     const details = snapshotDescriptor(descriptor);
@@ -237,7 +241,7 @@ export class VisualTelemetryReporter {
     return operation;
   }
 
-  /** 一项操作最多发出一个终止事件。 */
+  /** 一项操作最多发出一个终止事件。 / English: An operation may emit at most one termination event. */
   complete(
     operation: VisualTelemetryOperation,
     outcome: VisualTelemetryCompletionOutcome = "natural",
@@ -262,7 +266,7 @@ export class VisualTelemetryReporter {
     return true;
   }
 
-  /** 一项操作最多发出一个终端故障。 */
+  /** 一项操作最多发出一个终端故障。 / English: An operation may issue at most one terminal fault. */
   fail(
     operation: VisualTelemetryOperation,
     failure: VisualTelemetryFailure,
@@ -289,7 +293,7 @@ export class VisualTelemetryReporter {
     return true;
   }
 
-  /** 拆解是取消，绝不是保真度失败。 */
+  /** 拆解是取消，绝不是保真度失败。 / English: Teardown is a cancellation, never a failure of fidelity. */
   cancelAll(): void {
     for (const operationId of [...this.active.keys()]) {
       this.complete({ operationId }, "cancelled");
@@ -319,7 +323,7 @@ export class VisualTelemetryReporter {
         sourceEvent: sourceEvent ?? candidateSourceEvent,
       });
     } catch {
-      // 遥测上下文是诊断性的，因此也是故障开放的。
+      // 遥测上下文是诊断性的，因此也是故障开放的。 / English: The telemetry context is diagnostic and therefore fault-open.
       return EMPTY_VISUAL_TELEMETRY_CONTEXT;
     }
   }
@@ -333,12 +337,12 @@ export class VisualTelemetryReporter {
         void Promise.resolve(pending).catch(() => undefined);
       }
     } catch {
-      // 诊断监听器永远不是视觉或权威流程的一部分。
+      // 诊断监听器永远不是视觉或权威流程的一部分。 / English: Diagnostic listeners are never part of the visual or authoritative process.
     }
   }
 }
 
-/** 严格测试夹具要求这些 ID 在启动栅栏就绪前已经存在。 */
+/** 严格测试夹具要求这些 ID 在启动栅栏就绪前已经存在。 / English: The strict test fixture requires that these IDs exist before the launch fence is ready. */
 export const VISUAL_TELEMETRY_ENTRY_REQUIRED_IDS = Object.freeze([
   "launch.intro",
   "background.intro",

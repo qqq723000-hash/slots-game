@@ -214,8 +214,8 @@ describe("StreamingAssetPackageManager", () => {
 
     const first = manager.load("base");
     const second = manager.load("base");
-    // 每个调用方都持有一个取消操作相互隔离的外观层，而底层网络和解码工作
-    // 仍会去重。
+    // 每个调用方都持有一个取消操作相互隔离的外观层，而底层网络和解码工作 / English: Each caller maintains a facade layer that isolates cancellation operations while the underlying network and decoding work
+    // 仍会去重。 / English: It will still remove weight.
     expect(second).not.toBe(first);
     await vi.waitFor(() => expect(decoder).toHaveBeenCalledOnce());
     expect(manager.snapshot("base").state).toBe("decoding");
@@ -573,7 +573,7 @@ describe("StreamingAssetPackageManager", () => {
     const acquiring = manager.acquireStage("feature-on-demand", { signal: abort.signal });
     await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
     expect(manager.getReadyPackage("base")).not.toBeNull();
-    // 只有完整阶段就绪后，所有权才会对外可见；待定预留仍会阻止依赖项被提前淘汰。
+    // 只有完整阶段就绪后，所有权才会对外可见；待定预留仍会阻止依赖项被提前淘汰。 / English: Ownership will not be visible until the full stage is ready; pending reservations will still prevent dependencies from being retired early.
     expect(manager.referenceCount("base")).toBe(0);
     abort.abort(new Error("feature exited"));
 

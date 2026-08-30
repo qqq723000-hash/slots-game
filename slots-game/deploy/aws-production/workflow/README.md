@@ -1,9 +1,13 @@
-# AWS 工作流交付边界
+# AWS workflow delivery boundary / AWS 工作流交付边界
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This directory is called by three GitHub Actions workflows that separate uncredentialed validation, infrastructure planning and application verification, protected approvals, and final deployment duties. Long-lived AWS access keys are forbidden, artifacts are rebound to the exact run and commit before use, and deployment actions run only through the designated protected environments and identities. Static pull-request and push checks do not establish live AWS state; target-account permissions, approved infrastructure application, immutable artifact verification, private-runner evidence, and post-deployment acceptance remain external gates.
 
 本目录由三个 GitHub Actions 工作流调用。只有人工 `workflow_dispatch` 按目标环境共享同一个不可取消
 concurrency group；PR 与 push 的无凭据静态 run 使用“workflow identity + ref”独立分组，避免 GitHub 在同组

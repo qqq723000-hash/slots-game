@@ -15,6 +15,8 @@ export const BROWSER_RUNTIME_PHASES = Object.freeze([
 /**
  * 把浏览器异常压缩为固定低基数代码。原始 message/name/stack/URL 只参与本地
  * 分类，永远不会进入公开 CI 结果。
+ *
+ * 英文 / English: Compress browser exceptions into fixed low-radix code. The original message/name/stack/URL only participates in local classification and never enters public CI results.
  */
 export function classifyBrowserRuntimeFailure(input) {
   const kind = input?.kind === "unhandled-rejection"
@@ -41,7 +43,7 @@ export function classifyBrowserRuntimeFailure(input) {
     && input?.isTrusted === true
     && input?.errorPresent === false
     && resizeObserverMessage) {
-    // 仍按 fatal 处理：应用必须消除同步观察循环，不能用浏览器警告掩盖布局竞态。
+    // 仍按 fatal 处理：应用必须消除同步观察循环，不能用浏览器警告掩盖布局竞态。 / English: Still treated as fatal: the application must eliminate the synchronized observation loop and cannot use browser warnings to cover up layout races.
     return { kind, code: "RESIZE_OBSERVER_LOOP", severity: "fatal" };
   }
   if (kind === "unhandled-rejection" && input?.reasonPresent === false) {
@@ -58,7 +60,7 @@ export function classifyBrowserRuntimeFailure(input) {
   };
 }
 
-/** 在写入时合并并限制事件，避免异常风暴把 CI 输出或页面内存撑大。 */
+/** 在写入时合并并限制事件，避免异常风暴把 CI 输出或页面内存撑大。 / English: Consolidate and limit events on write to avoid abnormal storms from bloating CI output or page memory. */
 export function recordBrowserRuntimeEvent(state, event, phase, limit = 16) {
   const existing = state.events.find((candidate) => (
     candidate.kind === event.kind
@@ -77,7 +79,7 @@ export function recordBrowserRuntimeEvent(state, event, phase, limit = 16) {
   state.events.push({ ...event, phase, count: 1 });
 }
 
-/** 对页面内对象再次执行白名单投影，防止被测代码污染公开诊断。 */
+/** 对页面内对象再次执行白名单投影，防止被测代码污染公开诊断。 / English: Perform whitelist projection again on the objects in the page to prevent the tested code from contaminating the public diagnosis. */
 export function browserRuntimeDiagnosticSummary(state) {
   const allowedKinds = new Set(["window-error", "unhandled-rejection", "probe-warning"]);
   const allowedCodes = new Set([
@@ -216,7 +218,7 @@ export const BROWSER_TRANSACTION_PROBE_SOURCE = `
         severity: "warning",
       }, probe.phase);
     }
-    // document-start 只覆盖探针自身的最早初始化；生产模块随后立即进入 bootstrap。
+    // document-start 只覆盖探针自身的最早初始化；生产模块随后立即进入 bootstrap。 / English: document-start only overrides the earliest initialization of the probe itself; the production module enters bootstrap immediately thereafter.
     probe.setPhase("bootstrap");
   })();
 `;

@@ -131,6 +131,8 @@ function validateExistingLocalApproval(raw, value, now) {
   exactKeys(approval, APPROVAL_KEYS, "release asset approval");
   // 本地生成器始终输出这种规范编码；强制要求该编码还能拒绝会被
   // JSON.parse 折叠的重复 JSON 键。
+  // English: Local generators always output this canonical encoding; forcing this encoding will reject
+  // JSON.parse collapses duplicate JSON keys.
   if (raw !== `${JSON.stringify(approval, null, 2)}\n`) {
     fail("release asset approval is not canonical local JSON");
   }
@@ -366,6 +368,9 @@ function validatePendingPath(approvalPath, pendingPath) {
 
 /**
  * 生成可独立验证的候选审批，但不修改已提交审批或备份。bootstrap 可先构建全部
+// English: Generates independently verifiable candidate approvals without modifying submitted approvals or
+// backups. bootstrap can build all first Candidate image; if the subsequent gate definition fails, the old
+// approval will remain unchanged byte by byte.
  * 候选镜像；若后续定义门禁失败，旧审批仍保持逐字节不变。
  */
 export function prepareLocalAssetApprovalCandidate({
@@ -412,6 +417,8 @@ export function prepareLocalAssetApprovalCandidate({
 
 /**
  * 仅提交先前验证过的候选。预期摘要把“准备”和“提交”绑定到同一份已提交审批，
+// English: Only submit previously verified candidates. The expected digest binds "prepare" and "submit" to the
+// same document submitted for approval, Even manual changes to bypass native lockf will fail the shutdown.
  * 即使有绕过本机 lockf 的手工改动也会失败关闭。
  */
 export function commitLocalAssetApprovalCandidate({

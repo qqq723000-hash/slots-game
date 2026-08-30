@@ -1,9 +1,13 @@
-# RGS 可观测性本机与 CI 契约
+# RGS local and CI observability contract / RGS 可观测性本机与 CI 契约
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This directory provides local and CI contracts for Prometheus scraping and alert rules, provisioned Grafana resources, sanitized container-log collection, and an HTTPS Vector egress path. Its single-node Compose stack is not an AWS production component, and operational credentials must be read from files rather than embedded in configuration, environment variables, or logs. A production adopter must implement and validate private operations access, managed metrics and logs, SSO and RBAC, TLS trust, retention, alert routing, audit evidence, capacity, and failure behavior on the target platform.
 
 本目录只用于本机集成验收和 CI 契约验证，提供 Prometheus 抓取与告警规则、Grafana 声明式
 数据源/仪表盘、Vector 容器 stdout 收集与 HTTPS 出口，以及一个明确未获批准的保留策略模板。

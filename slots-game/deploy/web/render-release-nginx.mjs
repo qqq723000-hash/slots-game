@@ -23,6 +23,9 @@ function onlyMatch(source, expression, label) {
 
 /**
  * 生产 RGS iframe 的响应策略必须与同一次构建的两个公开 origin 完全一致。
+// English: The response policy of the artifactsion RGS iframe must be exactly the same as both public origins
+// of the same build. Only canonical HTTPS values are accepted here and single-point substitutions are made, and
+// wildcards or runtime string concatenation are not allowed to relax CSP.
  * 这里只接受规范 HTTPS 值并做单点替换，禁止用通配符或运行时字符串拼接放宽 CSP。
  */
 export function renderReleaseNginxConfig(baseConfig, options) {

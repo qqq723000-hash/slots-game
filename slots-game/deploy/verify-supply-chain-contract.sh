@@ -4,6 +4,11 @@
 # 该门禁不依赖 Docker daemon，并刻意使用精确匹配：可变镜像/Action 引用或联网构建
 # 必须在镜像创建前失败，避免“本机缓存恰好安全”掩盖发布输入漂移。上述 ShellCheck
 # 规则只因本文件刻意匹配字面量 `$` 与行尾反斜杠而关闭，不允许执行这些匹配文本。
+# English: This gate does not rely on the Docker daemon and deliberately uses exact matches: mutable
+# image/Action reference or network build Must fail before image creation to avoid "native cache happens to be
+# safe" masking release input drift. The above ShellCheck The rule is closed only because this file
+# intentionally matches the literal `$` and the trailing backslash, disallowing execution of these matching
+# text.
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -144,6 +149,8 @@ test "$(grep -F -c -- "apk info -e 'libssl3=3.5.8-r0'" "$web_dockerfile")" -eq 3
   fail 'all Nginx targets must prove fixed libssl3'
 require_line '# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e' "$web_dockerfile"
 # Docker ARG 在这里按 Dockerfile 字面量校验，不能让当前 shell 展开。
+# English: The Docker ARG is verified here according to the Dockerfile literal, and the current shell cannot be
+# expanded.
 # shellcheck disable=SC2016
 require_line 'FROM ${NODE_IMAGE} AS dependencies' "$web_dockerfile"
 test "$(grep -F -x -c -- '    npm ci --ignore-scripts' "$web_dockerfile" || true)" -eq 1 ||
@@ -178,6 +185,8 @@ test "$(grep -F -c -- 'node ./scripts/verify-production-javascript-bundles.mjs' 
 require_fixed 'RELEASE_ASSET_APPROVAL_FILE=/run/secrets/release_asset_approval \' "$web_dockerfile"
 require_fixed 'node ./scripts/verify-release-asset-approval.mjs' "$web_dockerfile"
 # 配置正向门禁只能继承未接触审批 secret 的 release-config-build，且最终产物不得包含 dist。
+# English: Configuring forward access can only inherit release-config-build that has not touched the approval
+# secret, and the final artifacts must not contain dist.
 # shellcheck disable=SC2016
 require_line 'FROM ${NGINX_IMAGE} AS config-conformance-nginx' "$web_dockerfile"
 require_line 'COPY --from=release-config-build --chown=101:101 /src/web/release-nginx.conf /etc/nginx/conf.d/default.conf' "$web_dockerfile"
@@ -254,7 +263,10 @@ test -n "$local_web_reset_line" && test -n "$local_web_copy_line" \
 last_web_stage=$(awk '/^FROM[[:space:]]+/ { stage = $NF } END { print stage }' "$web_dockerfile")
 test "$last_web_stage" = runtime || fail 'web runtime must remain the default final Docker target'
 require_line '    "build:release": "npm run build && node scripts/verify-release-asset-approval.mjs",' "$web_package_json"
-require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' "$makefile"
+make_tab=$(printf '\t')
+awk '$1 == ".PHONY:" { for (field = 2; field <= NF; field += 1) if ($field == "verify-demo-media") found = 1 } END { exit(found ? 0 : 1) }' "$makefile" ||
+  fail 'verify-demo-media must remain phony so a same-named file cannot bypass it'
+require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs verify-demo-media' "$makefile"
 require_regex '^[[:space:]]+node --test deploy/supply-chain/verify-release-version\.test\.mjs$' "$makefile"
 require_regex '^[[:space:]]+node deploy/supply-chain/verify-release-version\.mjs$' "$makefile"
 require_line 'verify-hardening-checklist:' "$makefile"
@@ -263,6 +275,19 @@ require_regex '^[[:space:]]+node scripts/verify-hardening-checklist\.mjs$' "$mak
 require_line 'verify-personal-project-docs:' "$makefile"
 require_regex '^[[:space:]]+node --test scripts/verify-personal-project-docs\.test\.mjs$' "$makefile"
 require_regex '^[[:space:]]+node scripts/verify-personal-project-docs\.mjs$' "$makefile"
+require_line 'verify-demo-media:' "$makefile"
+require_regex '^[[:space:]]+node --test scripts/verify-demo-media\.test\.mjs$' "$makefile"
+require_regex '^[[:space:]]+node scripts/verify-demo-media\.mjs$' "$makefile"
+awk -v target='verify-demo-media:' \
+  -v first="${make_tab}node --test scripts/verify-demo-media.test.mjs" \
+  -v second="${make_tab}node scripts/verify-demo-media.mjs" '
+  $0 == target {
+    targets += 1
+    if ((getline first_line) <= 0 || (getline second_line) <= 0) next
+    if (first_line == first && second_line == second) valid += 1
+  }
+  END { exit(targets == 1 && valid == 1 ? 0 : 1) }
+' "$makefile" || fail 'verify-demo-media target must own both reviewed recipes in order'
 require_regex '^[[:space:]]+sh \./deploy/verify-supply-chain-contract\.sh$' "$makefile"
 require_line 'verify-backend-licenses:' "$makefile"
 require_regex '^[[:space:]]+cd server && go run \./scripts/third-party-notices --check$' "$makefile"
@@ -272,6 +297,8 @@ require_line 'verify-observability-contract:' "$makefile"
 require_regex '^[[:space:]]+\./deploy/observability/verify-static-contract\.sh$' "$makefile"
 require_line 'verify-observability-release:' "$makefile"
 # Makefile 中的转义环境变量是待执行文本，不能让本脚本提前展开。
+# English: The escaped environment variables in the Makefile are text to be executed and cannot allow this
+# script to be expanded in advance.
 # shellcheck disable=SC2016
 require_fixed '--rendered-dir "$${OBSERVABILITY_RENDERED_DIR}"' "$makefile"
 require_regex '^[[:space:]]+\$\(MAKE\) verify-observability-contract$' "$makefile"
@@ -283,6 +310,7 @@ require_line 'smoke-runtime-production: verify-supply-chain-contract' "$makefile
 require_regex '^[[:space:]]+\./deploy/observability/ci-runtime-production-smoke\.sh$' "$makefile"
 require_line 'build-web-release-image: verify-supply-chain-contract' "$makefile"
 # Makefile 中的转义环境变量是刻意保留的字面量。
+# English: Escaped environment variables in Makefiles are intentionally reserved literals.
 # shellcheck disable=SC2016
 require_fixed 'VITE_RGS_BASE_URL is required' "$makefile"
 require_fixed 'VITE_RGS_BET_OPTIONS_MINOR is required' "$makefile"
@@ -332,11 +360,11 @@ if grep -F 'docker pull' "$vector_bounded_flush_test" >/dev/null; then
 fi
 observability_release_workflow_sha=$(ruby -rdigest -e \
   'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$observability_release_workflow")
-test "$observability_release_workflow_sha" = '25d0424e0a12d5faa2274bb5bd0f6bc297a302bb1e40ed3f7f2535fb44751b7b' ||
+test "$observability_release_workflow_sha" = 'f302cdc1f2aa49916f0650268129db99adc8b016d7c09f6125ef8fb7fcb360e6' ||
   fail 'rendered observability release workflow entrypoint drifted from the reviewed implementation'
 vector_bounded_flush_sha=$(ruby -rdigest -e \
   'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$vector_bounded_flush_test")
-test "$vector_bounded_flush_sha" = '248f272074880be00a9c840d389fbeb9e89d7bcc938393c9cfa646653f9971f2' ||
+test "$vector_bounded_flush_sha" = '91359b501a6ffac24912a07319b7b866e22d9bebdc86dfbf7b3ea2adabeb9fb9' ||
   fail 'bounded Vector recovery test drifted from the reviewed implementation'
 
 postgres_image='postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193'
@@ -378,6 +406,7 @@ require_fixed 'RGS_RUNTIME_SMOKE_POSTGRES_CONTAINER: ${{ job.services.postgres.i
 require_line '        run: make smoke-runtime-production' "$backend_workflow"
 require_fixed 'RGS_RUNTIME_SMOKE_ARTIFACT_DIR:' "$backend_workflow"
 # CI smoke 脚本中的 fixture_dir 必须由脚本运行时展开。
+# English: fixture_dir in CI smoke scripts must be expanded by the script runtime.
 # shellcheck disable=SC2016
 require_fixed 'RGS_CI_RUNTIME_FIXTURE=1 RGS_CI_RUNTIME_FIXTURE_PROFILE=development' "$runtime_smoke"
 require_fixed 'go run ./cmd/ci-runtime-fixture "$fixture_dir"' "$runtime_smoke"
@@ -389,6 +418,8 @@ require_fixed 'RGS_OPERATIONS_HTTP_ADDR=127.0.0.1:18081' "$runtime_smoke"
 require_fixed "expect_status 404 http://127.0.0.1:18080/metrics" "$runtime_smoke"
 require_fixed "expect_status 401 http://127.0.0.1:18081/readyz" "$runtime_smoke"
 # 运维 token 只能由 smoke 脚本运行时从临时夹具读取，本契约只匹配字面量。
+# English: The operations token can only be read from the temporary fixture when the smoke script is running.
+# This contract only matches literals.
 # shellcheck disable=SC2016
 require_fixed 'expect_status 200 http://127.0.0.1:18081/readyz "Bearer $operations_token"' "$runtime_smoke"
 require_fixed "grep -F -x 'rgs_ready 1' \"\$artifact_dir/metrics.prom\" >/dev/null" "$runtime_smoke"
@@ -432,6 +463,8 @@ invalid_actions=$(grep -RE '^[[:space:]]*uses:[[:space:]]+' "$workflows_root" | 
 test -z "$invalid_actions" || fail "workflow contains a mutable or malformed action reference: $invalid_actions"
 
 # 生产响应头 renderer 的语义与 CLI 失败闭合必须作为供应链门禁执行，不能只校验文件存在。
+# English: The semantics of the artifactsion response header renderer and CLI failure closure must be performed
+# as supply chain gate control and cannot just verify that the file exists.
 command -v node >/dev/null 2>&1 || fail 'node is required to verify the release nginx renderer'
 node --test "$web_release_renderer_test" >/dev/null || fail 'release nginx renderer tests failed'
 

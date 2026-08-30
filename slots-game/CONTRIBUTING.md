@@ -1,9 +1,13 @@
-# 贡献指南
+# Contributing guide / 贡献指南
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+Contributions must preserve the server-authoritative model for results, balances, RNG, feature state, round revisions, and definition identity. Economic operations use integer minor units and one stable `operationId`, and an unknown wallet outcome may be queried but must never be applied again. Changes should begin with failure coverage, keep secrets and local evidence out of Git and images, and treat live infrastructure, operator, security, asset-rights, and regulatory acceptance as external gates.
 
 ## 不可破坏的不变量
 

@@ -1,4 +1,4 @@
-// @ts-nocheck -- 浏览器探针辅助函数必须保持为可由 CDP 注入的无依赖 JavaScript。
+// @ts-nocheck -- 浏览器探针辅助函数必须保持为可由 CDP 注入的无依赖 JavaScript。 / English: @ts-nocheck -- Browser probe helper functions must remain dependency-free JavaScript that can be injected by CDP.
 import { describe, expect, it } from "vitest";
 import {
   BROWSER_TRANSACTION_PROBE_SOURCE,

@@ -22,6 +22,11 @@ import (
 // 而不是 scriptExecutor fake。valkey-go v1.0.67 的自动管线环有 1024 个槽位，
 // 饱和后的 PutOne 路径不响应 context；因此向完成握手但永不回复的 peer 同时发送
 // 超过 1024 条命令，可精确阻断会卡住 PostgreSQL 会话事务的生产故障。
+// English: TestBoundedValkeyTransportReturnsAfterBlackholeSaturation intentionally uses real TCP faults instead of
+// scriptExecutor fakes. The automatic pipeline ring of valkey-go v1.0.67 has 1024 slots, and the saturated PutOne
+// path does not respond to the context; therefore, more than 1024 commands are simultaneously sent to the peer
+// that completes the handshake but never replies, which can accurately block production failures that will block
+// PostgreSQL session transactions.
 func TestBoundedValkeyTransportReturnsAfterBlackholeSaturation(t *testing.T) {
 	baselineGoroutines := runtime.NumGoroutine()
 	peer := newBlackholeValkeyPeer(t)
@@ -91,6 +96,8 @@ func TestBoundedValkeyTransportReturnsAfterBlackholeSaturation(t *testing.T) {
 	}
 
 	// 四条故障 socket 必须被丢弃并归还池许可，随后新命令必须能建立新连接。
+	// English: The four failed sockets must be discarded and the pool permission returned, and new commands must
+	// subsequently establish new connections.
 	peer.blackhole.Store(false)
 	recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), time.Second)
 	defer recoveryCancel()
@@ -103,6 +110,8 @@ func TestBoundedValkeyTransportReturnsAfterBlackholeSaturation(t *testing.T) {
 	peer.close()
 
 	// 完成后，应用许可等待者和四个依赖/socket 操作必须全部消失，不能为每个请求遗留 goroutine。
+	// English: Once complete, the application permission waiter and four dependencies/socket operations must all be
+	// gone, no goroutine is left behind for each request.
 	limit := baselineGoroutines + 24
 	for until := time.Now().Add(2 * time.Second); runtime.NumGoroutine() > limit && time.Now().Before(until); {
 		runtime.GC()
@@ -290,6 +299,7 @@ func (peer *blackholeValkeyPeer) serve(connection net.Conn) {
 			_, err = io.WriteString(connection, "%2\r\n+version\r\n+7.2.0\r\n+proto\r\n:3\r\n")
 		case "CLIENT":
 			// 较旧 Valkey 版本会合理拒绝可选的 CLIENT SETINFO。
+			// English: Older Valkey versions would reasonably reject the optional CLIENT SETINFO.
 			_, err = io.WriteString(connection, "-ERR unknown command 'CLIENT SETINFO'\r\n")
 		case "PING":
 			if peer.blackhole.Load() {

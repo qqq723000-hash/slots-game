@@ -1,5 +1,6 @@
 #!/bin/sh
 # 把本部署的专用 CA 设为 macOS 登录钥匙串中的 SSL 信任根。
+# English: Set this deployment's private CA as the SSL root of trust in the macOS login keychain.
 set -eu
 # shellcheck source=deploy/local-production/common.sh
 . "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/common.sh"

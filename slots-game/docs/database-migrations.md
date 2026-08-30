@@ -1,9 +1,15 @@
-# PostgreSQL 迁移与运行角色契约
+# PostgreSQL 迁移与运行角色契约 / PostgreSQL migration and runtime-role contract
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document defines the PostgreSQL migration, schema-verification, and least-privilege runtime-role contract.
+Schema changes use a one-shot migrator identity, while `rgs-server` uses a separate runtime identity that cannot perform DDL, rewrite the migration ledger, own managed objects, or delete economic and audit history; the ordered embedded migration manifest and permission checks fail closed on drift.
+DBA role creation, protected credential injection, maintenance quiescence, backup and restore readiness, change approval, and validation against the target database remain external operational gates.
 
 模式变更与请求服务使用两个独立部署身份。`rgs-server` 进程绝不执行迁移或修复授权；
 PostgreSQL 是模式和权限的唯一权威来源。

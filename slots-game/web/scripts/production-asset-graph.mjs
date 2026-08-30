@@ -61,6 +61,8 @@ export function assertNoForbiddenProductionSentinels(artifacts) {
 /**
  * 返回生产 index.html 直接引用、并经静态或字面量动态 import 可达的 JS/CSS。
  * 未从正式入口可达的孤立测试分块不会进入发布白名单。
+ *
+ * 英文 / English: Returns the JS/CSS that is directly referenced by index.html and reachable via static or literal dynamic import. Orphaned test chunks that are not reachable from the official entrance will not be whitelisted for release.
  */
 export function reachableProductionAssets(indexSource, artifacts) {
   const sources = new Map();

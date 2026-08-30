@@ -2,6 +2,8 @@
  * 动画计时是根据提供的 Primal Rampage 桌面包测量的。
  *
  * 持续时间是从捆绑的 Spine 4.1.24 骨架中读取的。调度程序值是从捕获的游戏控制器中恢复的，而不是从视频中估计的，因此表现代码可以共享一个可审核的事实来源。
+ *
+ * 英文 / English: Animation timings are measured against the provided Primal Rampage desktop package. The duration is read from the bundled Spine 4.1.24 skeleton. Scheduler values ​​are recovered from captured game controllers rather than estimated from video, so performance code can share an auditable source of truth.
  */
 
 export const PRIMAL_SYMBOL_IDLE_FRAME_MS = 1_000 / 24;
@@ -21,7 +23,7 @@ export const PRIMAL_REEL_TIMING_MS = Object.freeze({
   fastReelGap: 150,
 });
 
-/** 原生第三卷预期 `in`/`hide` 剪辑持续时间。 */
+/** 原生第三卷预期 `in`/`hide` 剪辑持续时间。 / English: Native third volume expected `in`/`hide` clip duration. */
 export const PRIMAL_REEL_ANTICIPATION_TRANSITION_MS = 333.333;
 
 export const PRIMAL_REEL_SETTLE_MS =
@@ -95,6 +97,8 @@ export interface PrimalSymbolIdleClip {
  * 从 GameSymbol.idle()/playIdle() 恢复了确切的客户端 ID 资格。 LP1/LP2 (0/1)故意没有空闲夹子。
  * Symbol7还包含2秒的`idle_breaker`，但捕获的GameIdleController始终调用`playSpine("idle")`；
  * 该辅助剪辑不得进入此时间表。
+ *
+ * 英文 / English: Restored exact client ID qualification from GameSymbol.idle()/playIdle(). LP1/LP2 (0/1) intentionally have no free clips. Symbol7 also contains an `idle_breaker` for 2 seconds, but the captured GameIdleController always calls `playSpine("idle")`; the secondary clip is not allowed to enter this schedule.
  */
 export const PRIMAL_SYMBOL_IDLE_CLIP_BY_CLIENT_ID: Readonly<
   Record<number, PrimalSymbolIdleClip | null>
@@ -122,7 +126,7 @@ export const PRIMAL_SYMBOL_IDLE_MAX_DURATION_MS = Math.max(
     .flatMap((clip) => clip ? [clip.durationMs] : []),
 );
 
-/** 第一次空闲事件后的最小启动到启动间隙。 */
+/** 第一次空闲事件后的最小启动到启动间隙。 / English: Minimum boot-to-boot gap after first idle event. */
 export const PRIMAL_SYMBOL_IDLE_MIN_RESTART_GAP_MS =
   PRIMAL_SYMBOL_IDLE_COOLDOWN_MS
   + PRIMAL_SYMBOL_IDLE_MIN_FRAMES * PRIMAL_SYMBOL_IDLE_FRAME_MS;
@@ -202,6 +206,8 @@ export const PRIMAL_FEATURE_ANIMATION_MS = Object.freeze({
 /**
  * GamePPSFeature 在其九单元 Rage 级联之前使用 Fisher-Yates 遍历。单元索引为卷主 (`reel * 3 + row`)，
  * 与捕获的控制器的 `floor(index / ReelHeight)` 地址转换相匹配。
+ *
+ * 英文 / English: GamePPSFeature uses a Fisher-Yates traversal before its nine-unit Rage cascade. The cell index is the volume master (`reel * 3 + row`), matching the captured controller's `floor(index / ReelHeight)` address translation.
  */
 export function primalRageCascadeCellOrder(
   random: () => number = Math.random,
@@ -226,7 +232,7 @@ function randomUnit(value: number): number {
   return Math.min(1 - Number.EPSILON, Math.max(0, value));
 }
 
-/** 精确的 `(75 + floor(25 * Math.random())) * (1000 / 24)` 捆绑公式。 */
+/** 精确的 `(75 + floor(25 * Math.random())) * (1000 / 24)` 捆绑公式。 / English: Exact `(75 + floor(25 * Math.random())) * (1000 / 24)` bundled formula. */
 export function primalSymbolIdleDelayMs(random: number): number {
   return (
     PRIMAL_SYMBOL_IDLE_MIN_FRAMES
@@ -234,7 +240,7 @@ export function primalSymbolIdleDelayMs(random: number): number {
   ) * PRIMAL_SYMBOL_IDLE_FRAME_MS;
 }
 
-/** 原始闲置控制器在资格检查之前使用的 Fisher-Yates 命令。 */
+/** 原始闲置控制器在资格检查之前使用的 Fisher-Yates 命令。 / English: Fisher-Yates command used by the original idle controller before qualification checking. */
 export function primalSymbolIdleOrder(
   count: number,
   random: () => number = Math.random,
@@ -265,7 +271,7 @@ export interface PrimalSymbolIdleActivity {
   readonly rageCascadeActive: boolean;
 }
 
-/** 在每个活动表现期间，原始空闲集合都不存在。 */
+/** 在每个活动表现期间，原始空闲集合都不存在。 / English: During each activity performance, the original free set does not exist. */
 export function primalSymbolIdleShouldRun(activity: PrimalSymbolIdleActivity): boolean {
   return !activity.dormant
     && !activity.spinActive
@@ -277,6 +283,8 @@ export function primalSymbolIdleShouldRun(activity: PrimalSymbolIdleActivity): b
 /**
  * 镜像自 VideoSlotIdleController.idleHandler 的两态调度器。
  * 一个 `true` 结果意味着调用者应该打乱可见符号并启动不超过一个符合条件的非循环空闲动画。
+ *
+ * 英文 / English: A two-state scheduler mirrored from VideoSlotIdleController.idleHandler. A `true` result means that the caller should shuffle visible symbols and initiate no more than one qualifying non-looping idle animation.
  */
 export class PrimalSymbolIdleTimer {
   private phaseValue: PrimalSymbolIdlePhase = "random-delay";
@@ -309,7 +317,7 @@ export class PrimalSymbolIdleTimer {
       return false;
     }
 
-    // 捕获的调度程序对每个状态使用一个延迟回调。如果隐藏选项卡恢复较晚，它将执行该回调一次，并从 "now" 开始下一个完整延迟；经过的墙时间从不用于捕获一帧中的多个空闲事件。
+    // 捕获的调度程序对每个状态使用一个延迟回调。如果隐藏选项卡恢复较晚，它将执行该回调一次，并从 "now" 开始下一个完整延迟；经过的墙时间从不用于捕获一帧中的多个空闲事件。 / English: The captured scheduler uses a deferred callback for each state. If the hidden tab resumes late, it will execute that callback once and start the next full delay from "now"; the elapsed wall time is never used to capture multiple idle events in a frame.
     if (this.phaseValue === "random-delay") {
       this.phaseValue = "cooldown";
       this.remainingValue = PRIMAL_SYMBOL_IDLE_COOLDOWN_MS;

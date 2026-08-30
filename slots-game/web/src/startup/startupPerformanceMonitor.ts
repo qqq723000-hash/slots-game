@@ -13,6 +13,8 @@ let activeMonitor: ActiveStartupPerformanceMonitor | null = null;
 
 /**
  * 通过已绘制的准备屏障从微小的入口模块观察真实的帧间失速。 Long Task API 数据在主机暴露时添加；框架间隙仍然是跨浏览器的基线。
+ *
+ * 英文 / English: Observe realistic frame-to-frame stalls from tiny entry blocks through drawn preparation barriers. Long Task API data is added when the host is exposed; frame gaps remain a cross-browser baseline.
  */
 export function startStartupPerformanceMonitor(
   root: HTMLElement,

@@ -8,6 +8,9 @@ import (
 
 // NonceStore 在已验证密钥范围内原子消费随机数。返回假表示该随机数已被消费，
 // 当前请求属于重放。生产实现必须由所有服务副本共享。
+// English: NonceStore atomically consumes nonces within a verified key range. Returning false indicates that the
+// random number has been consumed and the current request is a replay. The production implementation must be
+// shared by all service replicas.
 type NonceStore interface {
 	Consume(context.Context, string, string, time.Time) (bool, error)
 }

@@ -1,6 +1,7 @@
 #!/bin/sh
 
 # 只为本地负向门禁返回不含真实秘密的 Kubernetes Secret fixture。
+# English: Only Kubernetes Secret fixtures without real secrets are returned for local negative gating.
 set -eu
 
 test "$#" -eq 7

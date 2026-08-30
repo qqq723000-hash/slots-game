@@ -43,6 +43,9 @@ var runtimeInsertColumns = map[string][]string{
 	"rgs_launch_codes":    {"code_hash", "operator_id", "claims_json", "expires_at", "created_at"},
 	// 0010 的永久触发器按 invoker 权限注册 operator；应用不直接写本表，但 runtime
 	// 若缺少本列权限，旧新 API 的 PREPARE 都会随触发器失败并回滚。
+	// English: The permanent trigger of 0010 registers the operator according to the invoker permission; the
+	// application does not directly write to this table, but if the runtime lacks the permission of this column, the
+	// PREPARE of the old and new API will fail with the trigger and roll back.
 	"rgs_wallet_recovery_operators": {"operator_id"},
 }
 

@@ -9,6 +9,8 @@
 /*
  * 字体源名称别名让 Canvas/Pixi 的字体简写与复刻游戏 CSS 完全一致。WOFF 已包含 Kanit 粗体字形；
  * `normal` 是资源自带的描述符，并不表示请求更细的字重。
+ *
+ * 英文 / English: Font source name aliases make Canvas/Pixi's font abbreviations exactly the same as forked game CSS. WOFF already contains the Kanit bold font; `normal` is a descriptor that comes with the resource and does not indicate a request for a thinner font weight.
  */
 @font-face {
   font-family: "KANIT_BOLD";
@@ -26,7 +28,7 @@
   font-display: swap;
 }
 
-/* 官方移动端配置直接请求该资源内建的粗体家族名；不要再叠加合成 700。 */
+/* 官方移动端配置直接请求该资源内建的粗体家族名；不要再叠加合成 700。 / English: The official mobile terminal configuration directly requests the built-in bold family name of this resource; do not superimpose and synthesize 700. */
 @font-face {
   font-family: "ROBOTO_CONDENSED_BOLD";
   src: url("/assets/primal-runtime/fonts/ROBOTO_CONDENSED_BOLD.woff") format("woff");
@@ -100,7 +102,7 @@ select {
   background: #000;
 }
 
-/* 浏览器安全区只缩小可用外框；设计坐标内绝不再次消费物理 safe-area。 */
+/* 浏览器安全区只缩小可用外框；设计坐标内绝不再次消费物理 safe-area。 / English: The browser safe area only shrinks the available frame; the physical safe-area is never consumed again within the design coordinates. */
 .game-safe-area {
   position: absolute;
   inset:
@@ -143,7 +145,7 @@ select {
   pointer-events: none;
 }
 
-/* 启动栅栏 */
+/* 启动栅栏 / English: start fence */
 .launch-loading {
   position: absolute;
   inset: 0;
@@ -262,7 +264,7 @@ select {
   50% { transform: translate(-50%, -50%) rotate(225deg) scale(1); opacity: 1; }
 }
 
-/* 小型品牌徽章不会遮挡生成的场景。 */
+/* 小型品牌徽章不会遮挡生成的场景。 / English: Small brand badges do not obscure the generated scene. */
 .brand {
   position: absolute;
   left: 104px;
@@ -384,7 +386,7 @@ select {
   color: #ff563a;
 }
 
-/* 五个真实的 Vault 倍率值，以中性金属铭牌呈现。 */
+/* 五个真实的 Vault 倍率值，以中性金属铭牌呈现。 / English: Five authentic Vault magnification values, presented on neutral metal nameplates. */
 .energy-ladder {
   position: absolute;
   left: 104px;
@@ -484,7 +486,7 @@ select {
   text-shadow: 0 0 8px rgba(255, 128, 34, 0.28);
 }
 
-/* 紧凑的圆形状态指示器悬浮在控制区上方。 */
+/* 紧凑的圆形状态指示器悬浮在控制区上方。 / English: Compact circular status indicators float above the control area. */
 .round-state {
   position: absolute;
   left: 50%;
@@ -522,7 +524,7 @@ select {
   text-overflow: ellipsis;
 }
 
-/* 中央半透明胶囊形控制区：信息、自动、投注、设置、声音。 */
+/* 中央半透明胶囊形控制区：信息、自动、投注、设置、声音。 / English: Central translucent capsule-shaped control area: information, auto, betting, settings, sound. */
 .utility-dock {
   position: absolute;
   left: 50%;
@@ -726,7 +728,7 @@ select {
   white-space: nowrap;
 }
 
-/* 在这个集中的弹出窗口打开之前，投注选项不会出现在主要内容中。 */
+/* 在这个集中的弹出窗口打开之前，投注选项不会出现在主要内容中。 / English: Betting options will not appear in the main content until this centralized pop-up window opens. */
 .bet-scrim {
   position: absolute;
   inset: 0;
@@ -899,7 +901,7 @@ select {
   50% { box-shadow: 0 0 8px rgba(226, 255, 166, 0.86), 0 0 24px rgba(151, 255, 49, 0.58); }
 }
 
-/* 最底部的条带仅包含权威的余额/投注/中奖值。 */
+/* 最底部的条带仅包含权威的余额/投注/中奖值。 / English: The bottommost strip contains only the authoritative balance/bet/win values. */
 .status-panel {
   position: absolute;
   left: 50%;
@@ -957,7 +959,7 @@ select {
   background: linear-gradient(transparent, rgba(170, 174, 161, 0.36), transparent);
 }
 
-/* 主控制按钮是 96px 的亮绿色玻璃圆钮，与转轴机台保持间距。 */
+/* 主控制按钮是 96px 的亮绿色玻璃圆钮，与转轴机台保持间距。 / English: The main control button is a 96px bright green glass round button, which is kept at a distance from the rotating machine table. */
 .spin-dock {
   position: absolute;
   right: 36px;
@@ -1213,7 +1215,7 @@ select {
   color: white;
 }
 
-/* 此提示位于缩放后的 1280×720 帧之外，因此手机文本保持清晰。 */
+/* 此提示位于缩放后的 1280×720 帧之外，因此手机文本保持清晰。 / English: This tip is outside the scaled 1280×720 frame, so phone text remains clear. */
 .orientation-lock {
   position: absolute;
   inset: 0;
@@ -1326,6 +1328,8 @@ select {
 /*
  * 捕获的桌面 statusbar.json 投影：1600x900 -> 1280x720 (.8)、T0AB 1600x30 -> 1280x24、T0CB 85x25 -> 68x20。
  * 信息行计数器以 (808,772.95) -> (646.4,618.36) 为中心，类型为 30px/5px -> 24px/4px。
+ *
+ * 英文 / English: Captured desktop statusbar.json projections: 1600x900 -> 1280x720 (.8), T0AB 1600x30 -> 1280x24, T0CB 85x25 -> 68x20. Info line counter is centered at (808,772.95) -> (646.4,618.36), type 30px/5px -> 24px/4px.
  */
 .status-panel {
   left: 0;
@@ -1502,7 +1506,7 @@ select {
   white-space: nowrap !important;
 }
 
-/* 游戏控件：共享菜单、紧凑的自动播放面板和参考版五按钮底座。 */
+/* 游戏控件：共享菜单、紧凑的自动播放面板和参考版五按钮底座。 / English: Game Controls: Share menu, compact autoplay panel, and reference five-button base. */
 .visually-hidden {
   position: absolute !important;
   width: 1px !important;
@@ -2084,6 +2088,8 @@ select {
 
 /*
  * 在手机景观中，控件在逻辑空间中被放大，因此它们的后缩放触摸目标仍然可用。
+ *
+ * 英文 / English: In mobile landscape, controls are enlarged in logical space so their post-zoom touch targets are still available.
  */
 @container game-surface (max-height: 600px) and (min-aspect-ratio: 4 / 5) {
   .utility-dock {
@@ -2152,7 +2158,7 @@ select {
   }
 }
 
-/* Primal Rampage 表现皮肤。底层控件和状态 API 保持原生行为。 */
+/* Primal Rampage 表现皮肤。底层控件和状态 API 保持原生行为。 / English: Primal Rampage expressive skin. The underlying controls and state API maintain native behavior. */
 .launch-loading {
   color: #fff4cf;
   background: radial-gradient(#002448, #000e20);
@@ -2744,7 +2750,7 @@ select {
   }
 }
 
-/* 最终的屏幕空间锁定覆盖；这些对顺序敏感的皮肤规则必须保留在最后。 */
+/* 最终的屏幕空间锁定覆盖；这些对顺序敏感的皮肤规则必须保留在最后。 / English: Final screen space lock override; these order-sensitive skin rules must be left last. */
 .launch-loading__mark {
   width: 310px;
   height: 162px;
@@ -2790,7 +2796,7 @@ select {
   display: none;
 }
 
-/* 在预加载之后和介绍之前显示测量的 1280×720 启动预览。 */
+/* 在预加载之后和介绍之前显示测量的 1280×720 启动预览。 / English: Shows a measured 1280×720 launch preview after preloading and before intro. */
 .feature-preview {
   position: absolute;
   inset: 0;
@@ -2803,6 +2809,8 @@ select {
   pointer-events: none;
   /*
   * 官方 SPLASH_HIDE 的 fadeOutDuration=0。若在此保留退场淡出，会遮住介绍动画已经推进的前 240 毫秒。
+   *
+   * 英文 / English: Official SPLASH_HIDE has fadeOutDuration=0. If you leave the exit fade here, it will obscure the first 240 milliseconds of the intro animation that has already advanced.
    */
   transition: none;
 }
@@ -3282,6 +3290,8 @@ select {
   position: absolute;
   /*
    * 预设的 1280px 框架在 4:3 和纵向表面上对称剪切。将此启动器控件锚定到可见边缘，如参考 PlayerUI 所做的那样，而不是让它消失在裁剪中。
+   *
+   * 英文 / English: The preset 1280px frame is cropped symmetrically on 4:3 and portrait surfaces. Anchor this launcher control to the visible edge, as done in Reference PlayerUI, rather than having it disappear into the crop.
    */
   right: calc(var(--visible-inset-x, 0px) + 27px);
   bottom: 26px;
@@ -3326,7 +3336,7 @@ select {
   50% { transform: translateY(3px) scale(1.01); }
 }
 
-/* 参考版 HUD：左侧放置 Logo 和与投注区比例一致的奖池塔。 */
+/* 参考版 HUD：左侧放置 Logo 和与投注区比例一致的奖池塔。 / English: Reference HUD: Place the logo and a prize pool tower in proportion to the betting area on the left. */
 .connection {
   display: none !important;
 }
@@ -3432,7 +3442,7 @@ select {
 .jackpot-tower__levels [data-tier="minor"] { --tier-color: #b7ef4a; --tier-glow: rgba(130, 239, 46, 0.5); }
 .jackpot-tower__levels [data-tier="mini"] { --tier-color: #f1f0de; --tier-glow: rgba(231, 235, 219, 0.34); }
 
-/* 细长的全宽数值条上方有五个紧凑的圆形控件。 */
+/* 细长的全宽数值条上方有五个紧凑的圆形控件。 / English: Five compact circular controls sit above the slender, full-width value bar. */
 .utility-dock {
   left: 50%;
   bottom: 29px;
@@ -3560,7 +3570,7 @@ select {
   }
 }
 
-/* 最终级联：捕获的状态栏和信息行必须覆盖旧版 HUD 主题。 */
+/* 最终级联：捕获的状态栏和信息行必须覆盖旧版 HUD 主题。 / English: Final Cascade: Captured status bar and info lines must override the legacy HUD theme. */
 :root {
   --primal-status-font-family: "ROBOTO_CONDENSED_REGULAR", "Primal Roboto Condensed Regular", "Arial Narrow", sans-serif;
   --primal-status-text-color: #cccccc;
@@ -3701,6 +3711,8 @@ select {
   text-transform: none;
   /*
   * 在白色字形内部下方绘制复刻轮廓。WebKit 默认的描边后填充顺序会让压缩后的 24px 字面变黑。
+   *
+   * 英文 / English: Draw a replica outline underneath the white glyph. WebKit's default filling order after stroke will make the compressed 24px text black.
    */
   paint-order: stroke fill;
   -webkit-text-fill-color: #fff;
@@ -3727,7 +3739,7 @@ select {
   display: none;
 }
 
-/* 活动中的普通计数器使用大型单行金色数值。 */
+/* 活动中的普通计数器使用大型单行金色数值。 / English: The normal counters in the campaign use large single lines of golden values. */
 .round-state[data-variant="win-counting"] {
   top: 576px;
   height: 58px;
@@ -3746,7 +3758,7 @@ select {
   -webkit-text-stroke: 4px #171006;
 }
 
-/* 已结算的普通中奖和返回网格 Wheel 中奖使用捕获的两行块。 */
+/* 已结算的普通中奖和返回网格 Wheel 中奖使用捕获的两行块。 / English: The settled normal jackpot and the return grid Wheel jackpot use captured two row blocks. */
 .round-state[data-variant="win-settled"],
 .round-state[data-variant="wheel-bonus"] {
   top: 597px;
@@ -3789,6 +3801,8 @@ select {
 /*
   * Pass 18：五个桌面控件共用一个连续复刻的胶囊形底板。将这些最终规则放在所有旧版 HUD 皮肤之后，
   * 避免各按钮的独立玻璃底板重新出现在最终桌面布局中。
+ *
+ * 英文 / English: Pass 18: Five desktop controls share a continuously replicated capsule base. Putting these final rules behind all legacy HUD skins will prevent separate glass backs for each button from reappearing in the final desktop layout.
  */
 .utility-dock {
   bottom: 25px;
@@ -3854,6 +3868,8 @@ select {
   /*
   * 移动端复刻的点击直径大于原生 44px 控件间距。在相邻图标的中点裁剪重叠圆形，
   * 避免后面的 DOM 同级节点抢占相邻按钮中心的点击。两侧外部控件仍保留完整的向外触达范围。
+   *
+   * 英文 / English: The click diameter of the mobile replica is larger than the native 44px control spacing. Crop overlapping circles at the midpoints of adjacent icons to prevent subsequent DOM sibling nodes from preempting clicks at the center of adjacent buttons. External controls on both sides still retain full outward reach.
    */
   --utility-hit-step: calc(
     var(--mobile-utility-control-size, 44px) +
@@ -3901,6 +3917,8 @@ select {
 
 /*
  * 全屏菜单位于可见的 4:3 投影中，而不是位于更宽渲染器的裁剪翼中。
+ *
+ * 英文 / English: The full-screen menu is in the visible 4:3 projection, rather than in the cropped wing of the wider renderer.
  */
 .game-menu {
   top: 0;
@@ -4267,10 +4285,14 @@ select {
 
 /*
  * 官方移动频道组成。 Pixi 渲染器拥有游戏区域；该 DOM 层仅拥有控件和服务器值状态栏。
+ *
+ * 英文 / English: Official mobile channel composition. The Pixi renderer owns the game area; this DOM layer only owns the controls and server value status bar.
  */
 .game-frame[data-channel="mobile"] {
   /*
    * `hidden` 创建一个滚动容器：Continue 失去焦点后，Chrome 可以保留分数 scrollTop 并将整个移动场景向上移动。
+   *
+   * 英文 / English: `hidden` creates a scroll container: Continue After losing focus, Chrome can retain the fractional scrollTop and move the entire mobile scene up.
    */
   overflow: clip;
   background: #000;
@@ -4388,6 +4410,8 @@ select {
   height: 100%;
   /*
   * 原生横屏提示采用紧凑标题。此前从桌面版推导出的缩放比 844x390 参考画面宽约 1.57 倍。
+   *
+   * 英文 / English: Native landscape prompts use compact titles. The scaling previously derived from the desktop version was approximately 1.57 times wider than the 844x390 reference frame.
    */
   font-size: clamp(11px, 1.5cqw, 14px);
   line-height: 1.65;
@@ -4499,7 +4523,7 @@ select {
   -webkit-text-stroke-width: 3px;
 }
 
-/* 手机竖屏的信息标题小于 iPad 竖屏。 */
+/* 手机竖屏的信息标题小于 iPad 竖屏。 / English: The title of the message in the vertical screen of the mobile phone is smaller than that of the vertical screen of the iPad. */
 .game-frame[data-channel="mobile"][data-mobile-layout="pt"] .round-state__title {
   font-size: clamp(13px, 3.9cqw, 16px);
   -webkit-text-stroke-width: 2px;
@@ -4512,6 +4536,8 @@ select {
 /*
   * 竖屏居中的 Spin 控件占据空闲标题下方区域。两行固定中奖信息和较大计数器需要独立空间，
   * 因此“Congratulations!”绝不能渲染到控制按钮图稿下方。
+ *
+ * 英文 / English: A vertically centered Spin control occupies the area below the free title. The two lines of fixed win information and the larger counter require separate space, so "Congratulations!" must never be rendered below the control button artwork.
  */
 .game-frame[data-channel="mobile"][data-mobile-layout="pt"] .round-state[data-variant="win-counting"],
 .game-frame[data-channel="mobile"][data-mobile-layout="pt"] .round-state[data-variant="win-settled"],
@@ -4575,6 +4601,8 @@ select {
 
 /*
  * Feature Preview 有自己的官方比例表并占据整个启动器视口（游戏中状态区域尚不存在）。
+ *
+ * 英文 / English: Feature Preview has its own official scale and takes up the entire launcher viewport (the in-game status area does not yet exist).
  */
 .game-frame[data-channel="mobile"] .feature-preview__continue,
 .game-frame[data-channel="mobile"] .feature-preview__continue::after,
@@ -4783,6 +4811,8 @@ select {
 
 /*
  * 将预设的 FPS 标签保留在与 Pixi 内容相同的捕获的 1280x720 投影上。内联变量来自官方 FPS 最小绑定，因此手机和平板电脑不再需要不相关的手动调整文本坐标。
+ *
+ * 英文 / English: Keeps the preset FPS tag on the same captured 1280x720 projection as the Pixi content. Inline variables come from the official FPS minimal binding, so phones and tablets no longer require irrelevant manual adjustments to text coordinates.
  */
 .game-frame[data-channel="mobile"][data-fps-layout] {
   --launcher-independent-bottom: 10px;
@@ -4897,6 +4927,8 @@ select {
 /*
   * Pass 59：复刻的桌面自动播放会把绿色主旋转按钮替换为橙色 10004.svg 停止/计数组合控件。
   * 黑色计数底板已烘焙进源资源，只有实时数字属于此叠层。
+ *
+ * 英文 / English: Pass 59: The forked desktop autoplay replaces the main green spin button with an orange 10004.svg stop/count combination control. The black counter plate is baked into the source asset, only the live numbers belong to this overlay.
  */
 .game-frame[data-channel="desktop"] .spin-button__autoplay-stop,
 .game-frame[data-channel="desktop"] .spin-button__autoplay-count {
@@ -4952,6 +4984,8 @@ select {
 
 /*
  * 小自动图标仅打开配置。它在原始桌面 HUD 中从未带有运行计数。
+ *
+ * 英文 / English: The small automatic icon only opens the configuration. It never came with a run count in the original desktop HUD.
  */
 .game-frame[data-channel="desktop"] .utility-button--auto[data-active="true"]::before {
   display: none;
@@ -4960,6 +4994,8 @@ select {
 /*
  * 状态栏以代码原生的个人独立开发标识替代供应商式署名，并保持既有 16px 页脚投影；
  * Balance/Bet 使用 15% 半透明底板。
+ *
+ * 英文 / English: The status bar replaces the vendor signature with a code-native personal independent development logo and maintains the existing 16px footer shadow; Balance/Bet uses a 15% translucent bottom plate.
  */
 .status-panel__identity {
   position: absolute;
@@ -5001,7 +5037,7 @@ select {
   background: transparent;
 }
 
-/* GAME RULES 使用独立白色文档面；固定公开玩法与运营商补充条款保持来源分层。 */
+/* GAME RULES 使用独立白色文档面；固定公开玩法与运营商补充条款保持来源分层。 / English: GAME RULES uses an independent white document surface; fixed public gameplay and operator supplementary terms maintain source layering. */
 #game-menu-rules {
   width: auto;
   margin-top: -8px;
@@ -5117,10 +5153,10 @@ select {
   font-size: clamp(13px, 3.4cqw, 16px);
 }
 
-/* 服务端空闲终态：按官方 390×844 捕获还原，并在所有布局保持同一比例语义。 */
+/* 服务端空闲终态：按官方 390×844 捕获还原，并在所有布局保持同一比例语义。 / English: Server-side idle final state: captured and restored according to the official 390×844, and maintains the same proportional semantics in all layouts. */
 [data-rgs-session-timeout="true"] .launch-loading-host,
 [data-rgs-session-timeout="true"] .orientation-lock {
-  /* 超时可能发生在启动/Intro；外层 status surface 不能遮住唯一终态 alertdialog。 */
+  /* 超时可能发生在启动/Intro；外层 status surface 不能遮住唯一终态 alertdialog。 / English: Timeouts may occur at startup/Intro; the outer status surface cannot cover the only final state alertdialog. */
   display: none !important;
 }
 
@@ -5244,9 +5280,12 @@ select {
 }
 
 /* 任意移动视口 DOM 合约 */
+/* English: Continuous DOM contract for every mobile viewport. */
 /*
  * 移动设计域由当前视口纵横比连续求解；这里仅消费连续 cqw/cqh 与现有 gameplay/status 变量。
  * 这些回退值也覆盖 DOM ResizeObserver 发布首个精确几何值之前的一帧，绝不识别设备型号或预设尺寸。
+ *
+ * 英文 / English: The mobile design domain is solved continuously by the current viewport aspect ratio; here only the continuous cqw/cqh and existing gameplay/status variables are consumed. These fallback values ​​also cover the frame before the first precise geometry value is published by the DOM ResizeObserver, which in no way recognizes the device model or preset size.
  */
 .game-frame[data-channel="mobile"] .dom-overlay {
   --mobile-hud-edge: clamp(8px, min(2.4cqw, 2.4cqh), 18px);
@@ -5330,7 +5369,7 @@ select {
   white-space: nowrap;
 }
 
-/* 纵向手机与平板共享同一套比例式堆栈；iPad_pt 只影响 Pixi 作者节点，不改变 DOM 流。 */
+/* 纵向手机与平板共享同一套比例式堆栈；iPad_pt 只影响 Pixi 作者节点，不改变 DOM 流。 / English: Portrait phones and tablets share the same proportional stack; iPad_pt only affects the Pixi author node and does not change the DOM flow. */
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"]) .dom-overlay {
   --mobile-utility-control-size: 39.37px;
   --mobile-utility-gap: var(--mobile-control-gap);
@@ -5343,7 +5382,7 @@ select {
   --mobile-utility-height: calc(
     var(--mobile-utility-control-size) + var(--mobile-utility-padding) + var(--mobile-utility-padding)
   );
-  /* 390x844 手机约 85.91px，633x844 平板约 79.59px；运行时按完整长宽比精确发布。 */
+  /* 390x844 手机约 85.91px，633x844 平板约 79.59px；运行时按完整长宽比精确发布。 / English: 390x844 is about 85.91px for mobile phones, 633x844 is about 79.59px for tablets; published exactly at full aspect ratio when running. */
   --mobile-spin-size: clamp(79.59px, calc(96.053px - 2.6008cqw), 85.91px);
   --mobile-round-height: clamp(28px, 7.5cqw, 34px);
   --mobile-utility-bottom: calc(var(--status-height) + 5px);
@@ -5419,7 +5458,7 @@ select {
 
 .game-frame[data-channel="mobile"]:not([data-mobile-layout="ls"])
   .round-state[data-variant="win-counting"] {
-  /* 覆盖旧 pt 变体的固定偏移；所有纵向比例都服从同一无重叠几何。 */
+  /* 覆盖旧 pt 变体的固定偏移；所有纵向比例都服从同一无重叠几何。 / English: Overrides the fixed offset of old pt variants; all vertical scales obey the same non-overlapping geometry. */
   bottom: var(--mobile-round-bottom);
   height: clamp(44px, 7cqh, 58px);
 }
@@ -5489,7 +5528,7 @@ select {
   white-space: nowrap;
 }
 
-/* 横向手机与平板根据连续高度收缩；去掉旧的 250px 最小栏高，避免矮视口把两端控件顶出玩法区。 */
+/* 横向手机与平板根据连续高度收缩；去掉旧的 250px 最小栏高，避免矮视口把两端控件顶出玩法区。 / English: Horizontal mobile phones and tablets shrink according to continuous height; remove the old 250px minimum column height to prevent the short viewport from pushing the controls at both ends out of the play area. */
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .dom-overlay {
   --mobile-utility-control-size: 44.31px;
   --mobile-utility-gap: 12.41px;
@@ -5637,7 +5676,7 @@ select {
   max-width: 31%;
 }
 
-/* int64 极值金额不得通过 ellipsis 隐藏：仅在长值出现时让三项接管整个状态栏。 */
+/* int64 极值金额不得通过 ellipsis 隐藏：仅在长值出现时让三项接管整个状态栏。 / English: int64 extreme amounts must not be hidden via ellipsis: only let three items take over the entire status bar when long values ​​appear. */
 .game-frame[data-channel="mobile"]
   .status-panel[data-money-density="extreme"] .status-metric strong {
   max-width: none;
@@ -5719,6 +5758,8 @@ select {
 /*
  * Pass 142：移动状态条已经拥有`--gameplay-height`以下的最终物理区域。 HUD 显示可能会淡化它，
  * 但桌面 24px 入口翻译会将整个条带（及其提供者）推过手机和平板电脑上的视口边缘。
+ *
+ * 英文 / English: Pass 142: The mobile status bar already has the final physical area below `--gameplay-height`. HUD displays may downplay it, but desktop 24px portal translation pushes the entire strip (and its providers) past the edge of the viewport on phones and tablets.
  */
 .game-frame[data-channel="mobile"] .status-panel {
   transform: none;
@@ -5727,6 +5768,8 @@ select {
 /*
  * 固定玩法说明：纵向移动表面使用顶部标签，横向恢复捕获的左侧导航轨。
  * 文案区域只在精确 session definition 绑定成功后显示。
+ *
+ * 英文 / English: Fixed gameplay notes: Moving the surface vertically using the top tab restores the captured left nav rail horizontally. The copy area is only displayed after the exact session definition is successfully bound.
  */
 .official-help,
 .presentation-rules-unavailable,
@@ -5796,7 +5839,7 @@ select {
 .official-help__section > h4 {
   position: absolute;
   left: 0;
-  /* 投影编排的 45px 字体后，与 Canvas 文本基线对齐。 */
+  /* 投影编排的 45px 字体后，与 Canvas 文本基线对齐。 / English: After projecting the choreographed 45px font, align it to the Canvas text baseline. */
   top: 3.3px;
   width: 750px;
   height: 60px;
@@ -5840,6 +5883,9 @@ select {
   color: #5c0001;
   paint-order: stroke fill;
   /* Canvas lineWidth=10 以字形边缘为中心；CSS text-stroke 使用类似半径的宽度，
+     因此 5px 是匹配的浏览器投影。
+     因此 5px 是匹配的浏览器投影。 *
+     因此 5px 是匹配的浏览器投影。 * 英文 / English: Canvas lineWidth=10 is centered on the glyph edge; CSS text-stroke uses a radius-like width, so 5px is the matching browser drop shadow.
      因此 5px 是匹配的浏览器投影。 */
   -webkit-text-stroke: 5px #5c0001;
 }
@@ -5890,6 +5936,9 @@ select {
 .official-help__copy--way-wins p {
   width: 740px;
   /* 原始实时渲染器会忽略该字段在源时间线中的 lsp=3；
+     将其作为 CSS 像素会错误地产生第三行。
+     将其作为 CSS 像素会错误地产生第三行。 *
+     将其作为 CSS 像素会错误地产生第三行。 * 英文 / English: The raw real-time renderer ignores lsp=3 for this field in the source timeline; treating it as a CSS pixel incorrectly produces the third row.
      将其作为 CSS 像素会错误地产生第三行。 */
   letter-spacing: 0;
 }
@@ -6139,7 +6188,7 @@ select {
   line-height: 40px;
 }
 
-/* 帮助页内部只保留官方 750 逻辑像素几何；外层舞台负责唯一一次等比缩放。 */
+/* 帮助页内部只保留官方 750 逻辑像素几何；外层舞台负责唯一一次等比缩放。 / English: Only the official 750 logical pixel geometry is retained inside the help page; the outer stage is responsible for the only proportional scaling. */
 .game-frame[data-channel="mobile"][data-mobile-layout="pt"] .wild-paytable {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px 0;
@@ -6154,7 +6203,7 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* 手机、平板与旋转态都不得重排或挤压官方帮助页内部内容。 */
+/* 手机、平板与旋转态都不得重排或挤压官方帮助页内部内容。 / English: Mobile phones, tablets and rotating media are not allowed to rearrange or squeeze the internal content of the official help page. */
 .game-frame[data-channel="mobile"][data-mobile-layout="iPad_pt"] .wild-paytable {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px 0;
@@ -6170,7 +6219,7 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* 横向手机/平板使用捕获的 x=22/w=109 左轨；作者帮助面只在右侧内容槽等比投影。 */
+/* 横向手机/平板使用捕获的 x=22/w=109 左轨；作者帮助面只在右侧内容槽等比投影。 / English: Horizontal mobile phones/tablets use the captured x=22/w=109 left track; the author's help surface is only projected proportionally in the right content slot. */
 .game-frame[data-channel="mobile"][data-mobile-layout="ls"] .wild-paytable {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px 0;
@@ -6221,6 +6270,8 @@ select {
  * PC 参考基线在 1280x720 的可见 footer 为 16px；整套几何必须
  * 保持同一投影，不能把 24px 字号/行高叠到已验收的 16px 独立身份标识与锚点上。
  * 移动端继续只消费 ResponsiveLayout 注入的物理区域变量。
+ *
+ * 英文 / English: Three-terminal status bar final contract: PC and mobile terminals use independent but complete final state projections. The visible footer of the PC reference baseline at 1280x720 is 16px; the entire set of geometry must maintain the same projection, and the 24px font size/line cannot be superimposed on the accepted 16px independent identity mark and anchor point. The mobile terminal continues to consume only the physical area variables injected by ResponsiveLayout.
  */
 .game-frame:not([data-channel="mobile"]) .status-panel {
   height: 16px;
@@ -6269,7 +6320,7 @@ select {
   font: 400 8px/16px "Primal Roboto Condensed Regular", "Arial Narrow", sans-serif;
 }
 
-/* 桌面构图没有移动端 Balance/Bet 背板；保留状态条自身的已验收纹理。 */
+/* 桌面构图没有移动端 Balance/Bet 背板；保留状态条自身的已验收纹理。 / English: Desktop composition does not have mobile Balance/Bet backplate; retains the status bar's own accepted texture. */
 .game-frame:not([data-channel="mobile"]) .status-metric--balance,
 .game-frame:not([data-channel="mobile"]) .status-metric--bet {
   padding: 0;

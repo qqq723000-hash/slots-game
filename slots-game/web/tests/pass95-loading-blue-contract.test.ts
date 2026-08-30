@@ -1,4 +1,4 @@
-// @ts-nocheck -- 仅在 Node 中运行的静态 CSS/HTML 证据契约测试。
+// @ts-nocheck -- 仅在 Node 中运行的静态 CSS/HTML 证据契约测试。 / English: @ts-nocheck -- Static CSS/HTML evidence contract tests that only run in Node.
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";

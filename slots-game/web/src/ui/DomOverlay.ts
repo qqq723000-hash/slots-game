@@ -58,8 +58,8 @@ interface TrustedHtmlPolicyFactory {
   ): TrustedHtmlPolicy;
 }
 
-// 唯一 TrustedHTML 铸造能力只存在于本模块词法作用域；不得导出 policy、factory、
-// 注册 tag 或接受外部模板的通用 mount API。
+// 唯一 TrustedHTML 铸造能力只存在于本模块词法作用域；不得导出 policy、factory、 / English: The only TrustedHTML casting capability exists only in the lexical scope of this module; policy, factory,
+// 注册 tag 或接受外部模板的通用 mount API。 / English: Register a tag or accept a generic mount API from an external template.
 let domOverlayPolicyFactory: TrustedHtmlPolicyFactory | null = null;
 let domOverlayPolicy: TrustedHtmlPolicy | null = null;
 
@@ -68,7 +68,7 @@ function mountReviewedDomOverlayShell(target: Element, reviewedSource: string): 
   const value = isTrustedHtmlPolicyFactory(candidate)
     ? trustedDomOverlayHtml(candidate, reviewedSource)
     : reviewedSource;
-  // lib.dom 在尚未原生声明 TrustedHTML 的 TypeScript 版本中仍把该属性标为 string。
+  // lib.dom 在尚未原生声明 TrustedHTML 的 TypeScript 版本中仍把该属性标为 string。 / English: lib.dom still marks the property as string in versions of TypeScript that do not natively declare TrustedHTML.
   (target as unknown as { innerHTML: unknown }).innerHTML = value;
 }
 
@@ -118,7 +118,7 @@ export type GameMenuTabAxis = "horizontal" | "vertical";
 export type UiPanelId = "bet" | "autoplay" | GameMenuTab;
 export type UiPanelHandler = (panel: UiPanelId) => void;
 
-/** 视觉轴与键盘轴必须一致；非当前轴方向键交回页面，不吞掉事件。 */
+/** 视觉轴与键盘轴必须一致；非当前轴方向键交回页面，不吞掉事件。 / English: The visual axis and keyboard axis must be consistent; non-current axis direction keys return to the page and do not swallow events. */
 export function gameMenuTabNavigationIndex(
   currentIndex: number,
   itemCount: number,
@@ -135,7 +135,7 @@ export function gameMenuTabNavigationIndex(
   if (key === nextKey) return (currentIndex + 1) % itemCount;
   return null;
 }
-/** @deprecated Use 四个捕获 `AutoPlayStopSettings` 的条件。 */
+/** @deprecated Use 四个捕获 `AutoPlayStopSettings` 的条件。 / English: @deprecated Use four conditions to capture `AutoPlayStopSettings`. */
 export type AutoPlayStopRule = "complete" | "win";
 
 export type AutoPlayStopBoundary = "any-win" | "bonus" | "free-spins" | "jackpot";
@@ -155,6 +155,8 @@ export interface AutoPlayStopSettingsStorage {
 /**
  * 从捕获的桌面 `.471` 捆绑包中的 `AutoplaySettings.awake()` 和 `VideoSlotAutoplaySettings.awake()` 中恢复的不可变证据配置文件。
  * 这记录了源模型；它故意不是用户为此项目选择的本地运行时默认值。
+ *
+ * 英文 / English: Immutable evidence configuration files recovered from `AutoplaySettings.awake()` and `VideoSlotAutoplaySettings.awake()` in the captured desktop `.471` bundle. This documents the source model; it is intentionally not the local runtime default chosen by the user for this project.
  */
 export const CAPTURED_AUTO_PLAY_STOP_SETTINGS: AutoPlayStopSettings = Object.freeze({
   anyWin: false,
@@ -163,7 +165,7 @@ export const CAPTURED_AUTO_PLAY_STOP_SETTINGS: AutoPlayStopSettings = Object.fre
   jackpot: true,
 });
 
-/** 用户请求的本地运行时配置文件：通过功能保留自动播放。 */
+/** 用户请求的本地运行时配置文件：通过功能保留自动播放。 / English: User-requested local runtime profile: Preserve autoplay via functionality. */
 export const DEFAULT_AUTO_PLAY_STOP_SETTINGS: AutoPlayStopSettings = Object.freeze({
   anyWin: false,
   bonus: false,
@@ -213,6 +215,8 @@ function normalizeAutoPlayStopSettings(value: unknown): AutoPlayStopSettings {
 
 /**
  * 只有 v2 包络是当前的。旧版 v1、裸露、损坏和未来记录会回退到完全关闭运行时配置文件，因此旧的捕获默认记录不会意外停止新启动的自动播放会话。
+ *
+ * 英文 / English: Only the v2 envelope is current. Legacy v1, naked, corrupted, and future recordings fall back to turning off the runtime profile entirely, so old capture default recordings don't unexpectedly stop newly launched autoplay sessions.
  */
 export function parseAutoPlayStopSettings(serialized: string | null): AutoPlayStopSettings {
   if (!serialized) return freshDefaultAutoPlayStopSettings();
@@ -255,7 +259,7 @@ export function loadAutoPlayStopSettings(
   }
 }
 
-/** 当浏览器隐私/存储策略拒绝写入时返回 false。 */
+/** 当浏览器隐私/存储策略拒绝写入时返回 false。 / English: Returns false when the browser privacy/storage policy denies writing. */
 export function persistAutoPlayStopSettings(
   settings: AutoPlayStopSettings,
   storage: AutoPlayStopSettingsStorage | null = availableAutoPlayStopStorage(),
@@ -282,6 +286,8 @@ function startupStageLabel(stage: string): string {
 
 /**
  * 可见控制面板的幂等仅表示生命周期。音频侦听器可能会失败，但不会阻止 DOM 面板更改状态。
+ *
+ * 英文 / English: Visible control panel idempotence only represents the life cycle. The audio listener may fail but does not prevent the DOM panel from changing state.
  */
 export class UiPanelLifecycle {
   private readonly visible = new Set<UiPanelId>();
@@ -303,7 +309,7 @@ export class UiPanelLifecycle {
     try {
       (visible ? this.openHandler : this.closeHandler)(panel);
     } catch {
-      // 面板状态权威；表现音频仅尽力而为。
+      // 面板状态权威；表现音频仅尽力而为。 / English: Panel status is authoritative; performance audio is best effort only.
     }
     return true;
   }
@@ -322,7 +328,7 @@ export const PAYTABLE_WILD_ENTRIES = [
   { label: "WILD", asset: "10038.png" },
 ] as const;
 
-/** 官方 PAYING SYMBOLS：玩家域顺序、作者缩放和十进制赔率均不经过浮点数。 */
+/** 官方 PAYING SYMBOLS：玩家域顺序、作者缩放和十进制赔率均不经过浮点数。 / English: OFFICIAL PAYING SYMBOLS: Player field order, author scaling and decimal odds are not floated. */
 export const BASE_PAYTABLE_ENTRIES = [
   { label: "Jet", awardTenths: 20, asset: "10017.png", widthPx: 150.8, heightPx: 110.2 },
   { label: "Tank", awardTenths: 15, asset: "10016.png", widthPx: 150.8, heightPx: 110.2 },
@@ -336,6 +342,8 @@ const CANONICAL_PAYTABLE_MONEY_MINOR = /^(0|[1-9]\d*)$/;
 
 /**
  * 三卷轴 x3 奖励使用十分之一投注单位；BigInt half-up 保持与 RGS minor-unit 结算一致。
+ *
+ * 英文 / English: Three-reel x3 bonus uses one-tenth betting unit; BigInt half-up remains consistent with RGS minor-unit settlement.
  */
 export function paytableAwardMinorForBet(
   totalBetMinor: MoneyMinor,
@@ -377,9 +385,9 @@ interface ArmedAutoPlayStopRound {
   stopRequested: boolean;
 }
 
-/** 捕获 VideoSlotAutoplayController `continueDelay`：十个 24fps 刻度。 */
+/** 捕获 VideoSlotAutoplayController `continueDelay`：十个 24fps 刻度。 / English: Capture VideoSlotAutoplayController `continueDelay`: Ten 24fps ticks. */
 export const PRIMAL_AUTOPLAY_CONTINUE_DELAY_MS = 10 * (1_000 / 24);
-/** 捕获 VideoSlotAutoplayController `bonusDelay`：四十个 24fps 刻度。 */
+/** 捕获 VideoSlotAutoplayController `bonusDelay`：四十个 24fps 刻度。 / English: Capture VideoSlotAutoplayController `bonusDelay`: Forty 24fps ticks. */
 export const PRIMAL_AUTOPLAY_BONUS_DELAY_MS = 40 * (1_000 / 24);
 
 export interface PrimarySpinControlPresentation {
@@ -389,12 +397,14 @@ export interface PrimarySpinControlPresentation {
   readonly ariaLabel: string;
   readonly text: SpinControlPresentation["text"];
   readonly disabled: boolean;
-  /** 自动播放外为空；渲染在 10004.svg 的黑色中心板上。 */
+  /** 自动播放外为空；渲染在 10004.svg 的黑色中心板上。 / English: Empty outside autoplay; rendered on the black center panel of 10004.svg. */
   readonly remainingText: string;
 }
 
 /**
  * 即使外部 Base 自动播放会话保持活动状态，这些模式也属于创作功能。功能操作绝不能被自动停止操作替代。
+ *
+ * 英文 / English: These modes are authoring features even if an external Base autoplay session remains active. Functional operation must never be replaced by automatic stop operation.
  */
 export function isAutoplayFeatureOwnedSpinMode(mode: SpinMode): boolean {
   return mode === "feature-continue"
@@ -408,7 +418,7 @@ export function isAutoplayFeatureOwnedSpinMode(mode: SpinMode): boolean {
     || mode === "wheel-none";
 }
 
-/** 捕获的自动游戏控制器前进的非投注功能输入。 */
+/** 捕获的自动游戏控制器前进的非投注功能输入。 / English: Captured automatic game controller advances for non-betting function inputs. */
 export function autoplayFeatureInputDelay(mode: SpinMode): number | null {
   if (mode === "wheel-ready") return PRIMAL_AUTOPLAY_BONUS_DELAY_MS;
   if (mode === "feature-continue"
@@ -416,12 +426,14 @@ export function autoplayFeatureInputDelay(mode: SpinMode): number | null {
     || mode === "cap-continue") {
     return PRIMAL_AUTOPLAY_CONTINUE_DELAY_MS;
   }
-  // Wheel 弹出窗口和摘要拥有捕获的 2500/3000ms 超时。手动 Continue 仍然可以提前释放它们而不结束自动播放运行。
+  // Wheel 弹出窗口和摘要拥有捕获的 2500/3000ms 超时。手动 Continue 仍然可以提前释放它们而不结束自动播放运行。 / English: Wheel popups and summaries have captured 2500/3000ms timeouts. Manual Continue can still release them early without ending the autoplay run.
   return null;
 }
 
 /**
  * 将一张已接受的外部 Base ROUNDSTART 提交至出示计数器。功能输入和拒绝的请求永远不会调用此帮助程序。
+ *
+ * 英文 / English: Submit an accepted external Base ROUNDSTART to the presentation counter. Function input and rejected requests never call this helper.
  */
 export function advanceAutoPlay(
   state: AutoPlayRunState,
@@ -439,6 +451,8 @@ export function advanceAutoPlay(
 
 /**
  * 原始客户端在自动播放期间替换（而不是徽章）其主要绿色 Spin 按钮。  将此视觉/输入投影与现有的自旋模式状态机分开：它永远不会确定结果。
+ *
+ * 英文 / English: The original client replaced (instead of the badge) its main green Spin button during autoplay. Separate this vision/input projection from the existing spin mode state machine: it never determines the outcome.
  */
 export function primarySpinControlPresentation(
   mode: SpinMode,
@@ -456,7 +470,7 @@ export function primarySpinControlPresentation(
     action: "autoplay-stop",
     visualToken: "autoplay-stop",
     ariaLabel: `Stop autoplay. ${remaining} spins remaining.`,
-    // 常规文本在视觉上被橙色复合材料隐藏，但如果 CSS 尚未到达，则仍可作为明智的回退路径文本。
+    // 常规文本在视觉上被橙色复合材料隐藏，但如果 CSS 尚未到达，则仍可作为明智的回退路径文本。 / English: The regular text is visually hidden by the orange composite, but still serves as sensible fallback path text if CSS hasn't arrived yet.
     text: regular.text,
     disabled: false,
     remainingText: String(remaining),
@@ -479,7 +493,7 @@ export type SpinMode =
   | "wheel-landing-continue"
   | "wheel-none";
 
-/** 为仅 Wheel 的 Spin 控制效果捕获光辉精灵相位。 */
+/** 为仅 Wheel 的 Spin 控制效果捕获光辉精灵相位。 / English: Captures the glowing sprite phase for Wheel-only Spin control effects. */
 export type WheelHyperspinPhase = "none" | "appear" | "loop" | "disappear";
 
 export interface WheelHyperspinSpritePosition {
@@ -492,7 +506,7 @@ export interface WheelHyperspinFrameState {
   readonly frame: number;
 }
 
-/** 捕获的 Radiance 包中的模块 4159 将这个精灵推进到 24fps。 */
+/** 捕获的 Radiance 包中的模块 4159 将这个精灵推进到 24fps。 / English: Module 4159 from the Captured Radiance package pushes this sprite to 24fps. */
 export const WHEEL_HYPERSPIN_FRAME_MS = 1_000 / 24;
 
 const WHEEL_HYPERSPIN_COLUMNS = Object.freeze([
@@ -503,7 +517,7 @@ function boundedHyperspinFrame(frame: number, count: number): number {
   return Math.min(count - 1, Math.max(0, Math.floor(frame)));
 }
 
-/** 来自官方 HyperSpin CSS 模块的精确 8×6 精灵表坐标。 */
+/** 来自官方 HyperSpin CSS 模块的精确 8×6 精灵表坐标。 / English: Precise 8×6 sprite sheet coordinates from the official HyperSpin CSS module. */
 export function wheelHyperspinSpritePosition(
   phase: Exclude<WheelHyperspinPhase, "none">,
   frame: number,
@@ -533,7 +547,7 @@ export function wheelHyperspinSpritePosition(
   };
 }
 
-/** 一个官方 24fps 过渡；离开就绪状态首先完成活动通道。 */
+/** 一个官方 24fps 过渡；离开就绪状态首先完成活动通道。 / English: An official 24fps transition; leaving the ready state completes the active pass first. */
 export function nextWheelHyperspinFrame(
   state: Readonly<WheelHyperspinFrameState>,
   hideRequested: boolean,
@@ -548,12 +562,14 @@ export function nextWheelHyperspinFrame(
 
 /**
  * DOM相当于官方Radiance模块4159。游戏渲染器拥有Wheel；这个仅控制的精灵永远不会进入 Pixi 的过滤帧缓冲区。
+ *
+ * 英文 / English: DOM equivalent of official Radiance module 4159. The game renderer owns the Wheel; this control-only sprite never enters Pixi's filtered framebuffer.
  */
 class WheelHyperspinEffect {
   private phase: WheelHyperspinPhase = "none";
   private frame = 0;
   private hideRequested = false;
-  /** 镜像 React 当前的 `visible` 属性跨越待处理的消失通道。 */
+  /** 镜像 React 当前的 `visible` 属性跨越待处理的消失通道。 / English: Mirror React's current `visible` property across pending disappearing channels. */
   private visibleRequested = false;
   private frameHandle: number | null = null;
   private lastFrameAt = 0;
@@ -565,7 +581,7 @@ class WheelHyperspinEffect {
   setVisible(visible: boolean): void {
     this.visibleRequested = visible;
     if (visible) {
-      // 捕获的React组件仅从`none`开始一个新的pass。
+      // 捕获的React组件仅从`none`开始一个新的pass。 / English: Captured React components only start a new pass from `none`.
       if (this.phase !== "none") return;
       this.beginAppear();
       return;
@@ -596,7 +612,7 @@ class WheelHyperspinEffect {
       this.paint();
     }
     if (this.phase === "none" && this.visibleRequested) {
-      // 如果 Wheel Ready 在旧效果消失时返回，React 首先让 `disappear` 完成，然后开始新的 `appear` 传递。
+      // 如果 Wheel Ready 在旧效果消失时返回，React 首先让 `disappear` 完成，然后开始新的 `appear` 传递。 / English: If Wheel Ready returns when the old effect disappears, React first lets `disappear` complete before starting a new `appear` pass.
       this.beginAppear();
     } else if (this.phase !== "none") {
       this.requestFrame();
@@ -647,7 +663,7 @@ export interface SpinControlPresentation {
   readonly disabled: boolean;
 }
 
-/** 保持官方视觉令牌独立于当前输入门。 */
+/** 保持官方视觉令牌独立于当前输入门。 / English: Keep official visual tokens independent of the current input gate. */
 export function spinControlPresentation(
   mode: SpinMode,
   canSpin: boolean,
@@ -699,8 +715,8 @@ export function spinControlPresentation(
         disabled: false,
       };
     case "feature-continue":
-      // GameFreespinView 与 CONTINUE_SPIN 一起等待：该按钮仍然看起来像绿色 Spin（双箭头 + 空闲光环），但其单击会消耗介绍门，
-      // 而不是提交新的下注回合。
+      // GameFreespinView 与 CONTINUE_SPIN 一起等待：该按钮仍然看起来像绿色 Spin（双箭头 + 空闲光环），但其单击会消耗介绍门， / English: GameFreespinView waits with CONTINUE_SPIN: the button still looks like a green Spin (double arrow + idle halo), but its click consumes the intro gate,
+      // 而不是提交新的下注回合。 / English: Instead of submitting a new betting round.
       return {
         dataMode: "ready",
         action: "continue",
@@ -1129,7 +1145,7 @@ export interface OfficialHelpProjectionGeometry {
   readonly scaleY: number;
   readonly projectedWidthPx: number;
   readonly projectedHeightPx: number;
-  /** 投影槽只占缩放后的宽度，因此不会制造水平滚动范围。 */
+  /** 投影槽只占缩放后的宽度，因此不会制造水平滚动范围。 / English: The drop shadow only takes up the scaled width, so no horizontal scrolling range is created. */
   readonly scrollWidthPx: number;
 }
 
@@ -1159,7 +1175,7 @@ function bestEffortDomOverlayCleanup(cleanup: () => void): void {
   try {
     cleanup();
   } catch {
-    // 一个 DOM/observer/RAF owner 的拆卸故障不得阻止其余 UI owner 释放。
+    // 一个 DOM/observer/RAF owner 的拆卸故障不得阻止其余 UI owner 释放。 / English: Teardown failure of one DOM/observer/RAF owner must not prevent the remaining UI owners from being released.
   }
 }
 
@@ -1171,6 +1187,8 @@ export type MobileStatusMoneyDensity = "normal" | "extreme";
 
 /**
  * 长金额必须切换为无省略布局；阈值按值本身计算，标签由 CSS 槽位另外预留。
+ *
+ * 英文 / English: Long amounts must be switched to a no-omission layout; the threshold is calculated by the value itself, and the label is additionally reserved by a CSS slot.
  */
 export function mobileStatusMoneyDensity(
   formattedValues: readonly string[],
@@ -1181,6 +1199,8 @@ export function mobileStatusMoneyDensity(
 /**
  * 移动 DOM HUD 只根据当前连续设计域求解，绝不识别 390/633/844 等设备预设。
  * Pixi 仍拥有玩法区域；这里仅保证菜单、状态信息和输入控件留在其安全边界内。
+ *
+ * 英文 / English: The mobile DOM HUD only solves based on the current continuous design domain and never recognizes device presets such as 390/633/844. Pixi still has a gameplay area; here only menus, state information, and input controls are kept within their safe boundaries.
  */
 export function mobileDomLayoutGeometry(
   designWidth: number,
@@ -1198,7 +1218,7 @@ export function mobileDomLayoutGeometry(
     ? clampedDomLayoutValue(statusHeight, 0, height - gameplay)
     : Math.max(0, height - gameplay);
   const shortEdge = Math.min(width, height);
-  // frameScale 仅属于透明指针尺寸；视觉控件在作者坐标中独立求解。
+  // frameScale 仅属于透明指针尺寸；视觉控件在作者坐标中独立求解。 / English: frameScale is a transparent pointer size only; visual controls are resolved independently in author coordinates.
   void frameScale;
   const orientation = width > height ? "landscape" : "portrait";
   const edge = clampedDomLayoutValue(shortEdge * 0.024, 8, 18);
@@ -1209,6 +1229,8 @@ export function mobileDomLayoutGeometry(
    * 633x844 平板纵向收敛为 79.59；到 4:3 横向再连续回到 85.91。
    * utility 从纵向的 39.37 连续收敛到横向的 44.31。点击区仍由
    * ResponsiveLayout 的物理指针合约独立发布，不能把 44px 最小点击区画出来。
+   *
+   * 英文 / English: The captured visual controls are continuously interpolated in aspect ratios: the Spin outer circle of the 390x844 phone is about 85.91, and the 633x844 tablet converges to 79.59 in the vertical direction; it continues to 85.91 in the 4:3 horizontal direction. utility continuously converges from 39.37 in the vertical direction to 44.31 in the horizontal direction. The click area is still independently released by the physical pointer contract of ResponsiveLayout, and the 44px minimum click area cannot be drawn.
    */
   const aspect = height > 0 ? width / height : 1;
   const wideControlInterpolation = clampedDomLayoutValue(
@@ -1236,7 +1258,7 @@ export function mobileDomLayoutGeometry(
     const controlCapacity = Math.max(0, (usableWidth - gap * 4 - padding * 2) / 5);
     const utilityControlSize = Math.min(desiredControl, controlCapacity);
     const contentWidth = utilityControlSize * 5 + utilityGap * 4 + padding * 2;
-    // 两个已捕获纵向端点都保持约 50.87px 的五钮节距；宽平板不能把组内空气拉宽。
+    // 两个已捕获纵向端点都保持约 50.87px 的五钮节距；宽平板不能把组内空气拉宽。 / English: Both captured vertical endpoints maintain a five-button pitch of approximately 50.87px; wide slabs do not widen the air within the group.
     const capturedUtilityWidth = 265.833125;
     const desiredWidth = Math.min(
       width * (capturedUtilityWidth / 390),
@@ -1250,7 +1272,7 @@ export function mobileDomLayoutGeometry(
       clampedDomLayoutValue(width * 0.075, 28, 34),
       gameplay,
     );
-    // 两个纵向实机端点都把工具首行和 Spin 中心锁在同一长边作者锚点。
+    // 两个纵向实机端点都把工具首行和 Spin 中心锁在同一长边作者锚点。 / English: Both vertical real-machine endpoints lock the first row of tools and the Spin center to the same long-side author anchor point.
     const utilityVisualTop = height * (705.2265625 / 844);
     const utilityBottom = Math.max(
       status,
@@ -1337,6 +1359,8 @@ export function mobileDomLayoutGeometry(
 
 /**
  * 750px 作者坐标只在这一层做一次各向同性投影。字体、换行盒和网格始终保留作者尺寸。
+ *
+ * 英文 / English: The 750px author coordinates only perform an isotropic projection on this layer. Fonts, wrap boxes, and grids always retain author size.
  */
 export function officialHelpProjectionGeometry(
   availableWidthPx: number,
@@ -1345,8 +1369,8 @@ export function officialHelpProjectionGeometry(
   const available = Number.isFinite(availableWidthPx) ? Math.max(0, availableWidthPx) : 0;
   const authoredHeight = Number.isFinite(authoredHeightPx) ? Math.max(0, authoredHeightPx) : 0;
   const scale = available / PRIMAL_HELP_AUTHORING.logicalWidthPx;
-  // IEEE-754 可能把 `750 * (available / 750)` 舍入到 available 右侧几个 ulp；
-  // 物理滚动边界必须严格封闭，不能把这个误差发布成水平滚动范围。
+  // IEEE-754 可能把 `750 * (available / 750)` 舍入到 available 右侧几个 ulp； / English: IEEE-754 may round `750 * (available / 750)` to a few ulps to the right of available;
+  // 物理滚动边界必须严格封闭，不能把这个误差发布成水平滚动范围。 / English: The physical scroll boundary must be strictly closed and this error cannot be published as a horizontal scroll range.
   const projectedWidth = Math.min(
     available,
     PRIMAL_HELP_AUTHORING.logicalWidthPx * scale,
@@ -1366,6 +1390,8 @@ export function officialHelpProjectionGeometry(
 /**
  * PC UI 归一到本项目 1280×720 舞台的验收几何。信息行来自 1600×900
  * 参考基线的 0.8 投影；状态栏以 1280×720 验收底部裁片为准。
+ *
+ * 英文 / English: The PC UI is normalized to the acceptance geometry of this project's 1280×720 stage. Information lines are from a 0.8 projection of the 1600×900 reference baseline; status bars are based on the 1280×720 acceptance bottom cut.
  */
 export const PRIMAL_DESKTOP_UI_GEOMETRY = Object.freeze({
   stageScale: 0.8,
@@ -1584,7 +1610,7 @@ export function soundControlPresentation(
   }
   return {
     state: muted ? "muted" : "on",
-    // 切换按钮的无障碍名称保持稳定，当前状态只通过咏叹调压表达。
+    // 切换按钮的无障碍名称保持稳定，当前状态只通过咏叹调压表达。 / English: The accessibility name of the toggle button remains stable, and the current state is expressed only through the aria modulation.
     ariaLabel: "Mute sound",
     ariaPressed: muted ? "true" : "false",
     title: muted ? "Sound muted" : "Sound on",
@@ -1596,7 +1622,7 @@ export function spinModeDisabled(mode: SpinMode, canSpin: boolean): boolean {
   return spinControlPresentation(mode, canSpin).disabled;
 }
 
-/** 免费旋转显示累计 WIN；基础游戏只显示当前轮次中奖额。 */
+/** 免费旋转显示累计 WIN；基础游戏只显示当前轮次中奖额。 / English: Free spins display accumulated WIN; base game only displays winnings for the current round. */
 export function visibleWinMinorForResult(result: Pick<SpinResult, "totalWinMinor" | "events" | "featureState">): MoneyMinor {
   if (result.featureState.mode !== "BASE" && result.featureState.freeSpinsWinMinor !== undefined) {
     return result.featureState.freeSpinsWinMinor;
@@ -1614,7 +1640,7 @@ export interface RoundStatePresentation {
   readonly variant?: "win-counting" | "win-settled" | "wheel-bonus";
 }
 
-/** 精确的 Base 自旋文本池和来自 Primal 的 GameInfoController 的订单。 */
+/** 精确的 Base 自旋文本池和来自 Primal 的 GameInfoController 的订单。 / English: Precise Base spin text pool and order from Primal's GameInfoController. */
 export const PRIMAL_BASE_SPIN_MESSAGES = Object.freeze([
   "Good luck!",
   "Wild can land on reel 2.",
@@ -1631,7 +1657,7 @@ export interface PrimalSpinMessageSelection {
   readonly text: (typeof PRIMAL_BASE_SPIN_MESSAGES)[number];
 }
 
-/** 第一个自旋是索引 0；以后的旋转是随机的，不会立即重复。 */
+/** 第一个自旋是索引 0；以后的旋转是随机的，不会立即重复。 / English: The first spin is index 0; subsequent spins are random and do not repeat immediately. */
 export function selectPrimalBaseSpinMessage(
   previousIndex: number,
   random = Math.random(),
@@ -1655,6 +1681,8 @@ export type OrdinaryWinInformationState = "counting" | "settled";
 
 /**
  * 将一个权威的平赢对抗值投射到中央信息线上。需要有一个正的最终总分，因此零/无胜回合永远无法制作庆祝副本。
+ *
+ * 英文 / English: Project an authoritative win-win confrontation value onto the central message line. There needs to be a positive final total, so zero/no win rounds can never make a celebratory copy.
  */
 export function ordinaryWinInformationPresentation(
   state: OrdinaryWinInformationState,
@@ -1681,7 +1709,7 @@ export function ordinaryWinInformationPresentation(
   };
 }
 
-/** `IDS_MSG_CONGRATULATIONS` 位于活动的 Primal Big Win 信息线上。 */
+/** `IDS_MSG_CONGRATULATIONS` 位于活动的 Primal Big Win 信息线上。 / English: `IDS_MSG_CONGRATULATIONS` is located on the active Primal Big Win message line. */
 export function bigWinCongratulationsPresentation(): RoundStatePresentation {
   return {
     visualText: "Congratulations!",
@@ -1691,6 +1719,8 @@ export function bigWinCongratulationsPresentation(): RoundStatePresentation {
 
 /**
  * Master-win信息线使用完整的权威回合总数。它独立于仅 Wheel B 层板和页脚 WIN。
+ *
+ * 英文 / English: The Master-win message line uses the full authority round total. It is independent of only the Wheel B layer and the footer WIN.
  */
 export function wheelBonusRoundSummaryPresentation(
   totalWinMinor: MoneyMinor,
@@ -1705,7 +1735,7 @@ export function wheelBonusRoundSummaryPresentation(
   };
 }
 
-/** 主信息行显示官方无摘要 Free Spins 结果副本。 */
+/** 主信息行显示官方无摘要 Free Spins 结果副本。 / English: The main information line displays a copy of the official unsummary Free Spins results. */
 export function freeSpinConclusionPresentation(
   cumulativeWinMinor: MoneyMinor,
   formatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER,
@@ -1722,7 +1752,7 @@ export function freeSpinConclusionPresentation(
   };
 }
 
-/** Base 阶段回退；明确的中奖/奖金所有者可以取代此预测。 */
+/** Base 阶段回退；明确的中奖/奖金所有者可以取代此预测。 / English: Base phase fallback; clear win/bonus owner can override this prediction. */
 export function roundStatePresentation(
   phase: GamePhase,
   featureState?: FeatureState,
@@ -1752,14 +1782,14 @@ export function roundStatePresentation(
   };
 }
 
-/** 奖池金额是权威投注的显示预测。 */
+/** 奖池金额是权威投注的显示预测。 / English: Prize pool amounts are displayed predictions from authoritative bets. */
 export function jackpotValuesForBet(betMinor: MoneyMinor): MoneyMinor[] {
   if (!/^(0|[1-9]\d*)$/.test(betMinor)) return JACKPOT_TIERS.map(() => "0");
   const wager = BigInt(betMinor);
   return JACKPOT_TIERS.map(({ multiplier }) => (wager * multiplier).toString());
 }
 
-/** 下注弹出窗口故意仅公开所选值及其邻居。 */
+/** 下注弹出窗口故意仅公开所选值及其邻居。 / English: The bet popup intentionally exposes only the selected value and its neighbors. */
 export function betTickerWindow(
   options: readonly MoneyMinor[],
   selected: MoneyMinor,
@@ -1820,6 +1850,8 @@ function eventTitle(
  * 收集包含超时 modal 的 DOM 分支之外、直到 document.body 的所有兄弟分支。
  * 这样 canvas、独立 launch status、orientation shell 及同页宿主控件都会被隔离，
  * 同时绝不 inert modal 自己的任何祖先。
+ *
+ * 英文 / English: Collects all sibling branches outside the DOM branch containing the timeout modal up to document.body. In this way, the canvas, independent launch status, orientation shell, and same-page host controls will be isolated, and the modal will never inert any of its own ancestors.
  */
 export function sessionTimeoutIsolationBranches(
   host: HTMLElement,
@@ -1916,14 +1948,14 @@ export class DomOverlay {
   private readonly loadingStatus: HTMLElement;
   private readonly loadingValue: HTMLElement;
   private readonly hudElements: readonly HTMLElement[];
-  /** 交互式 HUD 区域在打开的对话框后面必须不可用。 */
+  /** 交互式 HUD 区域在打开的对话框后面必须不可用。 / English: Interactive HUD areas must not be available behind an open dialog box. */
   private readonly modalBackground: readonly HTMLElement[];
-  /** 与当前 sessionId 一起锁定；同一会话不得热切换金额解释。 */
+  /** 与当前 sessionId 一起锁定；同一会话不得热切换金额解释。 / English: Locked with the current sessionId; hot switching is not allowed for the same session. */
   private moneySessionId: string | null = null;
   private moneyFormatter: MinorUnitFormatter = DEFAULT_MINOR_UNIT_FORMATTER;
-  /** 首次观察到的玩法表现绑定保持冻结；同会话任何字段漂移都会关闭固定文案。 */
+  /** 首次观察到的玩法表现绑定保持冻结；同会话任何字段漂移都会关闭固定文案。 / English: The first observed gameplay binding remains frozen; any field drift within the same session will turn off the fixed copy. */
   private presentationRulesBinding: Readonly<PresentationRulesBindingResult> | null = null;
-  /** 页面启动时冻结的运营商语言请求；同一会话不得随 DOM 或 URL 漂移。 */
+  /** 页面启动时冻结的运营商语言请求；同一会话不得随 DOM 或 URL 漂移。 / English: Operator language requests frozen on page launch; the same session must not drift with the DOM or URL. */
   private readonly requestedHelpLocale: string;
   private betOptions: MoneyMinor[] = [];
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1948,6 +1980,8 @@ export class DomOverlay {
   private autoplayActive = false;
   /**
    * 一次可能会发出一个付费 Base 请求。  计数器立即投影到 ROUNDSTART，但在权威结果通过 AppController 验证之前保持可逆。
+   *
+   * 英文 / English: One paid Base request may be issued at a time. The counter is projected to ROUNDSTART immediately, but remains reversible until the authoritative result is verified by the AppController.
    */
   private autoplayRunGeneration = 0;
   private pendingPaidAutoplaySpin: PendingPaidAutoplaySpin | null = null;
@@ -1956,7 +1990,7 @@ export class DomOverlay {
   private autoplayStopSessionId = "";
   private completedAutoplayStopSequence = -1;
   private stoppedAutoplayStopSequence: number | null = null;
-  /** EXPANSION/OVERDRIVE 中为 False，因此它们的服务器驱动调度程序是唯一的。 */
+  /** EXPANSION/OVERDRIVE 中为 False，因此它们的服务器驱动调度程序是唯一的。 / English: False in EXPANSION/OVERDRIVE so their server driver scheduler is unique. */
   private autoplayPaidSpinEligible = false;
   private autoplayTimer: ReturnType<typeof setTimeout> | null = null;
   private menuReturnFocus: HTMLElement | null = null;
@@ -2001,6 +2035,8 @@ export class DomOverlay {
    * ResizeObserver 回调内同步修改 host/帮助视口会重新触发布局观察。把 observer
    * 和 window.resize 的兜底通知收敛到同一动画帧，显式 ResponsiveLayout 提交
    * 则继续走同步的 setResponsiveLayout 路径。
+   *
+   * 英文 / English: Synchronously modifying the host/help viewport within the ResizeObserver callback will retrigger layout observation. Converg the back-end notifications of observer and window.resize to the same animation frame. Explicit ResponsiveLayout submission will continue to follow the synchronous setResponsiveLayout path.
    */
   private scheduleObservedLayoutSync(): void {
     if (this.destroyed || this.officialHelpResizeFrameHandle !== null) return;
@@ -2142,6 +2178,7 @@ export class DomOverlay {
       </section>
 
       <!-- 保留为空操作的 HUD 显示挂点；基础游戏的可见标志由 Pixi 合成中的
+           英文 / English: HUD left as a no-op to display hardpoints; base game's visible flags are generated by Pixi's compositing The logo_game Spine view is responsible for rendering.
            logo_game Spine 视图负责渲染。 -->
       <div class="brand" hidden aria-hidden="true"></div>
 
@@ -2150,6 +2187,7 @@ export class DomOverlay {
         <span data-role="connection-label">Linking</span>
       </div>
       <!-- 语义化功能播报仍供辅助技术读取；参考实现会在预设的画布 HUD 中渲染此状态，
+           英文 / English: Semantic feature announcements are still readable by assistive technologies; the reference implementation renders this state in the default canvas HUD. The diagnostic label is therefore no longer displayed repeatedly.
            因此不再重复显示诊断标签。 -->
       <div class="feature-pill visually-hidden" data-visible="false" data-role="feature" aria-live="polite"></div>
       <div class="toast" data-visible="false" data-role="toast" role="alert"></div>
@@ -2737,7 +2775,7 @@ export class DomOverlay {
         try {
           localStorage.setItem(FEATURE_PREVIEW_PREFERENCE_KEY, "1");
         } catch {
-          // 存储限制永远不会阻止启动。
+          // 存储限制永远不会阻止启动。 / English: Storage limits will never prevent startup.
         }
       }
       this.previewContinueHandler();
@@ -2764,7 +2802,7 @@ export class DomOverlay {
     this.spinHandler = handler;
   }
 
-  /** 可选展示挂钩；权威结算仍然在DOM HUD之外。 */
+  /** 可选展示挂钩；权威结算仍然在DOM HUD之外。 / English: Optional display hook; authoritative settlement remains outside the DOM HUD. */
   onFastStop(handler: FastStopHandler): void {
     this.fastStopHandler = handler;
   }
@@ -2789,7 +2827,7 @@ export class DomOverlay {
     this.fastPlayHandler = handler;
   }
 
-  /** 左右手只改变同一响应式快照的表现布局，不改变下注或结果状态。 */
+  /** 左右手只改变同一响应式快照的表现布局，不改变下注或结果状态。 / English: The left and right hands only change the presentation layout of the same responsive snapshot, not the betting or outcome status. */
   onHandModeChange(handler: HandModeHandler): void {
     this.handModeHandler = handler;
   }
@@ -2798,6 +2836,8 @@ export class DomOverlay {
    * 运营商规则是独立的玩家文案端口；玩法说明的定义绑定不会授权监管/会话文案。
    * 所有外部值先完成封闭校验，再通过 textContent 原子提交；失败时只隐藏补充条款。
    * 整份 Game Rules 文档是否可见仍由与 PAYTABLE 相同的 definition binding 决定。
+   *
+   * 英文 / English: Operator rules are independent player copyports; definition bindings to gameplay descriptions do not authorize regulatory/session copywriting. All external values ​​complete closure validation before being submitted atomically via textContent; on failure, only supplementary terms are hidden. Whether the entire Game Rules document is visible is still determined by the same definition binding as PAYTABLE.
    */
   setOperatorApprovedGameRules(
     input: unknown,
@@ -2846,11 +2886,13 @@ export class DomOverlay {
   /**
    * 服务端空闲终态的唯一玩家表面。背景与 Escape 均不可关闭；EXIT 只把控制权
    * 交回运营商，不会在浏览器中刷新、重连或重放 launch code。
+   *
+   * 英文 / English: The only player surface for the server's idle final state. Neither the background nor Escape can be closed; EXIT only returns control to the operator and does not refresh, reconnect or replay the launch code in the browser.
    */
   showSessionTimeout(handler: SessionTimeoutExitHandler): void {
     if (this.destroyed || this.sessionTimeoutVisible) return;
-    // 面板关闭 setter 会立即同步 inert；必须在它们运行前保存外层 canvas/loading/
-    // orientation 与同页宿主分支的原始状态，destroy 时才能精确恢复。
+    // 面板关闭 setter 会立即同步 inert；必须在它们运行前保存外层 canvas/loading/ / English: The panel close setter immediately synchronizes the inert; the outer canvas/loading/ must be saved before they run
+    // orientation 与同页宿主分支的原始状态，destroy 时才能精确恢复。 / English: The original state of the orientation and the host branch on the same page can be accurately restored when destroyed.
     this.captureSessionTimeoutIsolationState();
     this.sessionTimeoutVisible = true;
     this.sessionTimeoutExitRequested = false;
@@ -2906,7 +2948,7 @@ export class DomOverlay {
     return { ...this.autoplayStopSettings };
   }
 
-  /** 更新四个捕获的复选框；浏览器持久性是尽力而为的。 */
+  /** 更新四个捕获的复选框；浏览器持久性是尽力而为的。 / English: Updates four captured checkboxes; browser persistence is best effort. */
   setAutoplayStopSettings(settings: AutoPlayStopSettings, persist = true): void {
     this.autoplayStopSettings = normalizeAutoPlayStopSettings(settings);
     this.syncAutoplayStopSettings();
@@ -2915,6 +2957,8 @@ export class DomOverlay {
 
   /**
    * 在结果解码期间不间断地提供一个权威结果。返回的服务器序列是同一轮稍后的表示边界使用的幂等性令牌。
+   *
+   * 英文 / English: Provides an authoritative result without interruption during result decoding. The returned server sequence is an idempotent token used later in the same round to represent the boundary.
    */
   armAutoplayStopRound(result: SpinResult): number {
     if (this.autoplayStopSessionId !== result.sessionId) {
@@ -2937,6 +2981,8 @@ export class DomOverlay {
 
   /**
    * 仅一次到达预设的停止边界。过时的序列无法停止较新的自动游戏运行，并且 `any-win` 会被忽略以获得零胜结果。
+   *
+   * 英文 / English: The preset stopping boundary is reached only once. Stale sequences cannot stop newer automated games from running, and `any-win` is ignored for a zero-win result.
    */
   reachAutoplayStopBoundary(sequence: number, boundary: AutoPlayStopBoundary): boolean {
     const round = this.armedAutoplayStopRound;
@@ -2946,7 +2992,7 @@ export class DomOverlay {
     if (boundary === "any-win" && !round.anyWinEligible) return false;
     if (round.reached.has(boundary)) return round.stopRequested;
     round.reached.add(boundary);
-    // 多个官方条件可以描述相同的结果（例如，INSTANT Wheel 奖励同时是奖金、累积奖金和中奖）。第一个匹配边界拥有一站；随后的边界仍然可观察，但无法再次调用停止路径。
+    // 多个官方条件可以描述相同的结果（例如，INSTANT Wheel 奖励同时是奖金、累积奖金和中奖）。第一个匹配边界拥有一站；随后的边界仍然可观察，但无法再次调用停止路径。 / English: Multiple official conditions can describe the same result (e.g., an INSTANT Wheel award is simultaneously a bonus, jackpot, and jackpot). The first matching boundary has one stop; subsequent boundaries are still observable, but stop paths cannot be called again.
     if (round.stopRequested) return true;
     if (!isAutoPlayStopBoundaryEnabled(round.settings, boundary)) {
       return round.stopRequested;
@@ -2959,6 +3005,8 @@ export class DomOverlay {
 
   /**
    * 退役武装令牌。作为安全网，未达到的正赢令牌在此评估为 `any-win`；正常的编排在 Win Start 时就达到了。
+   *
+   * 英文 / English: Retirement of Armed Tokens. As a safety net, unreached positive win tokens are evaluated here as `any-win`; normal orchestration is reached at Win Start.
    */
   completeAutoplayStopRound(sequence = this.armedAutoplayStopRound?.sequence): boolean {
     if (sequence === undefined) return false;
@@ -2977,6 +3025,8 @@ export class DomOverlay {
 
   /**
    * 仅拥有主控件的呈现状态。当解码的服务器结果呈现动画时，`fast-stop` 保持启用状态；它永远不会更改结果本身，并将取消委托给注册的处理程序。
+   *
+   * 英文 / English: Has only the render state of the main control. `fast-stop` remains enabled while the decoded server result is animated; it never changes the result itself, and undelegates to the registered handler.
    */
   setSpinMode(mode: SpinMode): void {
     this.spinMode = mode;
@@ -2985,7 +3035,7 @@ export class DomOverlay {
     this.queueAutoplaySpin();
   }
 
-  /** AppController对于`ready`是否意味着付费Base旋转具有权威性。 */
+  /** AppController对于`ready`是否意味着付费Base旋转具有权威性。 / English: The AppController is authoritative about whether `ready` means paid Base rotation. */
   setAutoplayPaidSpinEligible(eligible: boolean): void {
     if (this.autoplayPaidSpinEligible === eligible) return;
     this.autoplayPaidSpinEligible = eligible;
@@ -2993,9 +3043,9 @@ export class DomOverlay {
     this.queueAutoplaySpin();
   }
 
-  /** 仅在网关接受外部付费 Base 轮后才提交。 */
+  /** 仅在网关接受外部付费 Base 轮后才提交。 / English: Submit only after gateway accepts external paid Base round. */
   commitAcceptedPaidAutoplaySpin(): void {
-    // 网关/卷轴护罩仅允许一轮进行中付费。将重复提交视为相同的 ROUNDSTART 而不是花费两次。
+    // 网关/卷轴护罩仅允许一轮进行中付费。将重复提交视为相同的 ROUNDSTART 而不是花费两次。 / English: Gateway/reel shields only allow one round of pay-in-progress. Treat duplicate submissions as the same ROUNDSTART instead of spending it twice.
     if (this.pendingPaidAutoplaySpin != null) return;
     const previous: AutoPlayRunState = {
       active: this.autoplayActive,
@@ -3015,7 +3065,7 @@ export class DomOverlay {
     this.syncAutoplayControl();
   }
 
-  /** 结果验证后，使可见的 ROUNDSTART 减量永久化。 */
+  /** 结果验证后，使可见的 ROUNDSTART 减量永久化。 / English: After the result is verified, make the visible ROUNDSTART decrement permanent. */
   finalizeAcceptedPaidAutoplaySpin(): boolean {
     if (this.pendingPaidAutoplaySpin == null) return false;
     this.pendingPaidAutoplaySpin = null;
@@ -3024,6 +3074,8 @@ export class DomOverlay {
 
   /**
    * 将被拒绝/格式错误的已派奖 Base ROUNDSTART 恢复一次。用户停止会更改生成并清除预留，因此故障恢复永远不会意外地重新启动播放器取消的运行。
+   *
+   * 英文 / English: Restore the rejected/malformed awarded Base ROUNDSTART once. User stopping changes the build and clears the reservation, so failover never accidentally restarts a player canceled run.
    */
   rollbackAcceptedPaidAutoplaySpin(): boolean {
     const pending = this.pendingPaidAutoplaySpin;
@@ -3035,13 +3087,15 @@ export class DomOverlay {
     return true;
   }
 
-  /** 向后兼容的视觉速记，适用于仅需要两种状态的调用者。 */
+  /** 向后兼容的视觉速记，适用于仅需要两种状态的调用者。 / English: A backwards-compatible visual shorthand for callers that only require two states. */
   setFastStopMode(active: boolean): void {
     this.setSpinMode(active ? "fast-stop" : (this.canSpin ? "ready" : "waiting"));
   }
 
   /**
    * 捕获的桌面启动序列在内部仍然是可跳过的，但它不会公开可见的“跳过介绍/退出”功能。  在此保持选择加入，以便将来明确预设的过渡可以请求过渡，而不会使常规游戏启动偏离参考。
+   *
+   * 英文 / English: The captured desktop boot sequence is still skippable internally, but it does not expose the visible "skip intro/exit" functionality. Keep the opt-in here so that explicitly canned transitions can be requested in the future without causing the regular game launch to deviate from the reference.
    */
   setLaunchPhase(phase: LaunchPhase, canSkip = false): void {
     this.host.dataset.launch = phase;
@@ -3072,6 +3126,8 @@ export class DomOverlay {
 
   /**
    * 将一个实时加载表面传输给视口空间所有者。在响应式布局开始之前，渲染器框架固定在 1280x720，因此其内部的加载器将在第一个移动框架上离开屏幕。
+   *
+   * 英文 / English: Transfers a live loading surface to the viewport space owner. Before responsive layout starts, the renderer frame is fixed at 1280x720, so the loader inside it will go off screen on the first mobile frame.
    */
   mountLaunchLoading(host: HTMLElement): void {
     if (this.loading.parentElement === host && host.childElementCount === 1) return;
@@ -3123,7 +3179,7 @@ export class DomOverlay {
     this.syncFeaturePreviewContinue();
   }
 
-  /** 会话就绪和瞬时 Continue 工作是独立的门。 */
+  /** 会话就绪和瞬时 Continue 工作是独立的门。 / English: Session ready and transient Continue work are separate gates. */
   setFeaturePreviewEnabled(enabled: boolean): void {
     this.featurePreviewEnabled = enabled;
     this.syncFeaturePreviewContinue();
@@ -3157,7 +3213,7 @@ export class DomOverlay {
   }
 
   private activeMoneyFormatter(): MinorUnitFormatter {
-    // 部分纯表现单元测试通过 Object.create 构造原型夹具；该回退只服务于尚未绑定会话的壳。
+    // 部分纯表现单元测试通过 Object.create 构造原型夹具；该回退只服务于尚未绑定会话的壳。 / English: Some purely presentational unit tests construct prototype fixtures via Object.create; this fallback only serves shells that have not yet bound a session.
     return this.moneyFormatter ?? DEFAULT_MINOR_UNIT_FORMATTER;
   }
 
@@ -3185,7 +3241,7 @@ export class DomOverlay {
     );
   }
 
-  /** ResponsiveLayout 的同一提交直接驱动 HUD；ResizeObserver 只保留为内容变化兜底。 */
+  /** ResponsiveLayout 的同一提交直接驱动 HUD；ResizeObserver 只保留为内容变化兜底。 / English: The same submission of the ResponsiveLayout directly drives the HUD; the ResizeObserver is only reserved for content changes. */
   setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
     if (this.destroyed) return;
     this.handMode = snapshot.handMode;
@@ -3291,7 +3347,7 @@ export class DomOverlay {
         this.officialHelpViewport.dataset.helpLocale = resolution.locale;
         localeDomReady = true;
       } catch {
-        // 缺 bundle、字体或 DOM key 时保持帮助页关闭，绝不展示半更新文案。
+        // 缺 bundle、字体或 DOM key 时保持帮助页关闭，绝不展示半更新文案。 / English: Keep the help page closed when a bundle, font or DOM key is missing, and never show half-updated copy.
       }
     }
     const bound = this.presentationRulesBinding.status === "bound" && localeDomReady;
@@ -3324,7 +3380,7 @@ export class DomOverlay {
     if (typeof currentSessionId === "string"
       && currentSessionId === session.sessionId
       && !sameMoneyDisplayBinding(this.activeMoneyFormatter(), next)) {
-      // 先抛错、后写入：任何调用者即使捕获异常，也看不到半更新的 Balance/Bet/Win。
+      // 先抛错、后写入：任何调用者即使捕获异常，也看不到半更新的 Balance/Bet/Win。 / English: Throw errors first, write later: any caller cannot see the half-updated Balance/Bet/Win even if it catches the exception.
       throw new MoneyDisplayBindingError("session money display binding changed");
     }
     this.moneySessionId = session.sessionId;
@@ -3388,7 +3444,7 @@ export class DomOverlay {
     this.setLastWin(amountMinor);
   }
 
-  /** 由权威总时钟和原始时钟驱动的线性整数计数。 */
+  /** 由权威总时钟和原始时钟驱动的线性整数计数。 / English: Linear integer counting driven by authoritative total clock and raw clock. */
   presentWinCounter(
     totalMinor: MoneyMinor,
     durationMs: number,
@@ -3437,7 +3493,7 @@ export class DomOverlay {
     });
   }
 
-  /** 完成可见计数器一次而不改变结算。 */
+  /** 完成可见计数器一次而不改变结算。 / English: Complete the visible counter once without changing the settlement. */
   finishWinCounter(): boolean {
     const animation = this.winCounterAnimation;
     if (!animation) return false;
@@ -3479,6 +3535,8 @@ export class DomOverlay {
   /**
    * 小 GameName 是一个已解决的 Base 空闲对象，而不是通用的零中奖回退路径对象。卷轴行程、Wheel/Rage 表现和活动 Free Spins 隐藏数值，
    * 但仅保留右对齐的 `Win:` 标签。
+   *
+   * 英文 / English: The little GameName is a resolved Base free object rather than a generic zero win fallback path object. Reel travel, Wheel/Rage behavior and active Free Spins Hide values, but only keep the right-aligned `Win:` label.
    */
   private syncStatusGameNameProjection(): void {
     if (!this.statusPanel?.dataset) return;
@@ -3491,7 +3549,7 @@ export class DomOverlay {
     );
   }
 
-  /** 卷轴已定；零胜回合消除了瞬态旋转消息。 */
+  /** 卷轴已定；零胜回合消除了瞬态旋转消息。 / English: Reels are set; zero win rounds eliminate transient spin messages. */
   beginResultPresentation(hasOrdinaryWin: boolean): void {
     this.resultPresentationSuppressesSpinCopy = !hasOrdinaryWin;
     if (hasOrdinaryWin || this.heldWheelBonusRoundState || this.heldOrdinaryWinRoundState) return;
@@ -3501,14 +3559,14 @@ export class DomOverlay {
     });
   }
 
-  /** 仅清除官方功能激活边界处的瞬态 Base 轮播。 */
+  /** 仅清除官方功能激活边界处的瞬态 Base 轮播。 / English: Only clears transient Base carousels at official feature activation boundaries. */
   clearTransientSpinMessage(): void {
     if (this.currentRoundPhase !== "presenting") return;
     this.resultPresentationSuppressesSpinCopy = true;
     this.applyCurrentRoundState();
   }
 
-  /** 取消/拆解缝仅适用于普通中奖者。 */
+  /** 取消/拆解缝仅适用于普通中奖者。 / English: Cancellation/unsewing of seams is only available to regular lottery winners. */
   clearOrdinaryWinInformation(): void {
     this.cancelWinCounter();
     this.heldOrdinaryWinRoundState = null;
@@ -3544,14 +3602,14 @@ export class DomOverlay {
     this.applyCurrentRoundState();
   }
 
-  /** 一次性浏览器设备调节；生产从不设置覆盖。 */
+  /** 一次性浏览器设备调节；生产从不设置覆盖。 / English: One-time browser device adjustment; production never sets overrides. */
   prepareSpinMessageCapture(message: string): boolean {
     if (!(PRIMAL_BASE_SPIN_MESSAGES as readonly string[]).includes(message)) return false;
     this.nextSpinMessageCaptureOverride = message as (typeof PRIMAL_BASE_SPIN_MESSAGES)[number];
     return true;
   }
 
-  /** 通过以下就绪刷新保存返回的网格主赢副本。 */
+  /** 通过以下就绪刷新保存返回的网格主赢副本。 / English: Save the returned grid master copy with the following ready refresh. */
   showWheelBonusRoundSummary(totalWinMinor: MoneyMinor): void {
     this.heldOrdinaryWinRoundState = null;
     this.heldWheelBonusRoundState = wheelBonusRoundSummaryPresentation(
@@ -3561,13 +3619,13 @@ export class DomOverlay {
     this.applyRoundState(this.heldWheelBonusRoundState);
   }
 
-  /** 正常请求之外的取消/失败路径使用显式拆卸。 */
+  /** 正常请求之外的取消/失败路径使用显式拆卸。 / English: Use explicit teardown for cancellation/failure paths outside of normal requests. */
   clearWheelBonusRoundSummary(): void {
     this.heldWheelBonusRoundState = null;
     this.applyCurrentRoundState();
   }
 
-  /** 替换就绪提示，直到下一轮状态转换。 */
+  /** 替换就绪提示，直到下一轮状态转换。 / English: Replace the ready prompt until the next state transition. */
   showFreeSpinConclusion(cumulativeWinMinor: MoneyMinor): void {
     this.heldOrdinaryWinRoundState = null;
     this.applyRoundState(freeSpinConclusionPresentation(
@@ -3576,7 +3634,7 @@ export class DomOverlay {
     ));
   }
 
-  /** 在 Base 退出之前将活动区域与接受的终端事件对齐。 */
+  /** 在 Base 退出之前将活动区域与接受的终端事件对齐。 / English: Aligns the active area with accepted terminal events before Base exits. */
   showFreeSpinsCompletedState(event: Readonly<FreeSpinsCompletedEvent>): void {
     this.feature.dataset.mode = event.mode.toLowerCase();
     this.feature.textContent = [
@@ -3588,7 +3646,7 @@ export class DomOverlay {
     this.feature.dataset.visible = "true";
   }
 
-  /** 显示本地化的 Big Win 信息事件，而不更改输入准备情况。 */
+  /** 显示本地化的 Big Win 信息事件，而不更改输入准备情况。 / English: Display localized Big Win information events without changing input readiness. */
   showBigWinCongratulations(): void {
     this.heldOrdinaryWinRoundState = null;
     this.applyRoundState(bigWinCongratulationsPresentation());
@@ -3671,8 +3729,8 @@ export class DomOverlay {
     this.destroyed = true;
     this.deferredFocusGeneration += 1;
     this.featureAnnouncementGeneration += 1;
-    // 先撤销包括内联闭包在内的全部 DOM/window/document 监听器，并立即让仍在页面
-    // 中的旧 HUD 不可达。加载表面已由 launchHost 独立持有，可继续展示固定失败文案。
+    // 先撤销包括内联闭包在内的全部 DOM/window/document 监听器，并立即让仍在页面 / English: First cancel all DOM/window/document listeners including inline closures, and immediately let the page still
+    // 中的旧 HUD 不可达。加载表面已由 launchHost 独立持有，可继续展示固定失败文案。 / English: The old HUD in is not reachable. The loading surface has been independently held by launchHost and can continue to display fixed failure text.
     bestEffortDomOverlayCleanup(() => this.domEventController?.abort());
     bestEffortDomOverlayCleanup(() => this.restoreSessionTimeoutIsolationState());
     bestEffortDomOverlayCleanup(() => { this.host.inert = true; });
@@ -3763,7 +3821,7 @@ export class DomOverlay {
     if (!presentation) return;
     this.heldOrdinaryWinRoundState = presentation;
     this.resultPresentationSuppressesSpinCopy = true;
-    // Wheel B层是更高优先级的所有者，不能被后期的普通计数器帧取代。
+    // Wheel B层是更高优先级的所有者，不能被后期的普通计数器帧取代。 / English: The Wheel B layer is the higher priority owner and cannot be replaced by a later normal counter frame.
     if (!this.heldWheelBonusRoundState) this.applyRoundState(presentation);
   }
 
@@ -3787,7 +3845,7 @@ export class DomOverlay {
         || this.spinMode === "normal-win-skip")
       && !this.isTypingTarget(event.target)) {
       event.preventDefault();
-      // 持有的密钥不得级联通过每个 Big Win 检查点。每个预设的片段都需要重新按下，匹配指针输入。
+      // 持有的密钥不得级联通过每个 Big Win 检查点。每个预设的片段都需要重新按下，匹配指针输入。 / English: The held keys must not cascade through each Big Win checkpoint. Each preset segment needs to be pressed again, matching pointer input.
       if (event.repeat) return;
       if (this.spinMode === "big-win-skip" || this.spinMode === "normal-win-skip") {
         this.fastStopHandler();
@@ -3945,7 +4003,7 @@ export class DomOverlay {
 
   private syncModalBackgroundInert(): void {
     const inert = !this.hudInteractive || this.activeDialog() !== null;
-    // 仅原型单元线束可以有意省略组装的 DOM。
+    // 仅原型单元线束可以有意省略组装的 DOM。 / English: Only prototype unit harnesses can intentionally omit the assembled DOM.
     for (const element of this.modalBackground ?? []) element.inert = inert;
     if (this.sessionTimeoutVisible) {
       for (const element of this.sessionTimeoutBackground ?? []) element.inert = true;
@@ -4043,8 +4101,8 @@ export class DomOverlay {
     const menuOpen = this.gameMenu.dataset.open === "true";
     if (menuOpen) this.gameMenuScrollPositions[previousTab] = this.gameMenuContent.scrollTop;
     this.activeMenuTab = tab;
-    // 两个外部 launcher 分别声明控制 Settings 与 Paytable 面板。菜单内切换标签时也要
-    // 同步它们的展开状态；否则辅助技术会继续把最初打开的面板报告为可见。
+    // 两个外部 launcher 分别声明控制 Settings 与 Paytable 面板。菜单内切换标签时也要 / English: Two external launchers are declared to control the Settings and Paytable panels respectively. Also when switching tabs in the menu
+    // 同步它们的展开状态；否则辅助技术会继续把最初打开的面板报告为可见。 / English: Synchronize their expanded states; otherwise assistive technologies will continue to report the originally opened panel as visible.
     this.settingsButton.setAttribute("aria-expanded", String(menuOpen && tab === "settings"));
     this.paytableButton.setAttribute("aria-expanded", String(menuOpen && tab === "paytable"));
     for (const control of this.gameMenuTabs) {
@@ -4068,8 +4126,8 @@ export class DomOverlay {
         ? 0
         : this.gameMenuScrollPositions[tab];
     }
-    // 菜单从 inert/隐藏切为可见后，纵向滚动条才拥有最终宽度；下一帧按最终
-    // clientWidth 重算作者面，避免沿用打开前的宽投影而裁掉右缘。
+    // 菜单从 inert/隐藏切为可见后，纵向滚动条才拥有最终宽度；下一帧按最终 / English: After the menu is switched from inert/hidden to visible, the vertical scroll bar will have the final width; press the final button on the next frame
+    // clientWidth 重算作者面，避免沿用打开前的宽投影而裁掉右缘。 / English: clientWidth recalculates the author surface to avoid cutting off the right edge by using the wide projection before opening.
     if (tab === "paytable") this.scheduleObservedLayoutSync();
   }
 
@@ -4204,7 +4262,7 @@ export class DomOverlay {
   private syncAutoplayControl(): void {
     const active = this.autoplayActive;
     this.autoplayButton.dataset.active = String(active);
-    // 原始计数器属于橙色主停止组合，而不是小自动实用程序图标。
+    // 原始计数器属于橙色主停止组合，而不是小自动实用程序图标。 / English: The original counter belongs to the orange main stop combination instead of the small automatic utility icon.
     this.autoplayButton.dataset.remaining = "";
     this.autoplayButton.setAttribute("aria-label", active
       ? `Autoplay active, ${this.autoplayRemaining} spins remaining`
@@ -4252,6 +4310,8 @@ export class DomOverlay {
 
   /**
    * 功能控件暂时拥有共享主按钮。手动输入可推进该功能，而不会终止保留的外部自动播放会话；普通的 Base 状态保留显式的自动停止语义。
+   *
+   * 英文 / English: Functional controls temporarily have a shared home button. Manual input advances the feature without terminating the retained external autoplay session; the normal Base state retains explicit autostop semantics.
    */
   private handlePrimarySpinAction(): void {
     if (this.autoplayActive && isAutoplayFeatureOwnedSpinMode(this.spinMode)) {
@@ -4261,7 +4321,7 @@ export class DomOverlay {
       else if (action === "continue" || action === "wheel-spin") this.spinHandler();
       return;
     }
-    // 在捕获的客户端中，橙色计数复合材料专门是在预设的 Continue 门之外的自动播放停止控件。
+    // 在捕获的客户端中，橙色计数复合材料专门是在预设的 Continue 门之外的自动播放停止控件。 / English: In the captured client, the orange count composite is specifically the autoplay stop control outside of the preset Continue gate.
     if (this.autoplayActive) {
       this.stopAutoplay(false);
       return;
@@ -4432,7 +4492,7 @@ export class DomOverlay {
     this.spin.setAttribute("aria-label", presentation.ariaLabel);
   }
 
-  /** 当Wheel等待Spin时，官方的DOM效果完全可见。 */
+  /** 当Wheel等待Spin时，官方的DOM效果完全可见。 / English: While the Wheel is waiting for Spin, the official DOM effects are fully visible. */
   private syncWheelHyperspinEffect(): void {
     this.wheelHyperspinEffect?.setVisible(this.spinMode === "wheel-ready");
   }

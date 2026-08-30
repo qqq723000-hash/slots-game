@@ -330,7 +330,7 @@ describe("native Big Win planning", () => {
       plan,
       (type) => dispatched.push(type),
     );
-    // 自然播放已经到达 SUPER，但尚未到达 MEGA 或计数结束点。
+    // 自然播放已经到达 SUPER，但尚未到达 MEGA 或计数结束点。 / English: Natural playback has reached SUPER, but has not yet reached MEGA or the end of the count.
     view.update(15_000);
     expect(harness.active?.tier).toBe("super");
     dispatched.length = 0;

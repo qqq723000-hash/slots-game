@@ -102,6 +102,9 @@ function createTemporaryNpmConfigurations() {
 
 /**
  * 不继承调用进程环境。只有下面列出的发布身份和 RGS 浏览器配置可进入 Vite；
+// English: The calling process environment is not inherited. Only the publishing identities and RGS browser
+// configurations listed below can enter Vite; NODE_OPTIONS, unexpected VITE_*, npm_config_*, proxy and user
+// shell variables are not propagated.
  * NODE_OPTIONS、非预期 VITE_*、npm_config_*、代理和用户 shell 变量均不会传播。
  */
 export function localProductionWebBuildEnvironment(nodeRoot, version, revision) {

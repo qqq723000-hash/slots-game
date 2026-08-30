@@ -1,6 +1,10 @@
 -- 钱包 v2 会把能力与账本路由快照锁定到每个新轮次，因此这是一次失败闭合的
 -- 维护窗口迁移，而不是允许旧版 API 继续写入的普通滚动扩展。发布前必须停止新 Spin、
 -- 排空旧 Pod；旧二进制遗漏 wallet_profile 的新写入会被下方约束拒绝。
+-- English: Wallet v2 will lock capabilities and ledger routing snapshots to each new round, so this is a failed
+-- closure Maintenance window migration instead of normal rolling expansion that allows legacy APIs to continue
+-- writing. New Spins must be stopped before publishing, Drain old Pods; new writes to wallet_profile missing
+-- from the old binary will be rejected by the constraints below.
 ALTER TABLE rgs_rounds
     ADD COLUMN wallet_phase text NOT NULL DEFAULT '',
     ADD COLUMN next_attempt_at timestamptz,
@@ -12,6 +16,11 @@ ALTER TABLE rgs_rounds
 -- 旧版记录没有锁定钱包契约及账本路由。即使 PREPARED 尚未外呼，也不能在迁移后
 -- 猜测它应由哪个账本命名空间接管；WALLET_PENDING 更可能已经跨过外部边界。
 -- 这些少量在途轮次必须失败闭合转人工审查，禁止用当前部署配置重新解释。
+-- English: The old version of the record does not lock the wallet contract and ledger routing. Even if PREPARED
+-- has not yet made an outbound call, it cannot be Guess which ledger namespace it should be taken over by;
+-- WALLET_PENDING is more likely to have crossed an external boundary. These few in-flight rounds must fail
+-- closed for manual review and are prohibited from being reinterpreted using the current deployment
+-- configuration.
 INSERT INTO rgs_outbox (
     operator_id, aggregate_type, aggregate_id, event_type, payload,
     created_at, available_at
@@ -78,6 +87,9 @@ CREATE INDEX rgs_rounds_wallet_recovery_due
 
 -- 单批 row_number 只能提供瞬时多样性；跨 Worker、跨批次的公平轮转必须持久化。
 -- 与候选轮次一起锁住本行后，另一 Worker 会跳过该运营商，而不是重复争抢其最老轮次。
+-- English: A single batch of row_number can only provide instantaneous diversity; fair rotation across workers
+-- and batches must be persistent. After locking the row with a candidate round, another worker skips the
+-- operator instead of repeatedly competing for its oldest round.
 CREATE TABLE rgs_wallet_recovery_operators (
     operator_id varchar(128) PRIMARY KEY,
     last_claimed_at timestamptz NOT NULL DEFAULT '-infinity'::timestamptz,

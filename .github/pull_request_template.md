@@ -1,9 +1,13 @@
-## 变更说明
+## Change description / 变更说明
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This template requires each change to describe the problem, the solution, its impact, and a concrete rollback path. Changes that touch economic results, protocols, databases, keys, assets, or release configuration must preserve the documented invariants and include the applicable failure and success evidence. Credentials, production data, local runtime state, and unrestricted artifacts must never be committed, while live cloud validation, operator acceptance, asset rights, and regulatory approval remain external delivery gates.
 
 说明问题、解决方案、影响范围和回滚方式。涉及经济结果、协议、数据库、密钥、资源或发布配置时，
 同时列出对应的不变量与兼容边界。

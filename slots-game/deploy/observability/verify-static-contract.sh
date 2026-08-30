@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 该门禁不依赖 daemon，只验证入库模板；部署仍必须校验完成替换且已经审批的渲染产物。
+# English: This gate does not rely on daemon and only verifies the incoming template; the deployment must still
+# verify the replaced and approved rendering artifacts.
 set -eu
 
 rendered_dir=''
@@ -13,10 +15,14 @@ if [ "$#" -ne 0 ]; then
   case "$1" in
     --rendered-dir)
       # 生产发布模式必须再由固定来源 promtool 做完整 PromQL/config 校验。
+      # English: artifactsion release mode must then be fully verified with PromQL/config by the fixed source
+      # promtool.
       rendered_mode='release'
       ;;
     --rendered-static-dir)
       # 仅供 daemon-independent 临时 bundle 回归；Make 的发布门禁绝不能使用此模式。
+      # English: Only for daemon-independent temporary bundle regressions; Make's release gate must not use this
+      # mode.
       rendered_mode='static-regression'
       ;;
     *)
@@ -114,8 +120,8 @@ ruby -e '
   "$provider_file" "$vector_file" "$local_vector_file" "$retention_file" || fail 'YAML parsing failed'
 ruby -rdigest -e '
   expected = {
-    ARGV.fetch(0) => "15d52a08e40e6562206f5b6de35bf2020e42dc616eb1b30f758b4a9396524fb3",
-    ARGV.fetch(1) => "dc3f3f51f26dfc1b12a3cad54c998b29cb35114d6c8bb972331e7b3415442fed"
+    ARGV.fetch(0) => "7070ef809860bcc3280be9fa28f2c2ab550b2291e618eef13463876bd8d16a4a",
+    ARGV.fetch(1) => "654c8701ec4c849a01ac4b0e9ea08e13d38e41fad853d2d2edbd2f4b4b56dacf"
   }
   expected.each do |path, digest|
     abort "reviewed Vector configuration digest drifted: #{path}" unless
@@ -161,7 +167,11 @@ sh -n "$rendered_test_file" || fail 'rendered bundle regression script has inval
 
 # 受审中央规则与仪表盘不能把“当前源码自身”当成唯一真相，否则同一提交同时弱化源码与
 # rendered 产物会自洽假绿。合法语义变更必须显式更新这里的 reviewed SHA-256 并接受审查。
-reviewed_rules_sha256='d6c5b1f520f33f67874116dcf19e90a3fec9753b7be11a6845a170df0a63e06d'
+# English: The central rules and dashboards under review cannot regard "the current source code itself" as the
+# only truth, otherwise the same submission will weaken both the source code and The rendered artifacts will be
+# self-consistent and false green. Legal semantic changes must explicitly update reviewed SHA-256 here and be
+# reviewed.
+reviewed_rules_sha256='4827dfed4b6ccbd8494f00ed1db0f3776dc1e21ba42a30f5b83e23bec34d357d'
 reviewed_dashboard_sha256='b230076b68669cd14ca013c82981a50b1e0c615688078e8a6379f34f262c8f13'
 ruby -rdigest -e '
   ARGV.each_slice(2) do |path, expected|
@@ -172,6 +182,7 @@ ruby -rdigest -e '
   fail 'reviewed Prometheus rules/dashboard source digest contract failed'
 
 # Compose 供应链与网络隔离不变量。
+# English: Compose supply chain and network isolation invariants.
 for image_variable in PROMETHEUS_IMAGE GRAFANA_IMAGE VECTOR_IMAGE; do
   require_fixed "\${$image_variable:?" "$compose_file"
 done
@@ -200,6 +211,7 @@ read_only_count=$(grep -F -c -- '    read_only: true' "$compose_file" || true)
 test "$read_only_count" -eq 3 || fail 'every observability service must have a read-only root filesystem'
 
 # Prometheus 抓取、记录规则、告警和有界标签基数契约。
+# English: Prometheus captures and logs rules, alerts, and bounded tag cardinality contracts.
 require_line '  scrape_interval: 15s' "$prometheus_file"
 require_line '  evaluation_interval: 15s' "$prometheus_file"
 require_line '  - job_name: prometheus' "$prometheus_file"
@@ -345,6 +357,7 @@ if grep -Ei '(operator|player|session|round|request|transaction)_id[[:space:]]*(
 fi
 
 # 日志最小化、出口失败即拒绝与磁盘缓冲上限。
+# English: Log minimization, export failure rejection and disk buffer limit.
 require_fixed 'type: file' "$vector_file"
 require_line '    read_from: beginning' "$vector_file"
 require_line '    ignore_older_secs: 86400' "$vector_file"
@@ -352,6 +365,8 @@ require_line '    type: internal_metrics' "$vector_file"
 require_line '    namespace: vector' "$vector_file"
 require_line '      host_key: ""' "$vector_file"
 # Vector 环境变量由部署时展开；此处只核对配置中的字面量引用。
+# English: Vector environment variables are expanded at deployment time; only literal references in the
+# configuration are checked here.
 # shellcheck disable=SC2016
 require_fixed '"${RGS_CONTAINER_LOG_GLOB}"' "$vector_file"
 # shellcheck disable=SC2016
@@ -576,6 +591,8 @@ ruby -ryaml -e '
     central.fetch("sources").fetch("archive_flush_heartbeat_metric") == expected_heartbeat
   expected_heartbeat_projection = <<~VRL.chomp
     # 无条件从空对象重建；上游指标名、标签、hostname 或未来新增字段都不能进入归档。
+    # English: Rebuild from an empty object unconditionally; no upstream indicator names, labels, hostnames or
+    # future new fields can be entered into the archive.
     . = {
       "service": "vector",
       "time": now(),

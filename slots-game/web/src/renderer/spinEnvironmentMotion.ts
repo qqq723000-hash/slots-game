@@ -12,7 +12,7 @@ export interface SpinEnvironmentFeatureCue {
   readonly atMs: number;
   readonly durationMs: number;
   readonly reducedMotion: boolean;
-  /** -1、0 和 1 将语义打击与左、中或右卷轴对齐。 */
+  /** -1、0 和 1 将语义打击与左、中或右卷轴对齐。 / English: -1, 0 and 1 align the semantic strike to the left, center or right scroll. */
   readonly bias?: number;
 }
 
@@ -32,16 +32,16 @@ export interface SpinEnvironmentState {
 }
 
 export interface SpinEnvironmentFrame {
-  /** 标准化化妆品卷轴电机能量。它从来不代表游戏结果。 */
+  /** 标准化化妆品卷轴电机能量。它从来不代表游戏结果。 / English: Standardized cosmetic reel motor energy. It never represents the outcome of the game. */
   readonly spinEnergy: number;
-  /** 附加粒子速率提升；零表示正常闲置气氛。 */
+  /** 附加粒子速率提升；零表示正常闲置气氛。 / English: Attached particle rate increased; zero represents normal idle atmosphere. */
   readonly smokeBoost: number;
   readonly emberBoost: number;
   readonly vignetteAlpha: number;
   readonly warmFlash: number;
   readonly floorDust: number;
   readonly eyeBoost: number;
-  /** -1..1，仅用于定位卷轴冲击附近的反射。 */
+  /** -1..1，仅用于定位卷轴冲击附近的反射。 / English: -1..1, used only to locate reflections near reel impacts. */
   readonly impactBias: number;
   readonly featureAura: number;
 }
@@ -172,7 +172,7 @@ function spinEnergyAt(state: SpinEnvironmentState, atMs: number): number {
   const ramp = smooth((atMs - state.startedAtMs) / SPIN_RAMP_MS);
   if (state.phase === "spinning" || state.finishAtMs === null) {
     if (state.fastStopAtMs === null || atMs <= state.fastStopAtMs) return ramp;
-    // 快速停止可压缩表现流程，而不会增加亮度峰值。
+    // 快速停止可压缩表现流程，而不会增加亮度峰值。 / English: Quick stop compresses the rendering process without increasing brightness peaks.
     return ramp * (1 - smooth((atMs - state.fastStopAtMs) / 110) * 0.22);
   }
   if (atMs < state.finishAtMs) return ramp;
@@ -254,6 +254,8 @@ const FEATURE_VALUES: Record<SpinEnvironmentFeatureKind, FeatureValues> = {
 
 /**
  * 从绝对单调的时间中采样装饰场景的链接。返回的值不能选择符号、计算中奖或更改服务器状态。
+ *
+ * 英文 / English: Links that sample decorative scenes from an absolutely monotonous time. The returned value cannot be used to select symbols, calculate wins, or change server status.
  */
 export function sampleSpinEnvironment(state: SpinEnvironmentState, atMs: number): SpinEnvironmentFrame {
   const time = finiteTime(atMs, "Environment sample");

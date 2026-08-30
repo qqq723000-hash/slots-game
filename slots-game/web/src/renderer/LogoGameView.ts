@@ -16,7 +16,7 @@ export const LOGO_GAME_ANIMATION = Object.freeze({
   win: "win",
 });
 
-/** 持续时间根据提供的 `logo_game.skel` 测量。 */
+/** 持续时间根据提供的 `logo_game.skel` 测量。 / English: The duration is measured against the provided `logo_game.skel`. */
 export const LOGO_GAME_ANIMATION_MS = Object.freeze({
   show: 1_033.333,
   idle: 1_500,
@@ -24,10 +24,10 @@ export const LOGO_GAME_ANIMATION_MS = Object.freeze({
   win: 1_066.667,
 });
 
-/** 原始 Flash 显示列表主机点为徽标 Spine 实例。 */
+/** 原始 Flash 显示列表主机点为徽标 Spine 实例。 / English: The original Flash display list host point is the logo Spine instance. */
 export const LOGO_GAME_SPINE_HOST = Object.freeze({ x: 600, y: 74 });
 
-/** 源控制器在显示徽标之前等待六个 24fps 帧。 */
+/** 源控制器在显示徽标之前等待六个 24fps 帧。 / English: The source controller waits for six 24fps frames before displaying the logo. */
 export const LOGO_GAME_SHOW_DELAY_MS = 250;
 
 export const LOGO_GAME_IDLE_TIMING = Object.freeze({
@@ -36,7 +36,7 @@ export const LOGO_GAME_IDLE_TIMING = Object.freeze({
   maxFrames: 200,
 });
 
-/** 对源控制器的稀疏、非循环空闲间隔进行采样。 */
+/** 对源控制器的稀疏、非循环空闲间隔进行采样。 / English: Sampling the source controller's sparse, acyclic idle intervals. */
 export function logoGameIdleDelayMs(random: () => number = Math.random): number {
   const sample = Math.min(1 - Number.EPSILON, Math.max(0, random()));
   const frameRange = LOGO_GAME_IDLE_TIMING.maxFrames - LOGO_GAME_IDLE_TIMING.minFrames;
@@ -46,6 +46,8 @@ export function logoGameIdleDelayMs(random: () => number = Math.random): number 
 
 /**
  * 捕获的桌面根转换。预设的最小边界映射到精确的 1280x720 游戏组合：-232 + 460*.8 = 136 和 104 - 130*.8 = 0。
+ *
+ * 英文 / English: Captured desktop root transition. The preset minimum bounds map to the exact 1280x720 game combination: -232 + 460*.8 = 136 and 104 - 130*.8 = 0.
  */
 export const LOGO_GAME_DESKTOP_LAYOUT = Object.freeze({
   x: -232,
@@ -54,7 +56,7 @@ export const LOGO_GAME_DESKTOP_LAYOUT = Object.freeze({
   minBound: Object.freeze([460, -130, 1_260, 900] as const),
 });
 
-/** 解析当前可见渲染器活动区域内的徽标根。 */
+/** 解析当前可见渲染器活动区域内的徽标根。 / English: Resolve the logo root within the active area of ​​the currently visible renderer. */
 export function logoGameResponsiveLayout(
   visibleInsetX: number,
 ): ResponsiveNodeTransform {
@@ -65,7 +67,7 @@ export function logoGameResponsiveLayout(
   );
 }
 
-/** 运行时单位校正是根据官方纵向通道捕获进行测量的。 */
+/** 运行时单位校正是根据官方纵向通道捕获进行测量的。 / English: Runtime unit corrections are measured against official longitudinal channel captures. */
 export function logoGameMobileLayout(
   transform: ResponsiveNodeTransform,
   profile: MobileLayoutProfile,
@@ -91,7 +93,7 @@ export function logoGameMobileLayout(
 
 export type LogoGameAnimationIntent = "show" | "hide" | "win";
 
-/** 视图和重点资产路由测试使用的导出合约。 */
+/** 视图和重点资产路由测试使用的导出合约。 / English: Export contract used by view and focus asset routing tests. */
 export function logoGameAnimationSequence(
   intent: LogoGameAnimationIntent,
 ): readonly { readonly animation: string; readonly loop: boolean }[] {
@@ -109,7 +111,7 @@ export function logoGameAnimationSequence(
 }
 
 export interface LogoGameViewOptions {
-  /** 源控制器延迟动画任务的测试/主机接口。 */
+  /** 源控制器延迟动画任务的测试/主机接口。 / English: Test/host interface for source controller delayed animation tasks. */
   readonly schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly cancelSchedule?: (handle: ReturnType<typeof setTimeout>) => void;
   readonly random?: () => number;
@@ -117,6 +119,8 @@ export interface LogoGameViewOptions {
 
 /**
  * 本机基础游戏徽标控制器。 Spine 文件拥有每个像素和显示/隐藏/中奖转换；此视图仅将已经权威的游戏生命周期事件路由到那些捕获的剪辑上。
+ *
+ * 英文 / English: Native base game logo controller. Spine files own every pixel and show/hide/win transition; this view only routes already authoritative game lifecycle events to those captured clips.
  */
 export class LogoGameView extends Container {
   private readonly schedule: NonNullable<LogoGameViewOptions["schedule"]>;
@@ -193,7 +197,7 @@ export class LogoGameView extends Container {
     return attempt;
   }
 
-  /** 入口和 Free Spins 出口使用本机延迟的单镜头表演剪辑。 */
+  /** 入口和 Free Spins 出口使用本机延迟的单镜头表演剪辑。 / English: Entry and Free Spins exits use natively delayed single-shot show clips. */
   show(): void {
     if (this.disposed || this.desiredShown) return;
     this.desiredShown = true;
@@ -203,7 +207,7 @@ export class LogoGameView extends Container {
     this.scheduleShow();
   }
 
-  /** Free Spins 条目在变为非渲染之前使用本机隐藏剪辑。 */
+  /** Free Spins 条目在变为非渲染之前使用本机隐藏剪辑。 / English: Free Spins entries use native hidden clipping before becoming non-rendering. */
   hide(immediate = false): void {
     if (this.disposed) return;
     const wasShown = this.desiredShown;
@@ -224,7 +228,7 @@ export class LogoGameView extends Container {
     }, LOGO_GAME_ANIMATION_MS.hide);
   }
 
-  /** 仅当基本徽标处于活动状态时，解码的行中奖才可以使徽标具有动画效果。 */
+  /** 仅当基本徽标处于活动状态时，解码的行中奖才可以使徽标具有动画效果。 / English: Decoded line jackpots animate the logo only when the base logo is active. */
   win(): void {
     if (this.disposed || !this.desiredShown || !this.spine) return;
     this.clearHideSchedule();
@@ -235,7 +239,7 @@ export class LogoGameView extends Container {
     this.scheduleIdle(LOGO_GAME_ANIMATION_MS.win);
   }
 
-  /** 镜像卷轴行程周围的源 `_isInIdle` 门。 */
+  /** 镜像卷轴行程周围的源 `_isInIdle` 门。 / English: Mirror the scroll stroke around the source `_isInIdle` gate. */
   setIdleAllowed(allowed: boolean): void {
     this.idleAllowed = allowed;
   }
@@ -319,7 +323,7 @@ export class LogoGameView extends Container {
         }
         spine.update(0);
       }
-      // 源任务在每次随机延迟时都会增加状态，并且仅在奇数状态下调用空闲，因此稳定的空闲启动相隔两个独立的延迟。剪辑持续时间不会添加到该任务时钟中。
+      // 源任务在每次随机延迟时都会增加状态，并且仅在奇数状态下调用空闲，因此稳定的空闲启动相隔两个独立的延迟。剪辑持续时间不会添加到该任务时钟中。 / English: The source task increments state at each random delay and only calls idle on odd states, so stable idle starts are separated by two independent delays. Clip duration is not added to the task clock.
       this.scheduleIdle(0, 2);
     }, delayMs);
   }

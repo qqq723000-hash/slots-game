@@ -17,7 +17,7 @@ export interface BaseMusicPotStateMachineOptions {
 
 export interface BaseMusicPotSnapshot {
   readonly betMinor: string | null;
-  /** 精确的十进制小单位；需要时保留十分之一的小数。 */
+  /** 精确的十进制小单位；需要时保留十分之一的小数。 / English: Precise decimal units; rounded to tenths when required. */
   readonly potMinor: string;
   readonly reduceRate: BaseMusicPotReduceRate;
   readonly level: BaseMusicPotLevel;
@@ -62,6 +62,8 @@ function reduceRateLabel(rate: ReduceRateTenths): BaseMusicPotReduceRate {
 /**
  * Primal Rampage 捆绑的 `iw` 音乐罐的独立于浏览器的转录。资金以十分之一的小单位持有，因此对于每个整数投注，无需进行数字转换，
  * 0.1x/0.2x/0.4x 投注衰减仍然准确。
+ *
+ * 英文 / English: Browser-independent transcription of the `iw` music jar bundled with Primal Rampage. Funds are held in small units of tenths, so for every round number bet, the 0.1x/0.2x/0.4x bet decay remains accurate without the need for number conversion.
  */
 export class BaseMusicPotStateMachine {
   private betMinorValue: bigint | null = null;
@@ -140,6 +142,8 @@ export class BaseMusicPotStateMachine {
 
   /**
    * 改进了原来的一秒调度程序。分数帧增量被累积；停靠的经过时间将被丢弃，而不是稍后追上。
+   *
+   * 英文 / English: Improvements to the original one-second scheduler. Fractional frame increments are accumulated; docked elapsed time is discarded rather than caught up later.
    */
   tick(elapsedMs = TICK_MS): void {
     if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {

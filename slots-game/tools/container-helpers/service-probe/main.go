@@ -1,4 +1,5 @@
 // Command service-probe 为无 shell 运行时提供小型 HTTP(S) 健康检查。
+// English: Command service-probe provides small HTTP(S) health checks for shellless runtimes.
 package main
 
 import (

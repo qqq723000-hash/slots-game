@@ -13,6 +13,8 @@ mkdirSync(resolve(outputRoot, "rules"), { recursive: true, mode: 0o700 });
 mkdirSync(resolve(outputRoot, "grafana/dashboards"), { recursive: true, mode: 0o700 });
 mkdirSync(resolve(outputRoot, "grafana/provisioning"), { recursive: true, mode: 0o700 });
 // Grafana 会枚举全部标准 provisioning 目录；空目录也显式创建，避免无意义的启动错误。
+// English: Grafana enumerates all standard provisioning directories; empty directories are also explicitly
+// created to avoid meaningless startup errors.
 mkdirSync(resolve(outputRoot, "grafana/provisioning/plugins"), { recursive: true, mode: 0o700 });
 mkdirSync(resolve(outputRoot, "grafana/provisioning/alerting"), { recursive: true, mode: 0o700 });
 
@@ -226,6 +228,8 @@ cpSync(
 );
 
 // Grafana 只挂载一个服务专用只读 bundle，dashboard provider 与该路径对齐。
+// English: Grafana only mounts a service-specific read-only bundle, and the dashboard provider is aligned with
+// that path.
 const dashboardProviderPath = resolve(outputRoot, "grafana/provisioning/dashboards/rgs.yml");
 writeFileSync(
   dashboardProviderPath,

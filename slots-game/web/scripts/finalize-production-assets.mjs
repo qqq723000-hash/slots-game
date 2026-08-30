@@ -24,7 +24,7 @@ function slash(path) {
 }
 
 async function referencedPrimalFiles() {
-  // 生产引用由源码常量和 CSS 构成。这里只解析已有文件名，不接受任意路径。
+  // 生产引用由源码常量和 CSS 构成。这里只解析已有文件名，不接受任意路径。 / English: Production references consist of source code constants and CSS. Only existing file names are parsed here, arbitrary paths are not accepted.
   const candidates = await regularFilesUnder(resolve(publicRoot, "assets/primal-reference"));
   const sourceFiles = (await regularFilesUnder(resolve(webRoot, "src"))).filter((path) => {
     const sourceName = slash(relative(webRoot, path));

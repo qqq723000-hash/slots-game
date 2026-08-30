@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # 使用纯本地 mock 覆盖 HMAC quiesce、失败自动恢复、固定证据校验与 resume。
+# English: Use purely local mocks to cover HMAC quiesce, automatic recovery on failure, fixed evidence
+# verification and resume.
 set -euo pipefail
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -198,6 +200,8 @@ test "$(cat "$state/api-replicas")" = 0 || fail 'cancellation marker 失败后�
 test -f "$state/maintenance-lock.json" || fail 'cancellation marker 失败后错误删除了安全锁'
 
 # E2 marker 不得遮蔽 E1；每份证据使用由 VersionId 与 SHA 派生的不可变对象路径。
+# English: E2 markers must not obscure E1; each piece of evidence uses an immutable object path derived from
+# VersionId and SHA.
 reset_state
 evidence_one="$test_root/evidence-one.json"
 evidence_two="$test_root/evidence-two.json"

@@ -74,8 +74,8 @@ const BASE_RAGE_LEVEL_TWO_PERSISTENT_AURA_FEATURE: FeatureState = {
   rageCollected: 12,
 };
 
-// 当第四个 PPS 光环已激活时，概率性一 Rage Wheel 触发器的回归原点。官方RESET合约将每个触发器/Free Spins/终端状态预测为1级/总计0；因此，
-// 从视觉上看，该装置暴露了任何 aura-4 或功能效果所有权，这些所有权在 Free Spins 摘要关闭后会泄漏回 Base 中。
+// 当第四个 PPS 光环已激活时，概率性一 Rage Wheel 触发器的回归原点。官方RESET合约将每个触发器/Free Spins/终端状态预测为1级/总计0；因此， / English: Probabilistic Rage Wheel trigger returns to origin when the fourth PPS halo is activated. The official RESET contract predicts each trigger/Free Spins/terminal state to be Level 1/Total 0; therefore,
+// 从视觉上看，该装置暴露了任何 aura-4 或功能效果所有权，这些所有权在 Free Spins 摘要关闭后会泄漏回 Base 中。 / English: Visually, the setup exposes any aura-4 or feature effect ownership that leaks back into the Base after the Free Spins digest is closed.
 const BASE_RAGE_LEVEL_FOUR_TRIGGER_ORIGIN_FEATURE: FeatureState = {
   mode: "BASE",
   freeSpinsRemaining: 0,
@@ -110,7 +110,7 @@ const bigWinGrid: GridCell[][] = [
   [cell("PRISM"), cell("TANK"), cell("CIRCUIT")],
 ];
 
-// 外卷轴故意不共享付费符号。因此，Wild 的单一作者在没有创造中奖的情况下发挥了其真实的揭示路径。
+// 外卷轴故意不共享付费符号。因此，Wild 的单一作者在没有创造中奖的情况下发挥了其真实的揭示路径。 / English: The outer reels intentionally do not share paying symbols. Thus, Wild's single author plays its true path of revelation without creating a jackpot.
 const baseWildRevealX100Grid: GridCell[][] = [
   [cell("PRISM"), cell("PULSE"), cell("ORBIT")],
   [cell("NOVA"), cell("WILD", { multiplier: 100 }), cell("TANK")],
@@ -122,7 +122,7 @@ const baseVaultUnlockX2Grid: GridCell[][] = [
   [cell("CIRCUIT"), cell("NOVA"), cell("TANK")],
 ];
 const baseVaultUnlockX2Cell = [{ reel: 1, row: 2 }] as const;
-// 官方 Fiddler 响应 43 证明服务端 ID 22 可以稳定存在并保持锁定。周围的静默网格仅供测试夹具使用；x6 牌面是准确的。
+// 官方 Fiddler 响应 43 证明服务端 ID 22 可以稳定存在并保持锁定。周围的静默网格仅供测试夹具使用；x6 牌面是准确的。 / English: The official Fiddler response 43 proves that server ID 22 can exist stably and remain locked. The surrounding silent grid is for testing the jig only; the x6 deck is accurate.
 const baseVaultLockedX6Grid: GridCell[][] = [
   [cell("PRISM"), cell("PULSE"), cell("ORBIT")],
   [cell("NOVA"), cell("TANK"), cell("VAULT", { lockedVaultFace: "x6" })],
@@ -135,14 +135,14 @@ const autoplayWheelResumeGrid: GridCell[][] = [
   [cell("ORBIT"), cell("NOVA"), cell("TANK")],
 ];
 const baseSingleRageNoWheelGrid: GridCell[][] = [
-  // 官方预设的身份是 ORBIT = K / Symbol1 和 PRISM = Q / Symbol0，
-  // 因此该测试场景逐像素渲染捕获的 K/Jet/K ... Tank/Tank/Q 板。
+  // 官方预设的身份是 ORBIT = K / Symbol1 和 PRISM = Q / Symbol0， / English: The official default identities are ORBIT = K/Symbol1 and PRISM = Q/Symbol0,
+  // 因此该测试场景逐像素渲染捕获的 K/Jet/K ... Tank/Tank/Q 板。 / English: So this test scene renders the captured K/Jet/K... Tank/Tank/Q board pixel by pixel.
   [cell("ORBIT"), cell("CIRCUIT"), cell("ORBIT")],
   [cell("SURGE"), cell("PULSE"), cell("CIRCUIT")],
   [cell("TANK"), cell("TANK"), cell("PRISM")],
 ];
 const baseTwoRageNoWheelGrid: GridCell[][] = [
-  // Pass46 保留了自然视觉样本的两行 Rage 和最终的坦克卷轴，同时用免费喷气机替换了其上下文 X7 Wild。这将双源收集批次与 Wild 揭示/支付行为隔离开来。
+  // Pass46 保留了自然视觉样本的两行 Rage 和最终的坦克卷轴，同时用免费喷气机替换了其上下文 X7 Wild。这将双源收集批次与 Wild 揭示/支付行为隔离开来。 / English: Pass46 retains the natural visual samples of the two-line Rage and final tank reels, while replacing its contextual X7 Wild with a free jet. This isolates dual-source collection batches from Wild reveal/payout behavior.
   [cell("ORBIT"), cell("SURGE"), cell("PULSE")],
   [cell("PULSE"), cell("SURGE"), cell("CIRCUIT")],
   [cell("TANK"), cell("TANK"), cell("TANK")],
@@ -152,7 +152,7 @@ const baseTwoRageNoWheelCells = [
   { reel: 1, row: 1 },
 ];
 const baseOneRageTriggerTransformGrid: GridCell[][] = [
-  // Pass47 冻结自然一Rage触发板。两个替换地址仍保留权威事件数据；它们永远不会在这里被选择，也不会被渲染器的修饰遍历顺序选择。
+  // Pass47 冻结自然一Rage触发板。两个替换地址仍保留权威事件数据；它们永远不会在这里被选择，也不会被渲染器的修饰遍历顺序选择。 / English: Pass47 Freeze Nature-Rage Trigger Board. The two replacement addresses still retain authoritative event data; they are never selected here, nor by the renderer's decorator traversal order.
   [cell("ORBIT"), cell("SURGE"), cell("PULSE")],
   [cell("PULSE"), cell("CIRCUIT"), cell("PULSE")],
   [cell("NOVA"), cell("ORBIT"), cell("ORBIT")],
@@ -167,15 +167,15 @@ const baseRageLevelTwoPersistentAuraGrid: GridCell[][] = [
   [cell("ORBIT"), cell("NOVA"), cell("ORBIT")],
   [cell("CIRCUIT"), cell("TANK"), cell("CIRCUIT")],
 ];
-// 唯一的 Rage 符号是准确恢复的收集源。独特的外卷轴特性使灯具在经济上保持安静，同时耐用的表现执行权威的 1/11 -> 2/12 过渡。
+// 唯一的 Rage 符号是准确恢复的收集源。独特的外卷轴特性使灯具在经济上保持安静，同时耐用的表现执行权威的 1/11 -> 2/12 过渡。 / English: The only Rage symbol is a collection source of accurate recovery. The unique outer reel feature allows the fixture to remain economically quiet while performing with durable performance for an authoritative 1/11 -> 2/12 transition.
 const baseRgsRecoveredLevelUpGrid: GridCell[][] = [
   [cell("PRISM"), cell("PULSE"), cell("ORBIT")],
   [cell("SURGE"), cell("NOVA"), cell("TANK")],
   [cell("CIRCUIT"), cell("NOVA"), cell("TANK")],
 ];
 const baseThreeRageWheelEntryGrid: GridCell[][] = [
-  // 与冷冻 Pass45 自然视觉圆形相同的零基 Rage 单元格。卷轴2排3保留官方锁定的x1 Vault面。其余的非 Rage 单元格仍然不包含支付线中奖，
-  // 因此 Wheel 条目遵循 1250ms 停止结尾，没有不相关的正常中奖覆盖。
+  // 与冷冻 Pass45 自然视觉圆形相同的零基 Rage 单元格。卷轴2排3保留官方锁定的x1 Vault面。其余的非 Rage 单元格仍然不包含支付线中奖， / English: The same zero-based Rage cell as the Frozen Pass45 Natural Vision Circle. Reel 2 row 3 retains the officially locked x1 Vault side. The remaining non-Rage cells still do not contain payline wins,
+  // 因此 Wheel 条目遵循 1250ms 停止结尾，没有不相关的正常中奖覆盖。 / English: So Wheel entries follow the 1250ms stop ending, with no irrelevant normal win overrides.
   [cell("PRISM"), cell("SURGE"), cell("PULSE")],
   [cell("SURGE"), cell("NOVA"), cell("VAULT")],
   [cell("TANK"), cell("TANK"), cell("SURGE")],
@@ -458,7 +458,7 @@ const tankWin = (amountMinor: MoneyMinor): Win => ({
   }],
 });
 
-/** 捕获的 Base 赔率表：Jet/CIRCUIT 为三卷轴路径支付 2 倍总投注额。 */
+/** 捕获的 Base 赔率表：Jet/CIRCUIT 为三卷轴路径支付 2 倍总投注额。 / English: Captured Base Paytable: Jet/CIRCUIT pays 2x the total stake for the three-reel path. */
 const jetWin = (amountMinor: MoneyMinor): Win => ({
   id: "jet-path",
   symbol: "CIRCUIT",
@@ -612,6 +612,8 @@ function multiRecordWildRound(): FixtureRound {
  *
  * 记录 0 故意输入 SEPARATE_DELAYED 乘数与四个唯一突出显示的单元格合并。
  * 浏览器测试场景在 `merge-start` 之后立即单击真正的主 Continue 控件；记录 1 是在接受的交互之后绝不能变得可见的哨兵。
+ *
+ * 英文 / English: Pass 40: 1 ordinary Base result, with 2 authoritative winning records. Record 0 intentionally entered a SEPARATE_DELAYED multiplier to merge with the four uniquely highlighted cells. The browser test scenario clicks on the real main Continue control immediately after `merge-start`; record 1 is a sentinel that must never become visible after an accepted interaction.
  */
 function normalWinContinueRound(): FixtureRound {
   const firstCells = [
@@ -933,7 +935,7 @@ const SCENARIOS: Readonly<Record<VisualFixtureScenarioName, FixtureScenario>> = 
   },
   "base-launch-level-two-intro": {
     initialFeatureState: BASE_RAGE_LEVEL_TWO_PERSISTENT_AURA_FEATURE,
-    // Pass50 仅观察预设的启动 INTRO -> LOOP 切换。将回合脚本保持为空会使意外旋转在协议边界处失败，而不是为屏幕截图制作游戏逻辑。
+    // Pass50 仅观察预设的启动 INTRO -> LOOP 切换。将回合脚本保持为空会使意外旋转在协议边界处失败，而不是为屏幕截图制作游戏逻辑。 / English: Pass50 only observes the preset startup INTRO -> LOOP switch. Leaving the turn script empty makes unexpected rotations fail at protocol boundaries instead of making game logic for screenshots.
     rounds: [],
   },
   "base-rgs-recovered-level-up": {
@@ -1335,7 +1337,7 @@ export function isVisualFixtureScenario(value: string): value is VisualFixtureSc
   return (VISUAL_FIXTURE_SCENARIOS as readonly string[]).includes(value);
 }
 
-/** 仅由 visual-fixtures.html 使用的确定性协议对等体。 */
+/** 仅由 visual-fixtures.html 使用的确定性协议对等体。 / English: Deterministic protocol peer used only by visual-fixtures.html. */
 export class VisualFixtureGateway implements GameGateway {
   private callbacks: GatewayCallbacks = {
     onStatus: () => undefined,
@@ -1375,7 +1377,7 @@ export class VisualFixtureGateway implements GameGateway {
       const session: SessionOpened = immutableClone({
         type: "session.opened",
         protocolVersion: 1,
-        // 视觉夹具只模拟已经批准的表现契约，避免测试页因缺少真实 RGS 投影而永远关闭帮助内容。
+        // 视觉夹具只模拟已经批准的表现契约，避免测试页因缺少真实 RGS 投影而永远关闭帮助内容。 / English: The visual fixture only simulates approved performance contracts, preventing the test page from permanently closing the help content due to the lack of a real RGS projection.
         engineRulesVersion: ENGINE_RULES_VERSION,
         definitionBinding: FIXTURE_PRESENTATION_DEFINITION_BINDING,
         requestId: createRequestId("fixture-open"),

@@ -65,7 +65,7 @@ export interface AuthoredPlaybackBatchResult {
   readonly played: number;
 }
 
-/** 捕获诊断使用的实时卷轴视口的简单、不可变的投影。 */
+/** 捕获诊断使用的实时卷轴视口的简单、不可变的投影。 / English: Capture a simple, immutable projection of the live scroll viewport used by diagnostics. */
 export interface ReelViewportCompositionDiagnostics {
   readonly reelIndex: number;
   readonly name: string;
@@ -82,20 +82,20 @@ export interface ReelVaultCaptureDiagnostics extends SymbolVaultCaptureDiagnosti
   readonly row: number;
 }
 
-/** 在卷轴运动期间捕获 GameSymbol 模糊豁免。 */
+/** 在卷轴运动期间捕获 GameSymbol 模糊豁免。 / English: Capture GameSymbol blur save during reel movement. */
 export function reelCellStaysSharpDuringSpin(cell: Readonly<GridCell>): boolean {
   return cell.symbol === "SURGE"
     || (cell.symbol === "VAULT"
       && (cell.prize !== undefined || cell.multiplier !== undefined));
 }
 
-/** 传送带显示普通的 Wild，直到预设的 500ms 显示门。 */
+/** 传送带显示普通的 Wild，直到预设的 500ms 显示门。 / English: The conveyor belt displays a normal Wild until a preset 500ms gate is displayed. */
 export function reelStopPresentationCell(cell: Readonly<GridCell>): GridCell {
   if (cell.symbol === "WILD" && cell.multiplier !== undefined) return { symbol: "WILD" };
   return { ...cell };
 }
 
-/** 投影完整卷轴合成之前的官方组合掩模边界。 */
+/** 投影完整卷轴合成之前的官方组合掩模边界。 / English: Project the official combined mask borders before full scroll composition. */
 export function reelViewportMaskGeometry(
   _reelIndex: number,
   width: number,
@@ -131,6 +131,8 @@ function clamp01(value: number): number {
 
 /**
  * 为调用者保留旧版公共采样器；现在代表测量到的300ms刹车+350ms正立方反弹而不是捏造的反弹。
+ *
+ * 英文 / English: Keep legacy public sampler for callers; now represents measured 300ms brake + 350ms cubed bounce instead of fabricated bounce.
  */
 export function settleBounceOffset(progress: number): number {
   return reelSettleFrame(progress, 100).resultOffset;
@@ -141,13 +143,13 @@ export function settleBlurStrength(progress: number): number {
 }
 
 export class ReelView extends Container {
-  /** 第 1 层：该卷轴的稳定轨道支撑；永远不会因符号删除而发生突变。 */
+  /** 第 1 层：该卷轴的稳定轨道支撑；永远不会因符号删除而发生突变。 / English: Tier 1: Stable orbital support for this reel; never mutated by symbol removal. */
   private readonly trackLayer: NamedContainer;
-  /** 第 2 层尾部：独立的嵌入式灯覆盖在该卷轴符号上方。 */
+  /** 第 2 层尾部：独立的嵌入式灯覆盖在该卷轴符号上方。 / English: Tier 2 Tail: Individual recessed lights overlay the reel symbols. */
   private readonly trackShadowLayer: NamedContainer;
   private readonly glassBackdrop = new Graphics();
   private readonly symbols = new Container();
-  /** 镜像、未屏蔽的固定符号分支安装在 ReelSetView 外部。 */
+  /** 镜像、未屏蔽的固定符号分支安装在 ReelSetView 外部。 / English: Mirrored, unmasked fixed symbol branch installed outside of ReelSetView. */
   readonly winningSymbolAdditiveDisplay = namedContainer(
     REEL_VIEW_LAYER_NAMES.winningAdditive,
   );
@@ -155,14 +157,14 @@ export class ReelView extends Container {
     "winning-symbol-additive-settled-overlay",
   );
   private readonly symbolViews: SymbolView[] = [];
-  /** 每个卷轴有一个覆盖层，与 rageSymbolTriggerOverlay.child0..2 完全相同。 */
+  /** 每个卷轴有一个覆盖层，与 rageSymbolTriggerOverlay.child0..2 完全相同。 / English: Each reel has an overlay, identical to rageSymbolTriggerOverlay.child0..2. */
   private readonly rageCascadeOverlay = new SymbolView(false, true);
-  /** 官方 maskedOverlay/reelOverlay：仅移动内容。 */
+  /** 官方 maskedOverlay/reelOverlay：仅移动内容。 / English: Official maskedOverlay/reelOverlay: Move content only. */
   private readonly maskedOverlay = new Container();
   private readonly motionLayer = new Container();
-  /** 普通的移动符号共享官方的垂直模糊。 */
+  /** 普通的移动符号共享官方的垂直模糊。 / English: Regular moving symbols share the official vertical blur. */
   private readonly spinSymbols = new Container();
-  /** Rage 和已解锁的 Vault 在皮带移动时保持锋利。 */
+  /** Rage 和已解锁的 Vault 在皮带移动时保持锋利。 / English: Rage and unlocked Vault stay sharp as the belt moves. */
   private readonly spinSharpSymbols = new Container();
   private readonly spinSymbolViews: SymbolView[] = [];
   private readonly clip = new Graphics();
@@ -229,12 +231,12 @@ export class ReelView extends Container {
     this.winningSettledAdditiveLayer.name =
       `winning-symbol-additive-settled-overlay-${reelIndex + 1}`;
     this.winningSymbolAdditiveDisplay.addChild(this.winningSettledAdditiveLayer);
-    // 可移动的 Rage 级联视图还拥有预设的 ADD 附件。将其双胞胎保留在第一帧的外部后置滤波器分支中。
+    // 可移动的 Rage 级联视图还拥有预设的 ADD 附件。将其双胞胎保留在第一帧的外部后置滤波器分支中。 / English: The movable Rage cascading view also has preset ADD attachments. Keep its twin in the outer post-filter branch of the first frame.
     this.winningSettledAdditiveLayer.addChild(
       this.rageCascadeOverlay.winningAdditiveDisplay,
     );
     this.spinProfile = reelSpinProfile(reelIndex);
-    // 官方组合掩模剪辑 reelOverlay，而固定符号移动到 symbolOverlay/highlightOverlay 并保留其预设的过扫描。
+    // 官方组合掩模剪辑 reelOverlay，而固定符号移动到 symbolOverlay/highlightOverlay 并保留其预设的过扫描。 / English: The official combination mask clips the reelOverlay, while the fixed symbol moves to symbolOverlay/highlightOverlay and retains its preset overscan.
     this.maskedOverlay.mask = this.clip;
     this.motionBlur.blurX = PRIMAL_BLURRED_SYMBOL_PLACEHOLDER.blurX;
     this.motionBlur.blurY = PRIMAL_BLURRED_SYMBOL_PLACEHOLDER.blurY;
@@ -274,17 +276,17 @@ export class ReelView extends Container {
     this.visualTelemetry = reporter;
   }
 
-  /** 稳定的第 1 层节点安装在每个符号视口之前。 */
+  /** 稳定的第 1 层节点安装在每个符号视口之前。 / English: Stable layer 1 nodes are installed before each symbol viewport. */
   get trackDisplay(): Container {
     return this.trackLayer;
   }
 
-  /** 稳定的符号后阴影节点安装在任一硬件框架下方。 */
+  /** 稳定的符号后阴影节点安装在任一硬件框架下方。 / English: Stable symbol rear shadow nodes are mounted underneath either hardware frame. */
   get trackShadowDisplay(): Container {
     return this.trackShadowLayer;
   }
 
-  /** 将三个分割显示节点保持在一个精确的卷轴本地坐标空间中。 */
+  /** 将三个分割显示节点保持在一个精确的卷轴本地坐标空间中。 / English: Keeps three split display nodes in an exact scroll local coordinate space. */
   setLayerPosition(x: number, y: number): void {
     this.position.set(x, y);
     this.trackLayer.position.set(x, y);
@@ -298,6 +300,8 @@ export class ReelView extends Container {
 
   /**
    * 通过不断增长的掩模显示出更高的固定尺寸条带。目标行布置在未更改的底部边缘上方，因此扩展不会压缩符号或跳跃完整的行。
+   *
+   * 英文 / English: Higher fixed-size bands are shown through growing masks. The target row is laid out above the unchanged bottom edge, so the expansion does not compress symbols or skip complete rows.
    */
   setExpansionLayout(
     width: number,
@@ -366,6 +370,8 @@ export class ReelView extends Container {
 
   /**
    * 复刻的转轴框架 Spine 已提供磨砂玻璃背板和钢制窗沿。程序绘制仅作为加载失败时的回退，因此绝不会与制作好的机台外框重复叠加。
+   *
+   * 英文 / English: The replica spindle frame Spine has been supplied with a frosted glass back and steel sills. The program drawing is only used as a fallback when loading fails, so it will never overlap with the prepared machine frame.
    */
   setAuthoredCabinet(active: boolean): void {
     if (this.authoredCabinet === active) return;
@@ -376,7 +382,7 @@ export class ReelView extends Container {
     this.glassSurface.renderable = !active;
     this.trackShadow.visible = !active;
     this.trackShadow.renderable = !active;
-    // 当符号旋转、着陆或由 Rage 功能提取时，仅回退路径照明不得对预设的轨道重新着色。
+    // 当符号旋转、着陆或由 Rage 功能提取时，仅回退路径照明不得对预设的轨道重新着色。 / English: Fallback path-only lighting must not recolor the preset track when the symbol rotates, lands, or is extracted by the Rage function.
     this.environmentReflection.visible = !active;
     this.environmentReflection.renderable = !active;
     this.environmentCoreReflection.visible = !active;
@@ -386,6 +392,8 @@ export class ReelView extends Container {
 
   /**
    * 预先分配 3x8 模式所需的所有固定和移动 SymbolView。每个帧切片只有通过取消检查后才会按上限构造并提交，因此 Kong 扩展时无需首次即时创建。
+   *
+   * 英文 / English: Pre-allocates all fixed and moving SymbolViews required for 3x8 mode. Each frame slice is capped and committed only after it passes a cancellation check, so there is no need for first-time on-the-fly creation when Kong expands.
    */
   prepareMaximumRows(options: ReelViewPreloadOptions = {}): Promise<void> {
     if (this.maximumRowsPrepared) {
@@ -438,7 +446,7 @@ export class ReelView extends Container {
       this.maximumRowsPrepared = true;
       this.ensureSymbols(this.rowCount);
       this.ensureSpinSymbols(reelPresentationCellCount(this.rowCount));
-      // 合并的固定视图在 (0, 0) 处可见。立即提交其活动行可见性和未来行坐标，或者休眠的 3x8 行使用其默认 Jet 单元覆盖 Base 第一行，直到发生另一种结构布局。
+      // 合并的固定视图在 (0, 0) 处可见。立即提交其活动行可见性和未来行坐标，或者休眠的 3x8 行使用其默认 Jet 单元覆盖 Base 第一行，直到发生另一种结构布局。 / English: The merged fixed view is visible at (0, 0). Either its active row visibility and future row coordinates are committed immediately, or the dormant 3x8 row uses its default Jet unit to overwrite the Base first row until another structural layout occurs.
       this.symbolViews.forEach((symbol, row) => {
         symbol.visible = row < this.rowCount;
         symbol.position.set(
@@ -461,7 +469,7 @@ export class ReelView extends Container {
     return attempt;
   }
 
-  /** 已停稳单元格使用捕获的骨骼；移动的条带保持静止。 */
+  /** 已停稳单元格使用捕获的骨骼；移动的条带保持静止。 / English: Stationary cells use captured bones; moving strips remain stationary. */
   setAuthoredSymbolsEnabled(active: boolean): void {
     if (this.authoredSymbolsEnabled === active) return;
     this.authoredSymbolsEnabled = active;
@@ -469,7 +477,7 @@ export class ReelView extends Container {
     this.rageCascadeOverlay.setAuthoredAnimationEnabled(active);
   }
 
-  /** 实例化有界框架切片中预设的固定单元 Spine 视图。 */
+  /** 实例化有界框架切片中预设的固定单元 Spine 视图。 / English: Instantiates a preset fixed-cell Spine view in a bounded frame slice. */
   async setAuthoredSymbolsEnabledFrameSliced(
     active: boolean,
     options: ReelViewPreloadOptions = {},
@@ -509,11 +517,11 @@ export class ReelView extends Container {
     }
   }
 
-  /** 选择捕获的 Base/King/Kong 客户端条而不触及结果。 */
+  /** 选择捕获的 Base/King/Kong 客户端条而不触及结果。 / English: Select the captured Base/King/Kong client bar without touching the results. */
   setVisualStripMode(mode: ReelVisualStripMode): void {
     if (this.visualStripMode === mode) return;
     this.visualStripMode = mode;
-    // 官方selectReelStripSet()将spinner.position重置为零。
+    // 官方selectReelStripSet()将spinner.position重置为零。 / English: The official selectReelStripSet() resets spinner.position to zero.
     this.phase = 0;
     this.spinElapsedMs = 0;
     this.spinOriginRows = 0;
@@ -553,13 +561,15 @@ export class ReelView extends Container {
     this.syncWinningSymbolAdditiveTransform();
   }
 
-  /** 整个机台共用的一次性空闲调度器所使用的当前各行主视图。 */
+  /** 整个机台共用的一次性空闲调度器所使用的当前各行主视图。 / English: The current main view of each row used by the one-time idle scheduler shared by the entire machine. */
   visibleSymbolViews(): readonly SymbolView[] {
     return this.symbolViews.slice(0, this.rowCount);
   }
 
   /**
    * 仅浏览器捕获事实。每个值都是从实时显示节点复制的，因此观察者无法保留或改变 Pixi 对象。
+   *
+   * 英文 / English: Only the browser captures the fact. Each value is copied from the live display node, so observers cannot persist or mutate the Pixi object.
    */
   getViewportCompositionDiagnostics(): Readonly<ReelViewportCompositionDiagnostics> {
     const bounds = this.clip.getLocalBounds();
@@ -585,7 +595,7 @@ export class ReelView extends Container {
     return cell ? { ...cell } : null;
   }
 
-  /** 针对一个服务器寻址的 Vault 单元的简单、冻结诊断。 */
+  /** 针对一个服务器寻址的 Vault 单元的简单、冻结诊断。 / English: Simple, frozen diagnostics for a server-addressed Vault cell. */
   getVaultCaptureDiagnostics(row: number): Readonly<ReelVaultCaptureDiagnostics> | null {
     const symbol = this.symbolViews[row];
     if (!symbol || row < 0 || row >= this.rowCount) return null;
@@ -612,6 +622,8 @@ export class ReelView extends Container {
   /**
    * GameSymbol.playScatterCollect 首先将 Rage 从 highlightOverlay 移动到 activatedOverlay，
    * 然后启动其预设的收集/隐藏队列。保持权威固定视图及其世界位置不变，同时仅更改显示所有权。
+   *
+   * 英文 / English: GameSymbol.playScatterCollect first moves the Rage from highlightOverlay to activatedOverlay and then starts its preset collection/hiding queue. Keeps the authoritative fixed view and its world position unchanged, while only changing the display ownership.
    */
   beginSurgeCollection(
     row: number,
@@ -635,7 +647,7 @@ export class ReelView extends Container {
     return symbol.playCollectAnimation();
   }
 
-  /** 仅恢复 1000ms 收集剪辑之后已处理的收集的 Rage。 */
+  /** 仅恢复 1000ms 收集剪辑之后已处理的收集的 Rage。 / English: Only restores collected Rage that has been processed 1000ms after the collection clip. */
   restoreSurgeCollectionLayer(
     row: number,
     activatedHost: Container,
@@ -680,14 +692,14 @@ export class ReelView extends Container {
     return this.symbolViews[row]?.playFeatureActivationAnimation() ?? false;
   }
 
-  /** 激活已设置的 Rage 而不更换其服务器单元。 */
+  /** 激活已设置的 Rage 而不更换其服务器单元。 / English: Activate an already set up Rage without replacing its server unit. */
   playPostStopSurgeActivation(row: number): boolean {
     const symbol = this.symbolViews[row];
     if (!symbol || symbol.cell.symbol !== "SURGE") return false;
     return symbol.playFeatureActivationAnimation();
   }
 
-  /** 恢复任何收集的源 Rage 并重置瞬态卷轴覆盖。 */
+  /** 恢复任何收集的源 Rage 并重置瞬态卷轴覆盖。 / English: Restores any collected source Rage and resets transient scroll overrides. */
   prepareRageCascade(): void {
     this.rageCascadeOverlay.visible = false;
     this.rageCascadeOverlay.syncWinningAdditiveDisplayTransform();
@@ -698,16 +710,16 @@ export class ReelView extends Container {
     });
   }
 
-  /** 一个洗牌级联步骤：爆炸单元，然后显示新的 Rage（如果命名）。 */
+  /** 一个洗牌级联步骤：爆炸单元，然后显示新的 Rage（如果命名）。 / English: A shuffle cascade step: explode the unit, then reveal the new Rage (if named). */
   revealRageCascadeCell(row: number, transformsToRage: boolean): boolean {
     const symbol = this.symbolViews[row];
     if (!symbol || row < 0 || row >= this.rowCount) return false;
-    // 现有 Rage 格子刻意不参与破坏性洗牌。到达其转轴主里程碑时应按原设计成功执行空操作，而不是视为缺少 `explosion` 片段。
+    // 现有 Rage 格子刻意不参与破坏性洗牌。到达其转轴主里程碑时应按原设计成功执行空操作，而不是视为缺少 `explosion` 片段。 / English: Existing Rage cells are intentionally not involved in destructive shuffling. Reaching its reels main milestone should successfully perform a no-op as designed, rather than being treated as if the `explosion` fragment is missing.
     if (symbol.cell.symbol === "SURGE") return true;
     const exploded = symbol.playExplosionAnimation();
     let rageShown = true;
     if (transformsToRage) {
-      // 每个卷轴都有一个可移动的覆盖层。因此，该卷轴上后来转换的行会移动/重新启动同一视图。
+      // 每个卷轴都有一个可移动的覆盖层。因此，该卷轴上后来转换的行会移动/重新启动同一视图。 / English: Each reel has a removable cover. Therefore, later converted rows on that scroll move/restart the same view.
       this.rageCascadeOverlay.position.set(
         this.symbolOffsetX,
         this.layoutTopOffset + row * this.layoutCellHeight,
@@ -721,7 +733,7 @@ export class ReelView extends Container {
     return exploded && rageShown;
   }
 
-  /** 激活已结算的 Rage 和该卷轴上最后可见的临时覆盖。 */
+  /** 激活已结算的 Rage 和该卷轴上最后可见的临时覆盖。 / English: Activates the resolved Rage and the last visible temporary overlay on that reel. */
   activateRageCascade(): AuthoredPlaybackBatchResult {
     let attempted = 0;
     let played = 0;
@@ -737,7 +749,7 @@ export class ReelView extends Container {
     return Object.freeze({ attempted, played });
   }
 
-  /** 预设的激活队列隐藏；这会强制执行相同的最终姿势。 */
+  /** 预设的激活队列隐藏；这会强制执行相同的最终姿势。 / English: The default activation queue is hidden; this forces the same final pose. */
   clearRageCascadePresentation(): void {
     this.symbolViews.slice(0, this.rowCount).forEach((symbol) => {
       if (symbol.cell.symbol === "SURGE") symbol.setFeatureHidden(true);
@@ -764,7 +776,7 @@ export class ReelView extends Container {
 
   revealVault(row: number, cell: GridCell): boolean {
     if (!this.setCellAt(row, cell)) return false;
-    // 原swapSymbol()改变Symbol9值姿势并突出显示；它不会在解锁序列期间重播停止时间 `land` 剪辑。
+    // 原swapSymbol()改变Symbol9值姿势并突出显示；它不会在解锁序列期间重播停止时间 `land` 剪辑。 / English: The original swapSymbol() changes the Symbol9 value pose and highlight; it does not replay the stopped time `land` clip during the unlock sequence.
     return true;
   }
 
@@ -784,7 +796,7 @@ export class ReelView extends Container {
     }
   }
 
-  /** 仅表现反射与城市大气生命周期共享。 */
+  /** 仅表现反射与城市大气生命周期共享。 / English: Only representational reflections are shared with the urban atmosphere life cycle. */
   setEnvironmentFrame(frame: SpinEnvironmentFrame): void {
     this.environmentFrame = { ...frame };
     this.applyEnvironmentFrame();
@@ -815,6 +827,8 @@ export class ReelView extends Container {
   /**
    * 已分派的 Wild 中奖暂时将 highlightOverlay 留给后来的 activatedOverlay。
    * 重新设置父级仅更改显示顺序：已确定的符号保持服务器寻址并保持其预设的中奖终端姿势。
+   *
+   * 英文 / English: The dispatched Wild win temporarily leaves highlightOverlay for later activatedOverlay. Reparenting only changes the display order: established symbols remain server addressed and retain their preset winning terminal pose.
    */
   promoteWinningWildRows(
     rows: ReadonlySet<number>,
@@ -937,7 +951,7 @@ export class ReelView extends Container {
     this.syncWinningSymbolAdditiveTransform();
   }
 
-  /** 仅暂停观察者选择的服务器寻址的已结算符号。 */
+  /** 仅暂停观察者选择的服务器寻址的已结算符号。 / English: Only settled symbols addressed by the server selected by the observer are paused. */
   setSymbolPlaybackPaused(rows: ReadonlySet<number>, active: boolean): void {
     for (const row of rows) {
       if (row >= 0 && row < this.rowCount) {
@@ -946,7 +960,7 @@ export class ReelView extends Container {
     }
   }
 
-  /** 仅推进测试场景暂停、服务器寻址的符号时钟。 */
+  /** 仅推进测试场景暂停、服务器寻址的符号时钟。 / English: Advance only test scenario paused, server-addressed symbolic clocks. */
   advanceSymbolPlayback(rows: ReadonlySet<number>, deltaMs: number): void {
     for (const row of rows) {
       if (row >= 0 && row < this.rowCount) {
@@ -955,7 +969,7 @@ export class ReelView extends Container {
     }
   }
 
-  /** 取消后清除已结算的仅表现 Symbol8 覆盖。 */
+  /** 取消后清除已结算的仅表现 Symbol8 覆盖。 / English: Clears settled performance-only Symbol8 overrides after cancellation. */
   clearForcedLockedVaultPresentation(): number {
     let cleared = 0;
     for (const symbol of this.symbolViews.slice(0, this.rowCount)) {
@@ -988,7 +1002,7 @@ export class ReelView extends Container {
     this.symbols.mask = this.clip;
     this.clearWinMotion();
     this.setDimmedExceptRows(null);
-    // 隔离 ReelView 消费者的防御兼容性。在启动门完成之前，生产环境会预加载完整的 3x8 池。
+    // 隔离 ReelView 消费者的防御兼容性。在启动门完成之前，生产环境会预加载完整的 3x8 池。 / English: Isolated ReelView consumer defense compatibility. The production environment is preloaded with the full 3x8 pool before the launch gate is completed.
     this.ensureSpinSymbols(reelPresentationCellCount(this.rowCount));
     this.syncSpinSymbols();
     this.spinSymbols.visible = true;
@@ -1127,7 +1141,7 @@ export class ReelView extends Container {
           cellHeight,
           stopPlan.brakeMs / Math.max(1, totalPresentationMs),
         );
-        // 服务端指定的格子此时已占据传送带位置。制动和回弹期间保持传送带不透明；只有当两者处于完全一致的锁定姿态后，才自动交接到已结算的原生视图。
+        // 服务端指定的格子此时已占据传送带位置。制动和回弹期间保持传送带不透明；只有当两者处于完全一致的锁定姿态后，才自动交接到已结算的原生视图。 / English: The grid specified by the server now occupies the conveyor belt position. Keeps the conveyor belt opaque during braking and rebound; automatically transitions to the settled native view only when both are in exactly the same locked position.
         this.motionLayer.alpha = 1;
         if (!this.stopImpactCommitted) this.symbols.alpha = 0;
         this.motionBlur.blurY = speedRatio <= 0.001 ? 0 : 400 * stopVelocityRowsPerMs;
@@ -1153,12 +1167,12 @@ export class ReelView extends Container {
   private commitRequestedStopImpact(): void {
     const mode = this.stopImpactRequestedMode;
     if (!mode || this.stopImpactCommitted) return;
-    // StopSequencer 拥有语义影响计时器。节流/失速的 RAF 可以将此视图留在计时器后面，因此保留移动条带，直到其自身的制动器物理到达目标。
+    // StopSequencer 拥有语义影响计时器。节流/失速的 RAF 可以将此视图留在计时器后面，因此保留移动条带，直到其自身的制动器物理到达目标。 / English: StopSequencer has semantic impact timers. A throttled/stalled RAF can leave this view behind a timer, thus retaining the moving strip until its own brakes physically reach the target.
     if (this.spinning && !this.stopTargetReached) return;
     this.stopImpactCommitted = true;
     this.stopImpactRequestedMode = null;
     this.motionLayer.visible = false;
-    // 官方 reverseLayeringOrder 将固定符号移动到 STOPPED 处未屏蔽的覆盖层。在显示之前，在同一切换帧中清除它。
+    // 官方 reverseLayeringOrder 将固定符号移动到 STOPPED 处未屏蔽的覆盖层。在显示之前，在同一切换帧中清除它。 / English: Official reverseLayeringOrder Move fixed symbols to the unmasked overlay at STOPPED. Clear it in the same switch frame before displaying it.
     this.symbols.mask = null;
     this.symbols.alpha = 1;
     this.applySettledStopPosition();
@@ -1196,11 +1210,11 @@ export class ReelView extends Container {
     if (changed) this.syncSettledSymbolOrder();
   }
 
-  /** 官方 reverseLayeringOrder 将行 2 -> 1 -> 0 迁移到覆盖层中。 */
+  /** 官方 reverseLayeringOrder 将行 2 -> 1 -> 0 迁移到覆盖层中。 / English: The official reverseLayeringOrder migrates rows 2 -> 1 -> 0 into the overlay. */
   private syncSettledSymbolOrder(): void {
     for (let row = this.symbolViews.length - 1; row >= 0; row -= 1) {
       const symbol = this.symbolViews[row];
-      // 激活的 Wild/Rage 视图仍归机柜范围覆盖层所有；对一个已确定的同级进行重新排序绝不能拉回另一功能。
+      // 激活的 Wild/Rage 视图仍归机柜范围覆盖层所有；对一个已确定的同级进行重新排序绝不能拉回另一功能。 / English: The active Wild/Rage view remains owned by the cabinet-wide overlay; reordering an established peer never pulls back another feature.
       if (symbol?.parent === this.symbols) this.symbols.addChild(symbol);
       if (symbol?.winningAdditiveDisplay.parent === this.winningSettledAdditiveLayer) {
         this.winningSettledAdditiveLayer.addChild(symbol.winningAdditiveDisplay);
@@ -1221,7 +1235,7 @@ export class ReelView extends Container {
     symbol.position.copyFrom(target.toLocal(worldPosition));
   }
 
-  /** 镜像内阁符号覆盖层下方的每个变换。 */
+  /** 镜像内阁符号覆盖层下方的每个变换。 / English: Mirror each transform below the cabinet symbol overlay. */
   syncWinningSymbolAdditiveTransform(): void {
     const root = this.winningSymbolAdditiveDisplay;
     root.position.copyFrom(this.position);
@@ -1344,7 +1358,7 @@ export class ReelView extends Container {
       + reelStartPositionDeltaRowsAt(this.spinElapsedMs, this.spinProfile);
     this.applyPresentationPositionRows(totalRows);
     if (this.stopping) return;
-    // GameReelView 直接交换到 SPIN_START 的移动皮带。之前基于速度的混合导致高达 10% 的旧固定板在巡航速度下在跑道下方出现重影。
+    // GameReelView 直接交换到 SPIN_START 的移动皮带。之前基于速度的混合导致高达 10% 的旧固定板在巡航速度下在跑道下方出现重影。 / English: GameReelView swaps directly to SPIN_START's moving belt. Previous speed-based blending resulted in up to 10% of the old fixed plates ghosting below the runway at cruising speeds.
     this.motionLayer.alpha = 1;
     this.energyVeil.alpha = 0.16 + speedRatio * 0.66;
     this.symbols.alpha = 0;
@@ -1358,7 +1372,7 @@ export class ReelView extends Container {
     this.phase = (safeRows - wholeSteps) * cellHeight;
     if (wholeSteps !== this.decorativeWholeSteps) {
       this.decorativeWholeSteps = wholeSteps;
-      // 逻辑带坐标在整个包裹中保持不变。下面的视图继承了旧的标识，包括插入的权威单元格。
+      // 逻辑带坐标在整个包裹中保持不变。下面的视图继承了旧的标识，包括插入的权威单元格。 / English: Logical band coordinates remain constant throughout the package. The view below inherits the old identity, including the inserted authoritative cell.
       this.syncSpinSymbols();
     }
     this.energyVeil.y = this.phase;
@@ -1369,14 +1383,14 @@ export class ReelView extends Container {
   private drawEnergyVeil(): void {
     this.energyVeil.clear();
     this.energyVeil.beginFill(0x080b0d, 0.56).drawRect(0, -48, this.reelWidth, this.reelHeight + 96).endFill();
-    // 长的垂直高光被模糊滤镜拉伸，并被读取为真正的向下运动，而不是之前的霓虹灯扫描线。
+    // 长的垂直高光被模糊滤镜拉伸，并被读取为真正的向下运动，而不是之前的霓虹灯扫描线。 / English: The long vertical highlights are stretched by the blur filter and read as true downward movement rather than the previous neon scan lines.
     for (let x = 13, index = 0; x < this.reelWidth; x += 19, index += 1) {
       const width = index % 3 === 0 ? 3 : 1.2;
       const alpha = index % 4 === 0 ? 0.2 : 0.1;
       this.energyVeil.beginFill(index % 5 === 0 ? 0xf19342 : 0xcbd0cf, alpha);
       this.energyVeil.drawRoundedRect(x, -30 + (index % 4) * 12, width, this.reelHeight + 42, width / 2).endFill();
     }
-    // 捕获的模糊在行进方向上是连续的。水平扫描带仍然被省略，因为它们将实时条带以巡航速度变成堆叠的幽灵行，这与原始的模糊虚拟渲染器不同。
+    // 捕获的模糊在行进方向上是连续的。水平扫描带仍然被省略，因为它们将实时条带以巡航速度变成堆叠的幽灵行，这与原始的模糊虚拟渲染器不同。 / English: The captured blur is continuous in the direction of travel. Horizontal scan strips are still omitted as they turn live strips into stacked ghost rows at cruising speed, unlike the original blurry virtual renderer.
   }
 
   private drawClip(): void {
@@ -1407,7 +1421,7 @@ export class ReelView extends Container {
     backdrop.clear();
     surface.clear();
 
-    // 每个卷轴都有一个不间断的窗格：烟色的防爆玻璃，沿一侧边缘有微弱的火反射，而在其对面则有寒冷的天空反射。
+    // 每个卷轴都有一个不间断的窗格：烟色的防爆玻璃，沿一侧边缘有微弱的火反射，而在其对面则有寒冷的天空反射。 / English: Each scroll has an uninterrupted pane: smoked blast-proof glass with faint reflections of fire along one edge and cold sky reflections on its opposite side.
     backdrop.beginFill(0x071014, 0.64).drawRoundedRect(0, 0, this.reelWidth, this.reelHeight, 12).endFill();
     backdrop.beginFill(0x5c2112, 0.07).drawPolygon([
       0, 0,
@@ -1428,7 +1442,7 @@ export class ReelView extends Container {
       backdrop.moveTo(this.reelWidth * 0.05, y).lineTo(this.reelWidth * 0.95, y);
     }
 
-    // 每个转轴都获得稳定且独特的玻璃 UV 采样，避免污渍和细微划痕在所有窗格的相同坐标重复出现。
+    // 每个转轴都获得稳定且独特的玻璃 UV 采样，避免污渍和细微划痕在所有窗格的相同坐标重复出现。 / English: Each spindle receives a stable and unique UV sampling of the glass, preventing stains and minor scratches from recurring at the same coordinates across all panes.
     const glassSeed = 0x61a55 + this.reelIndex * 0x19e37;
     const scratches = sampleScratches({
       seed: glassSeed,
@@ -1466,7 +1480,7 @@ export class ReelView extends Container {
       surface.moveTo(stroke.x1, stroke.y1).lineTo(stroke.x2, stroke.y2);
     });
 
-    // 每个窗格上都有一个受约束的菲涅尔捕捉器遵循不同的角度。
+    // 每个窗格上都有一个受约束的菲涅尔捕捉器遵循不同的角度。 / English: There is a constrained Fresnel catcher on each pane that follows a different angle.
     const lean = (this.reelIndex - 1) * this.reelWidth * 0.035;
     surface.lineStyle(1.2, 0xe8efed, 0.075);
     surface.moveTo(this.reelWidth * 0.12 + lean, 7);
@@ -1477,6 +1491,8 @@ export class ReelView extends Container {
 
   /**
    * 四个约束边缘带再现了凹进的轨道遮挡。该节点独立于 SymbolView，因此 Rage/Vault 隐藏永远无法重新着色或替换其下方的轨道。
+   *
+   * 英文 / English: Four restrained edge bands reproduce the recessed track occlusion. This node is independent of the SymbolView, so the Rage/Vault hide can never recolor or replace the track beneath it.
    */
   private drawTrackShadow(): void {
     const shadow = this.trackShadow;
@@ -1498,7 +1514,7 @@ export class ReelView extends Container {
         .endFill();
     }
 
-    // 狭窄的冷唇可以捕捉橱柜的光线，而不会将符号压平成明亮的网格。
+    // 狭窄的冷唇可以捕捉橱柜的光线，而不会将符号压平成明亮的网格。 / English: Narrow cold lips capture the light from the cabinets without flattening the symbol into a bright grid.
     shadow.lineStyle(1, 0xbec8c6, this.reelIndex === 1 ? 0.095 : 0.065);
     shadow.moveTo(depth * 0.52, depth * 0.42);
     shadow.lineTo(width - depth * 0.7, depth * 0.42);
@@ -1514,7 +1530,7 @@ export class ReelView extends Container {
     dust.clear();
     core.clear();
 
-    // 这些窗格共享一个模糊反射通道，但每个窗格都接收不对称的角度和发射器位置，以避免出现三个克隆椭圆。
+    // 这些窗格共享一个模糊反射通道，但每个窗格都接收不对称的角度和发射器位置，以避免出现三个克隆椭圆。 / English: The panes share a blurred reflection channel, but each receives an asymmetric angle and emitter position to avoid the appearance of three cloned ellipses.
     const lean = (this.reelIndex - 1) * this.reelWidth * 0.055;
     warm.beginFill(0xff6f2a, 0.56);
     warm.drawPolygon([
@@ -1579,7 +1595,7 @@ export class ReelView extends Container {
     const featureAura = clamp01(frame.featureAura);
     const floorDust = clamp01(frame.floorDust);
 
-    // 玻璃高光仅提供轻微反射。停轴/特性脉冲按转轴索引定位，保持半透明，并且绝不改动结果数据。
+    // 玻璃高光仅提供轻微反射。停轴/特性脉冲按转轴索引定位，保持半透明，并且绝不改动结果数据。 / English: Glass highlights provide only slight reflection. Axis stop/characteristic pulses are positioned according to the axis index, remain translucent, and never alter the resulting data.
     this.environmentWarmReflection.alpha = Math.min(
       0.2,
       spinEnergy * 0.01 + warmFlash * (0.035 + localWeight * 0.135),

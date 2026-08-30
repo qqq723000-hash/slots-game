@@ -8,6 +8,9 @@ import (
 // applyWinCap 将原始数学结果投影到权威的整场赔付预算。
 // 触发时的基础旋转及其启动的所有免费旋转共享 FeatureState.WinMinor，
 // 因而恢复时无需参考浏览器状态即可继续使用精确的剩余预算。
+// English: applyWinCap projects raw mathematical results to authoritative full-game payout budgets. The base spin
+// when triggered and all the free spins it launched share FeatureState.WinMinor, so the exact remaining budget can
+// continue to be used without reference to the browser state when resumed.
 func applyWinCap(config Config, input SpinInput, outcome *SpinOutcome) error {
 	if outcome == nil || outcome.TotalWinMinor < 0 {
 		return errors.New("win cap: invalid outcome")
@@ -53,6 +56,8 @@ func applyWinCap(config Config, input SpinInput, outcome *SpinOutcome) error {
 
 	// 对被裁剪结果和恰好达到上限的结果都发出边界事件。若恢复后的游戏已达到上限，
 	// 之后出现原始奖励时会再次发出事件，使该结果中支付为零的奖励仍具有明确解释。
+	// Emit the boundary event for both clipped results and results that exactly reach the cap. If a recovered game has already reached the cap,
+	// a later raw award emits it again so the zero-paid award in that result remains explicitly explained.
 	if rawTotal > 0 && rawTotal >= capMinor-priorWin {
 		outcome.Events = append(outcome.Events, Event{
 			Type:               "win_cap.reached",
@@ -74,6 +79,8 @@ func applyWinCap(config Config, input SpinInput, outcome *SpinOutcome) error {
 	} else if outcome.NextFeature.Active() {
 		// 新触发的功能会继承基础旋转的已支付结果。因此上限覆盖整个触发游戏，
 		// 而不只覆盖随后不收费的旋转。
+		// A newly triggered feature inherits the base spin's paid result. The cap therefore covers the entire triggered game,
+		// not only the subsequent no-charge spins.
 		outcome.NextFeature.WinMinor = totalPaid
 	}
 	return nil
@@ -116,6 +123,9 @@ func minInt64(left, right int64) int64 {
 
 // validateCappedAwardsAgainstConfig 会重新计算未设上限的数学奖励及其确定性上限投影。
 // 它是感知定义的信任边界，可同时防止超额赔付和无法解释的少付。
+// English: validateCappedAwardsAgainstConfig recalculates uncapped mathematical rewards and their deterministic
+// capped projection. It is a perceptually defined trust boundary that protects against both overpayments and
+// unexplained underpayments.
 func validateCappedAwardsAgainstConfig(
 	config Config,
 	input SpinInput,

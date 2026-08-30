@@ -2,6 +2,8 @@
 # shellcheck disable=SC1003,SC2016
 
 # 该门禁只读取源码，不需要 GitHub Environment、OIDC、Registry 或 AWS 凭据。
+# English: The gate only reads source code and does not require GitHub Environment, OIDC, Registry or AWS
+# credentials.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

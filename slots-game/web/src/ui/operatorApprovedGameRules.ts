@@ -24,7 +24,7 @@ export interface ApprovedPlayerGameRulesSection {
   readonly paragraphs: readonly string[];
 }
 
-/** 仅面向玩家的投影；其中刻意不包含引擎或 RGS 元数据。 */
+/** 仅面向玩家的投影；其中刻意不包含引擎或 RGS 元数据。 / English: A player-facing projection only; it intentionally does not include engine or RGS metadata. */
 export interface ApprovedPlayerGameRulesProjection {
   readonly locale: string;
   readonly version: string;
@@ -122,6 +122,8 @@ function invalid(
 /**
  * 校验操作方提供且已审批的玩家规则包，并仅投影可展示文本。
  * 模块不附带备用监管文案：校验失败时，调用方必须显示中性的不可用状态。
+ *
+ * 英文 / English: Validates the operator-provided and approved player rules package and projects only displayable text. The module does not come with backup supervision documentation: when verification fails, the caller must display a neutral unavailable status.
  */
 export function validateOperatorApprovedGameRulesBundle(
   input: unknown,

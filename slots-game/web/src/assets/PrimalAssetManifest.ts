@@ -57,7 +57,7 @@ export const PRIMAL_ASSETS = Object.freeze({
   },
 });
 
-/** 用户提供的 Primal Rampage 启动标志在图集中的精确帧。 */
+/** 用户提供的 Primal Rampage 启动标志在图集中的精确帧。 / English: The exact frame at which the user-supplied Primal Rampage launch flag is in the atlas. */
 export const PRIMAL_LOGO_REGION = Object.freeze({
   x: 0,
   y: 1_470,
@@ -77,7 +77,7 @@ export const SYMBOL_ASSET_BY_ID: Readonly<Record<SymbolId, string>> = Object.fre
   SURGE: PRIMAL_ASSETS.symbols.rage,
 });
 
-/** 显示 Wild 前必须已驻留内存的全部官方倍率变体。 */
+/** 显示 Wild 前必须已驻留内存的全部官方倍率变体。 / English: All official multiplier variants that must be resident in memory before showing Wild. */
 export const WILD_MULTIPLIER_ASSETS = Object.freeze([
   PRIMAL_ASSETS.symbols.wildX2,
   PRIMAL_ASSETS.symbols.wildX3,
@@ -106,20 +106,20 @@ export const CRITICAL_PRIMAL_ASSETS = Object.freeze([
   ...Object.values(SYMBOL_ASSET_BY_ID),
 ]);
 
-/** 背景图集的源空间区域；两张背景板共同组成垂直相机轨道。 */
+/** 背景图集的源空间区域；两张背景板共同组成垂直相机轨道。 / English: The source space area of ​​the background atlas; the two background plates together form the vertical camera track. */
 export const ENVIRONMENT_REGIONS = Object.freeze({
-  // 两张相机背景板之间保留了 2 像素的图集隔离带。
+  // 两张相机背景板之间保留了 2 像素的图集隔离带。 / English: A 2-pixel album buffer is maintained between the two camera background plates.
   daylight: Object.freeze({ x: 2, y: 0, width: 1_434, height: 2_676 }),
   destroyed: Object.freeze({ x: 1_438, y: 0, width: 1_434, height: 2_676 }),
 });
 
-/** 在角色与符号图集源空间中实测得到的角色裁剪区域。 */
+/** 在角色与符号图集源空间中实测得到的角色裁剪区域。 / English: Measured character clipping areas in character and symbol atlas source space. */
 export const CHARACTER_REGIONS = Object.freeze({
   torso: Object.freeze({ x: 0, y: 2_200, width: 420, height: 490 }),
   head: Object.freeze({ x: 2_525, y: 1_788, width: 180, height: 165 }),
 });
 
-/** 两张垂直环境背景板共用的源空间相机停靠位置。 */
+/** 两张垂直环境背景板共用的源空间相机停靠位置。 / English: Source space camera docking position shared by two vertical environment background plates. */
 export const ENVIRONMENT_VIEW = Object.freeze({
   baseSourceY: 720,
   expandedSourceY: 0,

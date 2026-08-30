@@ -2,6 +2,8 @@ schemaVersion: 1
 status: DRAFT_NOT_APPROVED
 
 # 这是 fail-closed 模板，不是审批证据；不得原样用于生产。
+# English: This is a fail-closed template and is not proof of approval; it may not be used in artifactsion
+# as-is.
 policyReference: "__REQUIRED_POLICY_REFERENCE__"
 jurisdictions:
   - "__REQUIRED_JURISDICTION__"
@@ -26,6 +28,8 @@ classes:
     deletionMode: "__REQUIRED_VERIFIABLE_DELETION_MODE__"
   auditOutboxEvidence:
     # 审计 outbox 的法律保留周期独立于普通应用日志，不能由此示例擅自设定。
+    # English: The legal retention period of the audit outbox is independent of the normal application logs and
+    # cannot be set arbitrarily by this example.
     retentionDays: "__REQUIRED_POSITIVE_INTEGER__"
     storageClass: "__REQUIRED_IMMUTABLE_STORAGE_CLASS__"
     immutable: true

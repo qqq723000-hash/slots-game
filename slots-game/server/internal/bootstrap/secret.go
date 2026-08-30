@@ -11,6 +11,9 @@ import (
 
 // LoadLaunchHMACKey 加载采用规范 Base64 编码的 256 位密钥。该密钥用于派生可重放但
 // 不可猜测的一次性启动码；所有副本必须共享它，并且只能在启动码最大生存期结束后轮换。
+// English: LoadLaunchHMACKey loads a 256-bit key in canonical Base64 encoding. This key is used to derive a
+// one-time boot code that is replayable but cannot be guessed; it must be shared by all replicas and can only be
+// rotated after the maximum lifetime of the boot code.
 func LoadLaunchHMACKey(path string) ([]byte, error) {
 	if path == "" {
 		return nil, errors.New("launch HMAC key path is required")

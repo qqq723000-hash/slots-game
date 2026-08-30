@@ -62,7 +62,7 @@ export interface PrimalSpriteAudioBackendOptions {
   packFiles?: Readonly<Record<PrimalAudioPackId, string>>;
   assetChannel?: PrimalRuntimeAssetChannel;
   random?: () => number;
-  /** 单调毫秒仅用于捕获待处理的 SoundStage 事件。 */
+  /** 单调毫秒仅用于捕获待处理的 SoundStage 事件。 / English: Monotonic milliseconds are used only to capture pending SoundStage events. */
   now?: () => number;
   maxVoices?: number;
 }
@@ -113,6 +113,8 @@ const UNMUTE_TIME_CONSTANT = 0.3;
 
 /**
  * 这些语义事件仅解析为每个捕获的 `.471` 清单中不存在的旧标题。因此，官方经理没有为他们创造资源；路由到附近的精灵或合成器将是捕获的构建所没有的可听行为。
+ *
+ * 英文 / English: These semantic events simply resolve to old headers that are not present in each captured `.471` manifest. Therefore, the official manager does not create resources for them; routing to nearby sprites or synths would be audible behavior that the captured build does not have.
  */
 const PRIMAL_CAPTURED_SILENT_ONE_SHOTS: ReadonlySet<OneShotAudioCue> = new Set([
   "symbol.wild",
@@ -135,7 +137,7 @@ const PRIMAL_DELAYED_LOOPS: ReadonlySet<LoopAudioCue> = new Set([
   "counter.normal-generic",
 ]);
 
-/** 捕获的 SoundStage 主屏障是公共加上 sounds0..2。 */
+/** 捕获的 SoundStage 主屏障是公共加上 sounds0..2。 / English: The captured SoundStage main barrier is public plus sounds0..2. */
 export const PRIMAL_MAIN_AUDIO_PACKS = Object.freeze([
   "common",
   "sounds0",
@@ -143,15 +145,15 @@ export const PRIMAL_MAIN_AUDIO_PACKS = Object.freeze([
   "sounds2",
 ] as const satisfies readonly PrimalAudioPackId[]);
 
-/** 为仍将主要屏障命名为“关键”的调用者保留兼容性别名。 */
+/** 为仍将主要屏障命名为“关键”的调用者保留兼容性别名。 / English: Keep compatible aliases for callers who still name their primary barrier "critical". */
 export const PRIMAL_CRITICAL_AUDIO_PACKS = PRIMAL_MAIN_AUDIO_PACKS;
 
-/** 官方延迟标题覆盖仅在四包主障碍之后开始。 */
+/** 官方延迟标题覆盖仅在四包主障碍之后开始。 / English: Official delayed title coverage begins only after the four-pack main hurdle. */
 export const PRIMAL_BACKGROUND_AUDIO_PACKS = Object.freeze([
   "delayed",
 ] as const satisfies readonly PrimalAudioPackId[]);
 
-/** 启动进度完成之前所需的每个捕获的精灵包。 */
+/** 启动进度完成之前所需的每个捕获的精灵包。 / English: Each captured Pokémon pack required before the startup progress is completed. */
 export const PRIMAL_LAUNCH_AUDIO_PACKS = Object.freeze([
   ...PRIMAL_MAIN_AUDIO_PACKS,
   ...PRIMAL_BACKGROUND_AUDIO_PACKS,
@@ -191,13 +193,15 @@ function disconnect(nodes: readonly AudioNode[]): void {
     try {
       node.disconnect();
     } catch {
-      // 自然结束或上下文拥有的节点可能已经断开连接。
+      // 自然结束或上下文拥有的节点可能已经断开连接。 / English: Natural ends or nodes owned by the context may have been disconnected.
     }
   }
 }
 
 /**
  * 通过网络音频播放选定的捕获的 Primal Rampage 音频精灵。仅当不支持本机精灵播放时才使用程序合成器。一旦选择本机播放，丢失的捕获标题将保持沉默。
+ *
+ * 英文 / English: Plays the selected captured Primal Rampage audio sprite over network audio. Use procedural synthesizers only if native sprite playback is not supported. Once native playback is selected, missing capture titles will remain silent.
  */
 export class PrimalSpriteAudioBackend implements AudioBackend {
   private readonly contextFactory: AudioContextFactory;
@@ -220,7 +224,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
   private readonly pendingLoops = new Map<LoopAudioCue, PendingLoop>();
   private readonly failedPacks = new Set<PrimalAudioPackId>();
   private readonly duckedCounterLoops = new Set<LoopAudioCue>();
-  /** 拥有该后端生命周期的每个本机包请求。 */
+  /** 拥有该后端生命周期的每个本机包请求。 / English: Owns every native package request for this backend's lifecycle. */
   private readonly lifetime = new AbortController();
   private introVoice: SpriteVoice | null = null;
   private wheelSpinVoice: SpriteVoice | null = null;
@@ -271,7 +275,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
     return this.fallback?.state ?? "unavailable";
   }
 
-  /** AudioContext 时间因浏览器暂停而冻结并在恢复时提前。 */
+  /** AudioContext 时间因浏览器暂停而冻结并在恢复时提前。 / English: AudioContext time is frozen when the browser is paused and advanced on resume. */
   playbackClockMs(): number | null {
     const currentTime = this.context?.currentTime;
     return currentTime !== undefined && Number.isFinite(currentTime)
@@ -281,6 +285,8 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
 
   /**
    * 创建一个仍然悬挂的图并解码四包主屏障。在玩家的手势之前不会发生源或上下文恢复。
+   *
+   * 英文 / English: Create a still-hanging figure and decode the four-pack master barrier. No source or context restoration occurs before the player's gesture.
    */
   prime(): Promise<void> {
     if (this.destroyed || !this.nativeSupported || !this.fetcher) return Promise.resolve();
@@ -295,6 +301,8 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
 
   /**
    * 严格的五件装发射壁垒。它共享正常的缓冲区高速缓存和挂起的图表，但永远不会将丢失的包转换为后台静默。
+   *
+   * 英文 / English: Strict five-pack launch barrier. It shares the normal buffer cache and pending charts, but never converts lost packets into background silence.
    */
   primeForLaunch(): Promise<void> {
     if (this.destroyed) return Promise.reject(new Error("Audio backend was destroyed"));
@@ -323,6 +331,8 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
 
   /**
    * 在非关键包加载或回退后解决。启动代码故意不等待此操作；存在用于渐进式音频准备情况的诊断和确定性测试的接口。
+   *
+   * 英文 / English: Resolved after non-critical packages are loaded or rolled back. The startup code intentionally does not wait for this operation; interfaces exist for diagnostics and deterministic testing of progressive audio readiness.
    */
   async whenBackgroundReady(): Promise<void> {
     const prime = this.primeAttempt;
@@ -332,7 +342,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
     await this.backgroundPreloadAttempt;
   }
 
-  /** 由稍后的用户手势调用，无需恢复或重建图表。 */
+  /** 由稍后的用户手势调用，无需恢复或重建图表。 / English: Called by a later user gesture without restoring or rebuilding the chart. */
   retryDeferredLoads(): void {
     const context = this.context;
     if (this.destroyed || !context || context.state === "closed" || !this.mainReady) return;
@@ -397,12 +407,12 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
           ) !== null;
           break;
         case "ui.open":
-          // 捕获的 UIOpen 程序：743UiOpen，增益为 55/100。
+          // 捕获的 UIOpen 程序：743UiOpen，增益为 55/100。 / English: Captured UIOpen program: 743UiOpen with a gain of 55/100.
           played = this.playSprite("743UiOpen", { gain: 0.55, semantic: options }) !== null;
           this.setGenericCounterDuck(true);
           break;
         case "ui.close":
-          // 捕获的 UIClose 程序：743UiClose 增益为 51/100。
+          // 捕获的 UIClose 程序：743UiClose 增益为 51/100。 / English: Captured UIClose program: 743UiClose gain is 51/100.
           played = this.playSprite("743UiClose", { gain: 0.51, semantic: options }) !== null;
           this.setGenericCounterDuck(false);
           break;
@@ -700,7 +710,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
           }) !== null;
           break;
         case "win.sting":
-          // 强度就是响度，从来不是权威的支出分类。
+          // 强度就是响度，从来不是权威的支出分类。 / English: Intensity is loudness and has never been the definitive spending classification.
           played = this.playSprite("986Win2x", {
             gain: 0.8,
             semantic: options,
@@ -871,8 +881,8 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
     if (cue === "intro.game" && this.introVoice) {
       this.stopVoice(this.introVoice, fadeMs);
     }
-    // 捕获的 ReelSuspenseStop 目标缺少 977SpinsWait* 标题。因此，
-    // 上面开始的 1065SfPpsLvl3 + 965SpinsWaitFire* 声音将继续播放到其预设的结尾。
+    // 捕获的 ReelSuspenseStop 目标缺少 977SpinsWait* 标题。因此， / English: The captured ReelSuspenseStop target is missing the 977SpinsWait* header. therefore,
+    // 上面开始的 1065SfPpsLvl3 + 965SpinsWaitFire* 声音将继续播放到其预设的结尾。 / English: The 1065SfPpsLvl3 + 965SpinsWaitFire* sound started above will continue playing to its preset end.
     this.tryFallback(() => this.fallback?.stopOneShot?.(cue, fadeMs));
   }
 
@@ -960,7 +970,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
       this.fadeVoiceGain(playback.level2, level === 1 ? 0.34 : 0, fadeMs);
       return;
     }
-    // 程序回退没有单独的主干，但它仍然必须遵守停靠/取消停靠，因此它永远不会在 Big Win 音乐下泄漏。
+    // 程序回退没有单独的主干，但它仍然必须遵守停靠/取消停靠，因此它永远不会在 Big Win 音乐下泄漏。 / English: There is no separate trunk for program fallback, but it still has to respect docking/undocking so it never leaks under Big Win music.
     if (level === null) {
       if (!this.fallbackLoops.delete("ambient.city")) return;
       this.tryFallback(() => this.fallback?.stopLoop("ambient.city", fadeMs));
@@ -974,6 +984,8 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
   /**
    * FREESPIN_INTRO首先对接锁相对，然后捕获的BaseGameMusicStop程序仅解析`1065MusBgLvl1`。
    * 为其预设的 2s 尾部保持二级活动并释放语义循环所有权，以便 FREESPIN_END 可以从样本零创建一个新的播放前停止对。
+   *
+   * 英文 / English: FREESPIN_INTRO first docks the lock relative, and then the captured BaseGameMusicStop program only resolves `1065MusBgLvl1`. Keeps the secondary active for its preset 2s tail and releases the semantic loop ownership so that FREESPIN_END can create a new stop-before-play pair from sample zero.
    */
   enterFreeSpinsBaseMusic(dockFadeMs = 2_000, levelOneStopFadeMs = 120): void {
     this.pendingLoops.delete("ambient.city");
@@ -1030,7 +1042,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
   }
 
   finishReelMotorNaturally(): void {
-    // ReelStart 和 ReelLoop 是一次性预设的。在不停止任一源的情况下分离语义循环所有权，因此在最终物理卷轴撞击后捕获的尾部仍然可以听到。
+    // ReelStart 和 ReelLoop 是一次性预设的。在不停止任一源的情况下分离语义循环所有权，因此在最终物理卷轴撞击后捕获的尾部仍然可以听到。 / English: ReelStart and ReelLoop are one-time presets. Separate semantic loop ownership without stopping either source, so captured tail ends can still be heard after the final physical reel hit.
     if (this.pendingLoops.delete("reel.motor") || this.pendingLoops.delete("reel.loop")) return;
     if (this.sampleLoops.delete("reel.motor") || this.sampleLoops.delete("reel.loop")) {
       this.reelMotorPlayback = null;
@@ -1070,7 +1082,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
     try {
       this.master?.disconnect();
     } catch {
-      // 上下文可能已经关闭。
+      // 上下文可能已经关闭。 / English: The context may have been closed.
     }
     this.master = null;
     const context = this.context;
@@ -1108,7 +1120,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
 
     this.mainLoadFailed = false;
     try {
-      // 同时进行的宽容主要/背景尝试共享这些确切的每包承诺，而这全部五个障碍保留拒绝。
+      // 同时进行的宽容主要/背景尝试共享这些确切的每包承诺，而这全部五个障碍保留拒绝。 / English: Simultaneous forgiving primary/background attempts share these exact per-package promises, while all five hurdles retain rejection.
       await this.loadPacks(context, PRIMAL_LAUNCH_AUDIO_PACKS);
       if (this.destroyed || this.context !== context || context.state === "closed") {
         throw new Error("Audio context changed during launch preload");
@@ -1198,7 +1210,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
     if (this.destroyed || this.context !== context || this.backgroundPreloadAttempt) return;
     const missing = PRIMAL_BACKGROUND_AUDIO_PACKS.filter((id) => !this.buffers.has(id));
     if (missing.length === 0) return;
-    // 延迟包装失败就是完全的沉默。稍后的手势可能会重试，但捕获的语义永远不会路由到程序后端。
+    // 延迟包装失败就是完全的沉默。稍后的手势可能会重试，但捕获的语义永远不会路由到程序后端。 / English: Delayed packaging failure is complete silence. Later gestures may be retried, but the captured semantics are never routed to the program backend.
     const attempt = Promise.allSettled(
       missing.map((id) => this.loadPack(context, id)),
     ).then(() => {
@@ -1253,7 +1265,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
         return buffer;
       })
       .catch((error: unknown) => {
-        // 销毁已经原子清除的每个拥有的集合。取指或不可中止的解码可能会稍后解决；它绝不能复活状态。
+        // 销毁已经原子清除的每个拥有的集合。取指或不可中止的解码可能会稍后解决；它绝不能复活状态。 / English: Destroy every owned collection that has been cleared atomically. An instruction fetch or unabortable decode may be resolved later; it must not resurrect the state.
         if (!this.destroyed) {
           this.bufferLoads.delete(id);
           this.failedPacks.add(id);
@@ -1261,7 +1273,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
         }
         throw error;
       });
-    // 合成/嵌入器获取实现可能会在返回其承诺之前同步拆除后端。也永远不要在那个狭窄的边界内重新填充所有权。
+    // 合成/嵌入器获取实现可能会在返回其承诺之前同步拆除后端。也永远不要在那个狭窄的边界内重新填充所有权。 / English: The composition/embedder fetch implementation may synchronously tear down the backend before returning its promise. Also never repopulate ownership within that narrow boundary.
     if (!this.destroyed) this.bufferLoads.set(id, promise);
     return promise;
   }
@@ -1562,7 +1574,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
     if (!this.hasCueBuffer("1065MusBgLvl1") || !this.hasCueBuffer("1065MusBgLvl2")) return null;
     const context = this.context;
     if (!context) return null;
-    // SoundStage 在同一个 BaseGameMusicStart 调度上启动两个标题。将其源开始固定到一个时钟读取，以便茎保持锁相。
+    // SoundStage 在同一个 BaseGameMusicStart 调度上启动两个标题。将其源开始固定到一个时钟读取，以便茎保持锁相。 / English: SoundStage starts both titles on the same BaseGameMusicStart schedule. Pin its source start to a clock read so that the stem remains phase locked.
     const remainingDelayMs = Math.max(0, options.delayMs - this.playbackCatchUpMs);
     const startTimeSeconds = context.currentTime + remainingDelayMs / 1_000;
     const targetLevel = this.baseMusicStemTarget;
@@ -1575,7 +1587,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
       startTimeSeconds,
       stopBeforePlay: true,
     });
-    // 原始发动机将两个阀杆锁相在 SPLASH_HIDE。在稍后的音乐罐转换之前，第二级是听不到的，但它必须共享样本 0。
+    // 原始发动机将两个阀杆锁相在 SPLASH_HIDE。在稍后的音乐罐转换之前，第二级是听不到的，但它必须共享样本 0。 / English: The original engine phase-locks both valve stems at SPLASH_HIDE. The second level is not audible until the later music can conversion, but it must share sample 0.
     const level2 = this.playSprite("1065MusBgLvl2", {
       gain: targetLevel === 1 ? 0.34 : 0,
       semantic: options,
@@ -1680,7 +1692,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
         voice.source.stop(now + fadeSeconds + 0.01);
         return;
       } catch {
-        // 如果调度与已结束的源竞争，则会导致立即发布。
+        // 如果调度与已结束的源竞争，则会导致立即发布。 / English: If a schedule competes with a source that has ended, it will result in an immediate release.
       }
     }
     this.releaseVoice(voice);
@@ -1710,7 +1722,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
     try {
       voice.source.stop(this.context?.currentTime ?? 0);
     } catch {
-      // 已经结束的声音只需要图形清理。
+      // 已经结束的声音只需要图形清理。 / English: Sounds that have ended just need graphics cleanup.
     }
     this.forgetVoice(voice);
   }
@@ -1757,7 +1769,7 @@ export class PrimalSpriteAudioBackend implements AudioBackend {
 
   private playFallbackOneShot(cue: OneShotAudioCue, options: AudioCueOptions): void {
     if (this.fallback?.state !== "running") return;
-    // 预设的面板剪辑位于可选的 sounds1 包中。如果在该包解码之前打开面板，请使用已支持的轻型 UI 单击，并且切勿在后台加载时保持交互。
+    // 预设的面板剪辑位于可选的 sounds1 包中。如果在该包解码之前打开面板，请使用已支持的轻型 UI 单击，并且切勿在后台加载时保持交互。 / English: Preset panel clips are available in the optional sounds1 package. If you open a panel before the package is decoded, use the lightweight UI click that is already supported, and never remain interactive while the background loads.
     const fallbackCue = cue === "ui.open" || cue === "ui.close" ? "ui.click" : cue;
     this.tryFallback(() => this.fallback?.playOneShot(fallbackCue, options));
   }

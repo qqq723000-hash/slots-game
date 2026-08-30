@@ -24,6 +24,8 @@ export type RetriableSpinMessage = Omit<SpinMessage, "sessionId">;
 
 /**
  * request/round 标识参与幂等与恢复，禁止从时钟或非密码学随机源派生。
+ *
+ * 英文 / English: The request/round flag participates in idempotence and recovery, and is prohibited from being derived from clocks or non-cryptographic random sources.
  */
 export class SecureRandomUnavailableError extends Error {
   constructor(message = "Web Crypto secure random generation is unavailable") {
@@ -50,7 +52,7 @@ function createRandomUuidV4(crypto: Crypto | undefined): string {
   } catch {
     throw new SecureRandomUnavailableError("Web Crypto secure random generation failed");
   }
-  // 按 RFC 4122 4.4 设置 version 4 与 variant 位；不得使用时间或 Math.random 回退。
+  // 按 RFC 4122 4.4 设置 version 4 与 variant 位；不得使用时间或 Math.random 回退。 / English: Set version 4 and variant bits as per RFC 4122 4.4; must not use time or Math.random fallbacks.
   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");

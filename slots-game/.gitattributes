@@ -1,14 +1,12 @@
-# 所有可识别文本在工作树与索引中固定为 LF，保证受审核的内联脚本、CSP hash 与
-# 生产静态产物不随 Windows core.autocrlf 漂移；下方原始字节/LFS 资源继续显式 -text。
+# 所有可识别文本在工作树与索引中固定为 LF；所有受审核的内联脚本、CSP hash 与生产静态产物都不得随 Windows core.autocrlf 漂移。/ Pin recognized text to LF so reviewed inline scripts, CSP hashes, and production assets cannot drift with Windows core.autocrlf.
+# 下方原始字节与 LFS 资源继续显式使用 -text。/ Raw-byte and LFS assets below remain explicitly marked with -text.
 * text=auto eol=lf
 
-# 两个上游音频清单按原始字节参与运行时 SHA-256 校验；保留 CRLF，且不把其
-# 既有行尾解释为仓库源码的空白错误。
+# 两个音频清单按原始字节参与运行时 SHA-256 校验；保留 CRLF，且不把既有行尾解释为源码空白错误。/ The two audio manifests participate in runtime SHA-256 checks as raw bytes; retain CRLF and do not treat their existing endings as source whitespace errors.
 web/public/assets/primal-runtime/audio/common_sounds_desktop.json -text -eol -whitespace
 web/public/assets/primal-runtime/mobile/audio/common_sounds_mobile.json -text -eol -whitespace
 
-# 生产二进制资源通过 Git LFS 交付，避免普通 Git push/clone 传输大对象；CI 必须
-# 显式启用 lfs checkout，JSON/SVG/atlas 等可审阅清单仍保留为普通 Git 文本。
+# 生产二进制资源通过 Git LFS 交付，避免普通 Git push/clone 传输大对象；CI 必须显式启用 LFS checkout，JSON/SVG/atlas 等可审阅清单仍为普通 Git 文本。/ Production binaries use Git LFS to avoid large regular Git transfers; CI must enable LFS checkout, while reviewable JSON/SVG/atlas manifests stay as normal Git text.
 web/public/assets/primal-runtime/**/*.png filter=lfs diff=lfs merge=lfs -text -eol
 web/public/assets/primal-runtime/**/*.avif filter=lfs diff=lfs merge=lfs -text -eol
 web/public/assets/primal-runtime/**/*.m4a filter=lfs diff=lfs merge=lfs -text -eol
@@ -18,10 +16,13 @@ web/public/assets/primal-runtime/**/*.woff filter=lfs diff=lfs merge=lfs -text -
 web/public/assets/primal-reference/**/*.png filter=lfs diff=lfs merge=lfs -text -eol
 web/public/assets/primal-reference/**/*.avif filter=lfs diff=lfs merge=lfs -text -eol
 
-# 下列五个资源均小于 4 MiB。当前交付网络对 Git LFS 对象存储的大请求存在超时，
-# 因此仅将这些精确路径作为普通 Git 二进制对象交付；其余生产资源继续使用 LFS。
+# 下列五个资源均小于 4 MiB；仅将这些精确路径作为普通 Git 二进制对象交付，其余生产资源继续使用 LFS。/ The following five assets are below 4 MiB; only these exact paths use regular Git binary delivery, while all other production assets remain in LFS.
 web/public/assets/primal-runtime/audio/sounds_desktop_0.m4a -filter -diff -merge -text -eol
 web/public/assets/primal-runtime/audio/sounds_desktop_1.m4a -filter -diff -merge -text -eol
 web/public/assets/primal-runtime/fonts/primal-rampage/PrimalRampage.png -filter -diff -merge -text -eol
 web/public/assets/primal-runtime/mobile/audio/sounds_mobile_0.m4a -filter -diff -merge -text -eol
 web/public/assets/primal-runtime/mobile/audio/sounds_mobile_1.m4a -filter -diff -merge -text -eol
+
+# 仓库演示媒体保持为普通 Git 二进制，海报用于首屏快速加载，MP4 仅在点击后加载。/ Repository demo media stays as regular Git binaries; the poster provides a fast first paint and the MP4 loads only after a click.
+docs/media/primal-rampage-local-full-stack-demo-poster.webp -filter -diff -merge -text -eol
+docs/media/primal-rampage-local-full-stack-demo-24s.mp4 -filter -diff -merge -text -eol

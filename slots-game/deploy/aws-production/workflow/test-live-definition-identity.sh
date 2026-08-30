@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 使用纯本地 fixture 证明数学定义普通滚动只接受首次安装或三元组完全一致。
+# English: Use pure local fixtures to prove that the ordinary math-definition rollout only accepts first
+# installation or triplet complete agreement.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

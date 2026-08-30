@@ -1,9 +1,13 @@
-# AWS 应用基础设施 Terraform
+# AWS application infrastructure with Terraform / AWS 应用基础设施 Terraform
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This directory defines the AWS infrastructure owned by the application, including its network, compute, database, cache, registry, secret metadata, Web edge, observability, backup, and archive baselines. It deliberately excludes account vending, centralized identity, organization policies, organization-wide audit and security services, and the adopter-managed state, DNS, certificate, and deployment-role prerequisites. Static validation does not contact an AWS account; approved plan and apply runs, account and region checks, secret population and rotation, cluster add-ons, WAF and logging behavior, backup and restore, failover, capacity, and live security acceptance remain target-environment gates.
 
 本目录定义 Slots 应用自己负责的 AWS 基础设施。它可以独立创建 VPC、EKS、RDS PostgreSQL、
 ECR、Secrets Manager 元数据、S3/CloudFront、AMP、CloudWatch 与 AWS Backup 基线；不会创建

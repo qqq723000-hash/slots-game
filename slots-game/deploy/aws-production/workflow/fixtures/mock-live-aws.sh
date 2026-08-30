@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 只模拟平台实时门禁读取的 EKS Pod Identity API，不连接 AWS。
+# English: It only simulates the EKS Pod Identity API of the platform's live gate reading, and does not connect
+# to AWS.
 set -eu
 
 fail() {

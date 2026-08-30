@@ -26,6 +26,8 @@ const (
 var ErrIsolationRejected = errors.New("wallet isolation rejected")
 
 // IsolationError 只包含有界分类值，刻意排除后端、运营商、玩家、轮次和操作标识。
+// English: IsolationError only contains bounded categorical values, intentionally excluding backend, operator,
+// player, round and action identifiers.
 type IsolationError struct {
 	Method string
 	Reason string
@@ -53,6 +55,9 @@ type IsolationConfig struct {
 func DefaultIsolationConfig() IsolationConfig {
 	// HTTP Transport 对每个主机最多开放 32 条连接；Apply 最多占 24 条，
 	// 从物理连接层为 Lookup 保留 8 条，避免仅在协程层“逻辑隔离”。
+	// English: HTTP Transport opens up to 32 connections to each host; Apply accounts for up to 24 connections, and
+	// reserves 8 connections from the physical connection layer for Lookup to avoid "logical isolation" only at the
+	// coroutine layer.
 	return IsolationConfig{
 		BackendApplyMaxInFlight:   24,
 		BackendLookupMaxInFlight:  8,
@@ -84,6 +89,8 @@ func (config IsolationConfig) validate() error {
 }
 
 // IsolationObserver 仅接收本包控制的常量，绝不把请求或租户身份交给指标标签。
+// English: IsolationObserver only receives constants controlled by this package and never passes the request or
+// tenant identity to the metric tag.
 type IsolationObserver interface {
 	ObserveWalletRequest(method, outcome string, duration time.Duration)
 	WalletInFlight(method string, delta int64)
@@ -143,6 +150,8 @@ func (registry *IsolationRegistry) Wrap(
 }
 
 // WrapPorts 允许兼容门面与显式结果接口共用同一组容量和熔断状态。
+// English: WrapPorts allow compatible facades to share the same set of capacities and circuit breaker states with
+// explicit result interfaces.
 func (registry *IsolationRegistry) WrapPorts(
 	backendURL, operatorID string,
 	next rgs.WalletPort,
@@ -214,6 +223,8 @@ func (registry *IsolationRegistry) WrapPorts(
 
 // AdmitNewIntent 在 RNG/PREPARE 之前只读检查 Apply lane；它不会占用许可，
 // 持久化之后的 SubmitRound 仍会再次执行权威非阻塞准入。
+// English: AdmitNewIntent only reads the Apply lane before RNG/PREPARE; it does not occupy permissions, and
+// SubmitRound after persistence will still perform authoritative non-blocking admission again.
 func (wallet *isolatedWallet) AdmitNewIntent(operatorID string) error {
 	if wallet == nil || operatorID == "" || operatorID != wallet.operatorID {
 		return fmt.Errorf("%w: wallet route unavailable", rgs.ErrWalletUnavailable)
@@ -241,6 +252,8 @@ func (wallet *isolatedWallet) admissionRejection(reason string) error {
 
 // ApplyAvailable 在 PREPARE 前进行不占用许可的只读准入检查。
 // 容量可能紧接着变化，所以 ApplyRound 仍是最终的权威闸门。
+// English: ApplyAvailable performs a permission-free read-only admission check before PREPARE. The capacity may
+// change immediately, so ApplyRound remains the final authoritative gate.
 func (registry *IsolationRegistry) ApplyAvailable(operatorID string) bool {
 	if registry == nil {
 		return false
@@ -402,6 +415,8 @@ func (wallet *isolatedWallet) Resolve(ctx context.Context, reference rgs.Operati
 func (wallet *isolatedWallet) Rollback(ctx context.Context, rollback rgs.WalletRollback) (rgs.WalletReceipt, error) {
 	// Rollback 会改变经济状态，因此复用 Apply 的后端/运营商容量与熔断器，
 	// 同时保留独立的有界指标方法名。
+	// English: Rollback changes the economic state, thus reusing Apply's backend/operator capacities and circuit
+	// breakers while retaining separate bounded indicator method names.
 	return wallet.apply(ctx, walletMethodRollback, func() (rgs.WalletReceipt, error) {
 		return wallet.next.Rollback(ctx, rollback)
 	})
@@ -499,6 +514,8 @@ func classifyWalletOutcome(err error) (string, bool, bool) {
 	case errors.Is(err, rgs.ErrWalletReceiptInvalid):
 		// 已认证但与该运营商命令身份不符的回执只熔断该运营商，不能误杀
 		// 共享同一物理钱包平台的其他租户。
+		// An authenticated receipt that does not match this operator command identity trips only that operator's circuit
+		// and must not disable other tenants sharing the same physical wallet platform.
 		return "invalid", true, false
 	default:
 		return "unknown", false, true
@@ -526,6 +543,8 @@ func classifyResolution(result rgs.Resolution) (string, bool, bool) {
 		if errors.Is(result.Cause, errWalletResponseAuthentication) {
 			// 响应验签失败通常是该运营商密钥/路由绑定错误；只熔断租户，
 			// 不能把同一大平台物理后端上的其他运营商一起切断。
+			// Response-authentication failure usually means this operator's key or route binding is wrong; trip only the tenant circuit,
+			// without disabling other operators on the same large physical backend.
 			return "response_auth_invalid", true, false
 		}
 		return "unknown", false, true
@@ -573,6 +592,9 @@ func canonicalBackendKey(raw string) (string, error) {
 
 // CanonicalBackendIdentity 返回钱包物理 origin 的稳定成本/隔离身份。调用方可在
 // 启动期建立 operator -> backend 静态映射；返回值不得直接作为监控标签或日志字段。
+// English: CanonicalBackendIdentity Returns the stable cost/isolation identity of the wallet's physical origin.
+// The caller can establish operator -> backend static mapping during startup; the return value must not be
+// directly used as a monitoring label or log field.
 func CanonicalBackendIdentity(raw string) (string, error) {
 	return canonicalBackendKey(raw)
 }

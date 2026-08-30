@@ -1,9 +1,15 @@
-# 生产架构
+# 生产架构 / Production architecture
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document describes the application-level production architecture, the macOS Compose integration-acceptance topology, and the portable cluster contract, while delegating the sole target cloud reference to the dedicated AWS documents.
+The browser is an untrusted presentation layer; the RGS and PostgreSQL-backed transaction model remain authoritative for sessions, RNG, rounds, balances, payouts, feature state, idempotency, and result order.
+The repository does not prove that any target account, network, cluster, database, edge service, operator integration, monitoring system, capacity result, or approval exists; those are external deployment and acceptance gates.
 
 AWS 是本项目定义的唯一目标生产参考架构。目标云架构、部署和运行责任分别以
 [AWS 正式生产架构](aws-production-architecture.md)、

@@ -156,6 +156,8 @@ func validateResultDeliveryAcknowledgementRequest(request resultDeliveryAcknowle
 		RoundID: request.RoundID, Sequence: sequence, ResultHash: request.ResultHash,
 		// 浏览器永不提供代际；该哨兵只校验公开 payload 形状，handler 随后会用
 		// 已验证的 token claims 替换它。
+		// English: Browsers never provide generational generation; the sentinel only verifies the public payload shape,
+		// which the handler then replaces with validated token claims.
 		TransportGeneration: 1,
 	}
 	if err := rgs.ValidateResultDeliveryAcknowledgement(receipt); err != nil {

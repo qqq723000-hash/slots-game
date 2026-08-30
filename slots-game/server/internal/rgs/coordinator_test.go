@@ -882,6 +882,8 @@ func TestWalletLookupRetryLimitBlocksBeforeAnotherExternalQuery(t *testing.T) {
 	wallet := newTestWallet(10_000)
 	// APPLY 的传输结果未知且后续查询持续不可用，模拟一个会把每个合法意图
 	// 放大为永久付费查询的第三方钱包故障。
+	// English: APPLY's transmission results are unknown and subsequent queries continue to be unavailable, simulating
+	// a third-party wallet failure that amplifies every legitimate intention into a perpetual paid query.
 	wallet.applyError = errors.New("wallet apply outcome is unknown")
 	wallet.lookupAllowed.Store(false)
 	registry := DefinitionResolverFunc(func(context.Context, string, string, string) (game.Spinner, error) {
@@ -901,6 +903,8 @@ func TestWalletLookupRetryLimitBlocksBeforeAnotherExternalQuery(t *testing.T) {
 	}
 
 	// 配置值 1 允许第一次权威查询。它仍为 UNKNOWN 时会持久调度下一次查询。
+	// English: Configuration value 1 allows first authoritative query. The next query is scheduled persistently while
+	// it is still UNKNOWN.
 	if _, err := coordinator.Reconcile(context.Background(), request.Key()); !errors.Is(err, ErrWalletPending) {
 		t.Fatalf("last allowed lookup error = %v, want ErrWalletPending", err)
 	}
@@ -910,6 +914,8 @@ func TestWalletLookupRetryLimitBlocksBeforeAnotherExternalQuery(t *testing.T) {
 
 	// 下一次领取先持久增加 lookup_attempts，再在同一 fenced claim 下隔离；
 	// 绝不能发出第二个外部查询。
+	// English: For the next claim, lookup_attempts will be permanently increased and then isolated under the same
+	// fenced claim; a second external query must not be issued.
 	if _, err := coordinator.Reconcile(context.Background(), request.Key()); !errors.Is(err, ErrManualReview) {
 		t.Fatalf("lookup limit error = %v, want ErrManualReview", err)
 	}
@@ -1073,6 +1079,8 @@ func TestFreeSpinStateSurvivesAmbiguousWalletAndCoordinatorRestart(t *testing.T)
 	}
 
 	// 新的 Coordinator 实例表示进程重启。持久化存储状态及钱包查询已足够，引擎绝不能再次运行。
+	// English: A new Coordinator instance represents a process restart. It is sufficient to persist state and wallet
+	// queries, the engine must never be run again.
 	wallet.lookupAllowed.Store(true)
 	secondCoordinator := newTestCoordinator(t, repository, wallet, spinner, time.Second)
 	result, err := secondCoordinator.Reconcile(context.Background(), request.Key())

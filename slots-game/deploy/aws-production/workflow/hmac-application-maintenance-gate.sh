@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # 在普通发布或 HMAC maintenance-complete 前后验证持久锁和零旧 Pod 边界。
+# English: Verify persistent locks and zero-old Pod boundaries before and after normal release or HMAC
+# maintenance-complete.
 set -euo pipefail
 
 test "$#" -ge 1 || exit 64

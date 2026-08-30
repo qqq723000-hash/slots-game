@@ -98,6 +98,7 @@ func TestWildCellCarriesServerSampledMultiplierUsedByWays(t *testing.T) {
 		}
 	}
 	// 左侧 3 个 ORBIT × 中间 3 个 5 倍 WILD × 右侧 3 个 ORBIT × 已采集赔付 0.3 倍。
+	// English: 3 ORBITs on the left × 3 ORBITs in the middle 5x WILD × 3 ORBITs on the right × collected payout 0.3x.
 	if outcome.TotalWinMinor != 4_050 || len(outcome.Wins) != 1 || outcome.Wins[0].AmountMinor != 4_050 {
 		t.Fatalf("WILD result = total:%d wins:%+v, want 4050", outcome.TotalWinMinor, outcome.Wins)
 	}

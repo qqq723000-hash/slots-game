@@ -20,6 +20,8 @@ export interface PrimalSpriteCueDefinition {
 
 /**
  * 根据捕获的 44.1 kHz 桌面精灵清单进行验证。保留整数样本位置可以避免复制的小数偏移造成的时间漂移​​。
+ *
+ * 英文 / English: Verified against captured 44.1 kHz desktop sprite manifest. Preserving integer sample positions avoids time drift caused by copied fractional offsets.
  */
 export const PRIMAL_CUE_DEFINITIONS = Object.freeze({
   "1065MusBgLvl1": { pack: "sounds0", startSample: 44_100, endSample: 2_469_600 },
@@ -45,7 +47,7 @@ export const PRIMAL_CUE_DEFINITIONS = Object.freeze({
   "743UiInteract1of3": { pack: "sounds1", startSample: 308_700, endSample: 366_030 },
   "743UiInteract2of3": { pack: "sounds1", startSample: 418_950, endSample: 476_280 },
   "743UiInteract3of3": { pack: "sounds1", startSample: 529_200, endSample: 586_530 },
-  // 捕获的仅清单提示：当前的官方捆绑包不为其调度任何操作。
+  // 捕获的仅清单提示：当前的官方捆绑包不为其调度任何操作。 / English: Caught manifest-only tip: The current official bundle has no operations scheduled for it.
   "743UiLight": { pack: "sounds1", startSample: 639_450, endSample: 728_385 },
   "743UiOpen": { pack: "sounds1", startSample: 793_800, endSample: 887_880 },
   "743UiSpin1of3": { pack: "sounds1", startSample: 948_150, endSample: 1_022_385 },
@@ -56,7 +58,7 @@ export const PRIMAL_CUE_DEFINITIONS = Object.freeze({
   "965SpinsWaitFire3of3": { pack: "sounds1", startSample: 2_028_600, endSample: 2_304_976 },
   "1065BigWinRoar1of2": { pack: "sounds1", startSample: 2_359_350, endSample: 2_491_838 },
   "1065BigWinRoar2of2": { pack: "sounds1", startSample: 2_557_800, endSample: 2_760_972 },
-  // 延迟的捆绑包最后加载并覆盖这些重复的标题密钥。
+  // 延迟的捆绑包最后加载并覆盖这些重复的标题密钥。 / English: Delayed bundles load last and overwrite these duplicate title keys.
   "BigWinCounterGenericNewLoop1": { pack: "delayed", startSample: 44_100, endSample: 143_290 },
   "BigWinCounterGenericNewStart1": { pack: "delayed", startSample: 198_450, endSample: 267_562 },
   "BigWinCounterGenericNewTail1": { pack: "delayed", startSample: 308_700, endSample: 395_858 },
@@ -72,7 +74,7 @@ export const PRIMAL_CUE_DEFINITIONS = Object.freeze({
   "WinCounterSweetener2": { pack: "delayed", startSample: 1_234_800, endSample: 1_260_953 },
   "WinCounterSweetener3": { pack: "delayed", startSample: 1_300_950, endSample: 1_326_453 },
   "WinCounterSweetener4": { pack: "delayed", startSample: 1_367_100, endSample: 1_380_242 },
-  // 长/短切片被捕获，但在该游戏的 SoundStage 中没有标题参考。
+  // 长/短切片被捕获，但在该游戏的 SoundStage 中没有标题参考。 / English: Long/short slices are captured, but there is no title reference in the SoundStage for that game.
   "LandBasedJackpotLong": { pack: "sounds1", startSample: 3_638_250, endSample: 3_906_405 },
   "LandBasedJackpotMed": { pack: "sounds1", startSample: 3_969_000, endSample: 4_171_297 },
   "LandBasedJackpotShort": { pack: "sounds1", startSample: 4_211_550, endSample: 4_327_992 },
@@ -138,7 +140,7 @@ export const PRIMAL_CUE_DEFINITIONS = Object.freeze({
     loopEndSample: 58_530,
   },
   "btnClick": { pack: "common", startSample: 137_055, endSample: 158_624 },
-  // 捕获共同精灵提示；目前没有官方调度员引用它。
+  // 捕获共同精灵提示；目前没有官方调度员引用它。 / English: Capture co-elf tip; no official dispatcher currently references it.
   "GenericWinLessSnd": { pack: "common", startSample: 202_724, endSample: 233_837 },
 } as const satisfies Readonly<Record<string, PrimalSpriteCueDefinition>>);
 
@@ -184,7 +186,7 @@ export const PRIMAL_SCATTER_LAND_CUES = Object.freeze([
   "1065ScatterLand5of5",
 ] as const satisfies readonly PrimalSpriteCueName[]);
 
-/** 第一级故意在捕获的声场数据中重复使用 PpsLvl2。 */
+/** 第一级故意在捕获的声场数据中重复使用 PpsLvl2。 / English: The first stage intentionally reuses PpsLvl2 in the captured sound field data. */
 export const PRIMAL_PPS_LEVEL_CUES = Object.freeze([
   "1065SfPpsLvl2",
   "1065SfPpsLvl2",
@@ -201,7 +203,7 @@ export const PRIMAL_JACKPOT_POT_CUES = Object.freeze({
   grand: "1065SfGrandPot",
 } as const satisfies Readonly<Record<string, PrimalSpriteCueName>>);
 
-/** 即使在庆祝模式下，Win1 也是用小于投注额的样本预设的。 */
+/** 即使在庆祝模式下，Win1 也是用小于投注额的样本预设的。 / English: Even in celebration mode, Win1 is preset with samples smaller than the stake. */
 export const PRIMAL_PAYOUT_WIN_CUES = Object.freeze([
   "986WinLessThanBet",
   "986Win2x",

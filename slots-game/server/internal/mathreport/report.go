@@ -26,15 +26,22 @@ type Options struct {
 	BetMinor  int64
 
 	// RNGAlgorithm 与 RNGSeed 标识确定性的工程随机流。生产熵绝不能传入或暴露在本报告中。
+	// English: RNGAlgorithm and RNGSeed identify deterministic engineering random streams. Production entropy must
+	// never be passed on or exposed in this report.
 	RNGAlgorithm string
 	RNGSeed      string
 
 	// RulesSchemaVersion 在引擎算法或随机数到结果的映射发生变化时更新，
 	// 即使数学配置本身没有变化也必须如此。
+	// English: RulesSchemaVersion must be updated when the engine algorithm or the mapping of random numbers to
+	// results changes, even if the math configuration itself does not change.
 	RulesSchemaVersion string
 
 	// RTPMinimum 与 RTPMaximum 是包含边界的十进制比率，例如 0.96 表示 96%。
 	// 两者均为必填项，防止持续集成调用方意外运行无边界的“仅供参考”模拟并将其作为验收门禁。
+	// English: RTPMinimum and RTPMaximum are decimal ratios with bounds, for example 0.96 means 96%. Both are required
+	// to prevent continuous integration callers from accidentally running an unbounded "for reference only" mock and
+	// using it as an acceptance gate.
 	RTPMinimum string
 	RTPMaximum string
 }
@@ -80,6 +87,8 @@ type Report struct {
 
 	// 此字段刻意命名为上界。它依据所有可达的正权重最大值计算，但可能组合相互排斥的网格布局。
 	// 它适合用于失效安全的责任检查，不适合声明经过认证的精确最高中奖概率。
+	// This field is deliberately named as an upper bound. It uses every reachable positive-weight maximum but may combine mutually exclusive grid layouts.
+	// It is suitable for fail-safe liability checks, not for claiming a certified exact maximum-win probability.
 	TheoreticalMaximumUpperBound MaximumEvidence `json:"theoreticalMaximumUpperBound"`
 	TheoreticalMaximumMethod     string          `json:"theoreticalMaximumMethod"`
 
@@ -418,6 +427,7 @@ func checkedMultiply(values ...int64) (int64, error) {
 }
 
 // 责任上界必须向上取整不足一个最小货币单位的风险敞口，即使运行时展示会将单项奖励取整到最近值。
+// The liability upper bound must round sub-minor-unit exposure upward even when runtime presentation rounds each award to the nearest value.
 func checkedScaleAwardCeil(payUnitMinor int64, factors ...int64) (int64, error) {
 	if payUnitMinor <= 0 {
 		return 0, errors.New("theoretical maximum requires a positive pay unit")

@@ -15,13 +15,15 @@ import {
   type TimelineCue,
 } from "./Timeline";
 
-/** 由所选网络音频后端提供的只读时钟接口。 */
+/** 由所选网络音频后端提供的只读时钟接口。 / English: Read-only clock interface provided by the selected network audio backend. */
 export interface LaunchPlaybackClock {
   now(): number;
 }
 
 /**
  * RAF 仍属于浏览器挂钟，而已用启动时间可以切换到已安排的 AudioContext 时钟（Continue）。切换会保留当前逻辑值，因此恢复或失败都不会跳转预设的转换。
+ *
+ * 英文 / English: RAF still belongs to the browser wall clock, and the used startup time can be switched to the scheduled AudioContext clock (Continue). Switches retain the current logic value, so recovery or failure does not jump to the preset transition.
  */
 export class SwitchableLaunchClock implements TimelineClock {
   private source: LaunchPlaybackClock;
@@ -53,7 +55,7 @@ export class SwitchableLaunchClock implements TimelineClock {
     this.switchSource(this.wall);
   }
 
-  /** 将下一个启动序列重置为新的挂钟零纪元。 */
+  /** 将下一个启动序列重置为新的挂钟零纪元。 / English: Resets the next boot sequence to the new wall clock epoch zero. */
   resetToWall(): void {
     this.source = this.wall;
     this.sourceEpoch = this.wall.now();
@@ -70,7 +72,7 @@ export class SwitchableLaunchClock implements TimelineClock {
 
 export interface IntroDirectorOptions {
   clock?: TimelineClock;
-  /** 共享外部播放时钟已经应用了自己的暂停时期。 */
+  /** 共享外部播放时钟已经应用了自己的暂停时期。 / English: The shared external playback clock has its own pause period applied. */
   clockOwnsElapsedTime?: boolean;
   reducedMotion?: boolean;
   onFrame?(frame: IntroFrame, timeMs: number): void;
@@ -98,7 +100,7 @@ export class IntroDirector {
     if (this.timeline) return this.timeline.play();
     const reducedMotion = this.options.reducedMotion ?? false;
     const durationMs = reducedMotion ? REDUCED_INTRO_DURATION_MS : INTRO_DURATION_MS;
-    // 减少动作只会缩短视觉编排。捕获的 GameTransition 声音在原始捆绑包中没有缩减运动门。
+    // 减少动作只会缩短视觉编排。捕获的 GameTransition 声音在原始捆绑包中没有缩减运动门。 / English: Reducing movement only shortens the visual choreography. Captured GameTransition sounds without reduced motion gates in the original bundle.
     const cues = reducedMotion
       ? INTRO_CUES.filter(({ name }) => name === "audio.game-intro")
       : INTRO_CUES;

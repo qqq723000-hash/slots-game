@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  HARDENING_CHECKLIST_ENGLISH_SUMMARY_HEADING,
   HARDENING_CHECKLIST_SECTIONS,
   HARDENING_CHECKLIST_TITLE,
   validateHardeningChecklist,
@@ -35,6 +36,28 @@ test("accepts the exact ordered section topology and names-only entries", () => 
       minimumItems: HARDENING_CHECKLIST_SECTIONS.length * 2,
     }),
     { sections: HARDENING_CHECKLIST_SECTIONS.length, items: HARDENING_CHECKLIST_SECTIONS.length * 2 },
+  );
+  const englishSummary = "This checklist defines the complete review surface for production-oriented hardening. Each name identifies a required implementation or acceptance topic rather than proof of completion. Repository evidence must remain separate from external deployment, licensing, capacity, and regulatory gates.";
+  const withBilingualSummary = source.replace(
+    `${HARDENING_CHECKLIST_TITLE}\n\n`,
+    `${HARDENING_CHECKLIST_TITLE}\n\n${PERSONAL_PROJECT_NOTICE}\n\n${HARDENING_CHECKLIST_ENGLISH_SUMMARY_HEADING}\n\n${englishSummary}\n\n`,
+  );
+  assert.deepEqual(
+    validateHardeningChecklist(withBilingualSummary, {
+      minimumItems: HARDENING_CHECKLIST_SECTIONS.length * 2,
+    }),
+    { sections: HARDENING_CHECKLIST_SECTIONS.length, items: HARDENING_CHECKLIST_SECTIONS.length * 2 },
+  );
+});
+
+test("rejects a malformed or non-substantive bilingual summary", () => {
+  const source = fixture().replace(
+    `${HARDENING_CHECKLIST_TITLE}\n\n`,
+    `${HARDENING_CHECKLIST_TITLE}\n\n${PERSONAL_PROJECT_NOTICE}\n\n${HARDENING_CHECKLIST_ENGLISH_SUMMARY_HEADING}\n\nToo short.\n\n`,
+  );
+  assert.throws(
+    () => validateHardeningChecklist(source, { minimumItems: 1 }),
+    /至少三句实质英文说明/u,
   );
 });
 

@@ -1,5 +1,7 @@
 #!/bin/sh
 # 安装项目依赖、生成一次性初始材料、构建已授权的 Web 产物并固定 Compose。
+# English: Install project dependencies, generate one-time initial assets, build licensed web artifacts, and pin
+# Compose.
 set -eu
 # shellcheck source=deploy/local-production/common.sh
 . "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/common.sh"
@@ -22,6 +24,8 @@ verify_source_identity() {
 }
 
 # 版本合同读取期间也不能切换 HEAD；修改任何仓库外状态前再次关闭竞态窗口。
+# English: HEAD cannot be switched during version contract reading; close the race window again before modifying
+# any state outside the warehouse.
 verify_source_identity
 
 mkdir -p "$state_root" "$state_root/backups" "$state_root/artifacts" "$state_root/rendered"
@@ -37,11 +41,17 @@ fi
 chmod 0700 "$secrets_root"
 # 首次运行可能已在密钥创建后、compose.env 提交前中断。重跑必须继续首次选择器
 # 路径，否则后面的 require_state 会把可恢复状态永久卡死。
+# English: The first run may have broken after the key was created but before compose.env was committed. Reruns
+# must continue the first selector path, otherwise the subsequent require_state will permanently block the
+# recoverable state.
 if needs_initial_compose_state; then
   new_state=true
 fi
 # 旧版本机状态可能早于生产共享准入门禁。该幂等子命令只在四个 Valkey
 # 专用文件全部缺失时使用既有本地 CA 补齐材料；绝不旋转任何已有密钥。
+# English: Old version machine status may predate artifactsion share access. This idempotent subcommand is only
+# available in four Valkey Use the existing local CA to make up for missing private files; never rotate any
+# existing keys.
 (cd "$repository_root/server" && \
   go run ./cmd/local-production-bootstrap add-shared-admission "$secrets_root")
 
@@ -66,6 +76,9 @@ asset_release_id="$(node "$local_production_directory/verify-release-identity.mj
 
 # 资源审批先写入受限候选文件并对当前 dist 做完整验证；在定义门禁和签名提交成功
 # 以前，已提交审批逐字节保持不变。
+# English: Resource approval first writes restricted candidate files and completes verification of the current
+# dist; after defining gate and signature submission, the Previously, submissions for approval remained
+# unchanged byte by byte.
 pending_asset_approval="$state_root/artifacts/release-asset-approval.pending.json"
 asset_prepare_status="$(node "$local_production_directory/rotate-asset-approval.mjs" \
   prepare \
@@ -127,6 +140,9 @@ LOCAL_PRODUCTION_ASSET_APPROVAL_HASH="$candidate_asset_approval_hash" \
 node "$local_production_directory/render-observability.mjs" "$state_root/rendered"
 # 首次安装尚无 Compose 环境。此时定义已经是目标代际，可以先写入候选镜像身份；
 # 既有部署则保持最后一次已提交的 compose.env，直到所有候选镜像和提交门禁通过。
+# English: The first installation does not yet have a Compose environment. At this time, the definition is
+# already the target generation, and the candidate image identity can be written first; Existing deployments
+# keep the last committed compose.env until all candidate images and submission gates pass.
 if [ "$new_state" = true ]; then
   LOCAL_PRODUCTION_IMAGE_CREATED="$image_created" \
   LOCAL_PRODUCTION_IMAGE_REVISION="$image_revision" \
@@ -141,6 +157,9 @@ require_state
 
 # 候选镜像使用唯一 tag 构建，不覆盖 compose.env 当前选择的已提交镜像。即使后续
 # 排空失败或定义拒绝轮换，up.sh 仍只会启动上一代兼容镜像。
+# English: The candidate image is built using a unique tag and does not overwrite the committed image currently
+# selected by compose.env. Even if the follow-up If draining fails or the definition refuses rotation, up.sh
+# will still only launch the previous generation compatible image.
 (
   export LOCAL_PRODUCTION_IMAGE_CREATED="$image_created"
   export LOCAL_PRODUCTION_IMAGE_REVISION="$image_revision"
@@ -160,6 +179,7 @@ for (const serviceName of ["ingress", "alert-proxy"]) {
 }
 ' "$candidate_image_tag"
   # ingress 与 alert-proxy 绑定同一个 slots-nginx-proxy tag，只需构建一次。
+  # English: Ingress and alert-proxy are bound to the same slots-nginx-proxy tag and only need to be built once.
   compose build --provenance=mode=max rgs-migrator rgs-server local-operator web ingress
 )
 for candidate_image in \
@@ -233,9 +253,13 @@ trap - EXIT HUP INT TERM
 
 # 候选构建全部成功后才进入受锁提交窗口。up/down/destroy 继承同一 lockf 边界，
 # 无法在排空检查与定义提交之间重新启动旧 RGS。
+# English: The locked submission window is entered only after all candidate builds are successful.
+# up/down/destroy inherit the same lockf bounds, Unable to restart old RGS between drain check and definition
+# commit.
 rotation_status="$(cd "$repository_root/server" && \
   go run ./cmd/local-production-bootstrap definition-rotation-status "$secrets_root")"
 # 输出字段均已由 Go 侧定义标识符和 SHA-256 校验。
+# English: The output fields have identifiers defined by the Go side and SHA-256 verification.
 # shellcheck disable=SC2086
 set -- $rotation_status
 test "$#" -eq 4 || { printf '%s\n' '定义轮换状态格式无效。' >&2; exit 1; }
@@ -253,6 +277,9 @@ fi
 
 # 在第一个不可逆定义/审批提交之前再次验证源码和宿主清单；实际审批 commit 仍会
 # 重新读取 releaseId，从而拒绝准备后同资产但不同 version/revision 的身份替换。
+# English: Verify source code and host manifest again before first irreversible definition/approval commit;
+# actual approval commit will still Reread the releaseId, thereby rejecting post-prep identity replacements with
+# the same asset but a different version/revision.
 verify_source_identity
 verify_host_release_payload
 if [ "$rotation_required" = true ]; then
@@ -274,6 +301,10 @@ node "$local_production_directory/rotate-asset-approval.mjs" \
 # compose.env 是唯一镜像选择器。它在定义和资源审批提交之后原子替换；若进程在
 # 新定义或审批已提交、选择器尚未提交的混合窗口中断，up.sh 会因身份或摘要不匹配
 # 而失败关闭，重跑即可收敛。
+# English: compose.env is the only image selector. It is replaced atomically after definition and resource
+# approval submission; if the process is Mixed windows where new definitions or approvals have been submitted
+# but selectors have not yet been submitted are interrupted and up.sh fails due to identity or digest mismatch.
+# If it fails to close, it can converge by re-running.
 verify_source_identity
 verify_host_release_payload
 LOCAL_PRODUCTION_IMAGE_CREATED="$image_created" \

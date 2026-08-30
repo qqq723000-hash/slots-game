@@ -13,3 +13,5 @@ providers:
       foldersFromFilesStructure: false
 
 # 仪表盘由版本库声明式提供，生产 UI 不允许漂移式编辑。
+# English: Dashboards are declaratively provided by the repository, and the artifactsion UI does not allow for
+# drift editing.

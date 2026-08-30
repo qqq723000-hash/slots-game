@@ -1,5 +1,5 @@
-// @ts-nocheck -- 清单一致性测试使用 Node 标准库 API，而浏览器应用的 TypeScript
-// 配置排除了 Node 类型。
+// @ts-nocheck -- 清单一致性测试使用 Node 标准库 API，而浏览器应用的 TypeScript / English: @ts-nocheck -- Manifest conformance testing uses the Node standard library API and the browser application's TypeScript
+// 配置排除了 Node 类型。 / English: Configuration excludes Node type.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";

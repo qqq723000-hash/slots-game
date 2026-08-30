@@ -1,4 +1,4 @@
-// @ts-nocheck -- 该契约测试需要在 Node 中读取构建配置与仓库级门禁文件。
+// @ts-nocheck -- 该契约测试需要在 Node 中读取构建配置与仓库级门禁文件。 / English: @ts-nocheck -- This contract test needs to read the build configuration and warehouse-level access control files in Node.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import config from "../vite.config";
@@ -181,7 +181,7 @@ describe("production browser bootstrap contract", () => {
       [1_024, 600],
       [1_024, 768],
       [1_366, 1_024],
-      // 病态纵横比必须走等比黑边，不能为了填满而拉伸。
+      // 病态纵横比必须走等比黑边，不能为了填满而拉伸。 / English: The pathological aspect ratio must be proportional to the black border, and cannot be stretched to fill it up.
       [320, 1_000],
       [1_200, 300],
     ] as const) {

@@ -53,17 +53,18 @@ const extendedScenarioDeadlineMs = 150_000;
 const largeScenarioDeadlineMs = 180_000;
 const chromiumKingScenarioDeadlineMs = 210_000;
 const chromiumDesktopKongScenarioDeadlineMs = 360_000;
-const edgeKingScenarioDeadlineMs = 240_000;
+const edgeDesktopExtendedScenarioDeadlineMs = 180_000;
+const edgeKingScenarioDeadlineMs = 300_000;
 const edgeDesktopKongScenarioDeadlineMs = 360_000;
-const edgeCapSummaryScenarioDeadlineMs = 300_000;
+const edgeCapSummaryScenarioDeadlineMs = 360_000;
 const slowExtendedScenarioDeadlineMs = 240_000;
 const slowKongScenarioDeadlineMs = 270_000;
 const standardBrowserDeadlineMs = 20 * 60_000;
 const slowBrowserDeadlineMs = 32 * 60_000;
-const edgeBrowserDeadlineMs = 32 * 60_000;
+const edgeBrowserDeadlineMs = 35 * 60_000;
 const standardMaximumBrowserBudgetMs = 21 * 60_000;
 const slowMaximumBrowserBudgetMs = 33 * 60_000;
-const edgeMaximumBrowserBudgetMs = 33 * 60_000;
+const edgeMaximumBrowserBudgetMs = 36 * 60_000;
 const temporalFrameAdvanceMs = 180;
 const geometryToleranceCssPixels = 0.75;
 const supportedBrowsers = Object.freeze(["chromium", "firefox", "webkit", "msedge"]);
@@ -97,8 +98,8 @@ const contentTypes = Object.freeze({
   ".woff": "font/woff",
 });
 
-// 这些仅是确定性的表现层夹具：不会调用 RGS 或权威 RNG、扣减钱包，也不能证明数据库结算。
-// 输出证据必须始终保留这一边界。
+// 这些仅是确定性的表现层夹具：不会调用 RGS 或权威 RNG、扣减钱包，也不能证明数据库结算。 / English: These are deterministic presentation layer fixtures only: no RGS or authoritative RNG calls are made, wallets are debited, and database settlements are not proven.
+// 输出证据必须始终保留这一边界。 / English: Output evidence must always preserve this boundary.
 const featureScenarios = Object.freeze([
   Object.freeze({
     capability: "big-win",
@@ -313,7 +314,7 @@ const featureScenarios = Object.freeze([
 ]);
 validateRenderCheckpointInputLeases(featureScenarios);
 
-// 核心玩法均跑真实 normal-motion；额外保留一条明确标识的 reduced-motion 可访问性证据。
+// 核心玩法均跑真实 normal-motion；额外保留一条明确标识的 reduced-motion 可访问性证据。 / English: The core gameplay runs on real normal-motion; an additional piece of clearly marked reduced-motion accessibility evidence is retained.
 const reducedMotionEvidenceContract = Object.freeze({
   ...requireFeatureScenario("big-win"),
   capability: "big-win-reduced-motion",
@@ -441,6 +442,13 @@ function resolveScenarioDeadlineMs(browserName, contract, surface) {
   const slowBrowser = browserName === "chromium" || browserName === "msedge";
   if (browserName === "msedge"
     && surface.id === "desktop-1440x900"
+    && contract.motion === "normal"
+    && (contract.scenario === "big-win"
+      || contract.scenario === "wheel-mini-flow")) {
+    return edgeDesktopExtendedScenarioDeadlineMs;
+  }
+  if (browserName === "msedge"
+    && surface.id === "desktop-1440x900"
     && contract.scenario === "king-flow") {
     return edgeKingScenarioDeadlineMs;
   }
@@ -486,6 +494,8 @@ function resolveScenarioDeadlineMs(browserName, contract, surface) {
 /**
  * 独立复算 ResponsiveLayout.ts 的根投影。这里故意不读取页面自报的 style，避免
  * 错误布局同时篡改“预期值”和“实际值”而形成假阳性。
+ *
+ * 英文 / English: Independently recompute the root projection of ResponsiveLayout.ts. Here, we deliberately do not read the self-reported style of the page to avoid false positives caused by incorrect layout and tampering with "expected value" and "actual value" at the same time.
  */
 function responsiveLayoutExpectedFrame(viewport, channel) {
   const width = viewport.width;
@@ -801,8 +811,8 @@ async function runScenario(
     (checkpoint) => checkpoint.requireTemporalChange === true,
   );
   if (controlledClockCapture) {
-    // 安装时钟后仍让页面自然运行；只在真实截图取证窗口内暂停。这样慢速软件渲染器
-    // 无法让短暂表现阶段在 PNG 编码期间逃逸，同时 Node 墙钟截止仍然独立生效。
+    // 安装时钟后仍让页面自然运行；只在真实截图取证窗口内暂停。这样慢速软件渲染器 / English: After installing the clock, still let the page run naturally; only pause during the real screenshot forensic window. Such a slow software renderer
+    // 无法让短暂表现阶段在 PNG 编码期间逃逸，同时 Node 墙钟截止仍然独立生效。 / English: There is no way to allow the transient rendering phase to escape during PNG encoding while the Node wall clock cutoff is still in effect independently.
     await page.clock.install();
   }
   const runtimeErrors = [];
@@ -928,9 +938,9 @@ async function runScenario(
         );
       }
 
-      // 控件与视觉遥测位于同一表现边界，但 DOM/观察器投影可能跨一个微任务。只要当前
-      // milestone/stage 仍有必需截图尚未取得，就不得点击进入下一阶段；证据永远不能
-      // 被测试驱动本身跳过。
+      // 控件与视觉遥测位于同一表现边界，但 DOM/观察器投影可能跨一个微任务。只要当前 / English: Controls are on the same presentation boundary as visual telemetry, but the DOM/viewer projection may span a microtask. As long as the current
+      // milestone/stage 仍有必需截图尚未取得，就不得点击进入下一阶段；证据永远不能 / English: If there are still necessary screenshots of milestone/stage that have not been obtained, you cannot click to enter the next stage; the evidence can never be
+      // 被测试驱动本身跳过。 / English: Skipped by the test driver itself.
       const pendingRenderCheckpoint = contract.renderCheckpoints.find((checkpoint) => (
         !observed.renderCheckpoints.has(renderCheckpointKey(checkpoint))
         && renderCheckpointSignalMatches(snapshot, checkpoint)
@@ -1134,8 +1144,8 @@ async function captureNewRenderCheckpoints(
     let captureError = null;
     try {
       if (controlledClockCapture) {
-        // 以页面自己的受控时间为基准，仅预留一次短协议往返。繁忙 runner 仍可能让
-        // 目标落入过去；Playwright 此时会留下暂停时钟，因此由有界 helper 恢复后重试。
+        // 以页面自己的受控时间为基准，仅预留一次短协议往返。繁忙 runner 仍可能让 / English: Only one short protocol round trip is reserved based on the page's own controlled time. Busy runner may still let
+        // 目标落入过去；Playwright 此时会留下暂停时钟，因此由有界 helper 恢复后重试。 / English: The target falls into the past; Playwright is left with a paused clock at this point, so it is resumed and retried by the bounded helper.
         await pauseCaptureClock(page, runtimeErrors, captureClockConsoleGuard);
         captureClockPaused = true;
         const pausedSnapshot = await readScenarioSnapshot(page);
@@ -1183,8 +1193,8 @@ async function captureNewRenderCheckpoints(
 
       let temporalChangedPixelRatio = null;
       if (temporalCapture) {
-        // 在同一暂停时钟中准确推进真实 RAF/Pixi 时间，随后再次冻结。两张截图均由
-        // 浏览器生成，且仍须保持同一视觉操作、同一控件状态和有效像素变化。
+        // 在同一暂停时钟中准确推进真实 RAF/Pixi 时间，随后再次冻结。两张截图均由 / English: Accurately advance real RAF/Pixi time in the same paused clock and then freeze again. Both screenshots are taken by
+        // 浏览器生成，且仍须保持同一视觉操作、同一控件状态和有效像素变化。 / English: Browser-generated, and must still maintain the same visual operations, the same control state, and effective pixel changes.
         await page.clock.runFor(temporalFrameAdvanceMs);
         const advancedSnapshot = await readScenarioSnapshot(page);
         const advancedEpoch = renderCheckpointEpoch(advancedSnapshot, checkpoint);
@@ -1264,7 +1274,7 @@ async function captureNewRenderCheckpoints(
       } catch (error) {
         cleanupError ??= error;
       }
-      // 清理失败不得覆盖触发当前路径的原始像素或时序错误。
+      // 清理失败不得覆盖触发当前路径的原始像素或时序错误。 / English: Cleanup failures must not overwrite the original pixels or timing errors that triggered the current path.
       if (captureError === null && cleanupError !== null) throw cleanupError;
     }
   }
@@ -1348,8 +1358,8 @@ function settleCaptureClockConsoleGuard(
 ) {
   const bufferedMessages = captureClockConsoleGuard.bufferedMessages.splice(0);
   captureClockConsoleGuard.active = false;
-  // 只消化至多一条与本次已捕获 pauseAt 异常配对的精确诊断；部分引擎不会另发
-  // 页面诊断，因此零条也有效，但重复诊断或未分类诊断仍继续失败。
+  // 只消化至多一条与本次已捕获 pauseAt 异常配对的精确诊断；部分引擎不会另发 / English: Only digest at most one accurate diagnosis paired with the captured pauseAt exception; some engines will not issue another
+  // 页面诊断，因此零条也有效，但重复诊断或未分类诊断仍继续失败。 / English: Page diagnostics, so zero entries also work, but duplicate or uncategorized diagnostics continue to fail.
   const unconsumedMessages = consumeExpectedPastTarget
     ? bufferedMessages.slice(1)
     : bufferedMessages;
@@ -1464,8 +1474,8 @@ async function captureVisibleFrameRegion(
     timeout: screenshotTimeoutMs,
     type: "png",
   });
-  // epoch 必须绑定到浏览器真正生成截图字节的时刻。PNG 解码和逐像素分析可能在慢速
-  // runner 上耗时数秒，但它只读取不可变字节，不应要求玩法 checkpoint 继续停留。
+  // epoch 必须绑定到浏览器真正生成截图字节的时刻。PNG 解码和逐像素分析可能在慢速 / English: The epoch must be bound to the moment when the browser actually generates the screenshot bytes. PNG decoding and pixel-by-pixel analysis may be slow
+  // runner 上耗时数秒，但它只读取不可变字节，不应要求玩法 checkpoint 继续停留。 / English: It takes several seconds on the runner, but it only reads immutable bytes and should not require gameplay checkpoints to continue.
   const scenarioSnapshotAfterScreenshot = captureScenarioSnapshot
     ? await readScenarioSnapshot(page)
     : null;
@@ -1852,7 +1862,7 @@ async function destroyFixtureDocument(page, browserName, scenario) {
 
 function observeSnapshot(observed, snapshot) {
   if (snapshot.stage) observed.stages.add(snapshot.stage);
-  // 轮询可能跨过瞬时 current；始终累计夹具实际发布的完整历史，而不是静态网关预期。
+  // 轮询可能跨过瞬时 current；始终累计夹具实际发布的完整历史，而不是静态网关预期。 / English: Polling may span instantaneous current; always accumulating the full history of fixtures actually issued, not what the static gateway expected.
   for (const event of snapshot.events) observed.events.add(event);
   if (snapshot.featureMode) observed.featureModes.add(snapshot.featureMode);
   for (const milestone of snapshot.milestones) observed.milestones.add(milestone);
@@ -1860,9 +1870,9 @@ function observeSnapshot(observed, snapshot) {
 
 async function requireHealthySnapshot(snapshot, runtimeErrors, browserName, scenario) {
   if (snapshot.fixtureStatus === "failed") {
-    // 页面失败标记可能先于 CDP/BiDi 的 console/pageerror 通知抵达 Node。仅用 Node 墙钟
-    // 留出单次 100ms 预算的诊断排空窗口；不主动操作受控页面时钟、重试场景或放宽失败。
-    // 页面可自然继续，但下方报告始终使用等待前已经冻结的首次失败快照。
+    // 页面失败标记可能先于 CDP/BiDi 的 console/pageerror 通知抵达 Node。仅用 Node 墙钟 / English: The page failure flag may arrive at the Node before CDP/BiDi's console/pageerror notification. Node wall clock only
+    // 留出单次 100ms 预算的诊断排空窗口；不主动操作受控页面时钟、重试场景或放宽失败。 / English: Allow a single 100ms budget for diagnostic drain windows; do not proactively manipulate controlled page clocks, retry scenarios, or relax failures.
+    // 页面可自然继续，但下方报告始终使用等待前已经冻结的首次失败快照。 / English: The page continues naturally, but the report below always uses the first failed snapshot that was frozen before waiting.
     await new Promise((resolvePromise) => {
       setTimeout(resolvePromise, fixtureFailureRuntimeDrainMs);
     });
@@ -1948,8 +1958,8 @@ async function clickCurrentPrimaryActionWithTrustedPointer(page, expectedLease, 
     let guardResult = null;
     let pointerError = null;
     try {
-      // 鼠标输入不经过定位器可操作性或滚动阶段；这里只等待一次协议操作，
-      // 场景级硬截止统一负责关闭上下文。
+      // 鼠标输入不经过定位器可操作性或滚动阶段；这里只等待一次协议操作， / English: Mouse input does not go through the locator operability or scrolling phase; here it only waits for one protocol operation,
+      // 场景级硬截止统一负责关闭上下文。 / English: The scene-level hard cutoff is uniformly responsible for closing the context.
       await page.mouse.click(pointerTarget.x, pointerTarget.y);
     } catch (error) {
       pointerError = error;

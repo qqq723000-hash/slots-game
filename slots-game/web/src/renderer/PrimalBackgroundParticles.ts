@@ -124,7 +124,7 @@ interface Particle {
 
 type RandomSource = () => number;
 
-/** 捕获的 main_texture0 (10059.avif) 中的本机 1 级帧。 */
+/** 捕获的 main_texture0 (10059.avif) 中的本机 1 级帧。 / English: Captured native level 1 frame in main_texture0 (10059.avif). */
 export const PRIMAL_PARTICLE_ATLAS_REGIONS = Object.freeze({
   fire: Object.freeze({
     frame: Object.freeze({ x: 1_412, y: 792, width: 120, height: 120 }),
@@ -173,7 +173,7 @@ class WindRuntime {
 
   update(deltaMs: number, elapsedMs: number): void {
     for (let index = 0; index < this.spec.updateRepeats; index += 1) {
-      // 所有捕获的风都具有零延迟范围。保留经过的保护，以便运行时准确遵循源修改器的状态机。
+      // 所有捕获的风都具有零延迟范围。保留经过的保护，以便运行时准确遵循源修改器的状态机。 / English: All captured winds have zero latency range. Preserves passing protections so that the runtime accurately follows the source modifier's state machine.
       if (elapsedMs < this.startTimeMs) continue;
       this.currentPosition += deltaMs * this.currentSpeed * 0.05;
       if (this.currentPosition > 1_600) this.reset(elapsedMs);
@@ -452,7 +452,7 @@ class ParticleSystemRuntime {
   update(deltaMs: number): void {
     this.elapsedMs += deltaMs;
     for (const wind of this.winds) wind.update(deltaMs, this.elapsedMs);
-    // 池顺序是创作行为：snow 的共享 L 发射器故意提前 P0 -> P1 -> P2，而不是在一批中扇出。
+    // 池顺序是创作行为：snow 的共享 L 发射器故意提前 P0 -> P1 -> P2，而不是在一批中扇出。 / English: Pool ordering is an act of creation: snow's shared L emitter is deliberately advanced P0 -> P1 -> P2, rather than fanning out in a batch.
     for (const pool of this.pools) {
       pool.updateEmitters(deltaMs);
       pool.updateParticles(deltaMs);
@@ -493,6 +493,8 @@ class ParticleSystemRuntime {
  * 捕获 Primal Rampage 背景粒子运行时。
  *
  * 将此容器安装为预设的前台 Spine 的同级容器。该类拥有源阶段中心/规模、发射器节奏和固定池；调用者只需加载它，选择调色板并转发帧增量。
+ *
+ * 英文 / English: Capture Primal Rampage background particles while running. Install this container as a sibling of the default front-end Spine. This class holds the source stage center/scale, emitter cadence, and fixed pool; the caller simply loads it, selects the palette and forwards the frame delta.
  */
 export class PrimalBackgroundParticles extends Container {
   private readonly random: RandomSource;
@@ -550,7 +552,7 @@ export class PrimalBackgroundParticles extends Container {
         if (this.disposed) return;
         this.applyEmissionState();
       } catch (error) {
-        // 取消的部分构建永远不可重用。在清除缓存的 Promise 之前分离其容器，以便重试无法堆叠池。
+        // 取消的部分构建永远不可重用。在清除缓存的 Promise 之前分离其容器，以便重试无法堆叠池。 / English: Canceled partial builds can never be reused. Detach a cached Promise's container before clearing its container so that retries fail to stack the pool.
         if (!this.disposed && this.systems === systems) {
           for (const system of systems) {
             if (system.view.parent === this) this.removeChild(system.view);

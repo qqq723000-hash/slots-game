@@ -1,4 +1,4 @@
-// @ts-nocheck -- 发布门控会刻意在 Node 中校验不透明的 JSON 夹具。
+// @ts-nocheck -- 发布门控会刻意在 Node 中校验不透明的 JSON 夹具。 / English: @ts-nocheck -- Release gate intentionally checks opaque JSON fixtures in Node.
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";

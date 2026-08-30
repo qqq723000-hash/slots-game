@@ -1,5 +1,7 @@
 #!/bin/sh
 # 使用本地 JSON fixture 证明普通发布也会拒绝旧 delivery VersionId 与内容漂移。
+# English: Use local JSON fixture to demonstrate that normal releases also reject old delivery VersionIds with
+# content drift.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

@@ -30,6 +30,8 @@ function canonicalPositiveInt64(value, name) {
 /**
  * 发布构建在 Vite 内联配置前校验全部非秘密 RGS 参数。错误只报告字段契约，
  * 禁止回显配置值，以免未来字段演进时把宿主信息带入构建日志。
+ *
+ * 英文 / English: Release builds verify all non-secret RGS parameters before Vite inline configuration. Errors only report field contracts, and echoing of configuration values ​​is prohibited to avoid bringing host information into the build log when fields evolve in the future.
  */
 export function validateReleaseRgsBuildEnvironment(environment) {
   const baseUrl = required(environment, "VITE_RGS_BASE_URL");

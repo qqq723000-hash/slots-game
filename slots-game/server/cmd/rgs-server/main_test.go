@@ -949,6 +949,8 @@ func TestObserveRequestsBoundsRepeatedSampledSuccess(t *testing.T) {
 	for range requests {
 		request := httptest.NewRequest(http.MethodPost, rgsapi.ClientSpinPath, nil)
 		// 重复一个已命中确定性采样的攻击者可控 ID；采样决定不能成为无限日志许可。
+		// English: Repeat an attacker-controllable ID that has hit deterministic sampling; sampling decisions cannot be
+		// unlimited log permissions.
 		request.Header.Set(operator.HeaderRequestID, "req-replayed-sampled")
 		handler.ServeHTTP(httptest.NewRecorder(), request)
 	}

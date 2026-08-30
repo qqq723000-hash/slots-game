@@ -1,9 +1,13 @@
-# 部署入口
+# Deployment entry points / 部署入口
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+AWS is the only target production reference architecture defined by this project, while this directory also contains the application containers, Helm delivery, local integration fixture, observability contracts, and supply-chain gates. Runtime and migrator identities are separated, required dependencies fail closed, and secrets, private keys, tokens, DSNs, and release approvals must not enter Git, image layers, public build arguments, URLs, or logs. Local Compose, CI fixtures, example values, and repository contracts are not proof that the adopter's database, wallet, key, audit, monitoring, recovery, or cloud controls are provisioned and accepted.
 
 AWS 是本项目定义的唯一目标生产参考架构。本目录交付应用容器、Helm Chart、本机集成夹具、可观测性契约和
 供应链门禁；它不虚构已经创建的云账号、VPC、EKS、RDS、S3、CloudFront、WAF、IAM 或监控

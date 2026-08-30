@@ -137,24 +137,26 @@ export interface PersistentFeatureVisualPlan {
 }
 
 export interface PixiRendererOptions {
-  /** 仅在“就绪”手势后采样的装饰 Wheel 偏移源。 */
+  /** 仅在“就绪”手势后采样的装饰 Wheel 偏移源。 / English: Decorative Wheel offset source sampled only after the Ready gesture. */
   readonly wheelStopOffsetSource?: WheelStopOffsetSource;
-  /** 仅限化妆品 COLLECT 身体选择器；生产样品Math.random一次。 */
+  /** 仅限化妆品 COLLECT 身体选择器；生产样品Math.random一次。 / English: Cosmetic COLLECT body selector only; produces sample Math.random once. */
   readonly characterCollectRandomSource?: CharacterCollectRandomSource;
-  /** 仅供测试夹具使用的装饰性排列来源；不能选择结果格子。 */
+  /** 仅供测试夹具使用的装饰性排列来源；不能选择结果格子。 / English: Decorative arrangement source for test fixtures only; results grid cannot be selected. */
   readonly rageCascadeCellOrderSource?: RageCascadeCellOrderSource;
   /**
    * 初始帧缓冲区尺寸。移动设备/平板电脑启动提供其物理视口，因此 Pixi 永远不会分配然后丢弃 1280x720。
+   *
+   * 英文 / English: Initial framebuffer size. Mobile devices/tablets start providing their physical viewport, so Pixi never allocates and then discards 1280x720.
    */
   readonly initialSize?: Readonly<{ width: number; height: number }>;
-  /** 可注入的纯装饰 Big Win 粒子策略；`frameFusePolicy: null` 保留逐帧捕获基线。 */
+  /** 可注入的纯装饰 Big Win 粒子策略；`frameFusePolicy: null` 保留逐帧捕获基线。 / English: Injectable purely decorative Big Win particle policy; `frameFusePolicy: null` preserves the frame-by-frame capture baseline. */
   readonly bigWinCoinShowerOptions?: BigWinCoinShowerOptions;
 }
 
 export interface PixiRendererStagedCreateOptions {
   readonly signal?: AbortSignal;
   readonly requestFrame?: FrameRequest;
-  /** 构建进度；一个是为完全连线的渲染器保留的。 */
+  /** 构建进度；一个是为完全连线的渲染器保留的。 / English: Build progress; one is reserved for fully wired renderers. */
   readonly onProgress?: (fraction: number) => void;
   readonly onStage?: (event: Readonly<StagedComponentConstructionEvent>) => void;
 }
@@ -252,6 +254,8 @@ export function resolveInitialRendererSize(
 /**
  * Primal 的启动材质规则使用的 Pixi 的 WebGL 渲染器状态的小型公众视图。  Pixi 6 在其声明中保留 `blendModes` 的保护，
  * 即使官方客户端故意覆盖其 ADD 条目。
+ *
+ * 英文 / English: A small public view of Pixi's WebGL renderer state used by Primal's startup material rules. Pixi 6 retains the protection of `blendModes` in its declaration, even if the official client intentionally overrides its ADD entries.
  */
 export interface PrimalAdditiveBlendRenderer {
   readonly gl?: Readonly<{
@@ -270,7 +274,7 @@ export interface PrimalAdditiveBlendRenderer {
   };
 }
 
-/** Pixi 6 的渲染器 `contextChange` 运行器使用的监听器形状。 */
+/** Pixi 6 的渲染器 `contextChange` 运行器使用的监听器形状。 / English: The listener shape used by Pixi 6's renderer `contextChange` runner. */
 export interface PrimalAdditiveBlendContextListener {
   contextChange(): void;
 }
@@ -283,6 +287,8 @@ export interface PrimalAdditiveBlendContextListener {
  * 当滤镜纹理合成回场景时，全黑零区域将变成不透明矩形。
  *
  * 防御形状可以让没有 WebGL 的单元/服务器环境安全地跳过规则；应用程序构建后，浏览器游戏逻辑始终具有这两个值。
+ *
+ * 英文 / English: Installs the global ADD compound rules of the original game. `GameMainGameView.start()` in the captured desktop package replaces Pixi's default ADD tuple (`ONE, ONE`) with `SRC_ALPHA, ONE, ZERO, ONE`. Primal's default `add/*` gallery page is an opaque RGB black-to-zero image. It is crucial to maintain the target alpha when rendering such a page into a filter texture: otherwise, when the filter texture is composited back into the scene, the completely black zero areas will become opaque rectangles. Defensive shapes allow cell/server environments without WebGL to safely skip rules; the browser game logic always has these two values ​​after the application is built.
  */
 export function installPrimalAdditiveBlendMode(
   renderer: PrimalAdditiveBlendRenderer | null | undefined,
@@ -301,6 +307,8 @@ export function installPrimalAdditiveBlendMode(
 /**
  * Pixi 在 WebGL 上下文恢复后重建 `state.blendModes`。在确切的生命周期边界重新应用捕获的 Primal 元组，
  * 而不是希望稍后的游戏效果会重新创建渲染器。
+ *
+ * 英文 / English: Pixi rebuilds `state.blendModes` after WebGL context is restored. Reapply the captured Primal tuple at the exact lifetime boundary rather than hoping that a later game effect will recreate the renderer.
  */
 export function createPrimalAdditiveBlendContextListener(
   renderer: PrimalAdditiveBlendRenderer,
@@ -322,7 +330,7 @@ export interface AuthoredSymbolClipReadiness {
   readonly win: boolean;
 }
 
-/** 发出严格的每功能准备情况，而不根据需要处理纯功能剪辑。 */
+/** 发出严格的每功能准备情况，而不根据需要处理纯功能剪辑。 / English: Issue strict per-feature readiness without processing purely feature clips as needed. */
 export function reportAuthoredSymbolClipReadiness(
   reporter: VisualTelemetryReporter,
   gaps: AuthoredSymbolRequiredClipGaps,
@@ -432,6 +440,8 @@ export function characterReelStructurePlan(
 /**
  * 捕获的 KONG_QUEST_INTRO/KING_SPIN_INTRO 处理程序仅添加其调色板和光环。两者都保留 LOOP_FEATURE，
  * 直到真正的 Kong Quest 高度增加分派 REEL_STRETCH 并将身体转换为 LOOP_KQ。
+ *
+ * 英文 / English: The captured KONG_QUEST_INTRO/KING_SPIN_INTRO handler only adds its palette and halo. Both retain LOOP_FEATURE until the real Kong Quest height increase dispatches REEL_STRETCH and converts the body to LOOP_KQ.
  */
 export function featureIntroCharacterPresentation(
   mode: Exclude<FeatureState["mode"], "BASE">,
@@ -469,7 +479,7 @@ export function persistentFeatureVisualPlan(
   };
 }
 
-/** 只有服务器寻址的免费 Spin 保险库可以运行预设的激活。 */
+/** 只有服务器寻址的免费 Spin 保险库可以运行预设的激活。 / English: Only server-addressed free Spin vaults can run scheduled activations. */
 export function vaultFreeSpinActivationCells(
   events: readonly Readonly<FreeSpinAwardedEvent>[],
 ): readonly CellAddress[] {
@@ -480,7 +490,7 @@ export function vaultFreeSpinActivationCells(
   ));
 }
 
-/** 转换一组权威的 Vault 目标集，无需创建层级。 */
+/** 转换一组权威的 Vault 目标集，无需创建层级。 / English: Convert an authoritative set of Vault targets without creating a hierarchy. */
 export function vaultJackpotMutationTiers(
   events: readonly Readonly<{ prize?: string }>[],
 ): readonly JackpotTier[] {
@@ -492,7 +502,7 @@ export function vaultJackpotMutationTiers(
   return [...tiers];
 }
 
-/** 针对部分/旧协议的向后兼容的最终奖励预测。 */
+/** 针对部分/旧协议的向后兼容的最终奖励预测。 / English: Backwards compatible final reward predictions for partial/old protocols. */
 export function vaultJackpotAwardTiers(
   events: readonly Readonly<VaultAwardedEvent>[],
 ): readonly JackpotTier[] {
@@ -547,13 +557,15 @@ export class PixiRenderer {
   private vaultAwardResolvedCount = 0;
   private readonly pendingVaultAwardTiers = new Set<JackpotTier>();
   private readonly vaultMutationPrizeByCell = new Map<string, string>();
-  /** 保留直至正版Wheel登陆；从不驱动服务器状态。 */
+  /** 保留直至正版Wheel登陆；从不驱动服务器状态。 / English: Keep it until the genuine Wheel is logged in; never drive the server state. */
   private pendingWheelAward: WheelAwardedEvent | null = null;
   private pendingFeatureExit: Promise<void> | null = null;
   /**
    * Pixi 6 独占帧缓冲量化：round(logical * DPR)。单独保留连续请求值，因为
    * renderer.screen 返回量化后的 backing/DPR，不能直接与带小数的设计表面比较
    * 来判断 resize 幂等性。
+   *
+   * 英文 / English: Pixi 6 exclusive framebuffer quantization: round(logical * DPR). Keep the continuous request value alone, because renderer.screen returns the quantized backing/DPR and cannot be directly compared with the design surface with decimals to determine the idempotence of resize.
    */
   private rendererRequestedWidth = Number.NaN;
   private rendererRequestedHeight = Number.NaN;
@@ -577,7 +589,7 @@ export class PixiRenderer {
     });
   }
 
-  /** 仅浏览器捕获诊断；从不提供渲染或游戏状态。 */
+  /** 仅浏览器捕获诊断；从不提供渲染或游戏状态。 / English: Only the browser captures diagnostics; rendering or game state is never provided. */
   getReelCabinetCompositionDiagnostics(): ReturnType<
     ReelSetView["getCabinetCompositionDiagnostics"]
   > & {
@@ -635,13 +647,13 @@ export class PixiRenderer {
     const resolution = Math.min(globalThis.devicePixelRatio || 1, 2);
     this.reels.setPerspectiveCoordinateScale(resolution);
     this.anticipation.setPerspectiveCoordinateScale(resolution);
-    // 在任何预设的不透明添加剂 Spine 页面可以进入过滤器渲染目标之前，保持 Pixi 的 ADD 状态与 GameMainGameView 逐字节对齐。
+    // 在任何预设的不透明添加剂 Spine 页面可以进入过滤器渲染目标之前，保持 Pixi 的 ADD 状态与 GameMainGameView 逐字节对齐。 / English: Keeps the Pixi's ADD state aligned byte-by-byte with the GameMainGameView before any of the preset opaque additive Spine pages can enter the filter render target.
     const additiveBlendRenderer = this.app.renderer as unknown as PrimalAdditiveBlendRenderer;
     installPrimalAdditiveBlendMode(additiveBlendRenderer);
     this.additiveBlendContextListener = createPrimalAdditiveBlendContextListener(
       additiveBlendRenderer,
     );
-    // 每当 WebGL 恢复时，StateSystem 都会重新创建混合模式表。它已经在此侦听器之前注册，因此在重置之后和下一个预设的 Spine 帧之前重新应用原始元组。
+    // 每当 WebGL 恢复时，StateSystem 都会重新创建混合模式表。它已经在此侦听器之前注册，因此在重置之后和下一个预设的 Spine 帧之前重新应用原始元组。 / English: The StateSystem re-creates the blend mode table whenever WebGL resumes. It has been registered before this listener, so the original tuple is reapplied after the reset and before the next preset Spine frame.
     additiveBlendRenderer.runners?.contextChange?.add(this.additiveBlendContextListener);
     this.app.view.setAttribute("aria-label", "Primal Rampage VideoSlot reels");
     this.app.view.setAttribute("role", "img");
@@ -661,7 +673,7 @@ export class PixiRenderer {
       this.anticipation,
     );
     this.launchScene.setReducedMotion(this.reducedMotion?.matches ?? false);
-    // 不透明的附加预期图集无法展平为 Pixi 的正常卷轴目标。其独立透视通道复合为 ADD，保持 RGB 黑色等于 0，同时保留原始同级顺序。
+    // 不透明的附加预期图集无法展平为 Pixi 的正常卷轴目标。其独立透视通道复合为 ADD，保持 RGB 黑色等于 0，同时保留原始同级顺序。 / English: Opaque additional expected atlases cannot be flattened to Pixi's normal reel targets. Its independent perspective channels are composited to ADD, keeping RGB black equal to 0 while preserving the original sibling order.
     this.syncAnticipationComposition();
     this.featureEffects = new FeatureEffects(
       this.camera.fxLayer,
@@ -689,7 +701,7 @@ export class PixiRenderer {
         onWheelInputReadyCheckpoint: () => (
           this.featurePresentationSemanticCheckpointListener?.("wheel.input-ready")
         ),
-        // `onWheelSpinStart`仅在玩家确认Wheel后才会发出。  在此输入边界上保持累积奖金重置：原始塔故意保留其先前的状态，而 Wheel 简介可见并等待输入。
+        // `onWheelSpinStart`仅在玩家确认Wheel后才会发出。  在此输入边界上保持累积奖金重置：原始塔故意保留其先前的状态，而 Wheel 简介可见并等待输入。 / English: `onWheelSpinStart` will only be emitted after the player confirms the Wheel. Keep the jackpot reset on this input boundary: the original tower intentionally retains its previous state, while the Wheel profile is visible and waiting for input.
         onWheelSpinStart: () => this.beginWheelSpinPresentation(),
         onWheelSpinStartCheckpoint: () => this.onWheelSpinStartCheckpoint(),
         onWheelQuickStop: () => {
@@ -760,8 +772,8 @@ export class PixiRenderer {
       this.visualTelemetry,
       options.rageCascadeCellOrderSource,
     );
-    // `main.reel.winLabelOverlay` 是前景卷轴覆盖。在接管/正常中奖视图之后添加它，这样一旦 Wheel 场景释放，空的较高兄弟就无法埋葬持有的大师中奖板。
-    // 分阶段业主可能已在 FeatureEffects 之前建造。重新添加确切的最终同级以确定性地恢复原始 FX 顺序。
+    // `main.reel.winLabelOverlay` 是前景卷轴覆盖。在接管/正常中奖视图之后添加它，这样一旦 Wheel 场景释放，空的较高兄弟就无法埋葬持有的大师中奖板。 / English: `main.reel.winLabelOverlay` is the foreground scroll overlay. Add this after the takeover/normal win view so that the empty higher brother cannot bury the held master win board once the Wheel scene is released.
+    // 分阶段业主可能已在 FeatureEffects 之前建造。重新添加确切的最终同级以确定性地恢复原始 FX 顺序。 / English: Staging owners may have built before FeatureEffects. Re-adding the exact final siblings deterministically restores the original FX order.
     this.camera.fxLayer.addChild(
       this.featureEffects.view,
       this.winCelebration.view,
@@ -793,6 +805,8 @@ export class PixiRenderer {
   /**
    * 跨多个已绘制帧构造最终渲染组件，再把这些确切实例交给同步连接的 PixiRenderer。
    * 不会构建后丢弃任何预检组件。
+   *
+   * 英文 / English: Constructs the final render component across multiple drawn frames and hands these exact instances to a synchronously connected PixiRenderer. No preflight components will be discarded after the build.
    */
   static async createStaged(
     host: HTMLElement,
@@ -1040,7 +1054,7 @@ export class PixiRenderer {
       () => !this.destroyed && options.signal?.aborted !== true,
     );
     this.assertLaunchActive(options.signal);
-    // 解析图集还没有准备好：将加载器后面的每个固定的 3x8 Spine 视图实例化为有界的、可取消的帧切片。
+    // 解析图集还没有准备好：将加载器后面的每个固定的 3x8 Spine 视图实例化为有界的、可取消的帧切片。 / English: Parsing the atlas is not yet ready: Instantiate each fixed 3x8 Spine view behind the loader as a bounded, cancelable frame slice.
     try {
       await this.reels.setAuthoredSymbolsEnabledFrameSliced(hasAuthoredSymbols, {
         signal: options.signal,
@@ -1096,7 +1110,7 @@ export class PixiRenderer {
     this.visualTelemetry?.setListener(listener);
   }
 
-  /** 只读表现 owner 计数，供同文档销毁门禁核对真实 reporter 终态。 */
+  /** 只读表现 owner 计数，供同文档销毁门禁核对真实 reporter 终态。 / English: Read-only display owner count, for checking the real reporter final state with the same document destruction access control. */
   getVisualTelemetryActiveCount(): number {
     return this.visualTelemetry.activeCount;
   }
@@ -1105,7 +1119,7 @@ export class PixiRenderer {
     descriptor: VisualTelemetryDescriptor,
     failure: Parameters<VisualTelemetryReporter["failedToStart"]>[1],
   ): void {
-    // 仅原型渲染器调用和部分构造后的拆卸路径会刻意省略观察者；遥测必须保持故障开放。
+    // 仅原型渲染器调用和部分构造后的拆卸路径会刻意省略观察者；遥测必须保持故障开放。 / English: Only prototype renderer calls and partially constructed teardown paths intentionally omit observers; telemetry must remain fault-open.
     this.visualTelemetry?.failedToStart(descriptor, failure);
   }
 
@@ -1138,7 +1152,7 @@ export class PixiRenderer {
     try {
       random = this.characterCollectRandomSource();
     } catch {
-      // 外观测试源无法中断已接受的功能事件。
+      // 外观测试源无法中断已接受的功能事件。 / English: Cosmetic test sources cannot interrupt accepted functional events.
       random = Math.random();
     }
     const bodyClip = characterCollectAnimationForRandom(random);
@@ -1213,7 +1227,7 @@ export class PixiRenderer {
     this.syncAnticipationComposition();
   }
 
-  /** 将一个不可变的桌面/移动快照路由到每个独立布局的 Z 层。 */
+  /** 将一个不可变的桌面/移动快照路由到每个独立布局的 Z 层。 / English: Route an immutable desktop/mobile snapshot to the Z layer of each independent layout. */
   setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
     this.featurePreview.setResponsiveLayout(snapshot);
     this.freeSpinHud.setResponsiveLayout(snapshot);
@@ -1305,7 +1319,7 @@ export class PixiRenderer {
     this.jackpotTower.setBet(betMinor);
   }
 
-  /** 将一次会话交换的同一不可变格式器同步给所有 Pixi 金额表面。 */
+  /** 将一次会话交换的同一不可变格式器同步给所有 Pixi 金额表面。 / English: Sync the same immutable formatter exchanged within a session to all Pixi amount surfaces. */
   setMoneyDisplayBinding(binding: Readonly<MoneyDisplayBinding>): void {
     const formatter = createMinorUnitFormatter(binding);
     this.jackpotTower.setMoneyFormatter(formatter);
@@ -1329,6 +1343,8 @@ export class PixiRenderer {
   /**
    * 在权威事件进入可见状态前，把目标包的已验证 bytes 原子交给对应消费者。
    * 依赖包仍由外层 StreamingAssetEventLease 保持，不在这里重复请求。
+   *
+   * 英文 / English: Before the authoritative event enters the visible state, the verified bytes atom of the target package is handed over to the corresponding consumer. Dependent packages are still maintained by the outer StreamingAssetEventLease and are not requested repeatedly here.
    */
   async adoptVerifiedFeatureArtwork(
     kind: VerifiedFeatureArtworkKind,
@@ -1389,8 +1405,8 @@ export class PixiRenderer {
     state: FeatureState,
     reducedMotion = false,
   ): Promise<void> {
-    // 在创建任何跟踪源/目标对之前，
-    // 捕获的 startDelayLaunchTrails 在每个解析的免费 Spin Vault 上调用 playVaultUnlockExtraFS。
+    // 在创建任何跟踪源/目标对之前， / English: Before creating any tracking source/target pairs,
+    // 捕获的 startDelayLaunchTrails 在每个解析的免费 Spin Vault 上调用 playVaultUnlockExtraFS。 / English: Captured startDelayLaunchTrails calls playVaultUnlockExtraFS on each resolved free Spin Vault.
     for (const address of vaultFreeSpinActivationCells(events)) {
       this.reels.playVaultFreeSpinActivation(address);
     }
@@ -1423,6 +1439,8 @@ export class PixiRenderer {
   /**
    * 镜像突变开始时的一个 GameJackpotController.instantWin 调用。升级事件仅包含更改的单元格，
    * 因此保留已寻址的目标面并在突出显示之前重建完整的当前 Vault 集。
+   *
+   * 英文 / English: A GameJackpotController.instantWin call at the beginning of the mirror mutation. Promotion events only contain changed cells, thus preserving the addressed target face and rebuilding the complete current vault set before highlighting.
    */
   highlightVaultMutationBatch(
     events: readonly Readonly<VaultUnlockedEvent | VaultUpgradedEvent>[],
@@ -1469,12 +1487,12 @@ export class PixiRenderer {
     }
   }
 
-  /** SCATTER_FEATURE_ACTIVATE 将 ape 和所有三个 Symbol7 夹子一起驱动。 */
+  /** SCATTER_FEATURE_ACTIVATE 将 ape 和所有三个 Symbol7 夹子一起驱动。 / English: SCATTER_FEATURE_ACTIVATE drives ape with all three Symbol7 clips. */
   playPostStopSurgeActivation(): void {
     this.playCharacterAnimation("feature_activation", "surge.post-stop-activation");
   }
 
-  /** 应用 PPS EVOLVE 而不重置角色身体动画。 */
+  /** 应用 PPS EVOLVE 而不重置角色身体动画。 / English: Apply PPS EVOLVE without resetting character body animation. */
   setRageAuraLevel(level: number): void {
     this.launchScene.setCharacterAuraLevel(level > 1 ? level : null);
   }
@@ -1543,11 +1561,11 @@ export class PixiRenderer {
     try {
       await listener(milestone);
     } catch {
-      // 只读捕获观察者无法中断预设的时钟。
+      // 只读捕获观察者无法中断预设的时钟。 / English: Read-only capture observers cannot interrupt the scheduled clock.
     }
   }
 
-  /** 保存级联控制器及其字符/帧/符号 Spine 时钟。 */
+  /** 保存级联控制器及其字符/帧/符号 Spine 时钟。 / English: Save the cascade controller and its character/frame/symbol spine clock. */
   setRageCascadePresentationPaused(active: boolean): void {
     if (this.rageCascadePresentationPaused === active) return;
     this.rageCascadePresentationPaused = active;
@@ -1560,12 +1578,14 @@ export class PixiRenderer {
     try {
       this.rageCascadePresentationMilestoneListener?.(milestone);
     } catch {
-      // 诊断观察者无法更改预设的级联状态机。
+      // 诊断观察者无法更改预设的级联状态机。 / English: Diagnostic observers cannot change the default cascade state machine.
     }
   }
 
   /**
    * 确定性的屏幕截图接口。它仅暂停活动的 Rage 源、收集线索、角色、大奖反应及其本地生命周期。
+   *
+   * 英文 / English: Deterministic screenshot interface. It only pauses the active Rage source, collecting clues, characters, jackpot reactions and their local lifecycle.
    */
   setRageCollectionPresentationPaused(active: boolean): void {
     if (this.rageCollectionPresentationPaused === active) return;
@@ -1586,7 +1606,7 @@ export class PixiRenderer {
     try {
       this.rageCollectionPresentationMilestoneListener?.(presentation);
     } catch {
-      // 诊断观察者无法更改集合状态机。
+      // 诊断观察者无法更改集合状态机。 / English: Diagnostic observers cannot change the collective state machine.
     }
     if (milestone.phase === "complete") this.activeRageCollectionCharacter = null;
   }
@@ -1595,11 +1615,11 @@ export class PixiRenderer {
     try {
       this.featurePresentationBranchListener?.(Object.freeze(branch));
     } catch {
-      // 诊断观察者不能中断预设的呈现门。
+      // 诊断观察者不能中断预设的呈现门。 / English: Diagnostic observers cannot interrupt preset presentation gates.
     }
   }
 
-  /** 将唯一的 H+500 切换映射到 B 层及其语义观察者接口上。 */
+  /** 将唯一的 H+500 切换映射到 B 层及其语义观察者接口上。 / English: Map the unique H+500 toggle onto layer B and its semantic observer interface. */
   private presentWheelBonusLabel(
     event: InstantWheelAwardedEvent,
     reducedMotion: boolean,
@@ -1688,7 +1708,7 @@ export class PixiRenderer {
         ["textures", splitGpuWarmupTargets(warmup, 1)],
         ["far", splitGpuWarmupTargets(this.camera.farLayer, 1)],
         ["terrain", splitGpuWarmupTargets(this.camera.terrainLayer, 1)],
-        // 上面已经隔离了每个图集。图形传递现在保持在组件粒度，因此数百个 Spine 插槽不会各自产生自己的准备插件调度周期。
+        // 上面已经隔离了每个图集。图形传递现在保持在组件粒度，因此数百个 Spine 插槽不会各自产生自己的准备插件调度周期。 / English: Each gallery has been isolated above. Graph delivery is now kept at component granularity, so hundreds of Spine slots don't each generate their own prepare plugin dispatch cycles.
         ["actor", splitGpuWarmupTargets(this.camera.actorLayer, 1)],
         ["foreground", splitGpuWarmupTargets(this.camera.foregroundLayer, 1)],
         ["game", splitGpuWarmupTargets(this.camera.gameLayer, 2)],
@@ -1730,7 +1750,7 @@ export class PixiRenderer {
               slowUploads = retainSlowGpuWarmupUploads(slowUploads, diagnostic);
               if (root) root.dataset.startupGpuSlowUploads = JSON.stringify(slowUploads);
             } catch {
-              // 诊断是只读的，绝不能将成功的 GPU 上传变成异常 Pixi 资源上的失败启动。
+              // 诊断是只读的，绝不能将成功的 GPU 上传变成异常 Pixi 资源上的失败启动。 / English: Diagnostics are read-only and must not turn a successful GPU upload into a failed launch on an abnormal Pixi resource.
             }
             options.onProgress?.(0.05 + (index + 1) / prepareTargets.length * 0.5);
           },
@@ -1804,17 +1824,19 @@ export class PixiRenderer {
 
   /**
    * 仅限化妆品。使用解码后的 `spin.result.wins` 调用此函数；空列表将被忽略，并且此处不计算支付、网格或功能状态。
+   *
+   * 英文 / English: Cosmetics only. Call this function with the decoded `spin.result.wins`; empty lists are ignored and no payouts, grids or feature states are calculated here.
    */
   reactToWin(wins: readonly Win[], presentation: CharacterWinPresentation): Promise<void> {
     if (wins.length === 0) return Promise.resolve();
     this.gameLogo.win();
     this.launchScene.setCharacterBodyContinuation(presentation, false);
     this.playCharacterAnimation("win", "win.presented");
-    // 活动的 Primal 后台控制器没有普通的 WIN 侦听器。城市脉冲和闪电仅属于预设的特征反应。
+    // 活动的 Primal 后台控制器没有普通的 WIN 侦听器。城市脉冲和闪电仅属于预设的特征反应。 / English: The active Primal background controller does not have a normal WIN listener. City Pulse and Lightning are just preset characteristic responses.
     return Promise.resolve();
   }
 
-  /** 在与发布 HUD 相同的里程碑处开始预设 Spine 时间表。 */
+  /** 在与发布 HUD 相同的里程碑处开始预设 Spine 时间表。 / English: Start the preset Spine schedule at the same milestone as publishing the HUD. */
   cueIntro(cue: string): void {
     switch (cue) {
       case "city.establish":
@@ -1840,13 +1862,13 @@ export class PixiRenderer {
         }) ?? null;
         return;
       case "hud.reveal":
-        // 官方角色光环在 4.7 秒时通过 HUD 释放，然后通过介绍到空闲切换保持驻留。 LaunchScene 拥有幂等性保护，因此重复的装饰提示无法重新启动预设的光环/粒子轨道。
+        // 官方角色光环在 4.7 秒时通过 HUD 释放，然后通过介绍到空闲切换保持驻留。 LaunchScene 拥有幂等性保护，因此重复的装饰提示无法重新启动预设的光环/粒子轨道。 / English: The official character aura releases via the HUD at 4.7 seconds and then remains resident through the intro to idle switch. LaunchScene has idempotence protection, so repeated decoration hints cannot restart the preset halo/particle track.
         this.launchScene.releaseAuthoredIntroAura();
         return;
     }
   }
 
-  /** 将背景、前景、人物和介绍标志保留在一个时钟上。 */
+  /** 将背景、前景、人物和介绍标志保留在一个时钟上。 / English: Keep the background, foreground, characters and intro logo on one clock. */
   seekAuthoredIntro(timeMs: number): void {
     this.backdrop.seekAuthoredIntro(timeMs);
     this.launchScene.seekAuthoredIntro(timeMs);
@@ -1872,7 +1894,7 @@ export class PixiRenderer {
     else this.gameLogo.hide(true);
   }
 
-  /** 开始不依赖结果的转轴运动及其轻量氛围效果。 */
+  /** 开始不依赖结果的转轴运动及其轻量氛围效果。 / English: Get started with outcome-free pivot motion and its lightweight atmospheric effects. */
   beginSpinPresentation(reducedMotion = false): void {
     this.wheelBonusWinLabel.hide(reducedMotion);
     this.jackpotTower.resetPanelAnimations();
@@ -1883,6 +1905,8 @@ export class PixiRenderer {
 
   /**
    * 镜像 GamePrimalWheelEvent.BEGIN_SPIN，由真正的 Wheel 控件调度，而不是由 Wheel 场景的介绍/就绪过渡调度。
+   *
+   * 英文 / English: Mirrors GamePrimalWheelEvent.BEGIN_SPIN, dispatched by the real Wheel control rather than by the Wheel scene's intro/ready transition.
    */
   private beginWheelSpinPresentation(): void {
     this.jackpotTower.resetPanelAnimations();
@@ -1894,6 +1918,8 @@ export class PixiRenderer {
   /**
    * 仅供测试夹具使用的 S0 栅栏。它位于已发出的旋转启动里程碑之后，
    * 用于证明捶胸效果负责人已先安装；正常生产没有监听器，因此会同步通过。
+   *
+   * 英文 / English: S0 fence for test fixture use only. It is located after the issued spin start milestone and is used to prove that the chest-thumping effect owner has been installed first; normal production does not have a listener, so it will pass synchronously.
    */
   private onWheelSpinStartCheckpoint(): void | Promise<void> {
     return this.featurePresentationSemanticCheckpointListener?.("wheel.chest-loop-start");
@@ -1902,55 +1928,57 @@ export class PixiRenderer {
   /**
    * Free-Spin 简介 CONTINUE_SPIN 是原始 FREESPIN_START → startOutro 过渡的本地等效项。在这个精确的输入帧上恢复塔，
    * 而不是在简介可见并等待时恢复。
+   *
+   * 英文 / English: Free-Spin Introduction CONTINUE_SPIN is the native equivalent of the original FREESPIN_START → startOutro transition. Restore the tower on this exact input frame, rather than when the intro is visible and wait.
    */
   private beginFreeSpinsPlayPresentation(): void {
     this.jackpotTower.resetPanelAnimations();
     this.featurePresentationMilestoneListener?.("free-spins.continue");
   }
 
-  /** 仅测试页姿势调节；生产 Spin 从未调用此接口。 */
+  /** 仅测试页姿势调节；生产 Spin 从未调用此接口。 / English: Test page pose adjustment only; production Spin never calls this interface. */
   prepareNeutralCharacterCapture(): boolean {
     return this.launchScene.prepareNeutralBaseCapture();
   }
 
-  /** 只读浏览器测试夹具的只读证据；从不提供游戏逻辑或渲染。 */
+  /** 只读浏览器测试夹具的只读证据；从不提供游戏逻辑或渲染。 / English: Read-only evidence of the browser test fixture; never provides game logic or rendering. */
   getCharacterCaptureDiagnostics(): ReturnType<LaunchScene["getCharacterTrackDiagnostics"]> {
     return this.launchScene.getCharacterTrackDiagnostics();
   }
 
-  /** 仅完成一个活跃的准备后介绍尾部以减少动作变化。 */
+  /** 仅完成一个活跃的准备后介绍尾部以减少动作变化。 / English: Introduce the tail only after completing an active preparation to reduce movement variations. */
   completeActiveCharacterIntroForReducedMotion(): boolean {
     return this.launchScene.completeActiveCharacterIntroForReducedMotion();
   }
 
-  /** 浏览器固定时钟保持；从不参与生产状态。 */
+  /** 浏览器固定时钟保持；从不参与生产状态。 / English: The browser keeps a fixed clock; never participates in production state. */
   setCharacterIntroCapturePaused(paused: boolean): boolean {
     return this.launchScene.setCharacterIntroCapturePaused(paused);
   }
 
-  /** 精确的 Base WIN Character 仅由捕获测试场景使用的步骤。 */
+  /** 精确的 Base WIN Character 仅由捕获测试场景使用的步骤。 / English: The exact Base WIN Character step is used only by capturing test scenarios. */
   advanceBaseWinCharacterCapture(elapsedMs: number): boolean {
     return this.launchScene.advanceBaseWinCharacterCapture(elapsedMs);
   }
 
-  /** 精确的 Wheel WIN_FEATURE Character 仅由捕获测试场景使用的步骤。 */
+  /** 精确的 Wheel WIN_FEATURE Character 仅由捕获测试场景使用的步骤。 / English: The exact Wheel WIN_FEATURE Character step is used only by capturing the test scene. */
   advanceWheelWinFeatureCharacterCapture(elapsedMs: number): boolean {
     return this.launchScene.advanceWheelWinFeatureCharacterCapture(elapsedMs);
   }
 
-  /** 精确的 Wheel FEATURE_CHEST_LOOP 调度程序步骤仅由捕获测试夹具使用。 */
+  /** 精确的 Wheel FEATURE_CHEST_LOOP 调度程序步骤仅由捕获测试夹具使用。 / English: The exact Wheel FEATURE_CHEST_LOOP scheduler step is only used by the capture test fixture. */
   advanceWheelChestPoundCapture(elapsedMs: number): boolean {
     return this.launchScene.advanceWheelChestPoundCapture(elapsedMs);
   }
 
-  /** 活动 Wheel FEATURE_CHEST_LOOP 调度程序的只读证据。 */
+  /** 活动 Wheel FEATURE_CHEST_LOOP 调度程序的只读证据。 / English: Activity Wheel FEATURE_CHEST_LOOP Read-only evidence for the scheduler. */
   getWheelChestPoundDiagnostics(): ReturnType<
     LaunchScene["getWheelChestPoundDiagnostics"]
   > {
     return this.launchScene.getWheelChestPoundDiagnostics();
   }
 
-  /** 预设的介绍/空闲切换的只读浏览器测试夹具证据。 */
+  /** 预设的介绍/空闲切换的只读浏览器测试夹具证据。 / English: Read-only browser test fixture evidence for default intro/idle switching. */
   getCharacterIntroLifecycleCaptureDiagnostics(): ReturnType<
     LaunchScene["getCharacterIntroLifecycleDiagnostics"]
   > {
@@ -1961,22 +1989,22 @@ export class PixiRenderer {
     this.environmentState = markSpinFastStop(this.environmentState, performance.now());
   }
 
-  /** 重复使用主要的 Spin 控件进行机轮启动和进行中快速停止。 */
+  /** 重复使用主要的 Spin 控件进行机轮启动和进行中快速停止。 / English: Reuse the main Spin control for wheel starts and quick stops in progress. */
   requestWheelInteraction(): WheelInteractionResult | null {
     return this.featureEffects.requestWheelInteraction();
   }
 
-  /** 仅当不同的 Wheel Spin 开始时，才对 FASTPLAY_ON/OFF 进行采样。 */
+  /** 仅当不同的 Wheel Spin 开始时，才对 FASTPLAY_ON/OFF 进行采样。 / English: FASTPLAY_ON/OFF is only sampled when a different Wheel Spin starts. */
   setWheelFastPlay(enabled: boolean): void {
     this.featureEffects.setWheelFastPlay(enabled);
   }
 
-  /** 仅在 A 层有限的演出后 CONTINUE 保留期间有效。 */
+  /** 仅在 A 层有限的演出后 CONTINUE 保留期间有效。 / English: Valid only during Tier A's limited post-show CONTINUE hold period. */
   requestWheelSummaryContinue(): boolean {
     return this.featureEffects.requestWheelSummaryContinue();
   }
 
-  /** Canvas/Spin 输入一次前进一个预设的 Big Win 段。 */
+  /** Canvas/Spin 输入一次前进一个预设的 Big Win 段。 / English: Canvas/Spin input advances one preset Big Win segment at a time. */
   requestBigWinInteraction(): BigWinInteractionResult | null {
     return this.bigWin.requestAdvance();
   }
@@ -1985,17 +2013,17 @@ export class PixiRenderer {
     return this.featureEffects.requestFreeSpinContinue();
   }
 
-  /** 仅在 Free Spins 摘要的有限展后保留期间有效。 */
+  /** 仅在 Free Spins 摘要的有限展后保留期间有效。 / English: Valid only during the limited post-roll retention period of the Free Spins digest. */
   requestFreeSpinSummaryContinue(): boolean {
     return this.featureEffects.requestFreeSpinSummaryContinue();
   }
 
-  /** CONTINUE_SPIN 仅在 CAPLIMIT 有界保持阶段有效。 */
+  /** CONTINUE_SPIN 仅在 CAPLIMIT 有界保持阶段有效。 / English: CONTINUE_SPIN is only valid during the CAPLIMIT bounded hold phase. */
   requestFreeSpinCapContinue(): boolean {
     return this.freeSpinHud.requestCapContinue();
   }
 
-  /** 接收卷轴锁定音频使用的相同预设的结算里程碑。 */
+  /** 接收卷轴锁定音频使用的相同预设的结算里程碑。 / English: Receive the same preset settlement milestones used by the reel lock audio. */
   reelImpact(reel: number, fastForward: boolean): void {
     this.environmentState = addSpinReelImpact(this.environmentState, {
       generation: this.environmentState.generation,
@@ -2013,6 +2041,8 @@ export class PixiRenderer {
 
   /**
    * 当没有明确的结构事件伴随结果时，防止 StopSequencer 在一帧中折叠高度更改的服务器网格。
+   *
+   * 英文 / English: Prevent StopSequencer from collapsing a height-changing server grid in one frame when there is no explicit structure event accompanying the result.
    */
   async reconcileReelRows(rows: number, reducedMotion = false): Promise<void> {
     if (!Number.isInteger(rows) || rows < 3 || rows > 8 || rows === this.reels.activeRows) return;
@@ -2025,6 +2055,8 @@ export class PixiRenderer {
 
   /**
    * 仅在服务器结束功能并显示最终功能结果后，才将表现流程返回到其三行基本布局。 CityBackdrop 拥有预设的火到主转换。
+   *
+   * 英文 / English: Only after the server ends the function and displays the final function result does the presentation flow return to its three-row basic layout. CityBackdrop has preset fire to main conversion.
    */
   async exitFeatureMode(state: FeatureState, reducedMotion = false): Promise<void> {
     this.beginFeatureExitAtSummaryHide(state, reducedMotion);
@@ -2051,7 +2083,7 @@ export class PixiRenderer {
     if (failures.length > 1) throw new AggregateError(failures, "Feature exit cleanup failed");
   }
 
-  /** FREESPIN_END 在摘要隐藏处触发，因此所有退出分支一起启动。 */
+  /** FREESPIN_END 在摘要隐藏处触发，因此所有退出分支一起启动。 / English: FREESPIN_END fires at the summary hide, so all exit branches are started together. */
   beginFeatureExitAtSummaryHide(state: FeatureState, reducedMotion = false): void {
     if (this.pendingFeatureExit) return;
     this.featureMode = state.mode;
@@ -2073,13 +2105,15 @@ export class PixiRenderer {
 
   completeWheelPresentation(state: FeatureState): void {
     this.launchScene.setCharacterPersistentPresentation(persistentFeatureVisualPlan(state).character);
-    // 源游戏删除了 Base 标志，以实现完整的 Wheel 接管。仅在 Wheel 摘要关闭到符合条件的 Base 状态后才将其恢复；功能奖励将其隐藏在以下介绍中。
+    // 源游戏删除了 Base 标志，以实现完整的 Wheel 接管。仅在 Wheel 摘要关闭到符合条件的 Base 状态后才将其恢复；功能奖励将其隐藏在以下介绍中。 / English: The source game removed the Base flag for a full Wheel takeover. Only restore the Wheel summary after it has been closed to the eligible Base state; the feature bonus hides it in the following introduction.
     if (this.introCompleted && state.mode === "BASE") this.gameLogo.show();
     else this.gameLogo.hide(true);
   }
 
   /**
    * 对着陆前退出的任何 Wheel 表现流程进行故障关闭清理。这永远不会提交解码的奖励；它只恢复持久像素并丢弃仍然隐藏的塔目的地。
+   *
+   * 英文 / English: Fail-close cleanup of any Wheel performance processes exiting before landing. This never commits the decoded reward; it only restores the persistent pixels and discards the still-hidden tower destination.
    */
   abortWheelPresentation(): void {
     this.wheelBonusWinLabel.cancel();
@@ -2092,7 +2126,7 @@ export class PixiRenderer {
   cancelSpinPresentation(): void {
     this.wheelBonusWinLabel.cancel();
     this.environmentState = resetSpinEnvironment(this.environmentState);
-    // 取消/失败的回合绝不能将其已解码的 Wheel 目的地泄漏到以后的表现中。
+    // 取消/失败的回合绝不能将其已解码的 Wheel 目的地泄漏到以后的表现中。 / English: A canceled/failed round must never leak its decoded Wheel destination to later performances.
     this.pendingWheelAward = null;
     this.gameLogo.setIdleAllowed(true);
     this.setRageCascadePresentationPaused(false);
@@ -2106,14 +2140,14 @@ export class PixiRenderer {
     if (award.outcome === "INSTANT") {
       this.jackpotTower.highlightAward(award.prize);
     } else {
-      // 官方 Wheel Kong/King 切片映射到 `jackpotController.win(-1)`。这会使每一层变暗，直到真正的 FREESPIN_START 重置。
+      // 官方 Wheel Kong/King 切片映射到 `jackpotController.win(-1)`。这会使每一层变暗，直到真正的 FREESPIN_START 重置。 / English: The official Wheel Kong/King slice maps to `jackpotController.win(-1)`. This will darken each layer until the actual FREESPIN_START reset.
       this.jackpotTower.darkenAllPanels();
     }
     this.pendingWheelAward = null;
   }
 
   private beginVaultAwardBatch(expectedCount: number): void {
-    // 新的权威团体也是任何先前不完整化妆品批次的防御边界。切勿在旋转过程中携带突出显示的等级。
+    // 新的权威团体也是任何先前不完整化妆品批次的防御边界。切勿在旋转过程中携带突出显示的等级。 / English: The new authority group also serves as a defensive boundary for any previously incomplete cosmetic batches. Never carry highlighted levels during a spin.
     this.flushVaultAwardHighlights(true);
     this.vaultAwardExpectedCount = Math.max(0, Math.floor(expectedCount));
   }
@@ -2122,7 +2156,7 @@ export class PixiRenderer {
     const tier = jackpotTierFromAward(event.prize);
     if (tier && !this.pendingVaultAwardTiers.has(tier)) {
       this.pendingVaultAwardTiers.add(tier);
-      // 忽略突变事件的旧/部分事件流的兼容性回退。当前流已经在解锁/升级开始时投影了该层，因此永远不会进入该分支。
+      // 忽略突变事件的旧/部分事件流的兼容性回退。当前流已经在解锁/升级开始时投影了该层，因此永远不会进入该分支。 / English: Compatibility fallback for old/partial event streams that ignore mutation events. The current stream already projects the layer at the beginning of the unlock/upgrade, so it never enters that branch.
       this.jackpotTower.highlightAwards([...this.pendingVaultAwardTiers]);
     }
     this.noteResolvedVaultAwards(1);
@@ -2138,14 +2172,14 @@ export class PixiRenderer {
   }
 
   private flushVaultAwardHighlights(clearExpectation: boolean): void {
-    // 累积奖金等级已在突变开始时预测。该边界只拥有批量记账，不得重玩即时中奖。
+    // 累积奖金等级已在突变开始时预测。该边界只拥有批量记账，不得重玩即时中奖。 / English: Jackpot levels have been predicted at the start of the mutation. This boundary only has batch accounting and no replay for instant wins.
     this.pendingVaultAwardTiers.clear();
     this.vaultMutationPrizeByCell.clear();
     this.vaultAwardResolvedCount = 0;
     if (clearExpectation) this.vaultAwardExpectedCount = 0;
   }
 
-  /** 仅针对已解码的权威特征事件添加更强的层。 */
+  /** 仅针对已解码的权威特征事件添加更强的层。 / English: Add a stronger layer only for decoded authoritative feature events. */
   cueFeatureEnvironment(event: FeatureEvent, reducedMotion = false): void {
     let kind: SpinEnvironmentFeatureKind;
     let effectKind: FeatureEffectKind;
@@ -2170,10 +2204,10 @@ export class PixiRenderer {
         break;
       case "vault.awarded":
         this.queueVaultAwardHighlight(event);
-        // 分组开始事件负责猿王/框架反应；制作好的符号在 FeatureEffects 中各自负责格子中奖片段。
+        // 分组开始事件负责猿王/框架反应；制作好的符号在 FeatureEffects 中各自负责格子中奖片段。 / English: The group start event is responsible for the ape king/frame reaction; the produced symbols are each responsible for the grid winning fragment in FeatureEffects.
         return;
       case "vault.upgraded":
-        // 上述小组启动事件引起了内阁/角色的反应。每单元颁奖活动仍然拥有其 FeatureEffects 的展示。
+        // 上述小组启动事件引起了内阁/角色的反应。每单元颁奖活动仍然拥有其 FeatureEffects 的展示。 / English: The above group activation event elicited a reaction from the cabinet/role. Each unit awards event still has its FeatureEffects displayed.
         return;
       case "wheel.started":
         this.pendingWheelAward = null;
@@ -2182,24 +2216,24 @@ export class PixiRenderer {
         effectKind = "wheel";
         break;
       case "wheel.awarded":
-        // 现在结果是权威的，但在Wheel仍在等待输入时，原始塔并没有透露它。仅在真正的车轮着陆里程碑处提交面板突出显示。
+        // 现在结果是权威的，但在Wheel仍在等待输入时，原始塔并没有透露它。仅在真正的车轮着陆里程碑处提交面板突出显示。 / English: The results are now authoritative, but while Wheel is still waiting for input, the original tower isn't revealing it. Submit panel highlighting only at true wheel landing milestones.
         this.pendingWheelAward = event;
-        // wheel.started 拥有环境/音频提示。 FeatureEffects 在预设的旋转/着陆里程碑处启动和停止 chest_pound。
+        // wheel.started 拥有环境/音频提示。 FeatureEffects 在预设的旋转/着陆里程碑处启动和停止 chest_pound。 / English: wheel.started holds ambient/audio cues. FeatureEffects Start and stop chest_pound at preset rotation/landing milestones.
         return;
       case "surge.collected":
-        // 精确三保证激活由 StopSequencer 拥有，并且没有替换级联。只有一/二 Rage 概率触发继续执行以下 rage.transformed 事件。
+        // 精确三保证激活由 StopSequencer 拥有，并且没有替换级联。只有一/二 Rage 概率触发继续执行以下 rage.transformed 事件。 / English: Exact three-guaranteed activation is owned by StopSequencer and has no replacement cascade. There is only one/two chance of Rage triggering the following rage.transformed event.
         if (event.triggered) return;
-        // GamePPSFeature 在此事件回合中开始角色/Symbol7/踪迹。该塔属于FeatureEffects'以下1ms状态屏障。
+        // GamePPSFeature 在此事件回合中开始角色/Symbol7/踪迹。该塔属于FeatureEffects'以下1ms状态屏障。 / English: GamePPSFeature starts the character/Symbol7/trail during this event turn. The tower belongs to FeatureEffects' following 1ms status barrier.
         kind = "collect";
         effectKind = "collect";
         this.reels.blockSymbolIdle(event.cells);
         this.playCharacterCollect(event.type);
         break;
       case "rage.transformed":
-        // FeatureEffects 负责精确的重旋/级联/捶击/激活链。若在此修改格子，会让结果提前 1.82 秒显示。
+        // FeatureEffects 负责精确的重旋/级联/捶击/激活链。若在此修改格子，会让结果提前 1.82 秒显示。 / English: FeatureEffects are responsible for precise respin/cascade/thump/activation chains. If you modify the grid here, the result will be displayed 1.82 seconds earlier.
         return;
       case "free_spins.started":
-        // 此事件打开 Kong/King 简介，但它还不是原始的 FREESPIN_START。通过可见的介绍使 Wheel 功能奖保持黑暗；绿色 Spin 输入边界拥有受保护的复位。
+        // 此事件打开 Kong/King 简介，但它还不是原始的 FREESPIN_START。通过可见的介绍使 Wheel 功能奖保持黑暗；绿色 Spin 输入边界拥有受保护的复位。 / English: This event opens the Kong/King intro, but it's not the original FREESPIN_START yet. Keep the Wheel feature prize dark with a visible introduction; the green Spin input boundary has a protected reset.
         this.featureMode = event.mode;
         this.reels.setVisualStripMode(event.mode);
         this.gameLogo.hide();
@@ -2211,13 +2245,13 @@ export class PixiRenderer {
         );
         break;
       case "free_spin.awarded":
-        // HUD 批处理和预设的收集路径拥有此表现流程。
+        // HUD 批处理和预设的收集路径拥有此表现流程。 / English: HUD batches and preset collection paths have this representation flow.
         return;
       case "free_spin.cap_reached":
-        // CAPLIMIT 重新触发面板拥有此表现流程。
+        // CAPLIMIT 重新触发面板拥有此表现流程。 / English: CAPLIMIT Retriggers the panel owning this presentation process.
         return;
       case "win_cap.reached":
-        // 纯经济边界事实，不虚构独立环境效果。
+        // 纯经济边界事实，不虚构独立环境效果。 / English: Pure economic boundary facts, no fiction of independent environmental effects.
         return;
       case "vaults.landed":
       case "vaults.locked":
@@ -2225,7 +2259,7 @@ export class PixiRenderer {
       case "free_spins.completed":
         return;
       case "vaults.unlock.completed":
-        // 混合货币/免费-Spin 组通常会在计算最终单元格时刷新。该边界安全地刷新旧的/部分协议数据；空的 King Spin 解锁组保留其预期的最终奖励计数。
+        // 混合货币/免费-Spin 组通常会在计算最终单元格时刷新。该边界安全地刷新旧的/部分协议数据；空的 King Spin 解锁组保留其预期的最终奖励计数。 / English: Mixed Currency/Free-Spin Groups usually refresh when final cells are calculated. This boundary safely refreshes old/partial protocol data; empty King Spin unlock groups retain their expected final reward count.
         if (this.vaultAwardResolvedCount > 0) this.flushVaultAwardHighlights(true);
         return;
     }
@@ -2268,7 +2302,7 @@ export class PixiRenderer {
     this.featureEffects.destroy();
     (this.app.renderer as unknown as PrimalAdditiveBlendRenderer)
       .runners?.contextChange?.remove(this.additiveBlendContextListener);
-    // 生成的符号纹理是模块级共享资源。递归地销毁它们将使已解析的资源缓存指向一个纹理，其 baseTexture 在同页渲染器重建上为 null。
+    // 生成的符号纹理是模块级共享资源。递归地销毁它们将使已解析的资源缓存指向一个纹理，其 baseTexture 在同页渲染器重建上为 null。 / English: The generated symbol texture is a module-level shared resource. Destroying them recursively will make the resolved resource cache point to a texture whose baseTexture is null on the same page renderer rebuild.
     this.app.destroy(true, { children: true, texture: false, baseTexture: false });
   }
 
@@ -2534,7 +2568,7 @@ function pixiRendererOwnerConstructionStages(
           requiredOwner(state, "reels"),
         );
         state.launchScene = launchScene;
-        // LaunchScene 没有独立销毁，因为其节点归 CameraRig 所有；相机处理程序在中止时撕毁该图。
+        // LaunchScene 没有独立销毁，因为其节点归 CameraRig 所有；相机处理程序在中止时撕毁该图。 / English: LaunchScene is not destroyed independently because its nodes are owned by CameraRig; the camera handler tears the graph when it aborts.
         return state.ownershipTransfer.componentDisposer(
           cleanup("launchScene", () => launchScene.cancelCharacterStateTasks()),
         );
@@ -2635,6 +2669,8 @@ const MAX_RUNNING_LAUNCH_LOAD_FRACTION = 1 - 1e-6;
 
 /**
  * 运行有界启动 I/O，同时平均每个组当前的分数进度。一个群体只有在其承诺兑现之后才能准确地达到一。
+ *
+ * 英文 / English: Run bounded startup I/O while averaging each group's current fractional progress. A group can achieve exactly one only after its commitments have been fulfilled.
  */
 export async function runBoundedLaunchLoads(
   loads: readonly FractionalLaunchLoad[],
@@ -2692,12 +2728,12 @@ export async function runBoundedLaunchLoads(
     }
   };
   const workerCount = Math.min(loads.length, Math.max(1, Math.floor(concurrency)));
-  // 在出现第一个故障之前，让已经运行的节点停止运行。这可以防止启动被拒绝而导致工作人员将更多场景工作从队列中剔除。
+  // 在出现第一个故障之前，让已经运行的节点停止运行。这可以防止启动被拒绝而导致工作人员将更多场景工作从队列中剔除。 / English: Stop running nodes before the first failure occurs. This prevents launch rejections from causing workers to dequeue more scene work.
   await Promise.allSettled(Array.from({ length: workerCount }, () => worker()));
   if (firstError !== undefined) throw firstError;
 }
 
-/** 将显示图拆分为独立上传的 GPU 准备切片。 */
+/** 将显示图拆分为独立上传的 GPU 准备切片。 / English: Split the display into independently uploaded GPU-ready slices. */
 export function splitGpuWarmupTargets(
   root: DisplayObject,
   depth: number,
@@ -2724,7 +2760,7 @@ export function splitGpuWarmupTargets(
   return targets;
 }
 
-/** GPU 上传是按 BaseTexture 执行的，而不是每个图集帧执行一次。 */
+/** GPU 上传是按 BaseTexture 执行的，而不是每个图集帧执行一次。 / English: GPU uploads are performed per BaseTexture rather than once per atlas frame. */
 export function uniqueGpuWarmupTextures(
   textures: readonly Texture[],
 ): readonly Texture[] {
@@ -2736,7 +2772,7 @@ export function uniqueGpuWarmupTextures(
   });
 }
 
-/** 查找已由预设的 Spine 和场景视图具体化的纹理。 */
+/** 查找已由预设的 Spine 和场景视图具体化的纹理。 / English: Find textures that have been materialized by preset Spine and Scene Views. */
 export function collectGpuWarmupTextures(root: DisplayObject): readonly Texture[] {
   const textures: Texture[] = [];
   const visit = (view: DisplayObject): void => {
@@ -2767,6 +2803,8 @@ function gpuWarmupNow(): number {
 /**
  * 在一个已绘制帧切片中上传多个低成本目标；CPU 预算耗尽后立即让出执行权。
  * 这样既能隔离大型图集上传，又能避免为已解码的单像素精灵空等数百次 rAF。
+ *
+ * 英文 / English: Upload multiple low-cost targets in a slice of drawn frames; yield execution as soon as the CPU budget is exhausted. This isolates large gallery uploads and avoids waiting hundreds of rAFs for decoded single-pixel sprites.
  */
 export async function runGpuPrepareSlices<T>(
   targets: readonly T[],
@@ -2792,7 +2830,7 @@ export async function runGpuPrepareSlices<T>(
   }
 }
 
-/** 暂时公开屏幕外着色器通道的隐藏关键节点。 */
+/** 暂时公开屏幕外着色器通道的隐藏关键节点。 / English: Temporarily exposes hidden key nodes of an off-screen shader pass. */
 function exposeForOffscreenWarmup(root: Container): () => void {
   const states: Array<{
     readonly view: DisplayObject;
@@ -2800,16 +2838,16 @@ function exposeForOffscreenWarmup(root: Container): () => void {
     readonly visible: boolean;
   }> = [];
   const visit = (view: DisplayObject): void => {
-    // Pixi 在销毁期间使 `transform` 无效。一些回退路径所有者在预设的艺术作品获奖后保留非渲染参考；永远不要为着色器通道恢复它。
+    // Pixi 在销毁期间使 `transform` 无效。一些回退路径所有者在预设的艺术作品获奖后保留非渲染参考；永远不要为着色器通道恢复它。 / English: Pixi invalidates `transform` during destruction. Some fallback path owners keep a non-rendered reference after the preset's artwork is awarded; never restore it for a shader pass.
     if ((view as DisplayObject & { transform: unknown | null }).transform === null) return;
-    // 大型预分配池明确选择退出此遍历。一个具有代表性的地图集精灵已存在于预热目标中。
+    // 大型预分配池明确选择退出此遍历。一个具有代表性的地图集精灵已存在于预热目标中。 / English: Large preallocated pools explicitly opt out of this traversal. A representative atlas sprite already exists in the warm-up target.
     if (!view.renderable) return;
     states.push({ view, alpha: view.alpha, visible: view.visible });
     view.visible = true;
     if (view.alpha <= 0) view.alpha = 0.001;
     if (view instanceof Container) {
-      // pixi-spine 将分离的槽容器保留在其内部子列表中；它们最初的隐形状态是有意的，并且它们的父级是 null，
-      // 因此复活它们将使 Container.updateTransform 抛出。
+      // pixi-spine 将分离的槽容器保留在其内部子列表中；它们最初的隐形状态是有意的，并且它们的父级是 null， / English: pixi-spine keeps detached slot containers in its internal sublist; their initial invisible state is intentional, and their parent is null,
+      // 因此复活它们将使 Container.updateTransform 抛出。 / English: So resurrecting them will make Container.updateTransform throw.
       for (const child of view.children) {
         if (child.parent === view) visit(child);
       }

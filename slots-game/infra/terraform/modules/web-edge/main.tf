@@ -356,6 +356,8 @@ data "aws_iam_policy_document" "web_bucket" {
       identifiers = ["*"]
     }
 
+    # 不支持携带条件请求头的 multipart 子操作仍可使用；真正创建对象的
+    # PutObject/CompleteMultipartUpload 请求仍必须提供 If-None-Match，因此无法替换现有发布 key。
     # Multipart sub-operations which cannot carry conditional headers remain
     # usable; the object-creating PutObject/CompleteMultipartUpload request must
     # still present If-None-Match so an existing release key cannot be replaced.

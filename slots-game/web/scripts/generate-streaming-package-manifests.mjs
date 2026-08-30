@@ -27,6 +27,8 @@ const EXPECTED_PROVENANCE = Object.freeze({
 /**
  * Wheel 的三张实际展示纹理来自已审查的本地参考资源，而不是旧 runtime-manifest。
  * 在构建事件清单时现场绑定大小与摘要，避免把它们留在未校验的首启 URL 路径。
+ *
+ * 英文 / English: The three actual display textures for Wheel are from censored local reference sources, not the old runtime-manifest. Bind sizes and digests in-place when building event manifests to avoid leaving them in unvalidated initial URL paths.
  */
 const WHEEL_REFERENCE_FILES = Object.freeze([
   Object.freeze({ id: "wheel-blue", publicUrl: "/assets/primal-reference/10023.png" }),
@@ -246,7 +248,7 @@ function buildChannelManifest(channel, authority, packageVersion) {
         )),
       ],
       packageVersion,
-      // Big Win 音频已由严格的交互就绪音频预加载负责。未来的按需视觉资源不得再次保留并解码完整音频图。
+      // Big Win 音频已由严格的交互就绪音频预加载负责。未来的按需视觉资源不得再次保留并解码完整音频图。 / English: Big Win audio has been taken care of by strict interaction-ready audio preloading. Future on-demand visual resources may not retain and decode the full audio map again.
       [sharedPackageId],
     ));
   }

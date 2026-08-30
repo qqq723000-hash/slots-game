@@ -1,4 +1,4 @@
-// @ts-expect-error Vitest 在 Node 中运行；浏览器生产版 tsconfig 刻意省略 Node 全局类型。
+// @ts-expect-error Vitest 在 Node 中运行；浏览器生产版 tsconfig 刻意省略 Node 全局类型。 / English: @ts-expect-error Vitest runs in Node; the browser production version tsconfig deliberately omits the Node global type.
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { FeatureEvent, FeatureState, SpinResult } from "../src/app/state/types";
@@ -717,8 +717,8 @@ describe("game control configuration", () => {
     expect(stopAutoplay).not.toHaveBeenCalled();
 
     overlay.armAutoplayStopRound(autoplayStopResult(21, "1"));
-    // 如果装饰性演出失败导致跳过 Win Start，回合完成时仍会计算已经生效的
-    // 权威正向结果。
+    // 如果装饰性演出失败导致跳过 Win Start，回合完成时仍会计算已经生效的 / English: If the cosmetic performance fails and causes Win Start to be skipped, the effects already in effect will still be calculated when the round is completed.
+    // 权威正向结果。 / English: Authoritative positive results.
     expect(overlay.completeAutoplayStopRound(21)).toBe(true);
     expect(stopAutoplay).toHaveBeenCalledOnce();
   });
@@ -1043,8 +1043,8 @@ describe("game control configuration", () => {
       remainingText: "",
     });
 
-    // 官方首次激活画面的捕获值为 99：所选次数在 ROUNDSTART 时递减，
-    // 而不是在打开 Auto Play 模态框时递减。
+    // 官方首次激活画面的捕获值为 99：所选次数在 ROUNDSTART 时递减， / English: The capture value of the official first activation screen is 99: the number of selections is decremented at ROUNDSTART,
+    // 而不是在打开 Auto Play 模态框时递减。 / English: Instead of decrementing when opening the Auto Play modal.
     expect(primarySpinControlPresentation("fast-stop", false, {
       active: true,
       remaining: 99,
@@ -1351,8 +1351,8 @@ describe("captured desktop HUD geometry", () => {
       "sound",
     ]);
 
-    // 可见中心点保持捕获到的 44px 间距。移动端直径超过该间距时，CSS 中点裁剪
-    // 会生成五条互不相交的 Voronoi 条带，同时保留完整的外侧触达范围。
+    // 可见中心点保持捕获到的 44px 间距。移动端直径超过该间距时，CSS 中点裁剪 / English: The visible center point maintains the captured 44px spacing. When the diameter of the mobile terminal exceeds this spacing, CSS midpoint cropping
+    // 会生成五条互不相交的 Voronoi 条带，同时保留完整的外侧触达范围。 / English: Five disjoint Voronoi strips are generated while retaining full outside reach.
     for (const utilityHitLogicalSize of [35, 124.6523076923, 112.1870769231]) {
       const trim = Math.max(0, (utilityHitLogicalSize - 44) / 2);
       const regions = centers.map((center, index) => ({
@@ -1766,7 +1766,7 @@ describe("primary spin control modes", () => {
       text: "Spin",
       disabled: false,
     });
-    // 终局 Free Spins 摘要使用另一个原始 CONTINUE 门控。
+    // 终局 Free Spins 摘要使用另一个原始 CONTINUE 门控。 / English: The endgame Free Spins summary uses another primitive CONTINUE gate.
     expect(spinControlPresentation("free-spin-summary-continue", false)).toMatchObject({
       dataMode: "continue",
       action: "continue",

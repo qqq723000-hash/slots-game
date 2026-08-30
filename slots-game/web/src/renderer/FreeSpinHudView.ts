@@ -88,12 +88,14 @@ export const FREE_SPIN_HUD_TEXT_SLOTS = Object.freeze({
   }),
 });
 
-/** 来自捕获的语言环境的精确 en_GB `IDS_MAX_RS_REACHED` 副本。 */
+/** 来自捕获的语言环境的精确 en_GB `IDS_MAX_RS_REACHED` 副本。 / English: An exact en_GB `IDS_MAX_RS_REACHED` copy from the captured locale. */
 export const FREE_SPIN_CAP_COPY = "Maximum number of FREE SPINS reached!";
 
 /**
  * 捕获的 1200x900 桌面节点通过游戏的 0.8 映射到渲染器的 1280x720 设计图面。骨架及其文本骨骼拥有所有内部定位；
  * 这些只是 main.json/layout_desktop.json 的两个根节点变换。
+ *
+ * 英文 / English: The captured 1200x900 desktop node is mapped via the game's 0.8 to the renderer's 1280x720 design surface. The skeleton and its text bones have all internal positioning; these are just the two root node transforms of main.json/layout_desktop.json.
  */
 export const FREE_SPIN_HUD_DESKTOP_LAYOUT = Object.freeze({
   counter: Object.freeze({ x: 260, y: 124, scale: 0.8 }),
@@ -104,19 +106,21 @@ export const FREE_SPIN_HUD_DESKTOP_LAYOUT = Object.freeze({
  * 1200x900 的编排游戏内容在 1280x720 渲染器中占据居中的 x=160..1120 区域。
  * 计数器的 `stop` 剪辑是可读的核心 HUD；叠加 Glow/扫光图形刻意不纳入
  * 此包含边界，并可继续溢出到渲染器两翼。
+ *
+ * 英文 / English: 1200x900 orchestrated game content occupies a centered x=160..1120 area in a 1280x720 renderer. The counter's `stop` clip is readable by the core HUD; the overlay Glow/Sweep graphics intentionally do not fit into this containing boundary, and can continue to overflow into the renderer flanks.
  */
 export const FREE_SPIN_HUD_DESKTOP_CORE_REGION_X = Object.freeze({
   left: 160,
   right: 1_120,
 });
 
-/** 从已验证的 `freespin_counter.skel` stop 剪辑测得的精确水平边界。 */
+/** 从已验证的 `freespin_counter.skel` stop 剪辑测得的精确水平边界。 / English: Exact horizontal bounds measured from verified `freespin_counter.skel` stop clip. */
 export const FREE_SPIN_HUD_COUNTER_STOP_BOUNDS_X = Object.freeze({
   left: -137.75519768021778,
   right: 146.48480825349785,
 });
 
-/** 1440x900 桌面视口以此逻辑内边距投影裁剪后的根节点。 */
+/** 1440x900 桌面视口以此逻辑内边距投影裁剪后的根节点。 / English: The 1440x900 desktop viewport projects the clipped root node with this logical padding. */
 export const FREE_SPIN_HUD_DESKTOP_CONTAINMENT_INSET_X = 64;
 
 interface FreeSpinHudMobileNodeLayout {
@@ -145,7 +149,7 @@ function mobileHudNode(
   });
 }
 
-/** 从移动端参考配置提取的 Free Spins HUD 根节点投影。 */
+/** 从移动端参考配置提取的 Free Spins HUD 根节点投影。 / English: Free Spins HUD root node projection extracted from mobile reference configuration. */
 export const FREE_SPIN_HUD_MOBILE_LAYOUTS: Readonly<
   Record<MobileHandMode, Readonly<Record<MobileLayoutProfile, FreeSpinHudMobileLayout>>>
 > = Object.freeze({
@@ -188,6 +192,8 @@ export interface FreeSpinHudResponsiveLayout {
  * 随桌面根节点开始裁剪，逐步采用编排的核心区域。inset=0 时，捕获的变换
  * 逐字节保持不变；在 1440x900 裁剪（64 个逻辑像素）下，stop/可读核心完全
  * 位于 x=160..1120 内。这里有意忽略非交互 VFX 边界。
+ *
+ * 英文 / English: Cutting begins with the root node of the desktop, gradually adopting the core area of ​​the orchestration. With inset=0, the captured transform remains unchanged byte-for-byte; at 1440x900 crop (64 logical pixels), the stop/readable core lies entirely within x=160..1120. Non-interactive VFX boundaries are intentionally ignored here.
  */
 export function freeSpinHudDesktopCounterLayout(
   visibleInsetX: number,
@@ -217,6 +223,8 @@ export function freeSpinHudDesktopCounterLayout(
 /**
  * 将 HUD 投影到当前连续 gameplay 设计域。参考档位只选择已验收节点规则，
  * 不选择或锁定物理视口尺寸。
+ *
+ * 英文 / English: Project the HUD onto the current continuous gameplay design domain. The reference gear only selects the accepted node rules and does not select or lock the physical viewport size.
  */
 export function freeSpinHudResponsiveLayout(
   snapshot: ResponsiveLayoutSnapshot,
@@ -256,14 +264,16 @@ export interface FreeSpinHudProjection {
   readonly remaining: number;
   readonly played: number;
   readonly totalAwarded: number;
-  /** 原始 `%d / %t` 计数器显示的下一个/当前序数。 */
+  /** 原始 `%d / %t` 计数器显示的下一个/当前序数。 / English: Raw `%d / %t` The next/current ordinal number displayed by the counter. */
   readonly currentSpin: number;
-  /** 服务器投影运行功能win；从未以这种观点积累。 */
+  /** 服务器投影运行功能win；从未以这种观点积累。 / English: Server projection runs function win; never accumulated in this view. */
   readonly cumulativeWinMinor: MoneyMinor;
 }
 
 /**
  * 仅项目服务器拥有的 Free Spins 字段。该值不涉及卷轴结果、奖励金额或本地中奖计算。
+ *
+ * 英文 / English: Free Spins field owned only by the project server. This value does not relate to reel results, prize amounts or local win calculations.
  */
 export function projectFreeSpinHud(state: FreeSpinHudFeatureState): FreeSpinHudProjection {
   const remaining = authoritativeCount(state.freeSpinsRemaining, "freeSpinsRemaining");
@@ -294,21 +304,21 @@ export interface FreeSpinHudViewOptions {
     event: Readonly<FreeSpinCapReachedEvent>,
     projection: FreeSpinHudProjection,
   ) => string;
-  /** 接收准确的服务器预测，包括以较小单位表示的运行中奖。 */
+  /** 接收准确的服务器预测，包括以较小单位表示的运行中奖。 / English: Receive accurate server predictions, including running wins expressed in smaller units. */
   readonly onProjection?: (projection: FreeSpinHudProjection) => void;
-  /** 仅可注入，以便主机可以将这些预设的等待绑定到自己的时钟。 */
+  /** 仅可注入，以便主机可以将这些预设的等待绑定到自己的时钟。 / English: Injectable only so that the host can bind these preset waits to its own clock. */
   readonly wait?: (durationMs: number) => Promise<void>;
-  /** 可注入媒体首选项用于通过压缩等待来保持顺序。 */
+  /** 可注入媒体首选项用于通过压缩等待来保持顺序。 / English: Injectable media preferences are used to maintain order through compression waits. */
   readonly prefersReducedMotion?: () => boolean;
-  /** 将官方 CAPLIMIT CONTINUE_SPIN 门投射到主机控件上。 */
+  /** 将官方 CAPLIMIT CONTINUE_SPIN 门投射到主机控件上。 / English: Cast the official CAPLIMIT CONTINUE_SPIN gate onto the host control. */
   readonly onCapInteraction?: (phase: "input-ready" | "continue") => void;
-  /** 可选的只读关闭结果；从不控制预设的门。 */
+  /** 可选的只读关闭结果；从不控制预设的门。 / English: Optional read-only closing result; never controls preset gates. */
   readonly onCapClose?: (reason: FreeSpinCapCloseReason) => void;
-  /** 可选测试场景屏障仅在真正的 CAP 输入门打开后才进入。 */
+  /** 可选测试场景屏障仅在真正的 CAP 输入门打开后才进入。 / English: The optional test scenario barrier is only entered after the real CAP input gate is open. */
   readonly onCapInputReadyCheckpoint?: () => void | Promise<void>;
 }
 
-/** 有界 CAPLIMIT 保持关闭后发出的只读原因。 */
+/** 有界 CAPLIMIT 保持关闭后发出的只读原因。 / English: Bounded CAPLIMIT Read-only reason emitted after keeping closed. */
 export type FreeSpinCapCloseReason = "continue" | "timeout" | "cancelled";
 
 type CounterPresentation = "hidden" | "shown";
@@ -333,6 +343,8 @@ const EMPTY_PROJECTION: FreeSpinHudProjection = Object.freeze({
  * 本机 Free Spins 计数器和重新触发覆盖。
  *
  * 提供的 Spine 骨架拥有钢制计数器、变暗器、发光、扫描和所有过渡。 Pixi 文本实例仅附加到替换原始运行时的本地化字段的预设边界框槽。
+ *
+ * 英文 / English: Native Free Spins counter and retrigger override. The supplied Spine skeleton has steel counters, darkeners, glows, sweeps and all transitions. Pixi text instances are only attached to preset bounding box slots that replace the localized fields of the original runtime.
  */
 export class FreeSpinHudView extends Container {
   private readonly counterHost = new Container();
@@ -402,7 +414,7 @@ export class FreeSpinHudView extends Container {
     return this.counterView !== null && this.retriggerView !== null;
   }
 
-  /** 布局提交只改变根节点矩阵，不重播动画，也不触碰权威计数。 */
+  /** 布局提交只改变根节点矩阵，不重播动画，也不触碰权威计数。 / English: Layout commit only changes the root node matrix, does not replay the animation, and does not touch the authority count. */
   setResponsiveLayout(snapshot: ResponsiveLayoutSnapshot): void {
     const layout = freeSpinHudResponsiveLayout(snapshot);
     this.counterHost.position.set(layout.counter.x, layout.counter.y);
@@ -473,7 +485,7 @@ export class FreeSpinHudView extends Container {
     return attempt;
   }
 
-  /** Free Spins 退出后销毁事件代视图；共享 atlas 仍由首启共享包拥有。 */
+  /** Free Spins 退出后销毁事件代视图；共享 atlas 仍由首启共享包拥有。 / English: The event representative view is destroyed after Free Spins exits; the shared atlas is still owned by the initial shared package. */
   clearArtwork(): void {
     this.artworkGeneration += 1;
     this.loadPromise = null;
@@ -495,7 +507,7 @@ export class FreeSpinHudView extends Container {
     this.interactive = false;
   }
 
-  /** 恢复重新连接快照而不重播显示/扫描/重新触发。 */
+  /** 恢复重新连接快照而不重播显示/扫描/重新触发。 / English: Restore reconnect snapshot without replaying display/scan/retrigger. */
   restoreFeatureState(state: FreeSpinHudFeatureState): void {
     const projection = this.applyAuthoritativeState(state);
     this.counterOperation += 1;
@@ -517,7 +529,7 @@ export class FreeSpinHudView extends Container {
     this.syncTextSlots();
   }
 
-  /** 仅更新值；所有金额和计数均由服务器预设。 */
+  /** 仅更新值；所有金额和计数均由服务器预设。 / English: Only values ​​are updated; all amounts and counts are preset by the server. */
   updateFeatureState(state: FreeSpinHudFeatureState): FreeSpinHudProjection {
     return this.applyAuthoritativeState(state);
   }
@@ -575,6 +587,8 @@ export class FreeSpinHudView extends Container {
 
   /**
    * 应用权威的授予后状态并仅进行装饰性扫描。事件计数永远不会添加到先前的客户端预测中。
+   *
+   * 英文 / English: Apply authoritative post-grant status and do cosmetic scans only. Event counts are never added to previous client predictions.
    */
   applyFreeSpinAwardBatch(
     events: readonly Readonly<FreeSpinAwardedEvent>[],
@@ -591,7 +605,7 @@ export class FreeSpinHudView extends Container {
     return projection;
   }
 
-  /** CAPLIMIT-仅限覆盖：显示、可跳过的保留，然后预设隐藏。 */
+  /** CAPLIMIT-仅限覆盖：显示、可跳过的保留，然后预设隐藏。 / English: CAPLIMIT - Override only: show, skippable hold, then preset hidden. */
   async retriggerCap(
     event: Readonly<FreeSpinCapReachedEvent>,
     state: FreeSpinHudFeatureState,
@@ -600,7 +614,7 @@ export class FreeSpinHudView extends Container {
     validateFreeSpinCap(event);
     if (this.capRetriggerShown) return;
     const incomingProjection = projectFreeSpinHud(state);
-    // 最终结果已经是BASE，但是CAPLIMIT事件仍然属于保留的特征HUD。保留该显示投影，直到控制器完成重新触发 -> 摘要 -> HUD 隐藏。
+    // 最终结果已经是BASE，但是CAPLIMIT事件仍然属于保留的特征HUD。保留该显示投影，直到控制器完成重新触发 -> 摘要 -> HUD 隐藏。 / English: The final result is already BASE, but the CAPLIMIT event still belongs to the retained feature HUD. Keep this display projection until the controller completes Retrigger -> Summary -> HUD Hide.
     const projection = !incomingProjection.active && this.projectionValue.active
       ? this.projectionValue
       : this.applyProjection(incomingProjection);
@@ -670,7 +684,7 @@ export class FreeSpinHudView extends Container {
     this.syncRootVisibility();
   }
 
-  /** 只接受一个 CONTINUE_SPIN 输入，并且仅在 CAPLIMIT 保持期间。 */
+  /** 只接受一个 CONTINUE_SPIN 输入，并且仅在 CAPLIMIT 保持期间。 / English: Only one CONTINUE_SPIN input is accepted, and only during the CAPLIMIT hold. */
   requestCapContinue(): boolean {
     const interaction = this.activeCapContinue;
     if (!interaction || interaction.state !== "waiting") return false;
@@ -686,7 +700,7 @@ export class FreeSpinHudView extends Container {
     super.destroy(options);
   }
 
-  /** 计数器电气中奖爆发时间为 0.7667 秒。 */
+  /** 计数器电气中奖爆发时间为 0.7667 秒。 / English: Counter electrical jackpot burst time is 0.7667 seconds. */
   playWin(): void {
     const view = this.counterView;
     if (!view || !this.counterHost.visible) return;
@@ -694,7 +708,7 @@ export class FreeSpinHudView extends Container {
     view.state.addAnimation(FREE_SPIN_HUD_TRACK.base, FREE_SPIN_HUD_ANIMATION.counter.stop, false, 0);
   }
 
-  /** 将捕获的 `main:fsCounter` 变换转换为效果图层。 */
+  /** 将捕获的 `main:fsCounter` 变换转换为效果图层。 / English: Convert the captured `main:fsCounter` transform into an effects layer. */
   getCollectTarget(targetSpace: Container): Point {
     return targetSpace.toLocal(this.toGlobal(new Point(
       this.counterHost.position.x,
@@ -702,7 +716,7 @@ export class FreeSpinHudView extends Container {
     )));
   }
 
-  /** 从主机渲染器中推进手动驱动的 Spine 实例。 */
+  /** 从主机渲染器中推进手动驱动的 Spine 实例。 / English: Push manually driven Spine instances from the host renderer. */
   update(deltaMs: number): void {
     const deltaSeconds = Math.min(64, Math.max(0, deltaMs)) / 1_000;
     if (this.counterView && this.counterHost.visible) this.counterView.update(deltaSeconds);
@@ -798,7 +812,7 @@ export class FreeSpinHudView extends Container {
     try {
       this.onCapInteraction?.(phase);
     } catch {
-      // 主机控制投影是装饰性的，不能阻塞 HUD 时间线。
+      // 主机控制投影是装饰性的，不能阻塞 HUD 时间线。 / English: Host-controlled projections are cosmetic and cannot block the HUD timeline.
     }
   }
 
@@ -811,7 +825,7 @@ export class FreeSpinHudView extends Container {
     try {
       this.onCapClose?.(reason);
     } catch {
-      // 只读主机投影无法阻止预设的 HUD 时间线。
+      // 只读主机投影无法阻止预设的 HUD 时间线。 / English: Read-only host projection cannot block the preset HUD timeline.
     }
   }
 
@@ -925,7 +939,7 @@ function validateFreeSpinCap(event: Readonly<FreeSpinCapReachedEvent>): void {
   if (event.type !== "free_spin.cap_reached") {
     throw new Error("Expected a free_spin.cap_reached event");
   }
-  // 捕获的CAPLIMIT命令是会话范围的；它的表示逻辑不使用卷/行地址。将可选协议元数据保留在可见性门之外，以便有效的上限通知不会被它抑制。
+  // 捕获的CAPLIMIT命令是会话范围的；它的表示逻辑不使用卷/行地址。将可选协议元数据保留在可见性门之外，以便有效的上限通知不会被它抑制。 / English: The captured CAPLIMIT command is session scoped; its presentation logic does not use volume/row addresses. Keep optional protocol metadata outside the visibility gate so that valid capping notifications are not suppressed by it.
 }
 
 function waitFor(durationMs: number): Promise<void> {

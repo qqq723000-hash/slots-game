@@ -2,6 +2,9 @@
 
 # 该脚本只在无 OIDC、无 Registry 凭据的构建权限域中生成发布包清单。特权发布 job
 # 不执行仓库脚本，而是使用工作流内固定逻辑和上游 job output 独立复核所有摘要。
+# English: This script only generates release package manifests in build permission domains with no OIDC and no
+# Registry credentials. Privileged publishing job Instead of executing warehouse scripts, all summaries are
+# independently reviewed using fixed logic within the workflow and upstream job output.
 set -eu
 
 fail() {
@@ -13,6 +16,8 @@ require_env() {
   variable_name=$1
   eval "variable_value=\${$variable_name-}"
   # 变量名来自下方固定列表，不接受调用方提供任意表达式。
+  # English: The variable name comes from the fixed list below and does not accept arbitrary expressions
+  # provided by the caller.
   # shellcheck disable=SC2154
   test -n "$variable_value" || fail "$variable_name is required"
 }
@@ -70,6 +75,8 @@ approval_metadata() {
   test ! -e "$output_file" || fail 'approval metadata output must not already exist'
 
   # 只输出公开 expiresAt 和规范化元数据摘要；审批引用、辖区和素材明细的明文不跨权限域。
+  # English: Only public expiresAt and standardized metadata summaries are output; the clear text of approval
+  # references, jurisdictions, and assets details does not cross authority domains.
   canonical_metadata=$(jq -ceS '
     def trimmed:
       if type == "string" then gsub("^[[:space:]]+|[[:space:]]+$"; "")
@@ -143,6 +150,8 @@ finalize_bundle() {
   done
 
   # OCI 归档只能含相对安全路径，并且必须是单平台、单 manifest 的标准 OCI layout。
+  # English: OCI archives can only contain relative security paths, and must be a single-platform,
+  # single-manifest standard OCI layout.
   if tar -tf "$bundle_dir/release-image.oci.tar" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
     fail 'OCI archive contains an unsafe path'
   fi
@@ -198,6 +207,8 @@ finalize_bundle() {
   spdx_digest=$(sha256sum "$bundle_dir/release-image.spdx.json" | awk '{ print $1 }')
 
   # 固定键值清单不 source 执行；发布 job 逐行精确匹配，防止制品替换或参数混淆。
+  # English: Fixed key-value lists are not sourced for execution; published jobs are matched row-by-row exactly
+  # to prevent artifact substitution or parameter confusion.
   {
     printf 'BUNDLE_SCHEMA_VERSION=2\n'
     printf 'SOURCE_SHA=%s\n' "$GITHUB_SHA"

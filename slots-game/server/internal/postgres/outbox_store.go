@@ -81,6 +81,10 @@ var (
 
 // OutboxStore 提供带围栏的 PostgreSQL 投递租约。可领取时间和到期时间统一使用数据库时钟，
 // 避免副本间的微小时钟差破坏归属判断；租约被重新领取后，唯一 LeaseToken 会拒绝旧工作器的迟到确认。
+// English: OutboxStore provides fenced PostgreSQL delivery leases. The retrievable time and expiration time use
+// the database clock uniformly to avoid the slight clock difference between replicas from damaging the ownership
+// judgment; after the lease is re-claimed, the only LeaseToken will reject the late confirmation from the old
+// worker.
 type OutboxStore struct {
 	db *sql.DB
 }

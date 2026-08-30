@@ -1,4 +1,4 @@
-// @ts-nocheck -- 此源码契约测试会刻意在 Vitest 的 Node 运行时中读取本地文件。
+// @ts-nocheck -- 此源码契约测试会刻意在 Vitest 的 Node 运行时中读取本地文件。 / English: @ts-nocheck -- This source contract test intentionally reads local files in Vitest's Node runtime.
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";

@@ -15,6 +15,9 @@ const (
 	MinimumTTL       = time.Second
 	// IdempotencyRetention 是启动码兑换窗口关闭后的墓碑保留期。该时长超过持久会话的
 	// 最大生存期，因此在会话仍可能重新启动期间，确定性交接凭据不会恢复为可用状态。
+	// English: IdempotencyRetention is the tombstone retention period after the activation code redemption window is
+	// closed. This duration exceeds the maximum lifetime of a persistent session, so the deterministic handover
+	// credentials are not restored to a usable state while the session may still be restarted.
 	IdempotencyRetention = 25 * time.Hour
 	codeGenerationTries  = 4
 )
@@ -27,9 +30,13 @@ var (
 )
 
 // CodeDigest 是 Store 可见的唯一启动码表示形式。持久化记录绝不包含明文凭据。
+// English: CodeDigest is the only representation of activation code visible to the Store. Persistent records never
+// contain clear text evidence.
 type CodeDigest [sha256.Size]byte
 
 // Claims 是成功兑换后复制到短期客户端访问令牌中的不可变启动事实。
+// English: Claims are immutable initiation facts that are copied into the short-lived client access token upon
+// successful redemption.
 type Claims struct {
 	OperatorID            string
 	SessionID             string
@@ -46,12 +53,16 @@ type Claims struct {
 }
 
 // Binding 由兑换端点提供。两个字段都必须匹配创建该启动码的已签名运营商启动请求。
+// English: Binding is provided by the exchange endpoint. Both fields must match the signed carrier launch request
+// that created the launch code.
 type Binding struct {
 	OperatorID string
 	SessionID  string
 }
 
 // Record 是持久化契约。它刻意不含明文启动码字段；适配器只接收其 SHA-256 摘要。
+// English: Record is a persistence contract. It intentionally does not contain a clear text activation code field;
+// the adapter only receives its SHA-256 digest.
 type Record struct {
 	Digest    CodeDigest
 	Claims    Claims
@@ -61,6 +72,9 @@ type Record struct {
 
 // CreateRequest 只携带调用方可决定的启动事实。绝对创建及到期时间必须由 Store 在
 // 同一次原子写入中使用其权威时钟生成并返回，不能由 Service 或 Pod 墙钟提供。
+// English: CreateRequest only carries startup facts that can be determined by the caller. Absolute creation and
+// expiration times must be generated and returned by the Store using its authoritative clock in the same atomic
+// write and cannot be provided by the Service or Pod wall clock.
 type CreateRequest struct {
 	Digest CodeDigest
 	Claims Claims
@@ -69,6 +83,8 @@ type CreateRequest struct {
 
 // ConsumeRequest 标识启动码及其必要的租户和会话绑定。Store 实现必须在同一次原子写入中
 // 检查全部三个字段。
+// English: ConsumeRequest identifies the launch code and its necessary tenant and session bindings. Store
+// implementations must check all three fields in the same atomic write.
 type ConsumeRequest struct {
 	Digest  CodeDigest
 	Binding Binding
@@ -76,12 +92,18 @@ type ConsumeRequest struct {
 
 // IssuedCode 只返回给受信启动调用方。Code 必须通过受保护的一次性启动重定向发送给浏览器，
 // 并且绝不能写入日志。
+// English: IssuedCode is returned only to trusted startup callers. Code must be sent to the browser via a
+// protected one-time launch redirect and must not be written to the log.
 type IssuedCode struct {
 	Code      string
 	ExpiresAt time.Time
 	// ValidatedAt 是签发或重放裁决使用的同一权威时间。首次签发来自 Store
 	// 原子创建返回的 CreatedAt；持久化重放必须来自 Store 的 ReplayObservation。
 	// HTTP 适配器只能用它做结果不变式校验，不能再用 Pod 墙钟替代。
+	// English: ValidatedAt is the same authoritative time used to issue or replay the ruling. The first issuance comes
+	// from the CreatedAt returned by the Store's atomic creation; persistent replay must come from the Store's
+	// ReplayObservation. The HTTP adapter can only use it for result invariant verification and cannot be replaced by
+	// the Pod wall clock.
 	ValidatedAt      time.Time
 	HistoricalReplay bool
 }
@@ -153,6 +175,8 @@ func validateCreateRequest(request CreateRequest) error {
 	}
 	// PostgreSQL timestamptz/interval 持久化精度为微秒；在 Store 边界统一精度，
 	// 避免内存与生产适配器返回不同的有效期。
+	// English: PostgreSQL timestamptz/interval persistence precision is microseconds; the precision is unified at the
+	// Store boundary to avoid memory and production adapters returning different validity periods.
 	if request.TTL%time.Microsecond != 0 {
 		return fmt.Errorf("%w: launch TTL must use microsecond precision", ErrInvalidInput)
 	}
@@ -164,16 +188,20 @@ func idempotencyRetained(record Record, now time.Time) bool {
 }
 
 // ValidateClaims 向持久化层及 HTTP 适配器提供固定启动协议校验，避免其重复实现策略。
+// English: ValidateClaims provides fixed startup protocol verification to the persistence layer and HTTP adapter
+// to avoid duplication of implementation strategies.
 func ValidateClaims(claims Claims) error {
 	return validateClaims(claims)
 }
 
 // ValidateRecord 应用 Store 适配器共同使用的持久化不变式。
+// English: ValidateRecord Persistence invariants common to App Store adapters.
 func ValidateRecord(record Record) error {
 	return validateRecord(record)
 }
 
 // ValidateCreateRequest 应用 Store 适配器共同使用的创建请求不变式。
+// English: ValidateCreateRequest Create request invariant common to application Store adapters.
 func ValidateCreateRequest(request CreateRequest) error {
 	return validateCreateRequest(request)
 }

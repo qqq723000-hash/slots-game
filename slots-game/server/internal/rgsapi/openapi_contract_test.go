@@ -16,6 +16,9 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 
 	// 这些路由都会在访问令牌验证后进入同一个 clientAdmission；规范必须同时
 	// 描述 JSON 401 与 429，否则生成的 SDK/网关会遗漏真实的失败闭合响应。
+	// English: These routes all go to the same clientAdmission after access token validation; the specification must
+	// describe both JSON 401 and 429, otherwise the generated SDK/gateway will miss the actual failed closure
+	// response.
 	for _, path := range []string{
 		"/client/v1/sessions/refresh",
 		"/client/v1/sessions/status",
@@ -34,6 +37,8 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 	}
 
 	// 运维承载令牌失败由独立监听器返回 text/plain 和 WWW-Authenticate，不能复用客户端 JSON 契约。
+	// English: If the operation and maintenance token fails, text/plain and WWW-Authenticate will be returned by the
+	// independent listener, and the client JSON contract cannot be reused.
 	for _, path := range []string{"/readyz", "/metrics"} {
 		section := openAPIPathSection(t, document, path)
 		if !strings.Contains(section, "'401':\n          $ref: '#/components/responses/OperationsUnauthorized'") {
@@ -43,6 +48,9 @@ func TestOpenAPIAuthenticationAndClientAdmissionResponses(t *testing.T) {
 
 	// 一次性启动码兑换没有已验证令牌身份，不创建 clientAdmission 限流桶；
 	// 其预认证资源保护是进程级 503 容量闸门，规范不能遗留旧的 IP 限流 429。
+	// English: The one-time activation code redemption does not have a verified token identity and does not create a
+	// clientAdmission current limiting bucket; its pre-authentication resource protection is a process-level 503
+	// capacity gate, and the old IP current limiting 429 cannot be left behind in the specification.
 	exchange := openAPIPathSection(t, document, "/client/v1/sessions/exchange")
 	if strings.Contains(exchange, "#/components/responses/RateLimited") {
 		t.Error("session exchange still declares the removed pre-authentication client rate limiter")
@@ -174,18 +182,23 @@ func TestOpenAPIFailureResponsesMatchImplementedHandlers(t *testing.T) {
 	document := string(contents)
 
 	// pending 读取会校验 token 与 X-Operator-Id 的绑定；不匹配时处理器返回 403。
+	// English: Pending reading will verify the binding of token and X-Operator-Id; if there is no match, the processor
+	// will return 403.
 	pending := openAPIPathSection(t, document, "/client/v1/results/pending")
 	if !strings.Contains(pending, "'403':\n          $ref: '#/components/responses/Error'") {
 		t.Error("pending-result recovery does not declare token-binding rejection")
 	}
 
 	// 已进入 MANUAL_REVIEW 的轮次必须保留 423，包括运营商签名对账路由。
+	// English: Rounds that have entered MANUAL_REVIEW must remain 423, including operator signature reconciliation
+	// routing.
 	operatorStatus := openAPIPathSection(t, document, "/operator/v1/rounds/status")
 	if !strings.Contains(operatorStatus, "'423':\n          $ref: '#/components/responses/SignedError'") {
 		t.Error("operator round status does not declare signed manual-review rejection")
 	}
 
 	// ACK 是带 JSON 正文的 POST；requirePOST/readBody 可在业务副作用前返回 413/415。
+	// English: ACK is a POST with JSON body; requirePOST/readBody can return 413/415 before business side effects.
 	acknowledgement := openAPIPathSection(t, document, "/client/v1/results/acknowledgements")
 	for _, status := range []string{"413", "415"} {
 		expectation := "'" + status + "':\n          $ref: '#/components/responses/Error'"

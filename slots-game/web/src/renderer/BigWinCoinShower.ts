@@ -32,7 +32,7 @@ export const BIG_WIN_COIN_IDS = Object.freeze([
 ] as const);
 export type BigWinCoinId = (typeof BIG_WIN_COIN_IDS)[number];
 
-/** 捆绑模块 9271 中的准确池顺序； coin04 故意具有 2 倍的重量。 */
+/** 捆绑模块 9271 中的准确池顺序； coin04 故意具有 2 倍的重量。 / English: Exact pool order in bundle module 9271; coin04 intentionally has 2x weight. */
 export const BIG_WIN_COIN_POOL_SEQUENCE = Object.freeze([
   "coin01",
   "coin02",
@@ -42,7 +42,7 @@ export const BIG_WIN_COIN_POOL_SEQUENCE = Object.freeze([
   "coin05",
 ] as const satisfies readonly BigWinCoinId[]);
 
-/** 常数转录自 CoinShowerEmitter/CoinShowerParticle (9271/1299)。 */
+/** 常数转录自 CoinShowerEmitter/CoinShowerParticle (9271/1299)。 / English: Constant transcribed from CoinShowerEmitter/CoinShowerParticle (9271/1299). */
 export const BIG_WIN_COIN_PHYSICS = Object.freeze({
   tickRate: 24,
   framesPerCoin: 19,
@@ -59,6 +59,8 @@ export const BIG_WIN_COIN_PHYSICS = Object.freeze({
 
 /**
  * 在一个绘制帧中同步 Sprite 构造的硬上限。因此，六个 25-Sprite 源池是在至少六个帧上构建的。
+ *
+ * 英文 / English: Hard cap on synchronizing Sprite construction within a draw frame. Therefore, six 25-Sprite source pools are constructed over at least six frames.
  */
 export const BIG_WIN_COIN_INITIALIZATION_BATCH_CAP = 25;
 export const BIG_WIN_COIN_TOTAL_POOL_SIZE = (
@@ -92,6 +94,8 @@ export type BigWinCoinPerformanceTier = "normal" | "low";
 /**
  * 仅作用于本地装饰粒子。默认等级完全保留捕获的 150 池和原始密度；三个慢帧才会
  * 降一级，避免一次 GC/后台调度抖动触发。恢复要求连续健康帧，并且每次只恢复一级。
+ *
+ * 英文 / English: Only works on local decoration particles. The default level fully retains the captured 150 pool and original density; only three slow frames will be downgraded to avoid a GC/background scheduling jitter trigger. Restoration requires consecutive health frames and only restores one level at a time.
  */
 export const BIG_WIN_COIN_FRAME_FUSE_POLICY: BigWinCoinFrameFusePolicy = Object.freeze({
   slowFrameThresholdMs: 34,
@@ -107,7 +111,7 @@ export const BIG_WIN_COIN_FRAME_FUSE_POLICY: BigWinCoinFrameFusePolicy = Object.
 });
 
 export interface BigWinCoinShowerOptions {
-  /** `null` 供逐帧捕获基线显式禁用动态采样；固定低档和 reduced-motion 仍然生效。 */
+  /** `null` 供逐帧捕获基线显式禁用动态采样；固定低档和 reduced-motion 仍然生效。 / English: `null` for frame-by-frame capture baseline to explicitly disable dynamic sampling; fixed low-range and reduced-motion still take effect. */
   readonly frameFusePolicy?: BigWinCoinFrameFusePolicy | null;
   readonly performanceTier?: BigWinCoinPerformanceTier;
   readonly reducedMotion?: boolean;
@@ -123,7 +127,7 @@ export function initialBigWinCoinFrameFuseState(): BigWinCoinFrameFuseState {
   });
 }
 
-/** 纯状态转换；不读取 navigator、硬件信息、时间源或服务端状态。 */
+/** 纯状态转换；不读取 navigator、硬件信息、时间源或服务端状态。 / English: Pure state transition; does not read navigator, hardware information, time source or server status. */
 export function advanceBigWinCoinFrameFuse(
   state: Readonly<BigWinCoinFrameFuseState>,
   frameDurationMs: number,
@@ -250,6 +254,8 @@ export interface BigWinCoinPoolInitializationOptions {
 /**
  * 公开，因此可以在不加载 Pixi 纹理的情况下测试帧预算和取消边界。调用者可以请求较小的批次，
  * 但绝不能大于 BIG_WIN_COIN_INITIALIZATION_BATCH_CAP。
+ *
+ * 英文 / English: Exposed so frame budgeting and cancellation bounds can be tested without loading Pixi textures. The caller can request a smaller batch, but never larger than BIG_WIN_COIN_INITIALIZATION_BATCH_CAP.
  */
 export function runBigWinCoinPoolInitialization(
   initializeBatch: (start: number, count: number) => void,
@@ -277,13 +283,13 @@ export function runBigWinCoinPoolInitialization(
 }
 
 export interface BigWinCoinShowerLoadOptions {
-  /** 测试/低端设备覆盖；始终固定在生产上限上。 */
+  /** 测试/低端设备覆盖；始终固定在生产上限上。 / English: Test/low-end device coverage; always fixed at production cap. */
   readonly batchSize?: number;
   readonly requestFrame?: FrameRequest;
   readonly onProgress?: (fraction: number) => void;
-  /** 与 verifiedAtlasTexture 成对提供；来自事件租约已校验 JSON bytes 的解码值。 */
+  /** 与 verifiedAtlasTexture 成对提供；来自事件租约已校验 JSON bytes 的解码值。 / English: Provided paired with verifiedAtlasTexture; decoded value from event lease verified JSON bytes. */
   readonly verifiedManifest?: unknown;
-  /** 与 verifiedManifest 成对提供；由同一租约已校验 PNG bytes 解码。 */
+  /** 与 verifiedManifest 成对提供；由同一租约已校验 PNG bytes 解码。 / English: Supplied paired with verifiedManifest; decoded from verified PNG bytes of the same lease. */
   readonly verifiedAtlasTexture?: Texture;
 }
 
@@ -305,7 +311,7 @@ export interface CoinEmissionStep {
 
 type RandomSource = () => number;
 
-/** CoinShowerEmitter.tick() 使用的精确分数密度累加器。 */
+/** CoinShowerEmitter.tick() 使用的精确分数密度累加器。 / English: Exact fractional density accumulator used by CoinShowerEmitter.tick(). */
 export function advanceCoinEmissionCounter(
   counter: number,
   density: number,
@@ -315,7 +321,7 @@ export function advanceCoinEmissionCounter(
   return Object.freeze({ counter: next, count: Math.floor(next) - before });
 }
 
-/** 来自捕获的包模块 1299 的精确初始化程序。 */
+/** 来自捕获的包模块 1299 的精确初始化程序。 / English: Exact initializer from captured packet module 1299. */
 export function createCoinParticleState(
   yForce: number,
   random: RandomSource = Math.random,
@@ -335,7 +341,7 @@ export function createCoinParticleState(
   };
 }
 
-/** 来自捕获的捆绑模块 1299 的精确固定蜱突变。 */
+/** 来自捕获的捆绑模块 1299 的精确固定蜱突变。 / English: Exact fixed-tick state mutation from captured bundle module 1299. */
 export function tickCoinParticle(state: CoinParticleState): boolean {
   state.velocityY += BIG_WIN_COIN_PHYSICS.gravityPerTick;
   if (state.alpha < 1) state.alpha += BIG_WIN_COIN_PHYSICS.alphaPerTick;
@@ -420,7 +426,7 @@ class CoinPoolRuntime {
     private readonly random: RandomSource,
   ) {}
 
-  /** 最多创建 `limit` 成员并返回实际创建的数量。 */
+  /** 最多创建 `limit` 成员并返回实际创建的数量。 / English: Creates at most `limit` members and returns the actual number created. */
   populate(limit: number): number {
     const count = Math.min(
       Math.max(0, limit),
@@ -478,7 +484,7 @@ class CoinPoolRuntime {
     this.active.length = 0;
   }
 
-  /** 降档时优先释放最老的粒子；新触发的层级反馈仍保持可见。 */
+  /** 降档时优先释放最老的粒子；新触发的层级反馈仍保持可见。 / English: When downshifting, the oldest particles are released first; newly triggered level feedback remains visible. */
   trimActive(limit: number): void {
     const boundedLimit = Math.max(0, Math.min(BIG_WIN_COIN_PHYSICS.poolCapacity, limit));
     while (this.active.length > boundedLimit) {
@@ -512,6 +518,8 @@ class CoinPoolRuntime {
 
 /**
  * 由捕获的 95 个图集作物支持的精确固定池 CoinShower 运行时。发射可以独立停止，因此最后的硬币会不断落入本机 Big Win 隐藏剪辑，与源引擎的生命周期相匹配。
+ *
+ * 英文 / English: Exact fixed pool CoinShower runtime backed by captured 95 atlas crops. Emissions can be stopped independently, so the last coin keeps falling into the native Big Win hidden clip, matching the life of the source engine.
  */
 export class BigWinCoinShower extends Container {
   private readonly random: RandomSource;
@@ -550,7 +558,7 @@ export class BigWinCoinShower extends Container {
     return this.pools.reduce((total, pool) => total + pool.activeCount, 0);
   }
 
-  /** 本地只读诊断；未接入 DOM、遥测、网络或服务端结果。 */
+  /** 本地只读诊断；未接入 DOM、遥测、网络或服务端结果。 / English: Local read-only diagnostics; no access to DOM, telemetry, network, or server-side results. */
   get particleBudgetSnapshot(): Readonly<{
     adaptiveLevel: number;
     activeParticleLimit: number;
@@ -613,7 +621,7 @@ export class BigWinCoinShower extends Container {
         if (this.disposed) return;
         throwIfAborted(signal);
 
-        // 仅在 150 个 Sprite 全部存在后才提交。因此，取消/销毁的视图永远不会公开部分初始化的池集合。
+        // 仅在 150 个 Sprite 全部存在后才提交。因此，取消/销毁的视图永远不会公开部分初始化的池集合。 / English: Only commit after all 150 sprites exist. Therefore, a canceled/destroyed view never exposes the partially initialized pool collection.
         this.addChild(...pools.map((pool) => pool.view));
         this.pools = pools;
         committed = true;
@@ -673,7 +681,7 @@ export class BigWinCoinShower extends Container {
     if (burst) this.burst(BIG_WIN_COIN_PHYSICS.burstTicks);
   }
 
-  /** 捕获的脉冲串：yForce = 4 + 电流密度时 15 个发射器滴答声。 */
+  /** 捕获的脉冲串：yForce = 4 + 电流密度时 15 个发射器滴答声。 / English: Captured burst: 15 emitter ticks with yForce = 4 + current density. */
   burst(ticks = BIG_WIN_COIN_PHYSICS.burstTicks): void {
     if (!Number.isInteger(ticks) || ticks < 0) {
       throw new Error("Coin shower burst ticks must be a non-negative integer");
@@ -723,6 +731,8 @@ export class BigWinCoinShower extends Container {
   /**
    * 丢弃尚未被 BigWinView 原子采用的一代派生纹理/精灵；共享 atlas BaseTexture
    * 仍由字体或视图 owner 持有。随后同一实例可用新租约重试。
+   *
+   * 英文 / English: Discard generation derived textures/sprites that have not been atomically adopted by the BigWinView; the shared atlas BaseTexture is still held by the font or view owner. The same instance can then be retried with a new lease.
    */
   clearArtwork(): void {
     this.killAll();

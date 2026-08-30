@@ -1,6 +1,8 @@
 #!/bin/sh
 
 # 只校验 Kubernetes Secret 的名称、不可变标志和 key 集合，不输出或解码任何值。
+# English: Only the name, immutable flags, and key set of the Kubernetes Secret are verified, and no values are
+# output or decoded.
 set -eu
 
 fail() {

@@ -45,10 +45,15 @@ var (
 
 // Metrics 只暴露有界基数的计数器、仪表盘和固定桶直方图。运营商、玩家、会话、
 // 轮次和交易标识绝不能成为标签，避免不可信输入耗尽监控系统的索引空间。
+// English: Metrics only exposes bounded cardinality counters, dashboards, and fixed bucket histograms. Operator,
+// player, session, round and transaction identifiers MUST NOT become tags to avoid untrusted input exhausting the
+// monitoring system's index space.
 type Metrics struct {
 	HTTPRequests atomic.Uint64
 	// HTTPFailures 保留全部 4xx/5xx 供诊断；HTTPServerFailures 只计 5xx，
 	// 供可用性告警使用，避免认证攻击或客户端输入错误制造服务故障噪声。
+	// English: HTTPFailures reserves all 4xx/5xx for diagnosis; HTTPServerFailures only counts 5xx for availability
+	// alarms to avoid authentication attacks or client input errors causing service failure noise.
 	HTTPFailures        atomic.Uint64
 	HTTPServerFailures  atomic.Uint64
 	AuthFailures        atomic.Uint64
@@ -58,12 +63,16 @@ type Metrics struct {
 	AccessLogsDropped   atomic.Uint64
 	SecurityLogsDropped atomic.Uint64
 	// TraceExportFailures 是单一固定类别计数器；记录前刻意丢弃 exporter 错误文本与 collector endpoint。
+	// English: TraceExportFailures is a single fixed category counter; exporter error text and collector endpoints are
+	// intentionally discarded before logging.
 	TraceExportFailures    atomic.Uint64
 	SharedAdmissionAllowed atomic.Uint64
 	SharedAdmissionLimited atomic.Uint64
 	SharedAdmissionErrors  atomic.Uint64
 	// EconomicAdmission* 使用固定无标签计数器区分平台成本预算结果。运营商和
 	// 钱包后端身份只存在于 HMAC 化 Valkey key，绝不能成为 Prometheus 标签。
+	// English: EconomicAdmission* uses fixed unlabeled counters to differentiate platform cost budget results.
+	// Operator and wallet backend identities only exist as HMAC-enabled Valkey keys and must not be Prometheus tags.
 	EconomicAdmissionAllowed         atomic.Uint64
 	EconomicAdmissionLimited         atomic.Uint64
 	EconomicAdmissionOperatorLimited atomic.Uint64
@@ -71,6 +80,9 @@ type Metrics struct {
 	EconomicAdmissionErrors          atomic.Uint64
 	// economicAdmission* 组合共享准入 PING/基础脚本和经济准入 Lua 的最近观测。
 	// 指标不携带运营商、key 或错误文本；未完成双路径验证时一律保持 0。
+	// English: economicAdmission* combines recent observations of shared admissions PING/base scripts and economic
+	// admissions Lua. The indicator does not carry the operator, key or error text; it always remains 0 when dual-path
+	// verification is not completed.
 	economicAdmissionHealthEnabled            atomic.Bool
 	economicAdmissionHealthMu                 sync.Mutex
 	sharedAdmissionHealthy                    bool
@@ -81,17 +93,30 @@ type Metrics struct {
 	economicAdmissionLastSuccessUnix          atomic.Int64
 	// CapacityRejected 只计进程级公网并发硬闸门拒绝；不得与租户/速率限流混用，
 	// 以便值班人员区分资源饱和与攻击或调用方超额。
+	// English: CapacityRejected only counts process-level public network concurrent hard gate rejections; it cannot be
+	// mixed with tenant/rate limiting, so that personnel on duty can distinguish resource saturation from attacks or
+	// caller oversubscription.
 	CapacityRejected atomic.Uint64
 	// PreAuthCapacityRejected 记录固定进程桶在任何身份/签名解析前的高水位拒绝。
+	// English: PreAuthCapacityRejected logs high-water rejections for fixed process buckets before any
+	// identity/signature resolution.
 	PreAuthCapacityRejected atomic.Uint64
 	// CryptographicCapacityRejected 记录验签、令牌验证或响应签名 CPU bulkhead 拒绝。
+	// English: CryptographicCapacityRejected Log signature verification, token verification, or response signature CPU
+	// bulkhead rejection.
 	CryptographicCapacityRejected atomic.Uint64
 	// NewIntentCapacityRejected 只计为 PostgreSQL 关键读取、结果恢复和 ACK 预留连接
 	// 而被非阻塞拒绝的新 session/launch/spin；不能与公网总 in-flight 闸门混用。
+	// English: NewIntentCapacityRejected only counts new sessions/launch/spin that are non-blockingly rejected for
+	// PostgreSQL critical reads, result recovery, and ACK reserved connections; cannot be mixed with public network
+	// in-flight gates.
 	NewIntentCapacityRejected atomic.Uint64
 	HTTPActiveRequests        atomic.Int64
 	// HTTPActiveConnections 覆盖公网监听器从 Accept 到 Close 或 Hijack 的完整生命周期，
 	// 包括尚未进入处理器的慢请求头、未读正文回收和空闲长连接。
+	// English: HTTPActiveConnections covers the complete life cycle of the public network listener from Accept to
+	// Close or Hijack, including slow request headers that have not yet entered the processor, unread body recycling
+	// and idle long connections.
 	HTTPActiveConnections       atomic.Int64
 	HTTPConnectionLimit         atomic.Int64
 	HTTPRequestDurations        [requestLatencyBucketCount]atomic.Uint64
@@ -293,6 +318,8 @@ func (m *Metrics) writeRecoveryMetrics(w io.Writer) error {
 }
 
 // NonceReplay 记录已经由签名验证链路确认的随机数重放，不携带任何请求派生标签。
+// English: NonceReplay records a replay of a nonce that has been confirmed by the signature verification link,
+// without carrying any request-derived tags.
 func (m *Metrics) NonceReplay() {
 	if m != nil {
 		m.AuthReplays.Add(1)
@@ -457,6 +484,9 @@ func formatPrometheusSeconds(duration time.Duration) string {
 
 // SetDatabasePool 绑定 rgs-server 唯一的进程内 SQL 连接池。仅在抓取时读取其
 // 快照，因此数据库仪表盘不会引入租户或请求派生的高基数标签。
+// English: SetDatabasePool binds rgs-server's only in-process SQL connection pool. Its snapshot is only read at
+// the time of fetch, so the database dashboard does not introduce tenants or request derived high cardinality
+// tags.
 func (m *Metrics) SetDatabasePool(database *sql.DB) {
 	if m != nil {
 		m.databasePool.Store(database)
@@ -465,6 +495,8 @@ func (m *Metrics) SetDatabasePool(database *sql.DB) {
 
 // BeginHTTPRequest 和 EndHTTPRequest 仅跟踪公网 RGS 工作。它们使用固定桶而非
 // 请求派生标签，保证恶意请求也不能无限扩展监控时序。
+// English: BeginHTTPRequest and EndHTTPRequest only track public network RGS work. They use fixed buckets instead
+// of request-derived labels to ensure that malicious requests cannot expand the monitoring schedule indefinitely.
 func (m *Metrics) BeginHTTPRequest() {
 	if m != nil {
 		m.HTTPActiveRequests.Add(1)
@@ -490,6 +522,8 @@ func (m *Metrics) EndHTTPRequest(duration time.Duration) {
 
 // AccessLogEmitted 与 AccessLogDropped 只累计两个无标签总量；访问日志中的
 // 路由和请求标识绝不能进入指标标签，以免形成高基数时序。
+// English: AccessLogEmitted and AccessLogDropped only accumulate two untagged totals; routing and request
+// identifiers in the access log must not enter the indicator label to avoid high cardinality timing.
 func (m *Metrics) AccessLogEmitted() {
 	if m != nil {
 		m.AccessLogsEmitted.Add(1)
@@ -504,6 +538,9 @@ func (m *Metrics) AccessLogDropped() {
 
 // SecurityLogDropped 只累计固定无标签总量；安全事件的权威计数必须在物理日志
 // 限流前单独增加，不能因为日志管道背压而丢失检测信号。
+// English: SecurityLogDropped only accumulates a fixed untagged total; the authoritative count of security events
+// must be increased separately before the physical log current limit, and the detection signal cannot be lost due
+// to log pipeline backpressure.
 func (m *Metrics) SecurityLogDropped() {
 	if m != nil {
 		m.SecurityLogsDropped.Add(1)
@@ -511,6 +548,8 @@ func (m *Metrics) SecurityLogDropped() {
 }
 
 // TraceExportFailure 记录无标签固定失败类别，不包含底层错误、endpoint、请求、trace 或身份值。
+// English: TraceExportFailure logs an unlabeled fixed failure category that does not contain the underlying error,
+// endpoint, request, trace, or identity values.
 func (m *Metrics) TraceExportFailure() {
 	if m != nil {
 		m.TraceExportFailures.Add(1)
@@ -520,6 +559,10 @@ func (m *Metrics) TraceExportFailure() {
 // EnableEconomicAdmissionHealthMetrics 只由实际配置 shared/economic admission
 // 的 API/combined 角色调用。这样 worker 不会暴露从未验证的合成零值；启用后的
 // 默认值仍为 fail-closed 的 0，直到 PING/基础脚本和经济 Lua 都成功。
+// English: EnableEconomicAdmissionHealthMetrics is only called by the API/combined role that actually configures
+// shared/economic admission. This way the worker does not expose synthetic zero values that have never been
+// validated; the default value when enabled remains fail-closed 0 until both PING/base scripts and economical Lua
+// succeed.
 func (m *Metrics) EnableEconomicAdmissionHealthMetrics() {
 	if m != nil {
 		m.economicAdmissionHealthEnabled.Store(true)
@@ -528,6 +571,9 @@ func (m *Metrics) EnableEconomicAdmissionHealthMetrics() {
 
 // ObserveSharedAdmissionHealth 更新无标签的共享准入组件状态。成功观测必须带有
 // 有效服务端时间；失败观测立即将组合健康置零，但保留最后成功时间供值班判断年龄。
+// English: ObserveSharedAdmissionHealth Updates the untagged shared admission component state. Successful
+// observation must have a valid server time; failed observation will immediately set the combined health to zero,
+// but retain the last successful time for the on-duty to judge the age.
 func (m *Metrics) ObserveSharedAdmissionHealth(healthy bool, observedAt time.Time) {
 	if m == nil {
 		return
@@ -536,6 +582,7 @@ func (m *Metrics) ObserveSharedAdmissionHealth(healthy bool, observedAt time.Tim
 }
 
 // ObserveEconomicAdmissionHealth 更新无标签的原子经济 Lua 组件状态。
+// English: ObserveEconomicAdmissionHealth Updates the untagged atomic economy Lua component state.
 func (m *Metrics) ObserveEconomicAdmissionHealth(healthy bool, observedAt time.Time) {
 	if m == nil {
 		return
@@ -567,6 +614,9 @@ func (m *Metrics) observeEconomicAdmissionComponent(shared, healthy bool, observ
 	}
 	// 组合成功时间取两条依赖路径最近成功时间的较早值。某一侧的高频成功不能
 	// 刷新另一侧的陈旧证据，否则 age 会错误掩盖 PING 或 Lua 路径长期未验证。
+	// English: The combined success time takes the earlier value of the latest success time of the two dependent
+	// paths. High-frequency successes on one side cannot refresh stale evidence on the other side, otherwise age will
+	// falsely mask PING or Lua paths that remain unverified for a long time.
 	combinedLastSuccessUnix := min(m.sharedAdmissionLastSuccessUnix, m.economicAdmissionComponentLastSuccessUnix)
 	if combinedLastSuccessUnix > m.economicAdmissionLastSuccessUnix.Load() {
 		m.economicAdmissionLastSuccessUnix.Store(combinedLastSuccessUnix)
@@ -630,6 +680,9 @@ func (m *Metrics) WalletUnknownOutcome() {
 
 // ObserveRecoveryBacklog 接收存储适配器用权威存储时钟生成的全局有界下界快照。
 // 它没有运营商、会话、轮次或 Worker 标签；副本身份只来自受控 scrape 标签。
+// English: ObserveRecoveryBacklog receives a global bounded lower-bound snapshot generated by the storage adapter
+// using the authoritative storage clock. It has no operator, session, round or worker tags; the replica identity
+// comes only from the controlled scrape tag.
 func (m *Metrics) ObserveRecoveryBacklog(
 	backlog int64,
 	oldestDueAge time.Duration,
@@ -648,6 +701,9 @@ func (m *Metrics) ObserveRecoveryBacklog(
 
 // EnableRecoveryMetrics 只由实际运行恢复循环的 worker/combined 角色调用，避免
 // API-only Pod 暴露看似健康、实为从未采集的零积压与零新鲜度。
+// English: EnableRecoveryMetrics is only called by the worker/combined role that actually runs the recovery loop,
+// preventing API-only Pods from exposing zero backlog and zero freshness that appear to be healthy but are
+// actually never collected.
 func (m *Metrics) EnableRecoveryMetrics() {
 	if m != nil {
 		m.recoveryMetricsEnabled.Store(true)
@@ -678,6 +734,8 @@ func (m *Metrics) RecoverySnapshotFailed() {
 
 // ObserveWalletRequest 仅接受 wallet 隔离层提供的固定 method/outcome，
 // 通过固定数组避免任何请求派生标签或动态映射。
+// English: ObserveWalletRequest only accepts fixed methods/outcomes provided by the wallet isolation layer,
+// avoiding any request derived tags or dynamic mapping via fixed arrays.
 func (m *Metrics) ObserveWalletRequest(method, outcome string, duration time.Duration) {
 	if m == nil {
 		return

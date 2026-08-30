@@ -10,6 +10,9 @@ import (
 
 // boundedCapacity 为未认证公网请求或密码学工作提供单一非阻塞硬上限。
 // 认证前的 path、RemoteAddr 和请求头都可伪造，不能据此分配第二个优先池。
+// English: boundedCapacity provides a single non-blocking hard cap for unauthenticated public network requests or
+// cryptographic work. The path, RemoteAddr and request header before authentication can be forged, and the second
+// priority pool cannot be allocated accordingly.
 type boundedCapacity struct {
 	permits chan struct{}
 }

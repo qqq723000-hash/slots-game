@@ -1,4 +1,4 @@
-// @ts-nocheck -- 仅在 Node 中运行、可感知裁剪的真实 Spine 与滤镜帧校验器。
+// @ts-nocheck -- 仅在 Node 中运行、可感知裁剪的真实 Spine 与滤镜帧校验器。 / English: @ts-nocheck -- A true clipping-aware Spine and filter frame checker that only runs in Node.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

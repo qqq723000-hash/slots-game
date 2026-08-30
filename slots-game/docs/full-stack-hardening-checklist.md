@@ -5,6 +5,10 @@
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
 
+## English summary / 英文摘要
+
+This names-only checklist defines the review surface for frontend, backend, data, deployment, observability, recovery, security, and delivery hardening. An entry records a required implementation or acceptance topic, not evidence that the topic is complete, deployed, certified, or commercially approved. Each item must be mapped separately to code or configuration, repeatable verification, target-environment evidence, or an explicit external gate, while economic authority remains in the RGS, PostgreSQL, and durable wallet workflow.
+
 ## 前端架构
 
 - 应用启动器边界

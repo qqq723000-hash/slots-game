@@ -9,6 +9,9 @@ import (
 
 // ErrDefinitionContinuity 表示数据库仍存在属于某个定义且可继续游戏或
 // 经济上尚未终结的工作，而新的单定义进程将无法再为该定义执行旋转。
+// English: ErrDefinitionContinuity means that there is still work in the database that belongs to a definition and
+// can continue to play or be economically unfinished, and the new single-definition process will no longer be able
+// to perform spins for that definition.
 var ErrDefinitionContinuity = errors.New("postgres definition continuity is not drained")
 
 const definitionContinuitySQL = `
@@ -58,6 +61,9 @@ func (snapshot DefinitionContinuitySnapshot) Drained() bool {
 // CheckDefinitionContinuity 是只读且失败时关闭的启动门禁。它绝不会使前代
 // 会话或轮次过期、关闭、重放或发生其他变更。操作方必须先排空这些对象，
 // 或部署支持多定义的运行时，之后才能替换唯一注册的旋转执行器。
+// English: CheckDefinitionContinuity is a read-only and closed-on-failure startup gate. It never expires, closes,
+// replays, or otherwise changes previous generation sessions or rounds. The operator must drain these objects or
+// deploy a runtime that supports multiple definitions before replacing the only registered rotation executor.
 func CheckDefinitionContinuity(
 	ctx context.Context,
 	database *sql.DB,

@@ -22,6 +22,15 @@ type databasePoolStats interface {
 // database/sql 不暴露连接与请求的归属，已经进入 InUse 的新意图仍可能同时计入预留。
 // 这是同池模型刻意选择的失败关闭上界：允许提前 shed，绝不为避免双计而漏算尚未
 // 取得连接的请求。只有把关键读取迁移到独立连接池后，才能安全消除该保守双计。
+// English: databaseIntentCapacity uses both hard licensing and database pool snapshots. At most one connection is
+// conservatively reserved for each new session or economic intent that has not yet ended; the sum of the
+// reservation and the current InUse must not encroach on the critical read budget, so concurrent requests cannot
+// co-observe the same idle snapshot post-penetration. database/sql does not expose the ownership of connections
+// and requests, and new intentions that have entered InUse may still be counted into the reservation at the same
+// time. This is the upper bound of failure closure deliberately chosen by the same pool model: early shed is
+// allowed, and requests that have not yet been connected are never missed to avoid double counting. This
+// conservative double counting can only be safely eliminated by migrating critical reads to a separate connection
+// pool.
 type databaseIntentCapacity struct {
 	pool         databasePoolStats
 	reservations atomic.Int64
@@ -64,6 +73,9 @@ func (capacity *databaseIntentCapacity) TryAcquire(
 		}
 		// CAS 把快照对应的空闲预算原子转换为本次预留；竞争失败必须重新读取
 		// InUse 和预留总数，禁止复用已经过期的共同空闲快照。
+		// English: CAS atomically converts the idle budget corresponding to the snapshot into this reservation; if the
+		// competition fails, the InUse and total number of reservations must be re-read, and reuse of expired common idle
+		// snapshots is prohibited.
 		if !capacity.reservations.CompareAndSwap(reserved, reserved+1) {
 			continue
 		}

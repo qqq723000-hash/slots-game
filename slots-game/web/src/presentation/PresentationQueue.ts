@@ -6,7 +6,7 @@ interface QueueEntry {
   reject: (reason: unknown) => void;
 }
 
-/** 将视觉工作序列化，不会让失败的任务影响到后续的工作。 */
+/** 将视觉工作序列化，不会让失败的任务影响到后续的工作。 / English: Serialize visual work so that failed tasks will not affect subsequent work. */
 export class PresentationQueue {
   private readonly entries: QueueEntry[] = [];
   private active = false;

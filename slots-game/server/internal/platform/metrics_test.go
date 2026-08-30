@@ -180,6 +180,7 @@ func TestWalletIsolationTelemetryUsesOnlyBoundedLabels(t *testing.T) {
 	metrics.ObserveWalletRequest("apply", "isolated", time.Millisecond)
 
 	// 非法值模拟请求派生输入；实现必须静默丢弃，绝不能生成新时序。
+	// Invalid values model request-derived input; the implementation must silently drop them and must never create a new time series.
 	metrics.WalletInFlight("operator-secret", 1)
 	metrics.ObserveWalletRequest("apply", "player-secret", time.Second)
 	metrics.WalletIsolationRejected("apply", "round-secret")
@@ -222,6 +223,7 @@ func TestRecoveryTelemetryUsesOnlyGlobalUnlabelledSnapshots(t *testing.T) {
 	metrics.RecoverySnapshotFailed()
 
 	// 非法快照和零时间不能覆盖最后一份可信观测。
+	// Invalid snapshots and zero times must not overwrite the last trusted observation.
 	metrics.ObserveRecoveryBacklog(-1, -time.Second, time.Time{})
 	metrics.ObserveRecoveryBacklog(
 		rgs.RecoverySnapshotBacklogLimit+1, time.Second, time.Unix(1_700_000_100, 0),
@@ -313,6 +315,7 @@ func TestEconomicAdmissionHealthRequiresBothComponentsAndPreservesLastSuccess(t 
 		"rgs_economic_admission_last_success_age_seconds 10",
 	)
 	// 只有一条路径产生新观测时，不能掩盖另一条路径已经陈旧的成功证据。
+	// A fresh observation from only one path must not conceal stale success evidence from the other path.
 	metrics.ObserveEconomicAdmissionHealth(true, time.Unix(1_700_000_001, 0))
 	text = writeAt(time.Unix(1_700_000_002, 0))
 	assertContains(text,

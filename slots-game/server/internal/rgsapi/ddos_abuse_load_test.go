@@ -134,6 +134,11 @@ func (verifier ddosSlowAccessVerifier) Verify(
 // TestRGSAPIDDoSAbuseProfile 是显式 opt-in 的应用层拒绝画像。它证明异常输入在认证、
 // 共享准入或经济协调器之前被拒绝，并证明大量有效会话不能绕过按运营商聚合的经济意图配额。
 // 该本机画像不产生真实资金副作用，也绝不能被表述为互联网规模 DDoS 或 AWS Shield 认证。
+// English: TestRGSAPIDDoSAbuseProfile is an explicit opt-in application layer denial profile. It demonstrates that
+// anomalous input is rejected before authentication, shared admissions, or the economic coordinator, and
+// demonstrates that a large number of valid sessions cannot bypass economic intent quotas aggregated by carrier.
+// This native profile has no real-money side effects and is in no way represented as Internet-scale DDoS or AWS
+// Shield certification.
 func TestRGSAPIDDoSAbuseProfile(t *testing.T) {
 	if os.Getenv("RGS_RUN_HTTP_DDOS_ABUSE") != "1" {
 		t.Skip("set RGS_RUN_HTTP_DDOS_ABUSE=1 to run the HTTP DDoS abuse profile")

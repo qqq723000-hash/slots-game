@@ -3,6 +3,8 @@ import type { ServerError } from "./state/types";
 /**
  * 面向玩家的错误码是产品契约，不是服务端或协议的透传。不要把异常消息、
  * URL、令牌、请求体或堆栈带到这个模块的输出里。
+ *
+ * 英文 / English: The error code for players is a product contract, not a transparent transmission of the server or protocol. Do not bring exception messages, URLs, tokens, request bodies, or stacks into the output of this module.
  */
 export const PLAYER_FACING_ERROR_CODES = {
   LAUNCH_UNAVAILABLE: "LAUNCH_UNAVAILABLE",
@@ -24,6 +26,8 @@ export interface PlayerFacingError {
   /**
    * 仅供受控宿主诊断；永远不会拼进玩家文案或 DOM 可见文本。
    * requestId 不是认证凭据，但仍须按诊断数据处理。
+   *
+   * 英文 / English: For controlled host diagnostics only; never spells in player text or DOM visible text. requestId is not an authentication credential, but must still be treated as diagnostic data.
    */
   readonly correlationId?: string;
 }
@@ -83,7 +87,7 @@ function isServerError(value: unknown): value is ServerError {
     && typeof (value as { retryable?: unknown }).retryable === "boolean";
 }
 
-/** 只提取受模式约束的关联 ID；绝不读取服务端消息。 */
+/** 只提取受模式约束的关联 ID；绝不读取服务端消息。 / English: Only extract correlation IDs subject to the schema; never read server messages. */
 export function safeCorrelationId(cause: unknown): string | undefined {
   if (cause === null || typeof cause !== "object") return undefined;
   const requestId = (cause as { requestId?: unknown }).requestId;
@@ -108,6 +112,8 @@ export function playerFacingError(
  * 将传输/协议/运行时故障统一转换为稳定玩家文案。
  * 此处刻意不读取 `cause.message`：该字段可能由服务端控制或包含实现细节，
  * 不得进入玩家可见表面。
+ *
+ * 英文 / English: Unified conversion of transport/protocol/runtime failures into stable player copy. `cause.message` is intentionally not read here: this field may be controlled by the server or contain implementation details and must not enter the player's visible surface.
  */
 export function playerFacingErrorFor(
   cause: unknown,

@@ -1,6 +1,8 @@
 name: slots-rgs-postgres
 
 # 仅用于开发/一致性验证；本文件不构成具备 HA、备份、传输加密、监控或监管审批的生产拓扑。
+# English: For development/conformance verification only; this document does not constitute a artifactsion
+# topology with HA, backup, transport encryption, monitoring, or regulatory approval.
 services:
   postgres:
     image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
@@ -33,6 +35,8 @@ networks:
   rgs-data:
     internal: true
   # 单独承担 127.0.0.1 端口发布；关闭转发 NAT，避免测试数据库取得通用外网出口。
+  # English: Responsible for the 127.0.0.1 port publishing alone; turn off forwarding NAT to prevent the test
+  # database from obtaining a general external network egress.
   rgs-host-access:
     driver: bridge
     driver_opts:

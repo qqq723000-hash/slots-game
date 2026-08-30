@@ -6,6 +6,8 @@ export const PRIMAL_PRESENTATION_RULES_VERSION = "primal-rampage-help-en-gb-v3" 
 /**
  * 这份白名单只批准固定玩法文案的展示，不批准数学定义本身。
  * 数学定义每次变更都必须显式增加新的表现规则版本或重新审阅后扩充该列表。
+ *
+ * 英文 / English: This whitelist only allows the display of fixed gameplay copywriting, and does not allow the mathematical definition itself. Each change to the mathematical definition must explicitly add a new version of the performance rules or re-examine and expand the list.
  */
 export const PRIMAL_PRESENTATION_DEFINITION_BINDINGS = Object.freeze([
   Object.freeze({
@@ -18,6 +20,8 @@ export const PRIMAL_PRESENTATION_DEFINITION_BINDINGS = Object.freeze([
 /**
  * `config_mobile.json` 保存的是字体字段的原始颜色；最终官方客户端还会叠加
  * paytableHeaderStyle。这里记录合成后的玩家可见结果，避免再次把原始黄字误当成最终画面。
+ *
+ * 英文 / English: `config_mobile.json` saves the original color of the font field; eventually the official client will also overlay paytableHeaderStyle. The player-visible results after synthesis are recorded here to avoid mistaking the original yellow text for the final picture again.
  */
 export const PRIMAL_HELP_AUTHORING = Object.freeze({
   logicalWidthPx: 750,
@@ -40,7 +44,7 @@ export const PRIMAL_HELP_AUTHORING = Object.freeze({
   }),
 });
 
-/** 实时 `config_mobile.json` 编排坐标；浏览器布局最多可相差 1px。 */
+/** 实时 `config_mobile.json` 编排坐标；浏览器布局最多可相差 1px。 / English: Real-time `config_mobile.json` layout coordinates; browser layouts can differ by up to 1px. */
 export const PRIMAL_HELP_AUTHOR_Y = Object.freeze({
   maximumWinTop: 51.5,
   wild: 176,
@@ -56,7 +60,7 @@ export const PRIMAL_HELP_AUTHOR_Y = Object.freeze({
   maximumWinBottom: 7_445,
 } as const);
 
-/** 捕获的九个 T0AB 帧界定编排的 PAYTABLE 章节。 */
+/** 捕获的九个 T0AB 帧界定编排的 PAYTABLE 章节。 / English: The nine T0AB frames captured define the PAYTABLE chapter of the arrangement. */
 export const PRIMAL_HELP_SEPARATOR_AUTHOR_Y = Object.freeze([
   159,
   858.05,
@@ -111,9 +115,9 @@ export type PrimalHelpLocaleKey = typeof PRIMAL_HELP_REQUIRED_LOCALE_KEYS[number
 export interface PrimalHelpFontRoute {
   readonly titleFamily: string;
   readonly bodyFamily: string;
-  /** 只有这些本地官方字体全部存在时，bundle 才允许进入可广告列表。 */
+  /** 只有这些本地官方字体全部存在时，bundle 才允许进入可广告列表。 / English: Only when all these local official fonts exist, the bundle will be allowed to enter the advertizable list. */
   readonly requiredFamilies: readonly string[];
-  /** CSS 最后防线；release 校验失败时玩法文案仍保持关闭，不能靠回退字体冒充官方版。 */
+  /** CSS 最后防线；release 校验失败时玩法文案仍保持关闭，不能靠回退字体冒充官方版。 / English: CSS is the last line of defense; when the release verification fails, the gameplay copy remains closed, and you cannot rely on fallback fonts to pretend to be the official version. */
   readonly cssFallbacks: readonly string[];
 }
 
@@ -185,6 +189,8 @@ const EN_GB_HELP_BUNDLE = Object.freeze({
 
 /**
  * 这里只有经过证据逐字核对的 en_GB。未来 locale 必须以完整 bundle 加入，禁止以机器翻译补洞。
+ *
+ * 英文 / English: Here is only en_GB that has been verified verbatim with the evidence. In the future, locales must be added as complete bundles, and machine translation to fill holes is prohibited.
  */
 export const PRIMAL_HELP_LOCALE_BUNDLES = Object.freeze({
   en_GB: EN_GB_HELP_BUNDLE,
@@ -239,6 +245,8 @@ export interface PrimalHelpLocaleRequestSource {
 /**
  * 运营商显式 query 参数优先于文档语言；两者都没有时才使用经过批准的 en_GB。
  * 这里只选择请求值，规范化与完整 bundle 回退仍由 resolvePrimalHelpLocale 统一负责。
+ *
+ * 英文 / English: The operator's explicit query parameter takes precedence over the document language; only the approved en_GB is used if neither is available. Only the request value is selected here, normalization and complete bundle fallback are still handled by resolvePrimalHelpLocale.
  */
 export function requestedPrimalHelpLocale(
   source: Readonly<PrimalHelpLocaleRequestSource> = {},
@@ -260,6 +268,8 @@ function normalizePrimalHelpLocale(locale: string): string {
 
 /**
  * Unsupported locale 以完整 en_GB bundle 回退；字体不完整时抛错，让调用方隐藏玩法文案。
+ *
+ * 英文 / English: Unsupported locale falls back to the complete en_GB bundle; an error is thrown when the font is incomplete, allowing the caller to hide the gameplay copy.
  */
 export function resolvePrimalHelpLocale(
   requestedLocale: string,
@@ -289,6 +299,8 @@ export function resolvePrimalHelpLocale(
 /**
  * 完整 locale bundle 的 DOM 提交边界。先验证白名单、bundle 和全部 DOM key，
  * 再一次性写入，避免缺键时留下混合语言或半更新的帮助页。
+ *
+ * 英文 / English: The DOM submission boundaries of the complete locale bundle. Verify the whitelist, bundle and all DOM keys first, and then write them all at once to avoid leaving mixed-language or semi-updated help pages when keys are missing.
  */
 export function applyPrimalHelpLocaleBundle(
   root: ParentNode,
@@ -362,6 +374,8 @@ export interface PrimalHelpSection {
 /**
  * 仅抄录官方 en_GB locale 中的短玩法文案；顺序来自移动端 paytable 的作者时间线。
  * 保留原文的大小写、标点和语法，以便证据测试逐字核对。
+ *
+ * 英文 / English: Only the short gameplay copy in the official en_GB locale is transcribed; the order comes from the author timeline of the mobile paytable. Preserve the capitalization, punctuation, and grammar of the original text for verbatim verification by evidence testing.
  */
 export const PRIMAL_HELP_SECTIONS = Object.freeze([
   Object.freeze({
@@ -527,14 +541,14 @@ export interface PresentationRulesSessionRecord {
   readonly sessionId: string;
   readonly engineRulesVersion: string | null;
   readonly definitionBinding: Readonly<GameDefinitionBinding> | null;
-  /** 运营商请求与最终完整 bundle 都被冻结；同一会话不得静默切换语言。 */
+  /** 运营商请求与最终完整 bundle 都被冻结；同一会话不得静默切换语言。 / English: Operator requests and final full bundles are frozen; languages ​​may not be switched silently in the same session. */
   readonly requestedLocale: string;
   readonly locale: string;
 }
 
 export interface PresentationRulesBindingResult {
   readonly status: PresentationRulesBindingStatus;
-  /** 首次观察记录在同一 sessionId 内保持冻结；漂移时不会被新值覆盖。 */
+  /** 首次观察记录在同一 sessionId 内保持冻结；漂移时不会被新值覆盖。 / English: First observed records remain frozen within the same sessionId; they are not overwritten by new values ​​when drifting. */
   readonly record: Readonly<PresentationRulesSessionRecord>;
 }
 
@@ -598,6 +612,8 @@ function isApprovedDefinitionBinding(binding: Readonly<GameDefinitionBinding>): 
 
 /**
  * 固定玩法文案只有在完整会话绑定逐项匹配时才启用；缺失、未批准和同会话漂移均失败闭合。
+ *
+ * 英文 / English: Fixed gameplay copy is only enabled when full session binding match-by-match; missing, unapproved, and same-session drift all fail to close.
  */
 export function bindPrimalPresentationRules(
   previous: Readonly<PresentationRulesBindingResult> | null,

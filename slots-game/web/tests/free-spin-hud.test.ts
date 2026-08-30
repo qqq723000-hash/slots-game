@@ -1,4 +1,4 @@
-// @ts-expect-error Vitest 在 Node 中运行，而浏览器 tsconfig 故意不声明 Node 内置模块。
+// @ts-expect-error Vitest 在 Node 中运行，而浏览器 tsconfig 故意不声明 Node 内置模块。 / English: @ts-expect-error Vitest runs in Node, and the browser tsconfig intentionally does not declare Node built-in modules.
 import { readFileSync } from "node:fs";
 import { TextureAtlas, Vector2 } from "@pixi-spine/base";
 import {
@@ -594,7 +594,7 @@ describe("native Free Spins HUD", () => {
     hud.restoreFeatureState(ACTIVE_STATE);
 
     const presentation = hud.retriggerCap(
-      // 官方 CAPLIMIT 演出以会话为作用域，并忽略地址元数据。
+      // 官方 CAPLIMIT 演出以会话为作用域，并忽略地址元数据。 / English: The official CAPLIMIT gig is session scoped and ignores address metadata.
       { type: "free_spin.cap_reached", reel: -1, row: -1 },
       ACTIVE_STATE,
     );
@@ -791,7 +791,7 @@ describe("native Free Spins HUD", () => {
     expect(phases).toEqual(["input-ready"]);
     expect(pending[1]?.durationMs).toBe(FREE_SPIN_HUD_ANIMATION_MS.retrigger.hold);
 
-    // 没有用户手势：预设的有限停留本身会关闭门控。
+    // 没有用户手势：预设的有限停留本身会关闭门控。 / English: No user gesture: the preset limited dwell itself closes the gate.
     pending[1]?.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -802,11 +802,11 @@ describe("native Free Spins HUD", () => {
     pending[2]?.resolve();
     await first;
 
-    // 同一个 Feature 会话仍然只展示一次。
+    // 同一个 Feature 会话仍然只展示一次。 / English: The same Feature session is still only displayed once.
     await hud.retriggerCap(capEvent, ACTIVE_STATE);
     expect(wait).toHaveBeenCalledTimes(3);
 
-    // BASE 快照会结束旧会话；后续 Feature 会话可以再次展示一次。
+    // BASE 快照会结束旧会话；后续 Feature 会话可以再次展示一次。 / English: The BASE snapshot ends the old session; subsequent Feature sessions can be shown again.
     hud.restoreFeatureState({
       mode: "BASE",
       freeSpinsRemaining: 0,

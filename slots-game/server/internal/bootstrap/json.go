@@ -67,6 +67,9 @@ func readLimitedFile(path string, limit int64) ([]byte, error) {
 // validateJSONStructure 在类型化解码前运行，因为 encoding/json 的
 // DisallowUnknownFields 不会拒绝重复对象成员名。签名或配置材料中的重复成员名存在风险，
 // 因为不同解析器可能无法就哪个值具有权威性达成一致。
+// English: validateJSONStructure is run before typed decoding because encoding/json's DisallowUnknownFields does
+// not reject duplicate object member names. Duplicate member names in signature or configuration material are
+// risky because different parsers may not agree on which value is authoritative.
 func validateJSONStructure(data []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()

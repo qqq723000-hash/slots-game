@@ -1,5 +1,6 @@
 #!/bin/sh
 # 本机集成验收脚本的共用路径、版本与 Compose 入口。
+# English: Common paths, versions, and Compose entries for natively integrated acceptance scripts.
 # shellcheck disable=SC2034
 set -eu
 
@@ -49,6 +50,9 @@ require_state() {
 
 # 密钥创建成功不代表首次 bootstrap 已提交：npm/build/审批等后续阶段仍可能中断。
 # 只有非空 compose.env 才是可启动镜像选择器；缺失或空文件都必须走首次选择器恢复路径。
+# English: Successful key creation does not mean that the first bootstrap has been submitted: subsequent stages
+# such as npm/build/approval may still be interrupted. Only non-empty compose.env is a bootable image selector;
+# missing or empty files must go through the first selector recovery path.
 needs_initial_compose_state() {
   test ! -s "$compose_environment"
 }
@@ -57,6 +61,11 @@ needs_initial_compose_state() {
 # macOS 使用 BSD lockf，Linux 合同环境使用 util-linux flock；进程退出或被终止时，
 # 内核自动释放锁，不依赖清理一个可能已陈旧的 PID 文件。文件描述符由子脚本继承，
 # 因此 bootstrap 的 drain 检查与定义提交始终处在同一个不可分割的部署窗口内。
+# English: bootstrap/up/down/destroy must share the same kernel-level exclusive lock. The lock file itself is
+# retained to ensure macOS uses BSD lockf, and the Linux contract environment uses util-linux flock; when the
+# process exits or is terminated, The kernel releases the lock automatically and does not rely on cleaning up a
+# PID file that may be stale. File descriptors are inherited by child scripts, Therefore, bootstrap's drain
+# check and definition submission are always within the same inseparable deployment window.
 acquire_deployment_lock() {
   test -d "$state_root" && test ! -L "$state_root" || {
     printf '%s\n' '状态目录必须是可验证的真实目录，无法建立部署锁。' >&2

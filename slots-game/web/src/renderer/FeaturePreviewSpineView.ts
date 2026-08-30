@@ -41,7 +41,7 @@ export const FEATURE_PREVIEW_PLAYBACK_MS = Object.freeze({
 });
 
 export const FEATURE_PREVIEW_BACKGROUND_POSE = Object.freeze({
-  // 捕获的预览将城市置于介绍过渡框架上，其中街道交通与预设的 1280x720 构图相匹配。
+  // 捕获的预览将城市置于介绍过渡框架上，其中街道交通与预设的 1280x720 构图相匹配。 / English: The captured preview places the city on the introductory transition frame, with street traffic matching the preset 1280x720 composition.
   backdropSeconds: 2.36,
   foregroundSeconds: 0,
 } as const);
@@ -70,15 +70,17 @@ export const FEATURE_PREVIEW_UI_ATLAS = Object.freeze({
 
 /**
  * 在将原始 1200x900 场景组合到 1280x720 游戏界面后，捕获的 Spine_fps 元素使用的精确桌面变换。
+ *
+ * 英文 / English: The exact desktop transformation used by the captured Spine_fps element after combining the original 1200x900 scene into a 1280x720 game interface.
  */
 export const FEATURE_PREVIEW_SPINE_TRANSFORM = Object.freeze({
-  // fpContent 将 1500x1100 装入 1600x900：9/11。 1280x720 帧缓冲区又贡献了 0.8，最终的内容比例为 36/55。
+  // fpContent 将 1500x1100 装入 1600x900：9/11。 1280x720 帧缓冲区又贡献了 0.8，最终的内容比例为 36/55。 / English: fpContent mounts 1500x1100 into 1600x900: 9/11. The 1280x720 framebuffer contributes another 0.8, giving a final content ratio of 36/55.
   x: 655.709_091,
   y: 321.872_727,
   scale: 0.733_091,
 });
 
-/** 预设的功能预览回放托管在同一 Pixi 应用程序中。 */
+/** 预设的功能预览回放托管在同一 Pixi 应用程序中。 / English: Preset feature preview playback is hosted within the same Pixi app. */
 export class FeaturePreviewSpineView {
   readonly view = new Container();
   private readonly backgroundHost = new Container();
@@ -277,7 +279,7 @@ export class FeaturePreviewSpineView {
     const profile = snapshot.fpsProfile;
     if (!transforms || !profile) return;
 
-    // 身份主机对应于捕获的桌面 `ls` 根。移动版本会改变 minBound 比例和预设的内部宽度。
+    // 身份主机对应于捕获的桌面 `ls` 根。移动版本会改变 minBound 比例和预设的内部宽度。 / English: The identity host corresponds to the captured desktop `ls` root. The mobile version changes the minBound scale and the preset's inner width.
     this.projectHost(
       this.contentHost,
       transforms.content,
@@ -313,7 +315,7 @@ export class FeaturePreviewSpineView {
     data: Parameters<typeof createSpineView>[0],
     timeSeconds: number,
   ): Spine {
-    // 预览背景重复使用PR_background / PR_background_frnt，其`add/normal_*`图集名称是正常的全屏城市车牌。
+    // 预览背景重复使用PR_background / PR_background_frnt，其`add/normal_*`图集名称是正常的全屏城市车牌。 / English: The preview background reuses PR_background / PR_background_frnt, whose `add/normal_*` album name is a normal full-screen city license plate.
     const view = createSpineView(data, { regionAdditiveFallback: false });
     view.autoUpdate = false;
     view.position.set(
@@ -357,6 +359,8 @@ export class FeaturePreviewSpineView {
    * FPS 图集故意将发光/电动框架存储在不透明的 JPEG 页面上。它们仅通过Spine的附加时隙模式是透明的。
    * 遮罩插槽可以在交换其附件时短暂保留 Pixi 的默认 NORMAL 混合，这会将 JPEG 的黑色背景暴露为大矩形。每次 Spine 更新后重新断言实时可渲染对象上的混合，
    * 以便预设的黑色为零合成保持不变。
+   *
+   * 英文 / English: FPS Atlas intentionally stores glowing/motorized frames on opaque JPEG pages. They are only transparent through Spine's additional slot mode. The mask slot can briefly retain Pixi's default NORMAL blending when swapping its attachments, which exposes the JPEG's black background as a large rectangle. Reasserts the blend on the live renderable after each Spine update so that the default black-to-zero composition remains unchanged.
    */
   private enforceAuthoredAdditiveSlots(): void {
     const spine = this.spine;

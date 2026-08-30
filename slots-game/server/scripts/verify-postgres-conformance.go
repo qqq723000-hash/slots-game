@@ -1,6 +1,8 @@
 //go:build ignore
 
 // verify-postgres-conformance 命令验证严格 PostgreSQL 一致性测试输出的逐行 JSON。
+// English: The verify-postgres-conformance command verifies line-by-line JSON of strict PostgreSQL conformance
+// test output.
 package main
 
 import (

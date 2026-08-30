@@ -1,9 +1,17 @@
-# SymbolHighlight Specification
+# 符号高亮规范 / SymbolHighlight Specification
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## 中文摘要 / Chinese summary
+
+本规范定义转轴符号的普通层与附加高亮层如何在待机、普通中奖和巨额奖励演示中保持成对。两层必须在每帧共享相同的世界变换、可见性和轨道所有权，不得用近似的 CSS 亮度或阴影效果替代作者素材。此文档只覆盖视觉运行时与回归合同，结算数学、RGS 经济权威与素材权利批准仍由各自的服务端、交付和外部门禁承担。
+
+## English summary / 英文摘要
+
+This specification defines how each reel symbol's NORMAL layer and authored ADD highlight layer remain paired during idle, ordinary wins, and Big Win presentation. Both layers must preserve identical world transforms, visibility, and animation-track ownership on every frame, and approximate CSS brightness or shadow effects are not valid replacements. The document covers visual runtime and regression behavior only; settlement mathematics, RGS economic authority, and asset-rights approval remain governed by their separate server, delivery, and external gates.
 
 ## Overview
 

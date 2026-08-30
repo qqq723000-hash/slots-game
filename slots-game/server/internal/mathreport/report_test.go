@@ -176,6 +176,8 @@ func TestTheoreticalMaximumFailsClosedOnDefinitionArithmeticOverflow(t *testing.
 	config := game.DemoConfig()
 	// 将所有视觉倍数限制在随附资源目录内。极大的赔付表数值仍能证明，责任计算器会在报告
 	// 无法表示的风险敞口前失效即关闭。
+	// Keep all visual multipliers within the bundled asset range. An extreme paytable value still proves that the liability calculator
+	// fails closed before reporting an unrepresentable exposure.
 	config.Paytable[game.SymbolOrbit] = int64(^uint64(0) >> 1)
 	options := reportOptions(1, config.Bet.MaxMinor)
 	_, err := Run(context.Background(), config, &fixedSpinner{}, options)

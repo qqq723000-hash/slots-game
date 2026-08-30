@@ -400,6 +400,7 @@ func (r *Repository) ExpireRiskReviews(
 		changed, err := r.expireRiskReview(ctx, key)
 		if err != nil {
 			// 单条损坏记录保持失败关闭，但不能阻止同一有界批次内其他独立会话到期。
+			// One corrupt record remains fail-closed but must not prevent other independent sessions in the same bounded batch from expiring.
 			failures = append(failures, err)
 			continue
 		}

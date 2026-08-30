@@ -26,7 +26,7 @@ const LOAD_ORDER = [
   ["sounds1", sounds1ManifestJson],
   ["sounds2", sounds2ManifestJson],
   ["common", commonManifestJson],
-    // 官方延迟加载器会在所有主清单之后运行，并按键覆盖 15 个重复计数器标题。
+    // 官方延迟加载器会在所有主清单之后运行，并按键覆盖 15 个重复计数器标题。 / English: The official lazy loader runs after all main manifests and overrides the 15 repeat counter titles by key.
   ["delayed", delayedManifestJson],
 ] as const satisfies readonly [PrimalAudioPackId, unknown][];
 

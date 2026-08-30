@@ -22,12 +22,12 @@ export interface SurfaceStroke {
 
 export interface EdgeWearMark extends SurfaceStroke {
   readonly edge: SurfaceEdge;
-  /** 暴露的明亮金属的标准化数量，从来都不是游戏价值。 */
+  /** 暴露的明亮金属的标准化数量，从来都不是游戏价值。 / English: The standardized amount of exposed bright metal was never game value. */
   readonly exposure: number;
 }
 
 export interface ScratchMark extends SurfaceStroke {
-  /** 装饰性凹槽深度用于选择第二个较暗的下描边。 */
+  /** 装饰性凹槽深度用于选择第二个较暗的下描边。 / English: Decorative Groove Depth is used to select a second, darker lower stroke. */
   readonly depth: number;
 }
 
@@ -51,6 +51,8 @@ function validateOptions(options: SurfaceSamplingOptions): void {
 
 /**
  * 无状态 32 位哈希采样器。相同的种子/索引对在浏览器中是稳定的，并且不会消耗或改变全局随机状态。
+ *
+ * 英文 / English: Stateless 32-bit hash sampler. The same seed/index pair is stable across browsers and does not consume or change the global random state.
  */
 export function seededSurfaceValue(seed: number, index: number): number {
   const safeSeed = Number.isFinite(seed) ? Math.trunc(seed) : 0;
@@ -68,7 +70,7 @@ function sample(seed: number, mark: number, channel: number): number {
   return seededSurfaceValue(seed, mark * 11 + channel);
 }
 
-/** 短、低对比度的定向笔划适合拉丝金属表面。 */
+/** 短、低对比度的定向笔划适合拉丝金属表面。 / English: Short, low-contrast directional strokes are suitable for brushed metal surfaces. */
 export function sampleBrushedSteel(options: SurfaceSamplingOptions): readonly SurfaceStroke[] {
   validateOptions(options);
   const direction = options.direction ?? "horizontal";
@@ -99,6 +101,8 @@ export function sampleBrushedSteel(options: SurfaceSamplingOptions): readonly Su
 
 /**
  * 对短的暴露金属运行进行采样，这些运行保留在与其声明边缘相邻的窄带内。这样可以保持承重边缘的磨损，而不是在柜子表面均匀地散布明亮的噪音。
+ *
+ * 英文 / English: Sample short exposed metal runs that remain within a narrow band adjacent to their declared edge. This keeps the load-bearing edges from wearing away, rather than spreading bright noise evenly across the cabinet surface.
  */
 export function sampleEdgeWear(
   options: SurfaceSamplingOptions,
@@ -146,7 +150,7 @@ export function sampleEdgeWear(
   });
 }
 
-/** 具有主导方向但不重复位置的稀疏凹槽。 */
+/** 具有主导方向但不重复位置的稀疏凹槽。 / English: Sparse grooves with dominant directions but no repeating positions. */
 export function sampleScratches(options: SurfaceSamplingOptions): readonly ScratchMark[] {
   validateOptions(options);
   const direction = options.direction ?? "mixed";

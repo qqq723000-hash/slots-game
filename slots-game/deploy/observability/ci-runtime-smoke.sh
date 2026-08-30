@@ -18,6 +18,8 @@ cleanup() {
   exit_code=$?
   if [ -n "$runtime_container" ] && docker container inspect "$runtime_container" >/dev/null 2>&1; then
     # 原始 stderr 可能包含第三方库错误文本，只留在短命目录并随 secret 一起删除，绝不上传。
+    # English: The raw stderr may contain third-party library error text and is only left in the ephemeral
+    # directory and deleted with the secret, never uploaded.
     docker logs "$runtime_container" >"$fixture_dir/runtime.raw.log" 2>&1 || true
     docker rm -f "$runtime_container" >/dev/null 2>&1 || true
   fi
@@ -69,6 +71,8 @@ migrator_image="${RGS_RUNTIME_SMOKE_MIGRATOR_IMAGE:-slots-rgs-migrator:conforman
 mkdir -p "$artifact_dir"
 
 # 职责隔离：migrator 容器只接收 DDL 凭据，runtime 容器只接收 DML 凭据。
+# English: Segregation of duties: The migrator container only receives DDL credentials, and the runtime
+# container only receives DML credentials.
 docker run --rm --network host \
   --read-only --cap-drop ALL --security-opt no-new-privileges:true \
   -e RGS_MIGRATOR_DATABASE_URL="$RGS_POSTGRES_MIGRATOR_TEST_URL" \
@@ -143,6 +147,8 @@ expect_status() {
 }
 
 # 公网只发布业务路由；8081 health 无需 Bearer，ready/metrics 必须失败闭合。
+# English: The public only publishes service routes; 8081 health does not require a Bearer, and ready/metrics
+# must fail to close.
 expect_status 404 http://127.0.0.1:18080/healthz
 expect_status 404 http://127.0.0.1:18080/readyz
 expect_status 404 http://127.0.0.1:18080/metrics

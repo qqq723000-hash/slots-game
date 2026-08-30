@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 # 用内存 plan 和静默证据证明 A/B 状态机会拒绝合并变更、自证和过期证据。
+# English: Prove A/B state machines with in-memory plans and quiescent evidence to reject merge changes,
+# self-certifying and expired evidence.
 require "digest"
 require "json"
 require "time"
@@ -48,6 +50,8 @@ end
 
 def shared_admission_secret_attributes(version, current: true)
   # 属性集合固定对应 AWS 提供程序 6.57.1 的真实计划结构，避免只测简化对象而产生假阳性。
+  # English: The property collection is fixed to correspond to the real plan structure of AWS provider 6.57.1 to
+  # avoid false positives from testing only simplified objects.
   name = "slots-prod-primary-rgs-shared-admission-v#{version}"
   arn = "arn:aws:secretsmanager:ap-southeast-1:123456789012:secret:#{name}-ABCDEF"
   {

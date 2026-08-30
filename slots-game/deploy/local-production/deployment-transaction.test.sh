@@ -1,5 +1,7 @@
 #!/bin/sh
 # 验证本机部署锁在进程退出后恢复，以及混合定义/Compose 代际在启动前失败关闭。
+# English: Verify that native deployment locks are restored after process egress and that hybrid
+# definition/Compose generations fail to close before starting.
 set -eu
 
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
@@ -56,6 +58,8 @@ secrets_root="$state_root/secrets"
 mkdir -p "$secrets_root"
 chmod 0700 "$state_root" "$secrets_root"
 # 首次 bootstrap 在密钥创建后中断时尚无选择器；重跑必须识别并恢复这一状态。
+# English: The first time bootstrap is interrupted after key creation there is no selector; reruns must
+# recognize and restore this state.
 sh "$0" initial-state "$state_root"
 : >"$secrets_root/compose.env"
 sh "$0" initial-state "$state_root"

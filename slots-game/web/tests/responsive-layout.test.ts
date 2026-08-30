@@ -597,7 +597,7 @@ describe("responsive game viewport", () => {
     });
     vi.stubGlobal("location", { search: "?channel=mobile&layout=mobile" });
     vi.stubGlobal("matchMedia", vi.fn((query: string) => ({
-      // IAB/DevTools 在手机视口下仍可能保留鼠标级主指针；显式移动路由必须优先。
+      // IAB/DevTools 在手机视口下仍可能保留鼠标级主指针；显式移动路由必须优先。 / English: IAB/DevTools may still retain the mouse-level primary pointer in mobile viewports; explicit mobile routing must take precedence.
       matches: query === "(pointer: fine)",
     })));
     vi.stubGlobal("navigator", { maxTouchPoints: 0 });

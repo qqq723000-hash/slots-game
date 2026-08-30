@@ -2,6 +2,8 @@
 # shellcheck disable=SC1003,SC2016
 
 # 负向门禁对临时副本注入危险变体，证明静态契约会失败；不会连接任何 AWS 服务。
+# English: Negative gating injects dangerous variants into temporary replicas, proving that static contracts
+# will fail; no AWS services will be connected.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

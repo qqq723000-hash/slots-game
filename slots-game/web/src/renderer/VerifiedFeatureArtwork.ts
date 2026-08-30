@@ -46,7 +46,7 @@ export interface VerifiedWheelArtwork {
   readonly channel: PrimalRuntimeAssetChannel;
   readonly spines: Readonly<Record<(typeof WHEEL_VERIFIED_SPINE_KEYS)[number], SpineData>>;
   readonly ownsTextures: boolean;
-  /** 三张纹理均由唯一 blob attempt 创建，所有权转交给 FeatureEffects。 */
+  /** 三张纹理均由唯一 blob attempt 创建，所有权转交给 FeatureEffects。 / English: All three textures were created by a unique blob attempt and ownership is transferred to FeatureEffects. */
   readonly textures: Readonly<{
     blue: Texture;
     red: Texture;
@@ -65,6 +65,8 @@ const WHEEL_TEXTURES = Object.freeze([
 /**
  * 只接受目标 feature-on-demand 包。依赖包由外层事件租约保持，但不会在这里
  * 冒充目标包资源或重复解码。
+ *
+ * 英文 / English: Only target feature-on-demand packages are accepted. Dependent packages are held by the outer event lease, but are not impersonated as target package resources or decoded repeatedly.
  */
 export async function verifiedFeatureArtworkFromPackage(
   loaded: LoadedAssetPackage,
@@ -92,7 +94,7 @@ export async function verifiedFeatureArtworkFromPackage(
   );
   const adopted: Partial<Record<(typeof WHEEL_TEXTURES)[number]["key"], Texture>> = {};
   try {
-    // 顺序解码使失败回滚拥有完整、确定的旧代集合；每个底层 attempt 自身仍可取消。
+    // 顺序解码使失败回滚拥有完整、确定的旧代集合；每个底层 attempt 自身仍可取消。 / English: Sequential decoding enables rollback on failure to have a complete, deterministic set of old generations; each underlying attempt itself remains cancelable.
     for (const spec of WHEEL_TEXTURES) {
       throwIfFeatureArtworkAborted(signal);
       const resource = requiredVerifiedFeatureResource(loaded, spec.url, "binary");
@@ -174,7 +176,7 @@ function requiredVerifiedFeatureResource(
 ): LoadedAssetResource {
   const expected = normalizedVerifiedFeatureAssetPath(url);
   const resource = [...loaded.resources.values()].find((candidate) => (
-    // streaming manifest 保留 `/assets/...` 根相对键，实际请求才按 Vite BASE_URL 重基。
+    // streaming manifest 保留 `/assets/...` 根相对键，实际请求才按 Vite BASE_URL 重基。 / English: The streaming manifest retains the `/assets/...` root relative key, and the actual request is based on Vite BASE_URL.
     normalizedVerifiedFeatureAssetPath(candidate.spec.url, "/") === expected
       && candidate.spec.decoder === decoder
   ));

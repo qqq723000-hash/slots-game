@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # 用本地 Helm 与 Kubernetes/AWS mock 证明 HMAC 两阶段恢复不会启动旧 Secret Pod。
+# English: Using local Helm with Kubernetes/AWS mocks to demonstrate that HMAC two-phase recovery does not bring
+# up old Secret Pods.
 set -euo pipefail
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -88,6 +90,8 @@ jq '
 ' "$source_delivery" > "$target_delivery"
 
 # Terraform 已发布 target steady 后允许原 60 分钟证据过期，但必须由私网 runner 重新证明实时安全状态。
+# English: Terraform allows the original 60 minutes of evidence to expire after target steady has been released,
+# but the real-time security state must be re-attested by the private runner.
 expired_times=$(ruby -rtime -e 'now = Time.now.utc; puts (now - 7200).iso8601; puts (now - 3600).iso8601')
 expired_observed=$(printf '%s\n' "$expired_times" | sed -n '1p')
 expired_at=$(printf '%s\n' "$expired_times" | sed -n '2p')
@@ -214,6 +218,8 @@ grep -F -x slots-rgs-shared-admission-v3 "$state/pod-start-log" >/dev/null || \
   fail 'Phase B 模拟没有证明只可能启动 target Secret Pod'
 
 # 成功的 Phase B 恢复新 HPA/API，完成标记落在证据派生路径，随后删除精确 UID lock。
+# English: A successful Phase B restores the new HPA/API, the completion mark falls on the evidence derivation
+# path, and the exact UID lock is subsequently removed.
 printf '%s\n' false > "$state/api-maintenance-quiesced"
 printf '%s\n' 2 > "$state/api-replicas"
 touch "$state/api-hpa-present"
@@ -242,6 +248,8 @@ if "$KUBECTL_BIN" delete configmap/slots-hmac-maintenance-lock --namespace "$AWS
 fi
 
 # 私网 runner 预装 kubectl；本地存在真实客户端时同时锁定其 CLI 契约，避免 mock 接受不存在的参数。
+# English: The private runner is pre-installed with kubectl; when a real client exists locally, its CLI contract
+# is also locked to prevent the mock from accepting non-existent parameters.
 if command -v kubectl >/dev/null 2>&1; then
   kubectl_delete_help=$(kubectl delete --help)
   printf '%s\n' "$kubectl_delete_help" | grep -F -- '--wait=true' >/dev/null || \

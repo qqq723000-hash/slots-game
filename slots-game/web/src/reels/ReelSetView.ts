@@ -47,8 +47,8 @@ import {
 import type { ReelStopMode } from "./reelMotion";
 import type { PostStopActivationPlan } from "./StopSequencer";
 
-// 在 1280x720 CSS 坐标域中捕获的 ReelSizeAnimator 结果。官方 DPR2 运行时在其双倍回退路径空间场景中存储与 1.14 相同的变换；
-// 本地 Pixi 使用逻辑坐标，因此两者在屏幕上的比例都是 0.57。框架子节点单独保留制作好的 1.01 倍缩放。
+// 在 1280x720 CSS 坐标域中捕获的 ReelSizeAnimator 结果。官方 DPR2 运行时在其双倍回退路径空间场景中存储与 1.14 相同的变换； / English: ReelSizeAnimator results captured in 1280x720 CSS coordinate domain. The official DPR2 runtime stores the same transformations as 1.14 in its double fallback path space scene;
+// 本地 Pixi 使用逻辑坐标，因此两者在屏幕上的比例都是 0.57。框架子节点单独保留制作好的 1.01 倍缩放。 / English: Native Pixi uses logical coordinates, so both have an on-screen scale of 0.57. The frame child nodes are left alone with the crafted 1.01x scaling.
 const AUTHORED_FRAME_SCALE = 1.01;
 const BASE_REEL_ROOT_SCALE = 0.57;
 const BASE_REEL_PARENT_SCALE_X = BASE_REEL_ROOT_SCALE;
@@ -65,7 +65,7 @@ const AUTHORED_REEL_HALF_BASE_HEIGHT = SOURCE_REEL_HEIGHT * 1.5;
 const AUTHORED_PIVOT_CORRECTION_Y = AUTHORED_REEL_HALF_BASE_HEIGHT - AUTHORED_REEL_PIVOT_Y;
 const BASE_ADAPTED_REEL_TOP = 266.4;
 export const REEL_AREA_WIDTH = SOURCE_REEL_UNION_WIDTH * BASE_REEL_PARENT_SCALE_X;
-/** 固定自适应调整大小后的原始三排柜高度。 */
+/** 固定自适应调整大小后的原始三排柜高度。 / English: Fixed original three-row cabinet height after adaptive resizing. */
 export const REEL_AREA_HEIGHT = 3 * SOURCE_REEL_HEIGHT * BASE_REEL_PARENT_SCALE_Y;
 export const REEL_STAGE_X = (1_280 - REEL_AREA_WIDTH) / 2;
 export const REEL_STAGE_Y = BASE_ADAPTED_REEL_TOP
@@ -90,14 +90,14 @@ export const REEL_WIN_LAYER_NAMES = Object.freeze({
   activated: "activated-symbol-overlay",
 } as const);
 
-/** 正式中标-Wild activatedOverlay住宅。 */
+/** 正式中标-Wild activatedOverlay住宅。 / English: Officially winning bid - Wild activatedOverlay house. */
 export const PRIMAL_WINNING_WILD_ACTIVATED_MS = 1_000;
 
 export const REEL_COMPOSITE_ROOT_NAME = "official-reel-composite-root";
 export const REEL_ADDITIVE_FRAME_OVERLAY_NAME = "authored-reel-frame-additive-overlay";
 export const REEL_WINNING_SYMBOL_ADDITIVE_OVERLAY_NAME = "winningSymbolAdditiveOverlay";
 
-/** 回退路径层保留其语义名称；预设模式使用符号下方的一帧。 */
+/** 回退路径层保留其语义名称；预设模式使用符号下方的一帧。 / English: Fallback path layers retain their semantic names; the default mode uses one frame below the symbol. */
 export const REEL_SET_DRAW_ORDER = Object.freeze([
   REEL_SET_LAYER_NAMES.tracks,
   REEL_SET_LAYER_NAMES.symbols,
@@ -113,9 +113,11 @@ export const REEL_HARDWARE_NODE_NAMES = Object.freeze({
 
 /**
  * 仅覆盖固定/非权威网格的瞬时渲染器。它们故意保留在 GridCell 和 SpinResult 之外，因此本地内阁着装姿势不会被误认为是后端游戏状态。
+ *
+ * 英文 / English: Transient renderer that only covers fixed/non-authoritative meshes. They are intentionally kept outside the GridCell and SpinResult so the local cabinet dress pose is not mistaken for backend game state.
  */
 export interface ReelGridPresentationOptions {
-  /** 保留锁定的 Symbol8 主体的地址，同时显示其价值姿势。 */
+  /** 保留锁定的 Symbol8 主体的地址，同时显示其价值姿势。 / English: Preserves the address of the locked Symbol8 body while displaying its value pose. */
   readonly forceLockedVaultCells?: readonly CellAddress[];
 }
 
@@ -130,6 +132,8 @@ function namedContainer(name: string): NamedContainer {
 /**
  * ReelSetView 拥有这些节点，即使 PixiRenderer 将它们安装为场景同级节点。因此，在卷轴已经释放它们之后，父拆卸可以再次遇到它们；
  * 让那一秒销毁一个明确的无操作。
+ *
+ * 英文 / English: ReelSetView owns these nodes even though PixiRenderer mounts them as scene sibling nodes. Therefore, after the scroll has released them, the parent disassembler can encounter them again; making that second destruction an explicit no-op.
  */
 class ReelExternalOverlay extends Container {
   override destroy(options?: Parameters<Container["destroy"]>[0]): void {
@@ -158,6 +162,8 @@ export interface ReelResponsiveProjection {
 
 /**
  * 外部不透明 ADD 悬念通道使用的普通实时投影。该效果仍是渲染器的同级节点，但所有空间参数都来自与原生机台相同的 ReelSetView 层级和滤镜目标。
+ *
+ * 英文 / English: External opacity ADD normal realtime projection used by the suspense pass. The effect is still a sibling of the renderer, but all spatial parameters come from the same ReelSetView hierarchy and filter targets as native.
  */
 export interface ReelAnticipationHostProjection {
   readonly host: Readonly<{
@@ -328,7 +334,7 @@ function resolveReelAnchor(
   };
 }
 
-/** 来自捕获的移动布局配置的精确 Base 卷轴锚点投影。 */
+/** 来自捕获的移动布局配置的精确 Base 卷轴锚点投影。 / English: Accurate Base scroll anchor projection from captured mobile layout configuration. */
 export function mobileReelProjection(
   region: ResponsiveRendererRegion,
   profile: MobileLayoutProfile,
@@ -346,12 +352,12 @@ export function mobileReelProjection(
     x: middleLeft.x + (adaptedWidth - SOURCE_REEL_UNION_WIDTH * rootScale) / 2,
     y: bottomRight.y
       - (AUTHORED_REEL_HALF_BASE_HEIGHT + AUTHORED_REEL_PIVOT_Y) * rootScale,
-    // ReelSetView 几何体已包含捕获的桌面 0.57 比例。
+    // ReelSetView 几何体已包含捕获的桌面 0.57 比例。 / English: The ReelSetView geometry already contains a captured desktop scale of 0.57.
     scale: rootScale / BASE_REEL_ROOT_SCALE,
   };
 }
 
-/** 桌面 ReelSizeAnimator 已解析最终的 1280x720 比例。 */
+/** 桌面 ReelSizeAnimator 已解析最终的 1280x720 比例。 / English: The desktop ReelSizeAnimator has resolved to the final 1280x720 scale. */
 export function responsiveReelCompositionScale(_characterScale: number): number {
   return 1;
 }
@@ -362,9 +368,9 @@ export const REEL_STAGE_BOTTOM = REEL_STAGE_Y + REEL_AREA_HEIGHT;
 export interface ReelLayoutGeometry {
   readonly rows: number;
   readonly areaWidth: number;
-  /** 一个 249 源像素卷轴间距的组合掩模宽度。 */
+  /** 一个 249 源像素卷轴间距的组合掩模宽度。 / English: A combined mask width of 249 source pixel scroll spacing. */
   readonly reelWidth: number;
-  /** 卷轴间距内的预设符号单元宽度。 */
+  /** 卷轴间距内的预设符号单元宽度。 / English: Default symbol unit width within reel spacing. */
   readonly symbolWidth: number;
   readonly gap: number;
   readonly cellHeight: number;
@@ -376,7 +382,7 @@ export interface ReelLayoutGeometry {
   readonly frameScaleY: number;
   readonly frameHierarchyY: number;
   readonly frameBaseY: number;
-  /** 结构补间期间底部锚定单元的局部顶部插图。 */
+  /** 结构补间期间底部锚定单元的局部顶部插图。 / English: Partial top illustration of bottom anchored unit during structural tweening. */
   readonly cellTopOffset: number;
 }
 
@@ -393,7 +399,7 @@ function validateRows(rows: number): void {
   }
 }
 
-/** 在结构调整大小确定后捕获自适应桌面几何形状。 */
+/** 在结构调整大小确定后捕获自适应桌面几何形状。 / English: Capture adaptive desktop geometry after structure resizing. */
 export function reelLayoutGeometry(rows: number): ReelLayoutGeometry {
   validateRows(rows);
   if (rows === BASE_ROW_COUNT) {
@@ -416,8 +422,8 @@ export function reelLayoutGeometry(rows: number): ReelLayoutGeometry {
     };
   }
 
-  // ReelSizeAnimator.computeScale 为每个扩展布局选择 504 源像素最大垂直边界。在捕获的桌面 0.8 级规模上，
-  // 这会形成稳定的 403.2px 机台宽度；行数增加时，格子会逐渐缩小。
+  // ReelSizeAnimator.computeScale 为每个扩展布局选择 504 源像素最大垂直边界。在捕获的桌面 0.8 级规模上， / English: ReelSizeAnimator.computeScale Selects a maximum vertical bound of 504 source pixels for each expanded layout. On a captured desktop scale of 0.8,
+  // 这会形成稳定的 403.2px 机台宽度；行数增加时，格子会逐渐缩小。 / English: This results in a stable table width of 403.2px; the grid will gradually shrink as the number of rows increases.
   const sourceScale = EXPANDED_SOURCE_SCALE_NUMERATOR / rows;
   const stageScale = DESKTOP_STAGE_SCALE * sourceScale;
   const reelWidth = SOURCE_REEL_PITCH * stageScale;
@@ -475,7 +481,7 @@ function interpolateGeometry(
   };
 }
 
-/** 1s 自适应调整大小时间线使用的纯几何样本。 */
+/** 1s 自适应调整大小时间线使用的纯几何样本。 / English: Pure geometry samples used by the 1s adaptive resize timeline. */
 export function reelTransitionGeometry(
   fromRows: number,
   toRows: number,
@@ -490,7 +496,7 @@ export function reelTransitionGeometry(
   );
 }
 
-/** 服务器寻址功能使用的局部几何图形并赢得效果。 */
+/** 服务器寻址功能使用的局部几何图形并赢得效果。 / English: Local geometry used by the server addressing function and win effect. */
 export function reelCellGeometry(address: CellAddress, rows: number): ReelCellGeometry | null {
   const geometry = reelLayoutGeometry(rows);
   if (!Number.isInteger(address.reel) || !Number.isInteger(address.row)
@@ -516,7 +522,7 @@ const JACKPOT_PRIZE_BY_MULTIPLIER: Readonly<Record<number, string>> = Object.fre
   1_000: "GRAND",
 });
 
-/** 仅重建已经权威的升级前显示姿势。 */
+/** 仅重建已经权威的升级前显示姿势。 / English: Only re-create already canonical pre-upgrade display poses. */
 export function vaultCellBeforeUpgrade(event: VaultUpgradedEvent): GridCell {
   let prize = JACKPOT_PRIZE_BY_MULTIPLIER[event.fromMultiplier];
   if (!prize && /^X\d+$/i.test(event.prize)) prize = `X${event.fromMultiplier}`;
@@ -528,7 +534,7 @@ export function vaultCellBeforeUpgrade(event: VaultUpgradedEvent): GridCell {
   return cell;
 }
 
-/** 由一个权威 Vault 解锁事件携带的确切最终单元格。 */
+/** 由一个权威 Vault 解锁事件携带的确切最终单元格。 / English: The exact final cell carried by an authoritative Vault unlock event. */
 export function vaultUnlockTargetCell(event: Readonly<VaultUnlockedEvent>): GridCell {
   const cell: GridCell = { symbol: "VAULT", prize: event.prize };
   if (event.multiplier !== undefined) cell.multiplier = event.multiplier;
@@ -542,7 +548,7 @@ interface PreparedCellPresentation {
 
 export class ReelSetView extends Container {
   readonly additiveFrameOverlay = namedExternalOverlay(REEL_ADDITIVE_FRAME_OVERLAY_NAME);
-  /** 用于结算中奖符号的外部 ADD 通行证；从来都不是 ReelSetView 孩子。 */
+  /** 用于结算中奖符号的外部 ADD 通行证；从来都不是 ReelSetView 孩子。 / English: External ADD pass used to settle winning symbols; never a child of ReelSetView. */
   readonly winningSymbolAdditiveOverlay = namedExternalOverlay(
     REEL_WINNING_SYMBOL_ADDITIVE_OVERLAY_NAME,
   );
@@ -592,7 +598,7 @@ export class ReelSetView extends Container {
   private authoredFrameRootX = 0;
   private authoredFrameRootY = 0;
   private readonly symbolIdleRandom: () => number = Math.random;
-  // 原始任务直到 Idle.launch 才抽取第一个随机样本。
+  // 原始任务直到 Idle.launch 才抽取第一个随机样本。 / English: The original task did not draw the first random sample until Idle.launch.
   private readonly symbolIdleTimer = new PrimalSymbolIdleTimer(this.symbolIdleRandom, false);
   private symbolIdleActive = false;
   private dormant = true;
@@ -616,7 +622,7 @@ export class ReelSetView extends Container {
     (this.middleHardware as Graphics & { name: string }).name = REEL_HARDWARE_NODE_NAMES.fallbackMiddle;
     this.waysLabel.anchor.set(0.5, 0);
     this.trackLayer.addChild(...this.reels.map((reel) => reel.trackDisplay));
-    // reverseLayeringOrder=true 将卷轴 2 -> 1 -> 0 迁移到固定的叠加层中，因此当预设的艺术溢出时，卷轴 0 是最后/最上面的同级。
+    // reverseLayeringOrder=true 将卷轴 2 -> 1 -> 0 迁移到固定的叠加层中，因此当预设的艺术溢出时，卷轴 0 是最后/最上面的同级。 / English: reverseLayeringOrder=true migrates reels 2 -> 1 -> 0 into fixed overlays, so when the preset's art overflows, reel 0 is the last/top sibling.
     this.symbolLayer.addChild(
       this.winFrameEffectLayer,
       ...[...this.reels].reverse(),
@@ -638,9 +644,9 @@ export class ReelSetView extends Container {
       this.middleFrameLayer,
     );
     this.addChild(this.reelMotionRoot);
-    // 准确保留冻结的透视目标。 PixiRenderer 将复制的仅附加帧通道安装为该节点的外部同级，因为黑色为零的图集页面无法在该离屏通道中幸存下来。
+    // 准确保留冻结的透视目标。 PixiRenderer 将复制的仅附加帧通道安装为该节点的外部同级，因为黑色为零的图集页面无法在该离屏通道中幸存下来。 / English: Accurately preserve frozen perspective targets. PixiRenderer mounts the copied append-only frame channel as an external sibling of this node, since a black zero gallery page cannot survive this off-screen channel.
     this.filters = [this.perspectiveFilter];
-    // 外部通行证仍然需要运送的投影。将其过滤纹理合成为 ADD 可使最终场景帧缓冲区中不透明的 RGB 图集黑色等于零，而不是将其变成黑色四边形。
+    // 外部通行证仍然需要运送的投影。将其过滤纹理合成为 ADD 可使最终场景帧缓冲区中不透明的 RGB 图集黑色等于零，而不是将其变成黑色四边形。 / English: External passes are still required to transport the projection. Compositing its filtered texture to ADD makes the opaque RGB atlas black equal to zero in the final scene framebuffer, instead of turning it into a black quad.
     this.additiveFrameOverlay.filters = [this.additivePerspectiveFilter];
     this.additivePerspectiveFilter.state.blendMode = BLEND_MODES.ADD;
     this.winningSymbolAdditiveOverlay.filters = [
@@ -657,7 +663,7 @@ export class ReelSetView extends Container {
     this.reels.forEach((reel) => reel.setVisualTelemetryReporter(reporter));
   }
 
-  /** 让普通机台与外部 ADD 通道共用同一景深。 */
+  /** 让普通机台与外部 ADD 通道共用同一景深。 / English: Let the common machine and the external ADD channel share the same depth of field. */
   setPerspectiveCoordinateScale(coordinateScale: number): void {
     this.perspectiveFilter.setCoordinateScale(coordinateScale);
     this.additivePerspectiveFilter.setCoordinateScale(coordinateScale);
@@ -666,6 +672,8 @@ export class ReelSetView extends Container {
 
   /**
    * 将卷轴拥有的 FX 安装在投影合成内部，位于符号和轨道阴影上方，但位于两个硬件框架层下方。
+   *
+   * 英文 / English: Install the reel-owned FX inside the drop shadow composition, above the symbols and track shadows but below the two hardware frame layers.
    */
   mountSymbolEffect(effect: Container): void {
     if (effect.parent === this.symbolLayer) {
@@ -676,7 +684,7 @@ export class ReelSetView extends Container {
     this.symbolLayer.addChild(effect);
   }
 
-  /** WinBox是官方的winFrameOverlay，下面固定符号。 */
+  /** WinBox是官方的winFrameOverlay，下面固定符号。 / English: WinBox is the official winFrameOverlay, with fixed symbols below. */
   mountWinFrameEffect(effect: Container): void {
     if (effect.parent === this.winFrameEffectLayer) {
       this.winFrameEffectLayer.addChild(effect);
@@ -707,7 +715,7 @@ export class ReelSetView extends Container {
     else if (rows < previousRows) this.playAuthoredFrame("reel_smash");
   }
 
-  /** 在单独的框架上构建每个轴的完整 3x8 固定/运动池。 */
+  /** 在单独的框架上构建每个轴的完整 3x8 固定/运动池。 / English: Build a complete 3x8 fixed/kinematic pool for each axis on a separate frame. */
   prepareMaximumRows(options: ReelViewPreloadOptions = {}): Promise<void> {
     if (this.maximumRowsPreparation) return this.maximumRowsPreparation;
     const attempt = (async () => {
@@ -735,6 +743,8 @@ export class ReelSetView extends Container {
 
   /**
    * 应用原始自适应转轴缩放的一次视觉采样。调用方提供已缓动的进度值，因此每项几何属性都可在两套复刻的固定布局之间线性插值。
+   *
+   * 英文 / English: Applies one visual sample of the original adaptive pivot scaling. The caller provides an eased progress value so that each geometric property is linearly interpolated between the two forked fixed layouts.
    */
   setRowsTransition(fromRows: number, toRows: number, progress: number): void {
     validateRows(fromRows);
@@ -767,7 +777,7 @@ export class ReelSetView extends Container {
     this.applyAuthoredFrameMover();
     this.drawFrame(geometry);
 
-    // 以完全相同的最终几何形状重新输入普通的固定布局，留下稍后的网格验证并赢得整数行的寻址。
+    // 以完全相同的最终几何形状重新输入普通的固定布局，留下稍后的网格验证并赢得整数行的寻址。 / English: Reenter the plain fixed layout with exactly the same final geometry, leaving grid validation later and winning addressing of integer rows.
     if (value >= 1) {
       this.layoutGeometry = toGeometry;
       this.reels.forEach((reel, index) => {
@@ -864,7 +874,7 @@ export class ReelSetView extends Container {
     return this.rowCount;
   }
 
-  /** 稳定的局部几何效果；它永远不会公开或更改结果数据。 */
+  /** 稳定的局部几何效果；它永远不会公开或更改结果数据。 / English: Stable local geometry effect; it never exposes or changes the result data. */
   getPresentationBounds(): Rectangle {
     return new Rectangle(0, 0, this.layoutGeometry.areaWidth, this.layoutGeometry.areaHeight);
   }
@@ -872,6 +882,8 @@ export class ReelSetView extends Container {
   /**
    * 返回 `CC/reelSuspense2` 的确切实时主机。原始节点在`OB/reel`内部；导出这个不可变的快照可以让独立的 ADD 传递继承该层次结构，
    * 而无需将其不透明图集展平到正常的卷轴渲染目标中。
+   *
+   * 英文 / English: Returns the exact live host of `CC/reelSuspense2`. The original node is inside `OB/reel`; exporting this immutable snapshot allows independent ADD passes to inherit the hierarchy without flattening its opaque atlas into a normal reel render target.
    */
   getAnticipationHostProjection(): Readonly<ReelAnticipationHostProjection> {
     const perspective = this.getPerspectiveDiagnostics();
@@ -893,7 +905,7 @@ export class ReelSetView extends Container {
       source: {
         centreX: this.layoutGeometry.areaWidth / 2,
         centreY: this.layoutGeometry.areaHeight / 2,
-        // 框架本身已有制作好的 1.01 倍缩放。Suspense 是它的同级节点，因此只继承共享的 ReelSizeAnimator 缩放值。
+        // 框架本身已有制作好的 1.01 倍缩放。Suspense 是它的同级节点，因此只继承共享的 ReelSizeAnimator 缩放值。 / English: The frame itself has a built-in 1.01x zoom. Suspense is its sibling node and therefore only inherits the shared ReelSizeAnimator scaling value.
         scaleX: this.layoutGeometry.frameScaleX / AUTHORED_FRAME_SCALE,
         scaleY: this.layoutGeometry.frameScaleY / AUTHORED_FRAME_SCALE,
         motionX: this.reelMotionRoot.position.x,
@@ -904,7 +916,7 @@ export class ReelSetView extends Container {
     });
   }
 
-  /** 浏览器奇偶校验装置使用的只读实时过滤器事实。 */
+  /** 浏览器奇偶校验装置使用的只读实时过滤器事实。 / English: A read-only live filter fact used by the browser parity device. */
   getPerspectiveDiagnostics(): ReelPerspectiveDiagnostics {
     const bounds = this.getBounds(true);
     const { x, y, width, height } = bounds;
@@ -926,6 +938,8 @@ export class ReelSetView extends Container {
 
   /**
    * 固定内阁层次结构的不可变浏览器捕获投影。它是由活动节点故意组装而成并复制为纯数据；没有显示对象、过滤器、遮罩或 Spine 轨道逃脱此边界。
+   *
+   * 英文 / English: Immutable browser capture projection of fixed cabinet hierarchy. It is intentionally assembled from active nodes and copied as pure data; no display objects, filters, masks, or spine tracks escape this boundary.
    */
   getCabinetCompositionDiagnostics(): Readonly<ReelCabinetCompositionDiagnostics> {
     const worldPosition = this.toGlobal(new Point(0, 0));
@@ -977,7 +991,7 @@ export class ReelSetView extends Container {
     return deepFreezePlain(diagnostics);
   }
 
-  /** 网格稳定后返回服务器寻址单元的视觉中心。 */
+  /** 网格稳定后返回服务器寻址单元的视觉中心。 / English: Once the grid has stabilized it returns to the visual center of the server addressing unit. */
   getCellCenter(address: CellAddress): Point | null {
     const cell = this.currentCellGeometry(address);
     if (!cell) return null;
@@ -987,7 +1001,7 @@ export class ReelSetView extends Container {
     );
   }
 
-  /** 返回纯粹装饰性的、服务器寻址的 FX 的本地单元格几何形状。 */
+  /** 返回纯粹装饰性的、服务器寻址的 FX 的本地单元格几何形状。 / English: Returns the local cell geometry of a purely cosmetic, server-addressed FX. */
   getCellPresentationBounds(address: CellAddress): Rectangle | null {
     const cell = this.currentCellGeometry(address);
     return cell ? new Rectangle(cell.x, cell.y, cell.width, cell.height) : null;
@@ -995,7 +1009,7 @@ export class ReelSetView extends Container {
 
   setGrid(grid: GridCell[][], options: ReelGridPresentationOptions = {}): void {
     this.validateGrid(grid);
-    // 在结构收缩之前清除完整的预分配池。仅分配传入行将使前 3x8 中奖者在第 3..7 行隐形前进，直到稍后的扩展。
+    // 在结构收缩之前清除完整的预分配池。仅分配传入行将使前 3x8 中奖者在第 3..7 行隐形前进，直到稍后的扩展。 / English: Clear the complete preallocated pool before the structure shrinks. Assigning only the incoming rows will cause the first 3x8 winners to advance invisibly on rows 3..7 until later expansions.
     this.clearHighlights();
     this.clearWinMotion();
     this.clearWinDimming();
@@ -1003,7 +1017,7 @@ export class ReelSetView extends Container {
     if (grid[0]?.length !== this.rowCount) this.setRows(grid[0]?.length ?? 3);
     const lockedRowsByReel = new Map<number, Set<number>>();
     for (const { reel, row } of options.forceLockedVaultCells ?? []) {
-      // 失败关闭：过时的视觉地址绝不能将非 Vault 变成特殊符号或影响权威网格。
+      // 失败关闭：过时的视觉地址绝不能将非 Vault 变成特殊符号或影响权威网格。 / English: Failed Closure: Obsolete visual addresses must not turn non-Vault into special symbols or affect the authority grid.
       if (grid[reel]?.[row]?.symbol !== "VAULT") continue;
       const rows = lockedRowsByReel.get(reel) ?? new Set<number>();
       rows.add(row);
@@ -1028,7 +1042,7 @@ export class ReelSetView extends Container {
       this.additiveFrameOverlay,
       this.winningSymbolAdditiveOverlay,
     ] as const;
-    // 先拆开。销毁普通树然后让每个 SymbolView 释放其外部安装的 ADD 根一次。
+    // 先拆开。销毁普通树然后让每个 SymbolView 释放其外部安装的 ADD 根一次。 / English: Take it apart first. Destroy the normal tree and then have each SymbolView release its externally mounted ADD root once.
     externalOverlays.forEach((overlay) => overlay.parent?.removeChild(overlay));
     super.destroy(options);
     externalOverlays.forEach((overlay) => overlay.destroy({
@@ -1040,6 +1054,8 @@ export class ReelSetView extends Container {
 
   /**
    * 隐藏最终的 Vault 值，直到呈现其权威揭示/升级事件。 GameSnapshot 保持最终网格不变。
+   *
+   * 英文 / English: Hide the final Vault value until its authoritative reveal/upgrade event is presented. GameSnapshot leaves the final mesh unchanged.
    */
   prepareFeaturePresentation(events: readonly FeatureEvent[]): void {
     this.preparedCellOverrides.clear();
@@ -1072,7 +1088,7 @@ export class ReelSetView extends Container {
     this.syncExternalAdditiveOverlayTransforms();
   }
 
-  /** 在三个卷轴窗格上镜像仅渲染器的环境光。 */
+  /** 在三个卷轴窗格上镜像仅渲染器的环境光。 / English: Mirror the renderer-only ambient light on three scroll panes. */
   setEnvironmentFrame(frame: SpinEnvironmentFrame): void {
     this.reels.forEach((reel) => reel.setEnvironmentFrame(frame));
   }
@@ -1143,7 +1159,7 @@ export class ReelSetView extends Container {
     return Object.freeze({ attempted, played });
   }
 
-  /** Wild 显示已陆路排队；只有三个 Rage 需要新的夹子。 */
+  /** Wild 显示已陆路排队；只有三个 Rage 需要新的夹子。 / English: The Wild are shown to be lined up overland; only three of the Rage need new clamps. */
   playPostStopActivation(plan: PostStopActivationPlan): void {
     if (plan.kind !== "surge-feature-activation") return;
     let played = 0;
@@ -1165,7 +1181,7 @@ export class ReelSetView extends Container {
     }
   }
 
-  /** 确定性的截图接口；单元格保持权威且不变。 */
+  /** 确定性的截图接口；单元格保持权威且不变。 / English: Deterministic screenshot interface; cells remain authoritative and unchanged. */
   setSymbolPlaybackPaused(cells: readonly Readonly<CellAddress>[], active: boolean): void {
     const rowsByReel = new Map<number, Set<number>>();
     for (const { reel, row } of cells) {
@@ -1178,7 +1194,7 @@ export class ReelSetView extends Container {
     }
   }
 
-  /** 只把测试场景中暂停的符号时钟推进指定的原生时间增量。 */
+  /** 只把测试场景中暂停的符号时钟推进指定的原生时间增量。 / English: Advances only the paused symbol clock in the test scene by the specified native time increment. */
   advanceSymbolPlayback(cells: readonly Readonly<CellAddress>[], deltaMs: number): void {
     const rowsByReel = this.rowsByReel(cells as readonly CellAddress[]);
     for (const [reel, rows] of rowsByReel) {
@@ -1186,7 +1202,7 @@ export class ReelSetView extends Container {
     }
   }
 
-  /** 冻结纯数据诊断；没有 Pixi 或 Spine 对象转义。 */
+  /** 冻结纯数据诊断；没有 Pixi 或 Spine 对象转义。 / English: Freezes data-only diagnostics; no Pixi or Spine object escaping. */
   getVaultCaptureDiagnostics(
     address: Readonly<CellAddress>,
   ): Readonly<ReelVaultCaptureDiagnostics> | null {
@@ -1196,7 +1212,7 @@ export class ReelSetView extends Container {
   cancelPresentation(): void {
     this.clearHighlights();
     this.reels.forEach((reel) => reel.cancelSpin());
-    // 测试场景观察者持有 Symbol8 时，结果可能已经实际落定。即使 AppController 尚未恢复整个权威网格，取消操作也必须先恢复其保存的最终格子。
+    // 测试场景观察者持有 Symbol8 时，结果可能已经实际落定。即使 AppController 尚未恢复整个权威网格，取消操作也必须先恢复其保存的最终格子。 / English: By the time the test scenario observer holds Symbol8, the outcome may have actually been settled. Even if the AppController has not restored the entire authoritative grid, canceling the operation must first restore its final saved grid.
     this.reels.forEach((reel) => reel.clearForcedLockedVaultPresentation());
     this.spinActive = false;
     this.rageCascadeActive = false;
@@ -1249,19 +1265,19 @@ export class ReelSetView extends Container {
     return Object.freeze({ attempted, played });
   }
 
-  /** 概率 Rage 触发器使用的服务器寻址替换单元。 */
+  /** 概率 Rage 触发器使用的服务器寻址替换单元。 / English: Server-addressed replacement unit used by probabilistic Rage triggers. */
   transformCellsToRage(cells: readonly CellAddress[]): void {
     for (const address of cells) this.reels[address.reel]?.transformCellToRage(address.row);
   }
 
-  /** 开始捕获的九单元 Rage 级联，无需更换服务器单元。 */
+  /** 开始捕获的九单元 Rage 级联，无需更换服务器单元。 / English: Start a captured nine-unit Rage cascade without changing server units. */
   prepareRageCascade(): void {
     this.rageCascadeActive = true;
     this.reels.forEach((reel) => reel.prepareRageCascade());
     this.syncSymbolIdleState();
   }
 
-  /** 应用原始打乱级联顺序中的一个卷轴主单元。 */
+  /** 应用原始打乱级联顺序中的一个卷轴主单元。 / English: Apply a reel master unit in the original shuffle cascade sequence. */
   revealRageCascadeCell(address: CellAddress, transformsToRage: boolean): boolean {
     return this.reels[address.reel]?.revealRageCascadeCell(address.row, transformsToRage) ?? false;
   }
@@ -1374,7 +1390,7 @@ export class ReelSetView extends Container {
     ));
   }
 
-  /** 调暗未由权威服务器中奖命名的每个已确定单元格。 */
+  /** 调暗未由权威服务器中奖命名的每个已确定单元格。 / English: Dim each identified cell that is not named by an authoritative server. */
   dimNonWinningCells(cells: readonly CellAddress[]): void {
     this.winPresentationActive = true;
     this.syncSymbolIdleState();
@@ -1390,7 +1406,7 @@ export class ReelSetView extends Container {
     this.syncSymbolIdleState(true);
   }
 
-  /** 符合原规则，已采集的Rage不能再次空闲。 */
+  /** 符合原规则，已采集的Rage不能再次空闲。 / English: In line with the original rules, collected Rage cannot be idle again. */
   blockSymbolIdle(cells: readonly CellAddress[]): void {
     const byReel = this.rowsByReel(cells);
     this.reels.forEach((reel, index) => {
@@ -1398,7 +1414,7 @@ export class ReelSetView extends Container {
     });
   }
 
-  /** 仅将瞬态运动应用于权威中奖中命名的单元格。 */
+  /** 仅将瞬态运动应用于权威中奖中命名的单元格。 / English: Applies transient motion only to cells named in the authoritative jackpot. */
   setWinMotion(cells: readonly CellAddress[], scale: number, offsetX: number, offsetY: number): void {
     const byReel = this.rowsByReel(cells);
     this.reels.forEach((reel, index) => {
@@ -1411,7 +1427,7 @@ export class ReelSetView extends Container {
   }
 
   update(deltaMs: number): void {
-    // 启动/特性负责人直接驱动投影后的机台根节点。外部附加通道必须在同一帧更新中继承这些表现属性，否则闪电可能在机台淡出/隐藏后仍继续显示。
+    // 启动/特性负责人直接驱动投影后的机台根节点。外部附加通道必须在同一帧更新中继承这些表现属性，否则闪电可能在机台淡出/隐藏后仍继续显示。 / English: The startup/feature leader directly drives the projected machine root node. External additional channels must inherit these performance properties in the same frame update, otherwise the lightning may continue to show after the machine fades/hides.
     this.syncExternalAdditiveOverlayTransforms();
     this.reels.forEach((reel) => reel.update(deltaMs));
     if (this.activatedWildRemainingMs > 0) {
@@ -1432,7 +1448,7 @@ export class ReelSetView extends Container {
     if (this.authoredFrameLoad) return this.authoredFrameLoad;
     this.authoredFrameLoad = loadPrimalSpineData("reelFrame").then((data) => {
       if (signal?.aborted) throw signal.reason;
-      // 分派的场景拥有一个完整的框架骨架。它是 `reel` 的第一个子项，位于 maskedOverlay 和固定符号叠加层之下。
+      // 分派的场景拥有一个完整的框架骨架。它是 `reel` 的第一个子项，位于 maskedOverlay 和固定符号叠加层之下。 / English: The dispatched scene has a complete frame skeleton. It is the first child of the `reel`, below the maskedOverlay and fixed symbol overlays.
       const frame = createSpineView(data, { animation: "stop", loop: false });
       const additiveFrame = createSpineView(data, { animation: "stop", loop: false });
       frame.autoUpdate = false;
@@ -1476,12 +1492,12 @@ export class ReelSetView extends Container {
     return this.authoredFrame !== null;
   }
 
-  /** 仅在固定的服务器寻址单元上启用原始 Spine 艺术。 */
+  /** 仅在固定的服务器寻址单元上启用原始 Spine 艺术。 / English: Raw Spine art is only enabled on fixed server addressing units. */
   setAuthoredSymbolsEnabled(active: boolean): void {
     this.reels.forEach((reel) => reel.setAuthoredSymbolsEnabled(active));
   }
 
-  /** 将制作好的 Spine 实例分帧创建，避免渲染器出现单帧阻塞。 */
+  /** 将制作好的 Spine 实例分帧创建，避免渲染器出现单帧阻塞。 / English: Create the prepared Spine instance in frames to avoid single-frame blocking of the renderer. */
   async setAuthoredSymbolsEnabledFrameSliced(
     active: boolean,
     options: ReelViewPreloadOptions = {},
@@ -1509,7 +1525,7 @@ export class ReelSetView extends Container {
     }
   }
 
-  /** 将所有三个移动条保留在官方 Base/King/Kong 套装上。 */
+  /** 将所有三个移动条保留在官方 Base/King/Kong 套装上。 / English: Keeps all three movement bars on the official Base/King/Kong set. */
   setVisualStripMode(mode: FeatureMode): void {
     this.reels.forEach((reel) => reel.setVisualStripMode(mode));
   }
@@ -1555,7 +1571,7 @@ export class ReelSetView extends Container {
     const frame = this.authoredFrame;
     if (!frame) return;
     const additiveFrame = this.authoredFrameAdditive;
-    // ReelSizeAnimator 给共享层次结构一种统一的尺度；该框架预设的 1.01 乘数已在此处表示。
+    // ReelSizeAnimator 给共享层次结构一种统一的尺度；该框架预设的 1.01 乘数已在此处表示。 / English: ReelSizeAnimator gives shared hierarchies a uniform scale; the framework's default multiplier of 1.01 is represented here.
     this.authoredFrameScaleX = geometry.frameScaleX;
     this.authoredFrameScaleY = geometry.frameScaleY;
     this.authoredFrameBaseX = geometry.areaWidth / 2;
@@ -1582,7 +1598,7 @@ export class ReelSetView extends Container {
     this.applyAuthoredFrameMover();
     const root = frame.skeleton.findBone("reel_master");
     if (!root) return;
-    // 官方 GameReelFrameView 将 reel_master 增量应用于公共父级 `reel`，因此符号、遮罩和完整框架一起移动。
+    // 官方 GameReelFrameView 将 reel_master 增量应用于公共父级 `reel`，因此符号、遮罩和完整框架一起移动。 / English: Official GameReelFrameView applies the reel_master increment to the common parent `reel`, so the symbol, mask and full frame move together.
     this.reelMotionRoot.position.x += this.authoredFrameRootX - root.worldX;
     this.reelMotionRoot.position.y += root.worldY - this.authoredFrameRootY;
     this.authoredFrameRootX = root.worldX;
@@ -1649,8 +1665,8 @@ export class ReelSetView extends Container {
     middleHardware.clear();
     hardware.clear();
 
-    // 一个带有定向面的锻造外壳取代了旧的一叠统一的同心轮廓。顶部/左侧平面捕捉炫酷的主光；底部/右侧平面保留粗糙的高遮挡边缘。回退路径外壳现在位于顶部硬件层，
-    // 因此它必须是空心锻造轮辋，而不是旧的全区域背板。
+    // 一个带有定向面的锻造外壳取代了旧的一叠统一的同心轮廓。顶部/左侧平面捕捉炫酷的主光；底部/右侧平面保留粗糙的高遮挡边缘。回退路径外壳现在位于顶部硬件层， / English: A forged shell with directional faces replaces the old stack of uniform concentric profiles. The top/left plane captures the cool key light; the bottom/right plane retains the rough high-occlusion edges. The fallback path shell is now at the top hardware layer,
+    // 因此它必须是空心锻造轮辋，而不是旧的全区域背板。 / English: So it would have to be a hollow forged rim, not the old full area back plate.
     frame.lineStyle(18, 0x010202, 0.46)
       .drawRoundedRect(-22, -17, areaWidth + 44, areaHeight + 44, 24);
     frame.lineStyle(12, 0x060809, 1)
@@ -1674,7 +1690,7 @@ export class ReelSetView extends Container {
       areaWidth + 18, areaHeight + 18, areaWidth + 10, areaHeight - 7,
     ]).endFill();
 
-    // 深的内倒角，左上狭窄的镜面反射捕捉，然后是故意粗糙的右下边缘。只有被照亮的一面才会露出干净的银色。
+    // 深的内倒角，左上狭窄的镜面反射捕捉，然后是故意粗糙的右下边缘。只有被照亮的一面才会露出干净的银色。 / English: A deep inner bevel, a narrow specular capture on the upper left, and then a deliberately rough lower right edge. Only the illuminated side will reveal a clean silver color.
     frame.lineStyle(7, 0x030405, 0.94).drawRoundedRect(-9, -9, areaWidth + 18, areaHeight + 18, 15);
     frame.lineStyle(1.35, 0xd1d5d2, 0.55);
     frame.moveTo(-11, -15).lineTo(areaWidth - 27, -15);
@@ -1704,7 +1720,7 @@ export class ReelSetView extends Container {
       frame.lineTo(mark.x2 - 18, mark.y2 - 18);
     });
 
-    // 侧窗唇属于外柜。卷轴 2 在最后的顶部通道中接收其自己的官方链笼，此处省略。
+    // 侧窗唇属于外柜。卷轴 2 在最后的顶部通道中接收其自己的官方链笼，此处省略。 / English: The side window lips belong to the exterior cabinets. Reel 2 receives its own official chain cage in the final top tunnel, omitted here.
     for (const reel of [0, 2]) {
       const x = reel * (reelWidth + gap);
       hardware.lineStyle(4, 0x030405, 0.96);
@@ -1730,7 +1746,7 @@ export class ReelSetView extends Container {
       areaHeight,
     );
 
-    // 所有主要负载点均采用嵌入式六角形紧固件。
+    // 所有主要负载点均采用嵌入式六角形紧固件。 / English: Recessed hexagonal fasteners are used at all major load points.
     for (const [x, y] of [
       [-12, -12], [areaWidth + 12, -12],
       [-12, areaHeight + 12], [areaWidth + 12, areaHeight + 12],
@@ -1746,7 +1762,7 @@ export class ReelSetView extends Container {
     width: number,
     height: number,
   ): void {
-    // 保留为自己的持久节点：加载预设的链仅隐藏回退路径金属，而不会隐藏这种向外的接触阴影。
+    // 保留为自己的持久节点：加载预设的链仅隐藏回退路径金属，而不会隐藏这种向外的接触阴影。 / English: Reserved as its own persistent node: the chain loaded with the preset only hides the fallback path metal, not this outward contact shadow.
     graphics.lineStyle(14, 0x010202, 0.27);
     graphics.drawRoundedRect(x - 5, -2, width + 12, height + 12, 10);
     graphics.lineStyle(7, 0x010202, 0.22);

@@ -12,7 +12,7 @@ export interface PreloadProgress {
 
 export interface PreloadTaskContext {
   readonly signal: AbortSignal;
-  /** 报告此任务在 0..1 范围内的单调完成情况。 */
+  /** 报告此任务在 0..1 范围内的单调完成情况。 / English: Reports monotonic completion of this task in the range 0..1. */
   report(fraction: number): void;
 }
 
@@ -54,6 +54,8 @@ const MAX_RUNNING_TASK_FRACTION = 1 - 1e-6;
  * 按声明顺序运行指定的入口关键启动阶段。
  *
  * 阶段仍然可以并行其自己的网络/解码工作并报告部分完成情况。门只拥有订购、加权进度、截止日期和取消；它永远不会根据任务计数来猜测进度。
+ *
+ * 英文 / English: Runs the specified entry-critical startup phases in the order they are declared. Stages can still parallelize their own network/decoding work and report partial completion. The gate only has ordering, weighted progress, due dates, and cancellations; it never guesses progress based on task counts.
  */
 export class PreloadGate {
   private activeController: AbortController | null = null;
@@ -137,7 +139,7 @@ export class PreloadGate {
               throw new Error(`Preload task "${task.name}" reported non-finite progress`);
             }
             const monotonicFraction = Math.max(taskFraction, clamp01(fraction));
-            // 任务只有在其承诺得到解决后才算完成。这可以防止过早的 report(1) 在最终任务中 100% 暴露 false。
+            // 任务只有在其承诺得到解决后才算完成。这可以防止过早的 report(1) 在最终任务中 100% 暴露 false。 / English: A task is not complete until its commitments are resolved. This prevents premature report(1) from 100% exposing false in the final task.
             taskFraction = Math.min(monotonicFraction, MAX_RUNNING_TASK_FRACTION);
             emit(
               task,

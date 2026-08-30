@@ -1,5 +1,6 @@
 #!/bin/sh
 # 在 AWS 凭据前绑定 Terraform HMAC 维护批准与受保护的证据标识。
+# English: Bind Terraform HMAC to maintain approval and protected evidence IDs in front of AWS credentials.
 set -eu
 
 test "$#" -eq 1 || {

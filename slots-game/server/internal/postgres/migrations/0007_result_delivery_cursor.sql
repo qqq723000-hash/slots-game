@@ -1,5 +1,8 @@
 -- 经济结算与展示交付是相互独立的持久状态转换。旧版已提交记录刻意不设为待交付，
 -- 因为其历史客户端消费状态无法确定。
+-- English: Economic settlement and presentation delivery are independent persistent state transitions. Older
+-- versions of submitted records are intentionally not set to pending delivery. Because its historical client
+-- consumption status cannot be determined.
 ALTER TABLE rgs_rounds
     ADD COLUMN IF NOT EXISTS result_delivery_required boolean NOT NULL DEFAULT false,
     ADD COLUMN IF NOT EXISTS result_hash char(64),

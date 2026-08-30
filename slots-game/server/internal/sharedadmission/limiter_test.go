@@ -396,6 +396,7 @@ func TestLimiterHealthTracksCanaryRuntimeFailureAndCallerCancellation(t *testing
 		t.Fatal(err)
 	}
 	// 基础 canary 成功仍不能宣称原子经济 Lua 路径已经就绪。
+	// English: Basic canary success still does not claim that the atom-economic Lua path is ready.
 	assertEconomicAdmissionHealth(t, metrics, 0, 0)
 	metrics.ObserveEconomicAdmissionHealth(true, now.Add(time.Second))
 	assertEconomicAdmissionHealth(t, metrics, 1, now.Unix())
@@ -438,6 +439,7 @@ func TestLimiterHealthTracksCanaryRuntimeFailureAndCallerCancellation(t *testing
 		t.Fatalf("cancelled runtime admission = %+v", result)
 	}
 	// 调用方取消会让本次请求失败闭合，但不应改变依赖健康状态。
+	// Caller cancellation makes this request fail closed but must not change dependency health state.
 	assertEconomicAdmissionHealth(t, metrics, 1, now.Add(-5*time.Second).Unix())
 }
 

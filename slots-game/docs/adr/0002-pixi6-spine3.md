@@ -1,9 +1,15 @@
-# ADR-0002：PixiJS 6.5.2 与 pixi-spine 3.x 渲染栈
+# ADR-0002：PixiJS 6.5.2 与 pixi-spine 3.x 渲染栈 / PixiJS 6.5.2 and pixi-spine 3.x rendering stack
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This ADR records the accepted M1 compatibility baseline for the PixiJS 6.5.2 and pixi-spine 3.x presentation stack.
+Rendering and skeletal-animation adapters own visual lifecycle concerns, while game mathematics, result authority, networking, idempotency, and accounting remain outside the renderer and cannot change with frame rate or fallback mode.
+Any upgrade or commercial release still requires visual, performance, asset-loading, browser, dependency-license, and per-asset rights review; this ADR is not evidence of asset ownership or distribution approval.
 
 - 状态：已接受作为 M1 兼容基线
 - 日期：2026-07-25

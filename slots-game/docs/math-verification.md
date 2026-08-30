@@ -1,9 +1,13 @@
-# 数学验证门禁
+# Mathematics verification gate / 数学验证门禁
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+The `cmd/math-verify` gate runs paid base-game spins and every generated free spin to produce deterministic engineering evidence for one exact game definition. It fails closed against caller-supplied RTP bounds from an approved specification, but it does not tune reel weights, choose a target RTP, or turn observed simulation output into an approved limit. Its report is non-certifying evidence and cannot replace independent mathematics, RNG, feature-distribution, executable-identity, and jurisdictional review before release.
 
 状态：确定性工程证据；非认证
 报告 schema：`rgs-math-report-v2`

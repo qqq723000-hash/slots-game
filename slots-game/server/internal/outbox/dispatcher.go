@@ -37,6 +37,10 @@ type BatchResult struct {
 // Observer 接收每次分发扫描的一项有界基数汇总。Published 和 Failed 仅统计已由 Store
 // 持久确认的完成结果；LeaseLost 统计被围栏拒绝的过期完成结果。Claimed 统计投递尝试，
 // 因此重试事件会刻意再次增加该值。
+// English: Observer receives a bounded cardinality summary for each distribution scan. Published and Failed only
+// count completion results that have been persistently confirmed by the Store; LeaseLost counts expired completion
+// results that are rejected by the fence. Claimed counts delivery attempts, so retry events will intentionally
+// increment the value again.
 type Observer interface {
 	ObserveOutboxDispatch(BatchResult)
 }
@@ -57,6 +61,10 @@ type Dispatcher struct {
 	// publishSlots 会保持占用直至 Publisher 真正返回，而不是仅持续到其上下文过期。
 	// 因此不配合取消的 Publisher 最多遗留 MaxParallel 个协程；后续尝试会在等待槽位时超时，
 	// 不会继续创建被阻塞的协程。
+	// English: publishSlots remain occupied until the Publisher actually returns, rather than just until their context
+	// expires. Therefore, a Publisher that does not cooperate with cancellation will leave at most MaxParallel
+	// coroutines; subsequent attempts will time out while waiting for slots and will not continue to create blocked
+	// coroutines.
 	publishSlots chan struct{}
 }
 
@@ -114,6 +122,9 @@ func NewDispatcher(
 
 // Run 立即执行一次分发，随后按配置周期运行。短暂的扫描失败会被观测并重试；
 // 只有取消才会终止。崩溃安全由租约提供，而非依赖进程关闭钩子。
+// English: Run performs a distribution immediately and then at the configured cycle. Brief scan failures are
+// observed and retried; they are terminated only by cancellation. Crash safety is provided by leases rather than
+// relying on process shutdown hooks.
 func (d *Dispatcher) Run(ctx context.Context) {
 	d.runAndObserve(ctx)
 	ticker := time.NewTicker(d.config.Interval)
@@ -250,6 +261,9 @@ func (d *Dispatcher) publishWithHardDeadline(ctx context.Context, event Event) e
 	case <-ctx.Done():
 		// Publisher 仍可能稍后产生副作用。其协程会保留全局槽位直至真正返回，
 		// 从而限制泄漏数量，并阻止后续扫描生成无限量阻塞调用。
+		// English: Publisher may still have side effects later. Its coroutine reserves the global slot until it actually
+		// returns, thereby limiting the number of leaks and preventing subsequent scans from generating an unlimited
+		// number of blocking calls.
 		return ctx.Err()
 	}
 }
@@ -282,6 +296,8 @@ func (d *Dispatcher) runAndObserve(ctx context.Context) {
 
 // RetryDelay 返回 base*2^(attempt-1)，并在不发生时长溢出的前提下应用上限。
 // Attempts 是领取后的持久化尝试次数，因此首次失败恰好等待 base。
+// English: RetryDelay returns base*2^(attempt-1) and applies the upper limit without duration overflow. Attempts
+// is the number of persistence attempts after claiming, so the first failure just waits for base.
 func RetryDelay(attempt int, base, maximum time.Duration) time.Duration {
 	if base <= 0 || maximum < base {
 		return 0

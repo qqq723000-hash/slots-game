@@ -2,6 +2,9 @@
 
 # 该回归只在系统临时目录生成 bundle，不修改入库模板。static-regression 模式验证结构；
 # 真实发布仍必须使用 --rendered-dir 和固定来源 promtool，不能以本脚本替代。
+# English: This regression only generates bundles in the system temporary directory and does not modify the
+# storage template. static-regression pattern verification structure; Real releases must still use
+# --rendered-dir and fixed-source promtool, and cannot be replaced by this script.
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -44,6 +47,9 @@ render_bundle() {
 
 # 源码级负向测试必须保留 verify-static-contract.sh 计算仓库根目录所依赖的拓扑；
 # 只复制 observability 子目录会因 metrics.go 缺失而“误通过”任意变异测试。
+# English: Source code level negative testing must retain the topology that verify-static-contract.sh relies on
+# to calculate the root directory of the warehouse; Copying only the observability subdirectory will "falsely
+# pass" any mutation tests due to missing metrics.go.
 copy_contract_repository() {
   destination=$1
   mkdir -p "$destination/deploy" "$destination/server/internal/platform"
@@ -55,6 +61,8 @@ copy_contract_repository() {
 }
 
 # Vector 语义负测必须先刷新复制件中的审阅摘要，避免仅由旧摘要拒绝而未真正覆盖结构断言。
+# English: Vector semantic negative tests must first refresh the review digest in the replica to avoid rejection
+# by the old digest without actually covering the structural assertion.
 refresh_reviewed_vector_digest() {
   contract_root=$1
   relative_path=$2

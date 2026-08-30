@@ -64,6 +64,10 @@ func (capacity *loadIntentCapacity) TryAcquire(context.Context) (func(), Admissi
 // TestRGSAPIHighConcurrencyProfile 是显式 opt-in 的 HTTP 协议画像。它经过真实 socket、
 // access-token 验证、严格 JSON、响应编码和 Ed25519 签名，但使用无资金副作用的协调器；
 // PostgreSQL、Valkey 和钱包容量由各自的隔离负载门禁测量，不能把本结果外推为整站 TPS。
+// English: TestRGSAPIHighConcurrencyProfile is an explicit opt-in HTTP protocol profile. It is authenticated with
+// real sockets, access-token verification, strict JSON, response encoding, and Ed25519 signatures, but uses a
+// coordinator with no financial side effects; PostgreSQL, Valkey, and wallet capacity are measured by their
+// respective isolated load gates, and this result cannot be extrapolated to the entire site TPS.
 func TestRGSAPIHighConcurrencyProfile(t *testing.T) {
 	if os.Getenv("RGS_RUN_HTTP_HIGH_CONCURRENCY") != "1" {
 		t.Skip("set RGS_RUN_HTTP_HIGH_CONCURRENCY=1 to run the HTTP load profile")

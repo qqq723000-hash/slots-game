@@ -1,4 +1,4 @@
-// @ts-nocheck -- 该契约测试在 Node 中执行 release-only 构建配置校验器。
+// @ts-nocheck -- 该契约测试在 Node 中执行 release-only 构建配置校验器。 / English: @ts-nocheck -- This contract test executes a release-only build configuration validator in Node.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";

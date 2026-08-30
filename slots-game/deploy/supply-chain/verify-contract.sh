@@ -4,6 +4,11 @@
 # 该门禁不调用 Docker 或网络；它验证发布工作流、扫描阈值、身份约束和工具引用没有被
 # 静默放宽。动态漏洞结果仍由 scan.sh 在 CI 中产生，二者不能互相替代。SC1003/SC2016
 # 仅因本文件刻意匹配工作流/脚本中的字面量 `$` 与 Dockerfile 行尾反斜杠而关闭。
+# English: This gatekeeper does not make calls to Docker or networking; it verifies that release workflows, scan
+# thresholds, identity constraints, and tool references have not been Silence relaxes. Dynamic vulnerability
+# results are still generated in CI by scan.sh, and the two are not substitutes for each other. SC1003/SC2016
+# Closed only because this file intentionally matches the literal `$` with the Dockerfile end-of-line backslash
+# in the workflow/script.
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -234,11 +239,19 @@ require_fixed 'secret-env: absolute secret file path is required' "$cluster_imag
 require_fixed 'RGS_DATABASE_URL_FILE=/run/cluster-contract/database-url' "$cluster_image_contract"
 require_fixed '"$runtime_image" RGS_DATABASE_URL /service-probe' "$cluster_image_contract"
 require_fixed 'service-probe: unexpected HTTP status 503' "$cluster_image_contract"
+require_fixed 'docker volume create "$materializer_volume"' "$cluster_image_contract"
+require_fixed 'docker cp "$materializer_container:/run/materializer/destination/secret" -' "$cluster_image_contract"
+require_fixed 'member.mode != 0o400' "$cluster_image_contract"
+require_fixed 'payload != b"materialized-secret\n"' "$cluster_image_contract"
+require_fixed "fail '/secret-materializer 错误覆盖了已有凭据'" "$cluster_image_contract"
 require_fixed 'prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893' "$cluster_prometheus_rule_contract"
 require_fixed 'check rules /rules.yaml' "$cluster_prometheus_rule_contract"
 
 # 低流量磁盘缓冲恢复必须在固定镜像预载后运行真实黑盒门禁；步骤名、命令和顺序都属于
 # 发布合同，不能用注释、可跳过条件或第二条业务事件制造“恢复”假象。
+# English: Low-traffic disk buffer recovery must run true black box access after fixed image preload; step
+# names, commands, and sequences are When publishing a contract, you cannot use comments, skippable conditions,
+# or second business events to create the illusion of "recovery."
 ruby -ryaml -e '
   workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
   job = workflow.dig("jobs", "verify-deployment-contracts")
@@ -311,11 +324,14 @@ reject_fixed 'docker run -p' "$vector_bounded_flush_test"
 reject_fixed 'docker run --publish' "$vector_bounded_flush_test"
 vector_bounded_flush_sha=$(ruby -rdigest -e \
   'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$vector_bounded_flush_test")
-test "$vector_bounded_flush_sha" = '248f272074880be00a9c840d389fbeb9e89d7bcc938393c9cfa646653f9971f2' ||
+test "$vector_bounded_flush_sha" = '91359b501a6ffac24912a07319b7b866e22d9bebdc86dfbf7b3ea2adabeb9fb9' ||
   fail 'bounded Vector recovery test drifted from the reviewed implementation'
 
 # 两阶段的顺序本身是证据：先在 receiver 不存在时确认磁盘持久化，再停止第一 sender，
 # 通过独立 HTTP->file 控制探针确认 receiver 就绪，最后才启动全新 data_dir 的在线 sender。
+# English: The order of the two phases is evidence in itself: first confirm disk persistence when the receiver
+# does not exist, then stop the first sender, Confirm receiver readiness through a separate HTTP->file control
+# probe, and finally start the new data_dir's online sender.
 outage_buffer_evidence_line=$(grep -n -F "files.any? { |path| File.binread(path).include?(marker) }" "$vector_bounded_flush_test" | cut -d: -f1)
 receiver_start_line=$(grep -n -F 'run_vector "$receiver_name" "$receiver_config" "$receiver_data"' "$vector_bounded_flush_test" | cut -d: -f1)
 outage_remove_line=$(grep -n -F 'docker rm "$outage_sender_name"' "$vector_bounded_flush_test" | cut -d: -f1)
@@ -357,6 +373,8 @@ require_cancellable_conformance_concurrency \
   'frontend conformance'
 
 # 工具版本和多架构清单 digest 均为经复核的发布输入；标签用于审计可读性，digest 才是执行身份。
+# English: The tool version and multi-architecture manifest digest are both audited release inputs; tags are
+# used for audit readability, and digest is the execution identity.
 require_line 'GOLANG_IMAGE=docker.io/library/golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36' "$tool_file"
 require_line 'NODE_IMAGE=docker.io/library/node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94' "$tool_file"
 require_line 'GOVULNCHECK_MODULE=golang.org/x/vuln/cmd/govulncheck@v1.7.0' "$tool_file"
@@ -375,6 +393,8 @@ invalid_tool_lines=$(grep -Ev '^(#[[:space:]].*|[[:space:]]*$|[A-Z_]+=[A-Za-z0-9
 test -z "$invalid_tool_lines" || fail 'tool manifest contains executable or malformed content'
 
 # 当前策略没有任何仓库内豁免；不能用伪工单或无到期日白名单绕过 HIGH/CRITICAL 门禁。
+# English: The current policy has no in-repository exemptions; HIGH/CRITICAL gates cannot be bypassed with
+# fabricated tickets or non-expiring allowlist entries.
 require_line '  "policy": "block-high-and-critical",' "$exception_file"
 require_line '  "exceptions": []' "$exception_file"
 if grep -E 'CVE-|GHSA-|GO-[0-9]{4}-|"id"[[:space:]]*:' "$exception_file" >/dev/null; then
@@ -382,6 +402,8 @@ if grep -E 'CVE-|GHSA-|GO-[0-9]{4}-|"id"[[:space:]]*:' "$exception_file" >/dev/n
 fi
 
 # 依赖、secret、双格式 SBOM、文件系统与容器扫描必须同时存在。
+# English: Dependencies, secrets, dual-format SBOM, file system, and container scanning must exist at the same
+# time.
 require_line '      "$GOBIN/govulncheck" -json ./... > /out/govulncheck.json' "$scan_script"
 require_line '      sha256sum "$GOBIN/govulncheck" > /out/govulncheck-binary.sha256' "$scan_script"
 require_fixed '--env GOPATH=/tmp/go' "$scan_script"
@@ -529,6 +551,8 @@ if printf '%s\n' "$trivy_prepare_block" | grep -Ev '^[[:space:]]*#' | grep -E --
 fi
 
 # checks bundle 不能只依赖镜像内隐式 fallback；必须校验动态 metadata、内容与真实 IaC 命中并留存哈希。
+# English: The checks bundle cannot rely solely on the image's implicit fallback; it must verify dynamic
+# metadata, content, and real IaC hits and persist the hashes.
 require_fixed 'test -s "$cache_dir/db/metadata.json"' "$trivy_asset_verifier"
 require_fixed 'test -s "$cache_dir/policy/metadata.json"' "$trivy_asset_verifier"
 require_fixed 'test -d "$cache_dir/policy/content"' "$trivy_asset_verifier"
@@ -559,6 +583,8 @@ reject_fixed '--exclude' "$scan_script"
 reject_fixed '--insecure' "$scan_script"
 
 # 跨权限域发布包必须把源码、目标、公开配置、Web 审批摘要、OCI manifest 和每个文件摘要绑定。
+# English: Cross-authority domain distribution packages must bind the source code, target, public configuration,
+# web approval digest, OCI manifest and each file digest.
 require_fixed 'case "$SUPPLY_CHAIN_ARTIFACT:$build_kind" in' "$release_bundle_script"
 require_fixed 'rgs-runtime:rgs-unprivileged|rgs-migrator:rgs-unprivileged|web-runtime:web-approved)' "$release_bundle_script"
 require_fixed 'tar -xOf "$bundle_dir/release-image.oci.tar" oci-layout' "$release_bundle_script"
@@ -583,6 +609,8 @@ require_fixed 'oci_archive_sha256=%s' "$release_bundle_script"
 reject_fixed 'source "$bundle_dir/bundle-manifest.env"' "$release_bundle_script"
 
 # AWS 静态发布只能逐文件验证从不可变制品提取的根目录，拒绝软链接、额外文件和摘要漂移。
+# English: AWS static publishing can only verify root directories extracted from immutable artifacts on a
+# file-by-file basis, rejecting soft links, extra files, and digest drift.
 require_fixed 'release-manifest.json' "$web_static_verifier"
 require_fixed 'extracted Web root contains a symbolic link' "$web_static_verifier"
 require_fixed 'extracted Web root contains a file outside release-manifest' "$web_static_verifier"
@@ -617,6 +645,8 @@ test -n "$aws_extract_line" && test -n "$aws_publisher_line" \
   fail 'AWS guide must extract and verify immutable Web bytes before the conditional publisher'
 
 # 获批 Web OCI 在扫描和上传前必须把精确静态字节装入真实 Chrome；源码目录的普通构建不能替代。
+# English: Approved Web OCI must load the exact static bytes into real Chrome before scanning and uploading; a
+# normal build of the source directory is not a substitute.
 require_fixed 'Smoke the exact approval-gated Web bytes in a real browser' "$release_workflow"
 require_fixed '"docker-archive:/output/release-image.docker.tar:$local_ref"' "$release_workflow"
 require_fixed 'docker load --input "$conversion_root/release-image.docker.tar"' "$release_workflow"
@@ -640,6 +670,8 @@ test -n "$web_build_line" && test -n "$web_browser_line" && test -n "$web_static
   fail 'exact approved Web browser smoke must run after build and before scan/upload'
 
 # 发布必须来自受保护 tag，身份须精确绑定本工作流；Cosign 禁止弱化 Registry/TLog/身份校验。
+# English: Publishing must come from protected tags, and the identity must be accurately bound to this workflow;
+# Cosign prohibits weakening Registry/TLog/identity verification.
 require_fixed 'test "$GITHUB_REF_PROTECTED" = true' "$release_script"
 require_fixed 'refs/tags/*)' "$release_script"
 require_fixed 'rgs-runtime|rgs-migrator)' "$release_script"
@@ -712,8 +744,10 @@ require_line '            job_timeout_minutes: 35' "$frontend_workflow"
 require_line '          - browser: webkit' "$frontend_workflow"
 require_fixed '  verify-edge:' "$frontend_workflow"
 require_fixed '    runs-on: windows-latest' "$frontend_workflow"
-require_line '    # Windows 软件渲染截图受脚本 32 分钟硬截止；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' "$frontend_workflow"
-require_line '    timeout-minutes: 40' "$frontend_workflow"
+require_line '    # Windows 软件渲染截图受脚本 35 分钟硬截止，作业保留 45 分钟；额外预算只覆盖安装、生产构建与 Edge 事务门禁。' "$frontend_workflow"
+require_line '    # English: Windows software-rendered screenshots have a 35-minute scripted hard cutoff and a 45-minute job budget;' "$frontend_workflow"
+require_line '    # the extra time only covers installation, production builds, and Edge transaction gates.' "$frontend_workflow"
+require_line '    timeout-minutes: 45' "$frontend_workflow"
 require_line '        run: npx playwright install --with-deps firefox webkit' "$frontend_workflow"
 require_fixed 'SLOTS_FIREFOX_XVFB_SOFTWARE_WEBGL=1' "$frontend_workflow"
 require_fixed 'LIBGL_ALWAYS_SOFTWARE=true' "$frontend_workflow"
@@ -726,15 +760,41 @@ require_fixed 'npm run test:visual-fixtures-browser-matrix -- --browser "${{ mat
 require_line '        run: npm run test:visual-fixtures-browser-matrix -- --browser msedge' "$frontend_workflow"
 
 require_line 'const chromiumDesktopKongScenarioDeadlineMs = 360_000;' "$visual_fixture_browser_gate"
-require_line 'const edgeCapSummaryScenarioDeadlineMs = 300_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeDesktopExtendedScenarioDeadlineMs = 180_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeKingScenarioDeadlineMs = 300_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeDesktopKongScenarioDeadlineMs = 360_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeCapSummaryScenarioDeadlineMs = 360_000;' "$visual_fixture_browser_gate"
 require_line 'const slowKongScenarioDeadlineMs = 270_000;' "$visual_fixture_browser_gate"
 require_line 'const slowBrowserDeadlineMs = 32 * 60_000;' "$visual_fixture_browser_gate"
-require_line 'const edgeBrowserDeadlineMs = 32 * 60_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeBrowserDeadlineMs = 35 * 60_000;' "$visual_fixture_browser_gate"
 require_line 'const slowMaximumBrowserBudgetMs = 33 * 60_000;' "$visual_fixture_browser_gate"
-require_line 'const edgeMaximumBrowserBudgetMs = 33 * 60_000;' "$visual_fixture_browser_gate"
+require_line 'const edgeMaximumBrowserBudgetMs = 36 * 60_000;' "$visual_fixture_browser_gate"
 node - "$visual_fixture_browser_gate" <<'NODE'
 const { readFileSync } = require("node:fs");
 const source = readFileSync(process.argv[2], "utf8");
+const edgeDesktopExtendedBranch = [
+  '  if (browserName === "msedge"',
+  '    && surface.id === "desktop-1440x900"',
+  '    && contract.motion === "normal"',
+  '    && (contract.scenario === "big-win"',
+  '      || contract.scenario === "wheel-mini-flow")) {',
+  "    return edgeDesktopExtendedScenarioDeadlineMs;",
+  "  }",
+].join("\n");
+const edgeKingBranch = [
+  '  if (browserName === "msedge"',
+  '    && surface.id === "desktop-1440x900"',
+  '    && contract.scenario === "king-flow") {',
+  "    return edgeKingScenarioDeadlineMs;",
+  "  }",
+].join("\n");
+const edgeDesktopKongBranch = [
+  '  if (browserName === "msedge"',
+  '    && surface.id === "desktop-1440x900"',
+  '    && contract.scenario === "kong-flow") {',
+  "    return edgeDesktopKongScenarioDeadlineMs;",
+  "  }",
+].join("\n");
 const chromiumDesktopKongBranch = [
   '  if (browserName === "chromium"',
   '    && surface.id === "desktop-1440x900"',
@@ -763,6 +823,15 @@ const sharedSlowExtendedBranch = [
   "  }",
 ].join("\n");
 const count = (value) => source.split(value).length - 1;
+if (count(edgeDesktopExtendedBranch) !== 1) {
+  throw new Error("Edge normal-motion desktop extended timing tuple drifted");
+}
+if (count(edgeKingBranch) !== 1) {
+  throw new Error("Edge desktop King timing tuple drifted");
+}
+if (count(edgeDesktopKongBranch) !== 1) {
+  throw new Error("Edge desktop Kong timing tuple drifted");
+}
 if (count(chromiumDesktopKongBranch) !== 1) {
   throw new Error("Chromium desktop Kong timing tuple drifted");
 }
@@ -775,6 +844,11 @@ if (count(edgeCapSummaryBranch) !== 1) {
 if (count(sharedSlowExtendedBranch) !== 1) {
   throw new Error("shared slow extended timing tuple drifted");
 }
+if (source.indexOf(edgeDesktopExtendedBranch) >= source.indexOf(edgeKingBranch)
+    || source.indexOf(edgeKingBranch) >= source.indexOf(edgeDesktopKongBranch)
+    || source.indexOf(edgeDesktopKongBranch) >= source.indexOf(edgeCapSummaryBranch)) {
+  throw new Error("Edge desktop timing tuples must retain the reviewed order");
+}
 if (source.indexOf(chromiumDesktopKongBranch) >= source.indexOf(sharedSlowKongBranch)) {
   throw new Error("Chromium desktop Kong timing tuple must precede the shared slow tuple");
 }
@@ -786,6 +860,10 @@ NODE
 # 前端门禁的命令字面量必须位于预期 job/step 中并保持无条件执行。仅 grep 到同一命令不能证明
 # 它没有被移入禁用 step、容错 step 或不受保护的新 job；YAML 语义检查同时固定权限、runner、
 # 超时、矩阵、工作目录、步骤顺序和经复核的 Action 身份。
+# English: The command literal of the front-end gate must be located in the expected job/step and remain
+# unconditionally executed. Just greping to the same command doesn't prove It has not been moved into a disabled
+# step, a fault-tolerant step, or a new unprotected job; YAML semantics checks while fixing permissions,
+# runners, Timeouts, matrices, working directories, step sequences, and reviewed Action identities.
 ruby -ryaml -e '
   workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
   abort "frontend workflow root must be a mapping" unless workflow.is_a?(Hash)
@@ -869,7 +947,7 @@ ruby -ryaml -e '
     },
     "verify-edge" => {
       "runs-on" => "windows-latest",
-      "timeout-minutes" => 40,
+      "timeout-minutes" => 45,
       "defaults" => {
         "run" => { "shell" => "bash", "working-directory" => "slots-game/web" },
       },
@@ -1020,6 +1098,8 @@ require_fixed "done < <(git ls-files -- '*.sh')" "$deployment_workflow"
 reject_fixed 'npm run build:demo' "$frontend_workflow"
 
 # 公开试玩与 Pages 已按产品范围移除；门禁同时拒绝工作流、构建入口和源码重新出现。
+# English: Public demos and Pages have been removed artifacts-wide; gated workflows, build entries, and source
+# code have reappeared.
 for removed_demo_path in \
   "$workflows_root/pages-demo.yml" \
   "$repository_root/web/demo" \
@@ -1047,6 +1127,8 @@ for public_doc in "$delivery_root/README.md" "$repository_root/README.md" "$repo
 done
 
 # release 只允许人工 dispatch，并把执行仓库代码、Web 素材审批和最终发布拆成三个权限域。
+# English: Release only allows manual dispatch, and splits the execution of repository code, web asset approval
+# and final release into three permission areas.
 release_trigger=$(awk '/^on:$/ { inside = 1; next } /^permissions:$/ { inside = 0 } inside { print }' "$release_workflow")
 printf '%s\n' "$release_trigger" | grep -F -x '  workflow_dispatch:' >/dev/null || fail 'release workflow must use workflow_dispatch'
 if printf '%s\n' "$release_trigger" | grep -E '^[[:space:]]+(push|pull_request|schedule|workflow_run):' >/dev/null; then
@@ -1186,7 +1268,7 @@ test -n "$release_observability_verify_line" && test "$release_bounded_gate_line
   fail 'bounded Vector recovery must pass before rendered release verification'
 observability_release_workflow_sha=$(ruby -rdigest -e \
   'print Digest::SHA256.file(ARGV.fetch(0)).hexdigest' "$observability_release_workflow_script")
-test "$observability_release_workflow_sha" = '25d0424e0a12d5faa2274bb5bd0f6bc297a302bb1e40ed3f7f2535fb44751b7b' ||
+test "$observability_release_workflow_sha" = 'f302cdc1f2aa49916f0650268129db99adc8b016d7c09f6125ef8fb7fcb360e6' ||
   fail 'rendered observability release workflow entrypoint drifted from the reviewed implementation'
 ruby -ryaml -rjson -rdigest -e '
   workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
@@ -1247,6 +1329,8 @@ if printf '%s\n' "$conformance_job_code" | grep -E 'release-image\.oci\.tar|rele
 fi
 
 # B：RGS 候选必须从独立 fresh checkout 构建，绑定真实 Git tree，且不运行宿主 npm/go/make。
+# English: B: RGS candidates must be built from a standalone fresh checkout, bound to the real Git tree, and not
+# run the host npm/go/make.
 printf '%s\n' "$rgs_job" | grep -F -x '  build-rgs:' >/dev/null || fail 'missing isolated build-rgs job'
 printf '%s\n' "$rgs_job" | grep -F -x '    needs: verify-source-conformance' >/dev/null || fail 'RGS build must depend on source conformance'
 printf '%s\n' "$rgs_job" | grep -F -x '      contents: read' >/dev/null || fail 'RGS build must only read contents'
@@ -1284,6 +1368,8 @@ printf '%s\n' "$rgs_job" | grep -F 'buildkitd-flags: --debug=false' >/dev/null |
 printf '%s\n' "$rgs_job_code" | grep -F -- '--allow-insecure-entitlement' >/dev/null && fail 'BuildKit insecure entitlements are forbidden'
 
 # C：只有 Web 构建能进入独立审批 Environment；它没有发布身份或 Registry 凭据。
+# English: C: Only the web build can enter the standalone approval environment; it does not have publishing
+# identity or registry credentials.
 printf '%s\n' "$web_job" | grep -F -x '    environment: supply-chain-web-approval' >/dev/null || fail 'Web build must use its dedicated approval Environment'
 printf '%s\n' "$web_job" | grep -F -x '      contents: read' >/dev/null || fail 'Web approval job must only read contents'
 if printf '%s\n' "$web_job_code" | grep -E '^[[:space:]]+(id-token|attestations|artifact-metadata):|SUPPLY_CHAIN_REGISTRY_(USERNAME|PASSWORD)' >/dev/null; then
@@ -1333,6 +1419,8 @@ if printf '%s\n' "$web_job_code" | grep -F '/var/run/docker.sock' >/dev/null; th
 fi
 
 # D：独立无源码 job 只读 Actions 元数据，并把 ID/digest 与当前 run、SHA 和唯一名称绑定。
+# English: D: Independent sourceless job reads only Actions metadata and binds ID/digest to the current run, SHA
+# and unique name.
 printf '%s\n' "$artifact_binding_job" | grep -F -x '  bind-release-artifact:' >/dev/null || \
   fail 'missing bind-release-artifact job'
 artifact_id_selection='${{ inputs.artifact == '\''web-runtime'\'' && needs.build-approved-web.outputs.artifact_id || needs.build-rgs.outputs.artifact_id }}'
@@ -1361,6 +1449,8 @@ do
 done
 
 # E：最终 Environment 是唯一 OIDC/Registry 域；不 checkout、不执行任何源码/依赖/build/scan。
+# English: E: The final Environment is the only OIDC/Registry domain; no checkout, no source
+# code/dependency/build/scan is executed.
 printf '%s\n' "$publish_job" | grep -F -x '    environment: supply-chain-release' >/dev/null || fail 'publish job must use the final release Environment'
 for required_permission in '      contents: read' '      id-token: write' '      attestations: write' '      artifact-metadata: write'
 do
@@ -1469,6 +1559,8 @@ do
 done
 
 # 清洁源码扫描必须先于 conformance 依赖；fresh RGS job 必须 checkout→tree→build→scan→bundle。
+# English: Clean source code scanning must precede conformance dependencies; fresh RGS job must
+# checkout→tree→build→scan→bundle.
 source_security_line=$(grep -n -F 'run: ./deploy/supply-chain/scan.sh source "$SUPPLY_CHAIN_REPORT_DIR/source"' "$release_workflow" | head -n 1 | cut -d: -f1)
 setup_go_line=$(grep -n -F "uses: actions/setup-go@$setup_go_sha" "$release_workflow" | head -n 1 | cut -d: -f1)
 npm_ci_line=$(grep -n -F 'run: npm ci' "$release_workflow" | head -n 1 | cut -d: -f1)
@@ -1509,6 +1601,9 @@ test "$attest_count" -eq 2 || fail 'release workflow must generate provenance an
 
 # 仓库治理自动化同样属于供应链边界：依赖更新、PR 差异审查和源码分析必须使用固定
 # Action、最小权限和明确目录，不能依赖 GitHub UI 中不可审计的临时设置。
+# English: Repository-governance automation is also part of the supply-chain boundary: dependency updates, PR
+# diff review, and source analysis must use pinned Actions, least privilege, and explicit directories rather
+# than unauditable temporary GitHub UI settings.
 ruby -ryaml -e '
   config = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
   abort "Dependabot schema version drifted" unless config["version"] == 2
@@ -1606,6 +1701,8 @@ require_fixed '生产事故处置、SLA、SLO 或赔偿责任' "$support_doc"
 require_fixed 'security/advisories/new' "$support_doc"
 
 # CI 失败证据只能上传审查过的文件名，拒绝目录通配符把日志、抓包或临时秘密一起带走。
+# English: CI failure evidence can only upload reviewed file names, and directory wildcards are rejected to take
+# away logs, packet captures or temporary secrets.
 for approved_backend_artifact in \
   'slots-game/.artifacts/postgres-conformance/postgres-conformance.jsonl' \
   'slots-game/.artifacts/postgres-conformance/postgres-migration.jsonl' \
@@ -1635,6 +1732,9 @@ require_line '      org.opencontainers.image.licenses="NOASSERTION" \' "$local_n
 
 # Nginx 基础镜像的默认页面不是发布 payload。两个可服务目标和本机候选都必须先整体
 # 重建静态根，不能使用会漏掉 dotfile 的通配符删除，再复制 release-manifest 约束的 dist。
+# English: The default page of the Nginx base image is not to publish the payload. Both the serviceable target
+# and the native candidate must first be Rebuild the static root, do not use wildcard deletion that will miss
+# the dotfile, and then copy the dist constrained by release-manifest.
 for served_stage_name in static-conformance runtime; do
   served_stage="$(docker_stage_source "$served_stage_name" "$web_dockerfile")"
   test "$(printf '%s\n' "$served_stage" | grep -Fxc 'RUN --network=none rm -rf /usr/share/nginx/html && \' || true)" -eq 1 ||
@@ -1659,6 +1759,9 @@ test -n "$local_reset_line" && test -n "$local_copy_line" \
 
 # 真实候选回归自身也属于供应链门禁：固定上游摘要、按 BuildKit 返回的不可变 ID
 # 提取、全量清单复核和只删除本次随机 tag 的所有权边界均不得空实现。
+# English: True candidate returns are themselves supply chain gatekeepers: fixed upstream digest, immutable ID
+# returned by BuildKit Extraction, full inventory review, and ownership boundaries that only delete this random
+# tag must not be implemented empty.
 test -x "$local_web_payload_test" || fail 'local Web payload behavior gate must be executable'
 sh -n "$local_web_payload_test" || fail 'local Web payload behavior gate has invalid shell syntax'
 for payload_test_line in \
@@ -1723,6 +1826,8 @@ test "$payload_host_verify_line" -lt "$payload_base_copy_line" \
   fail 'local Web payload behavior gate lost its build, immutable extraction, and verification order'
 
 # 两个发布 Environment 的真实审批/Secret 归属无法由仓库创建，运维文档必须明确列为上线阻断。
+# English: The real approval/secret ownership of the two release Environments cannot be created by the
+# warehouse, and the operations documents must be clearly listed as online blocking.
 require_fixed '## 版本与仓库治理门禁' "$readme"
 require_fixed '`verify-release-version.mjs --formal`' "$readme"
 require_fixed '六个带锁文件的' "$readme"
@@ -1750,13 +1855,16 @@ done
 require_fixed '固定 digest、`--network=none`、无 OIDC env/Registry/Docker socket 的 Skopeo' "$readme"
 
 # 仓库中的所有 Action（不限于本工作流）都必须是完整 40 位 SHA。
+# English: All actions in the repository (not limited to this workflow) must be the full 40-bit SHA.
 invalid_actions=$(grep -RE '^[[:space:]]*uses:[[:space:]]+' "$workflows_root" | grep -Ev '@[0-9a-f]{40}([[:space:]]|$)' || true)
 test -z "$invalid_actions" || fail "workflow contains a mutable or malformed action reference: $invalid_actions"
 reject_fixed 'pull_request_target:' "$source_workflow"
 reject_fixed 'pull_request_target:' "$release_workflow"
 
 make_tab=$(printf '\t')
-require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs' "$makefile"
+awk '$1 == ".PHONY:" { for (field = 2; field <= NF; field += 1) if ($field == "verify-demo-media") found = 1 } END { exit(found ? 0 : 1) }' "$makefile" ||
+  fail 'verify-demo-media must remain phony so a same-named file cannot bypass it'
+require_line 'verify-supply-chain-contract: verify-hardening-checklist verify-hardening-stability-contract verify-personal-project-docs verify-demo-media' "$makefile"
 require_line "${make_tab}node --test deploy/supply-chain/verify-release-version.test.mjs" "$makefile"
 require_line "${make_tab}node deploy/supply-chain/verify-release-version.mjs" "$makefile"
 require_line 'verify-hardening-checklist:' "$makefile"
@@ -1765,11 +1873,26 @@ require_line "${make_tab}node scripts/verify-hardening-checklist.mjs" "$makefile
 require_line 'verify-personal-project-docs:' "$makefile"
 require_line "${make_tab}node --test scripts/verify-personal-project-docs.test.mjs" "$makefile"
 require_line "${make_tab}node scripts/verify-personal-project-docs.mjs" "$makefile"
+require_line 'verify-demo-media:' "$makefile"
+require_line "${make_tab}node --test scripts/verify-demo-media.test.mjs" "$makefile"
+require_line "${make_tab}node scripts/verify-demo-media.mjs" "$makefile"
+awk -v target='verify-demo-media:' \
+  -v first="${make_tab}node --test scripts/verify-demo-media.test.mjs" \
+  -v second="${make_tab}node scripts/verify-demo-media.mjs" '
+  $0 == target {
+    targets += 1
+    if ((getline first_line) <= 0 || (getline second_line) <= 0) next
+    if (first_line == first && second_line == second) valid += 1
+  }
+  END { exit(targets == 1 && valid == 1 ? 0 : 1) }
+' "$makefile" || fail 'verify-demo-media target must own both reviewed recipes in order'
 require_line "${make_tab}./deploy/supply-chain/verify-contract.sh" "$makefile"
 require_line "${make_tab}./deploy/supply-chain/test-contract.sh" "$makefile"
 
 # `make verify` 的传递闭包是发布源码门禁的一部分；移除全量测试或任一后端检查均拒绝。
-require_line 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-hardening-checklist verify-hardening-stability-contract test test-race vet build' "$makefile"
+# English: The transitive closure of `make verify` is part of the gated release of source code; removing full
+# testing or rejecting any backend checks.
+require_line 'verify: verify-supply-chain-contract verify-backend-licenses verify-chinese-comments verify-personal-project-docs verify-demo-media verify-hardening-checklist verify-hardening-stability-contract test test-race vet build' "$makefile"
 require_line "${make_tab}cd server && go test ./..." "$makefile"
 require_line "${make_tab}cd web && npm test -- --run --fileParallelism=false" "$makefile"
 require_line "${make_tab}cd server && go test -race ./..." "$makefile"

@@ -316,6 +316,8 @@ func TestPostgresRollingOldPrepareIsRecoverableByNewWorker(t *testing.T) {
 		"https://wallet.test.invalid/rolling-old-api-ledger",
 	))
 	// 该 helper 保留旧 API 的多语句 PREPARE，不包含新版本的 registry CTE。
+	// English: This helper retains the multi-statement PREPARE of the old API and does not include the new version of
+	// the registry CTE.
 	if _, prepared, err := prepareRoundLegacyForLoad(
 		ctx, repository, request, rgs.FingerprintFor(request), profile, func(rgs.Session) (rgs.SpinResult, error) {
 			return result, nil
@@ -334,6 +336,9 @@ func TestPostgresRollingOldPrepareIsRecoverableByNewWorker(t *testing.T) {
 	}
 	// backfill 只扫描可领取 phase；若旧数据稍后从不可领取 phase 修复为 APPLY，
 	// UPDATE 触发器必须补注册，避免为了走部分索引引入永久假阴性。
+	// English: The backfill only scans the retrievable phase; if the old data is later restored from the retrievable
+	// phase to APPLY, the UPDATE trigger must be re-registered to avoid introducing permanent false negatives for
+	// partial indexing.
 	if _, err := migrator.ExecContext(ctx,
 		`DELETE FROM rgs_wallet_recovery_operators WHERE operator_id=$1`, operatorID,
 	); err != nil {
@@ -1240,6 +1245,7 @@ func TestPostgresWorkerLookupLimitFencesAcrossPasses(t *testing.T) {
 	}
 
 	// 第一个 Worker pass 是配置允许的最后一次查询。
+	// English: The first Worker pass is the last query allowed by the configuration.
 	if err := worker.RunOnce(ctx); err != nil {
 		t.Fatalf("last allowed lookup pass: %v", err)
 	}
@@ -1248,6 +1254,8 @@ func TestPostgresWorkerLookupLimitFencesAcrossPasses(t *testing.T) {
 	}
 	// 第二个 pass 由另一 Repository 实例执行 fenced 状态转换；达到上限后只能
 	// 隔离，不能再次访问第三方钱包。
+	// English: In the second pass, another Repository instance performs fenced state transition; after reaching the
+	// upper limit, it can only be isolated and cannot access the third-party wallet again.
 	if err := worker.RunOnce(ctx); err != nil {
 		t.Fatalf("lookup limit pass: %v", err)
 	}

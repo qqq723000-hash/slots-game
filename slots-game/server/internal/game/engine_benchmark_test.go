@@ -7,6 +7,8 @@ import (
 )
 
 // benchmarkSource 只用于测量引擎分配和计算路径；它不是生产随机源，也不用于验证数学分布。
+// English: benchmarkSource is only used to measure engine allocation and calculation paths; it is not a source of
+// randomness, nor is it used to verify mathematical distributions.
 type benchmarkSource struct {
 	value atomic.Uint64
 }
@@ -60,6 +62,9 @@ func TestEngineSpinRepresentativeAllocationBudget(t *testing.T) {
 	})
 	// 预算刻意高于当前代表性路径的约 22 次分配，允许不同合法结果带来的小幅波动，
 	// 但会阻止重新引入逐路径 map、排序切片或每局重复复制完整数学定义等明显回退。
+	// English: The budget is deliberately higher than the current representative path's ~22 allocations, allowing for
+	// small fluctuations in different legal outcomes, but preventing significant fallbacks such as reintroducing
+	// path-by-path maps, sorted slicing, or repeated duplication of full mathematical definitions per round.
 	if allocations > 32 {
 		t.Fatalf("代表性 Spin 平均分配 %.2f 次，超过预算 32 次", allocations)
 	}

@@ -1,5 +1,7 @@
 #!/bin/sh
 # 使用只读 provider lock 对四个环境执行离线 backend 初始化和 schema 校验。
+# English: Perform offline backend initialization and schema validation on four environments using read-only
+# provider lock.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

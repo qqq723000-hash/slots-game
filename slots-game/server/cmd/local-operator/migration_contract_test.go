@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -47,5 +48,30 @@ func TestWalletV2NullHardeningMigrationCoversExistingTables(t *testing.T) {
 		if !strings.Contains(string(contents), required) {
 			t.Fatalf("0003 migration is missing %q", required)
 		}
+	}
+	rawDigest := sha256.Sum256(contents)
+	if got, want := hex.EncodeToString(rawDigest[:]),
+		"411bdff7694e9367a702fad282b44ed326b473dd55ba4f10d5258c92517b04d9"; got != want {
+		t.Fatalf("0003 localized migration checksum = %s, want %s", got, want)
+	}
+	executable := make([]byte, 0, len(contents))
+	for _, line := range bytes.SplitAfter(contents, []byte{'\n'}) {
+		if bytes.HasPrefix(bytes.TrimLeft(line, " \t"), []byte("--")) {
+			continue
+		}
+		executable = append(executable, line...)
+	}
+	executableDigest := sha256.Sum256(executable)
+	if got, want := hex.EncodeToString(executableDigest[:]),
+		"9a92b3b8cb0303d6a756614894e89ab6d57d953a20b686dfd490a3d7235bde7a"; got != want {
+		t.Fatalf("0003 executable migration checksum = %s, want %s", got, want)
+	}
+	if !acceptedLocalOperatorMigrationChecksum(
+		"0003_wallet_v2_binding_null_hardening.sql",
+		"54b1dc3ecf6306a65e00a23a691d372fcecfea283347dde63c95008de9123802",
+	) || acceptedLocalOperatorMigrationChecksum(
+		"0003_wallet_v2_binding_null_hardening.sql", strings.Repeat("f", 64),
+	) {
+		t.Fatal("0003 comment-localization manifest upgrade allowlist is not exact")
 	}
 }

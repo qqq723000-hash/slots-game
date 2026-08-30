@@ -193,6 +193,7 @@ resource "aws_eks_node_group" "system" {
 
   lifecycle {
     # desired_size 由 Cluster Autoscaler 接管；min/max 仍由 Terraform 管理。
+    # English: desired_size is taken over by the Cluster Autoscaler; min/max is still managed by Terraform.
     ignore_changes = [scaling_config[0].desired_size]
   }
 

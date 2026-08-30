@@ -49,6 +49,8 @@ configuration = {
   rds_deletion_protection       = true
   rds_backup_retention_days     = 7
   # 只读副本默认关闭；必须先完成目标区域容量/延迟评审和应用只读路由改造，才可改为 true。
+  # English: Read replicas are off by default; you must complete the target region capacity/latency review and
+  # apply the read-only routing transformation before changing to true.
   rds_read_replica = {
     enabled        = false
     instance_class = "db.t4g.medium"

@@ -1,9 +1,15 @@
-# RGS 多副本集群运行契约
+# RGS 多副本集群运行契约 / RGS multi-replica cluster runtime contract
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document defines the application guarantees and required external conditions for horizontally scaling `rgs-server` in an adopter-controlled production cluster.
+API and Worker roles must use the same artifact, schema manifest, and mathematics-definition identity while keeping replica budgets, runtime secrets, network exposure, and responsibilities separate; PostgreSQL remains authoritative and the one-shot migrator retains a distinct identity.
+A real platform, database service, operator wallet, audit receiver, centralized observability, multi-replica capacity test, failure exercise, and production approval are external gates, and the local companion services are not production substitutes.
 
 状态：生产部署约束
 

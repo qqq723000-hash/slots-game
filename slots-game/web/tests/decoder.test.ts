@@ -21,7 +21,7 @@ const result = {
   wins: [{
     id: "win-1",
     symbol: "ORBIT",
-    // 旧版共享解码器夹具有意省略 nominalAmountMinor。
+    // 旧版共享解码器夹具有意省略 nominalAmountMinor。 / English: Legacy shared decoder fixtures intentionally omit nominalAmountMinor.
     amountMinor: "225",
     cells: [{ reel: 0, row: 0 }, { reel: 1, row: 0 }, { reel: 2, row: 0 }],
   }],

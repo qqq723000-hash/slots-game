@@ -138,7 +138,7 @@ function observeFixtureFeatureStates(
     },
     close: () => fixtureGateway.close(),
   };
-  // 临时测试夹具网关刻意省略 ACK。保留这种传输差异，不要伪造值为 undefined 的成功确认。
+  // 临时测试夹具网关刻意省略 ACK。保留这种传输差异，不要伪造值为 undefined 的成功确认。 / English: The temporary test fixture gateway intentionally omits ACKs. Preserve this transfer difference and do not fake successful acknowledgments with a value of undefined.
   if (fixtureGateway.acknowledgeSpinResult) {
     observed.acknowledgeSpinResult = (roundId, sequence) => {
       const accepted = fixtureGateway.acknowledgeSpinResult?.(roundId, sequence) ?? false;
@@ -152,6 +152,8 @@ function observeFixtureFeatureStates(
 /**
  * 视觉夹具只验证可见表现与玩家输入门。它明确不覆盖音频解码或声画同步，
  * 因而使用无 I/O 的非权威音频负责人，避免把浏览器音频编解码器能力误记为视觉玩法失败。
+ *
+ * 英文 / English: The visual fixture only verifies visible representation and player input gates. It explicitly does not cover audio decoding or audio-visual synchronization, so using a non-authoritative audio manager without I/O avoids mistaking browser audio codec capabilities for visual gameplay failures.
  */
 function createPresentationOnlyFixtureAudioManager(): AudioManager {
   const backend: AudioBackend = {
@@ -186,7 +188,7 @@ const freeSpinsSummaryHold = searchParams.get("freeSpinsSummaryHold");
 const checkpointQuery = searchParams.get("checkpoint");
 const run = searchParams.get("run");
 const PASS48_RAGE_AURA_SCENARIO = "base-rage-level-two-persistent-aura";
-// 仅修饰捕获遍历。它可以对九个授权的爆炸访问进行排序，但不能选择两个服务器授权的替换地址。
+// 仅修饰捕获遍历。它可以对九个授权的爆炸访问进行排序，但不能选择两个服务器授权的替换地址。 / English: Only decorates the capture traversal. It can sort nine authorized blast accesses, but cannot select replacement addresses authorized by two servers.
 const PASS47_RAGE_CASCADE_CELL_ORDER = Object.freeze([8, 7, 6, 5, 4, 3, 2, 1, 0]);
 const requestedCheckpoint = resolveVisualFixtureSemanticCheckpoint(
   scenario,
@@ -460,7 +462,7 @@ if (!isVisualFixtureScenario(scenario)) {
   }
 
   if (pass55WheelChestCapture) {
-    // AppController 开始时 FASTPLAY 已禁用。在发布之前，在同步自旋启动检查点再次对精确值进行采样。
+    // AppController 开始时 FASTPLAY 已禁用。在发布之前，在同步自旋启动检查点再次对精确值进行采样。 / English: AppController starts with FASTPLAY disabled. The exact value is sampled again at a synchronized spin start checkpoint before publishing.
     body.dataset.fixtureWheelChestReducedMotion = String(pass55WheelChestReducedMotion);
     body.dataset.fixtureWheelChestFastPlay = "false";
     const violation = pass55WheelChestCaptureEnvironmentViolation(
@@ -608,7 +610,7 @@ if (!isVisualFixtureScenario(scenario)) {
       );
       return;
     }
-    // wheel.landing 在 wheel.spin 完成安装 Track 1 WIN 后立即同步调度，在下一个浏览器 RAF 之前。
+    // wheel.landing 在 wheel.spin 完成安装 Track 1 WIN 后立即同步调度，在下一个浏览器 RAF 之前。 / English: wheel.landing synchronizes the wheel.spin schedule immediately after it completes the installation of Track 1 WIN, before the next browser RAF.
     if (!app.setCharacterIntroCapturePaused(true)) {
       failPass54WheelCharacter("wheel-character-pause-rejected");
       return;
@@ -688,7 +690,7 @@ if (!isVisualFixtureScenario(scenario)) {
       );
       return;
     }
-    // 在暂停或推进之前拒绝合同外回合 Character；失败的装置不能首先改变证据时钟。
+    // 在暂停或推进之前拒绝合同外回合 Character；失败的装置不能首先改变证据时钟。 / English: Reject an out-of-contract turn Character before pausing or advancing; the failing device cannot change the evidence clock first.
     if (sequence !== 1) {
       failPass55WheelChest("wheel-chest-sequence-not-canonical");
       return;
@@ -709,7 +711,7 @@ if (!isVisualFixtureScenario(scenario)) {
       return;
     }
 
-    // wheel.chest-loop-start 是同步的：轨道 1 条目 #1 和 wheel.spin-start 里程碑存在，而 Wheel 延续仍然是 S0。
+    // wheel.chest-loop-start 是同步的：轨道 1 条目 #1 和 wheel.spin-start 里程碑存在，而 Wheel 延续仍然是 S0。 / English: wheel.chest-loop-start is synchronous: track 1 entry #1 and the wheel.spin-start milestone exist, while the Wheel continuation is still S0.
     if (!app.setCharacterIntroCapturePaused(true)) {
       failPass55WheelChest("wheel-chest-pause-rejected");
       return;
@@ -781,7 +783,7 @@ if (!isVisualFixtureScenario(scenario)) {
     checkpointHold = hold;
     body.dataset.fixtureStatus = "conditioning";
 
-    // 嵌套的 RAF 保证在自动化可以观察到 fixtureStatus=ready 之前，至少有一个合成器绘制精确的 Character 姿势。
+    // 嵌套的 RAF 保证在自动化可以观察到 fixtureStatus=ready 之前，至少有一个合成器绘制精确的 Character 姿势。 / English: Nested RAF guarantees that at least one compositor draws an accurate Character pose before the automation can observe fixtureStatus=ready.
     pass55FirstPaintRaf = window.requestAnimationFrame(() => {
       pass55FirstPaintRaf = null;
       if (destroyed || failureLocked || checkpointHold !== hold) return;
@@ -974,8 +976,8 @@ if (!isVisualFixtureScenario(scenario)) {
   };
 
   const handlePlayerErrorDiagnostic = (event: Event): void => {
-    // 先取得首失败锁，再触碰可执行的 CustomEvent.detail getter；即使 getter 重入
-    // console/error 观察面，也不能覆盖来源或把迟到 code 附到其他首失败上。
+    // 先取得首失败锁，再触碰可执行的 CustomEvent.detail getter；即使 getter 重入 / English: Obtain the first failure lock first, and then touch the executable CustomEvent.detail getter; even if the getter reentrants
+    // console/error 观察面，也不能覆盖来源或把迟到 code 附到其他首失败上。 / English: The console/error observation surface also cannot overwrite the source or attach late code to other first failures.
     if (!fail("player-error")) return;
     const playerErrorCode = visualFixturePlayerErrorCodeFromDetail(
       event instanceof CustomEvent ? event.detail : null,
@@ -1001,13 +1003,13 @@ if (!isVisualFixtureScenario(scenario)) {
     fail(event.target instanceof Element ? "resource-error" : "window-error");
   };
   const handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
-    // Firefox 也会把 Playwright 可恢复的截图时钟协议竞态发布为未处理页面拒绝。保持事件未处理，
-    // 使门禁仍能记录 pageerror，并且仅在精确协议拒绝与稳定暂停时钟共同证明恢复时才消化它。
+    // Firefox 也会把 Playwright 可恢复的截图时钟协议竞态发布为未处理页面拒绝。保持事件未处理， / English: Firefox will also post Playwright's resumable screenshot clock protocol race as an unhandled page rejection. Leave the event unhandled,
+    // 使门禁仍能记录 pageerror，并且仅在精确协议拒绝与稳定暂停时钟共同证明恢复时才消化它。 / English: Enable the gatekeeper to still log a pageerror, and only digest it when an exact protocol rejection is demonstrated in conjunction with a stable pause clock to recover.
     if (body.dataset.fixtureCaptureClockGuard === "active"
       && isVisualFixtureCaptureClockPastTargetRejection(event.reason)) return;
     fail("unhandled-rejection");
   };
-  // 捕获资源元素故障以及普通窗口错误。
+  // 捕获资源元素故障以及普通窗口错误。 / English: Catch resource element failures as well as normal window errors.
   window.addEventListener("error", handleWindowError, true);
   window.addEventListener("unhandledrejection", handleUnhandledRejection);
 
@@ -1033,7 +1035,7 @@ if (!isVisualFixtureScenario(scenario)) {
         fail();
         return;
       }
-      // 条件失败事件仅在尝试该视觉路径之后才存在，因此它是严格测试场景中的激活条件。
+      // 条件失败事件仅在尝试该视觉路径之后才存在，因此它是严格测试场景中的激活条件。 / English: The conditional failure event only exists after trying that visual path, so it is the activation condition in a strict test scenario.
       if (event.kind === "fail"
         && (event.requirement === "required" || event.requirement === "conditional")) fail();
     },
@@ -1061,17 +1063,17 @@ if (!isVisualFixtureScenario(scenario)) {
     onLaunchPhase: (phase): void => {
       if (destroyed) return;
       if (phase === "failed") {
-        // completeLaunchFailure 会在同一任务中紧接着发布安全玩家错误事件。把默认合同失败
-        // 留到微任务末端：存在该事件时它拥有首次来源；不存在时仍由默认失败闭合。
+        // completeLaunchFailure 会在同一任务中紧接着发布安全玩家错误事件。把默认合同失败 / English: completeLaunchFailure will immediately post a safe player error event in the same mission. Fail the default contract
+        // 留到微任务末端：存在该事件时它拥有首次来源；不存在时仍由默认失败闭合。 / English: Leave it to the end of the microtask: when the event exists, it has the first source; when it does not exist, it is still closed by default failure.
         queueMicrotask(() => fail());
       }
       else if (phase === "ready" && visualTelemetryState.missingRequiredVisualIds.size > 0) fail();
       else if (phase === "ready" && !failureLocked) {
-        // 此回调在 INTRO_COMPLETE 之后但在控制器释放缓冲的恢复结果之前运行。此处仅冻结随机 Base 空闲调度程序，
-        // 以便 result.accepted 观察确定性原点姿势，而无需触及后来预设的收集轨道。
+        // 此回调在 INTRO_COMPLETE 之后但在控制器释放缓冲的恢复结果之前运行。此处仅冻结随机 Base 空闲调度程序， / English: This callback runs after INTRO_COMPLETE but before the controller releases the buffered resume results. Only the random Base idle scheduler is frozen here,
+        // 以便 result.accepted 观察确定性原点姿势，而无需触及后来预设的收集轨道。 / English: so that result.accepted observes the deterministic origin pose without touching the later preset collection track.
         launchReady = true;
         if (pass50CharacterIntroCapture) {
-          // 在启动回调中同步暂停：没有普通的 RAF 刻度线可以首先推进预设的 ~5000ms 屏幕截图姿势。
+          // 在启动回调中同步暂停：没有普通的 RAF 刻度线可以首先推进预设的 ~5000ms 屏幕截图姿势。 / English: Synchronous pauses in startup callbacks: There is no normal RAF tick to advance the preset ~5000ms screenshot pose first.
           holdPass50LaunchReady();
           return;
         }
@@ -1131,7 +1133,7 @@ if (!isVisualFixtureScenario(scenario)) {
         return;
       }
       if (pass53CharacterWinCapture && trace.type === "counter.started") {
-        // AppController 在 reactToWin 安装了 Track 1 WIN 之后且在浏览器可以渲染下一个 RAF 之前同步发出此消息。
+        // AppController 在 reactToWin 安装了 Track 1 WIN 之后且在浏览器可以渲染下一个 RAF 之前同步发出此消息。 / English: AppController emits this message synchronously after reactToWin has installed Track 1 WIN and before the browser can render the next RAF.
         capturePass53CharacterWin(trace.sequence);
         return;
       }
@@ -1281,7 +1283,7 @@ if (!isVisualFixtureScenario(scenario)) {
         document,
         body.dataset,
         checkpointName,
-        // 浏览器视觉审查跨越流程/工具边界；保留准确的预设姿态足够长的时间，以获得确定性的屏幕截图。
+        // 浏览器视觉审查跨越流程/工具边界；保留准确的预设姿态足够长的时间，以获得确定性的屏幕截图。 / English: Browser visual review crosses process/tool ​​boundaries; retains accurate preset posture long enough to obtain conclusive screenshots.
         scenario === "win-effects-matrix"
           || scenario === "normal-win-continue"
           || scenario === "base-wild-reveal-x100"

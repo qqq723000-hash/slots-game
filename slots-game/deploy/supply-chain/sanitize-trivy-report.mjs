@@ -2,6 +2,9 @@
 
 // Trivy 会遮蔽已命中的 Match，但 Code 上下文仍可能包含邻近业务值。审计制品只需要
 // 规则、位置和严重级别，因此统一删除原文/上下文，避免 always-upload 泄露凭据片段。
+// English: Trivy will mask the Match that was hit, but the Code context may still contain adjacent business
+// values. Audit artifacts only require Rules, locations and severity levels, so the original text/context is
+// removed uniformly to avoid always-upload leaking credential fragments.
 import fs from "node:fs";
 import path from "node:path";
 

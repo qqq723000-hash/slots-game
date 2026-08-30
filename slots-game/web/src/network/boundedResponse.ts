@@ -1,15 +1,15 @@
 export const NETWORK_RESPONSE_LIMITS = Object.freeze({
-  /** RGS 的权威 JSON 响应；与协议解码器原有 4 MiB 上限保持一致。 */
+  /** RGS 的权威 JSON 响应；与协议解码器原有 4 MiB 上限保持一致。 / English: Authoritative JSON response for RGS; consistent with protocol decoder's original 4 MiB limit. */
   rgsJsonBytes: 4 * 1024 * 1024,
-  /** 流式资源清单；当前产物不足 32 KiB，保留版本扩展余量。 */
+  /** 流式资源清单；当前产物不足 32 KiB，保留版本扩展余量。 / English: Streaming resource list; the current product is less than 32 KiB, and version expansion margin is reserved. */
   streamingManifestBytes: 2 * 1024 * 1024,
-  /** 单个经清单签名约束的资源；同时约束网络读取与瞬时堆占用。 */
+  /** 单个经清单签名约束的资源；同时约束网络读取与瞬时堆占用。 / English: A single resource constrained by a manifest signature; constrains both network reads and transient heap usage. */
   assetPackageResourceBytes: 16 * 1024 * 1024,
-  /** 单个音频包；当前最大产物不足 3 MiB。 */
+  /** 单个音频包；当前最大产物不足 3 MiB。 / English: Single audio packet; current maximum output is less than 3 MiB. */
   audioAssetBytes: 8 * 1024 * 1024,
-  /** Spine 二进制骨骼；当前最大产物不足 512 KiB。 */
+  /** Spine 二进制骨骼；当前最大产物不足 512 KiB。 / English: Spine binary skeleton; current maximum output is less than 512 KiB. */
   spineBinaryBytes: 4 * 1024 * 1024,
-  /** Spine atlas、BMFont 与小型渲染清单的文本上限。 */
+  /** Spine atlas、BMFont 与小型渲染清单的文本上限。 / English: Text caps for Spine atlas, BMFont and small render manifests. */
   rendererTextBytes: 1024 * 1024,
 } as const);
 
@@ -20,7 +20,7 @@ export interface BoundedResponseReadOptions {
   readonly onProgress?: (receivedBytes: number) => void;
 }
 
-/** 表示远端响应越过本地硬字节边界；错误不得携带 URL、响应正文或凭据。 */
+/** 表示远端响应越过本地硬字节边界；错误不得携带 URL、响应正文或凭据。 / English: Indicates that the remote response crossed a local hard byte boundary; the error must not carry the URL, response body, or credentials. */
 export class NetworkResponseLimitError extends Error {
   constructor(
     readonly label: string,
@@ -43,6 +43,8 @@ export class NetworkResponseBodyError extends Error {
 /**
  * 有界读取 Fetch 响应。Content-Length 仅用于提前拒绝和初始容量规划；
  * 真正边界始终由流式累计字节数执行，防止 chunked 或伪造长度绕过。
+ *
+ * 英文 / English: Bounded read Fetch response. Content-Length is only used for early rejection and initial capacity planning; the true boundary is always enforced by the streaming cumulative byte count, preventing chunked or forged length bypasses.
  */
 export async function readBoundedResponseBytes(
   response: Response,
@@ -71,7 +73,7 @@ export async function readBoundedResponseBytes(
     ) {
       return new Uint8Array(0);
     }
-    // 无 ReadableStream 时 arrayBuffer()/text() 无法在分配前实施硬上限，必须故障关闭。
+    // 无 ReadableStream 时 arrayBuffer()/text() 无法在分配前实施硬上限，必须故障关闭。 / English: Without a ReadableStream arrayBuffer()/text() cannot enforce a hard cap before allocation and must fail closed.
     throw new NetworkResponseBodyError(
       options.label,
       "does not expose a bounded streaming body",
@@ -104,7 +106,7 @@ export async function readBoundedResponseBytes(
           total + value.byteLength,
           declaredBytes,
         );
-        // 在保存越界分块前立即取消底层流，避免继续下载或扩大堆占用。
+        // 在保存越界分块前立即取消底层流，避免继续下载或扩大堆占用。 / English: Cancel the underlying stream immediately before saving out-of-bounds chunks to avoid continued downloading or expanding heap usage.
         cancelReader(reader, error);
         readerCancelled = true;
         throw error;
@@ -178,13 +180,13 @@ function growBuffer(
   return next;
 }
 
-/** 无需解析正文的失败响应也应立即释放，避免错误页占用连接与带宽。 */
+/** 无需解析正文的失败响应也应立即释放，避免错误页占用连接与带宽。 / English: Failure responses that do not require parsing the text should also be released immediately to avoid error pages occupying connections and bandwidth. */
 export function cancelNetworkResponse(response: Response, reason: Error): void {
   if (!response.body) return;
   try {
     void response.body.cancel(reason).catch(() => undefined);
   } catch {
-    // 本地边界错误优先；取消失败不得覆盖首要故障，也不得继续读取正文。
+    // 本地边界错误优先；取消失败不得覆盖首要故障，也不得继续读取正文。 / English: Local boundary errors take precedence; failure to cancel must not overwrite the primary fault, nor may the text continue to be read.
   }
 }
 
@@ -195,7 +197,7 @@ function cancelReader(
   try {
     void reader.cancel(reason).catch(() => undefined);
   } catch {
-    // 同上：保留确定、脱敏的边界错误。
+    // 同上：保留确定、脱敏的边界错误。 / English: Ditto: Preserve identified, desensitized boundary errors.
   }
 }
 

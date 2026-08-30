@@ -1,6 +1,8 @@
 /*
  * 与嵌入式运营入口兼容的加载界面。
  * 该文件在 style.css 之后加载，确保项目加载器几何不会被旧版皮肤声明覆盖。
+ *
+ * 英文 / English: Loading interface compatible with embedded operations portal. This file is loaded after style.css to ensure that project loader geometry is not overwritten by legacy skin declarations.
  */
 .launch-loading-host {
   position: absolute;

@@ -99,6 +99,7 @@ func TestMemoryRecoverySnapshotTracksScheduledLifecycleWithoutNegativeAge(t *tes
 	}
 
 	// 持久调度行不能因会话绑定失配而从观测中消失；领取路径会另行完整校验并隔离。
+	// A durable schedule row must not disappear from observation because of a session-binding mismatch; the claim path validates it fully and quarantines it separately.
 	entry.mu.Lock()
 	entry.session.Status = SessionClosed
 	entry.session.PendingRoundID = ""
@@ -141,6 +142,8 @@ func TestMemoryRecoverySnapshotCapsBacklogButKeepsGlobalOldestAge(t *testing.T) 
 		nextAttemptAt := now.Add(-time.Minute)
 		if index == RecoverySnapshotBacklogLimit {
 			// 最老候选故意放在按 key 排序的最后一项，证明计数封顶不截断年龄计算。
+			// English: The oldest candidate is deliberately placed at the last item sorted by key to prove that the count cap
+			// does not truncate the age calculation.
 			nextAttemptAt = now.Add(-10 * time.Minute)
 		}
 		repository.sessions[sessionKey(operatorID, sessionID)] = &memorySession{

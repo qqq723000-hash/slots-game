@@ -57,6 +57,8 @@ export interface CreateGpuWarmupUploadDiagnosticOptions {
 /**
  * 确保 DOM 数据属性的诊断安全：只有来自当前源、当前 Vite public base 下的 `assets/` 路径能够幸存，
  * 而凭证/查询/哈希永远不会。
+ *
+ * 英文 / English: Make diagnostics of DOM data properties safe: only the `assets/` path from the current source under the current Vite public base survives, but credentials/queries/hashes never.
  */
 export function sanitizeGpuWarmupPublicUrl(
   value: unknown,
@@ -79,7 +81,7 @@ export function sanitizeGpuWarmupPublicUrl(
   }
 }
 
-/** 从 Pixi 元数据到有界公共数据的纯故障关闭投影。 */
+/** 从 Pixi 元数据到有界公共数据的纯故障关闭投影。 / English: Pure fault-closed projection from Pixi metadata to bounded public data. */
 export function createGpuWarmupUploadDiagnostic(
   options: CreateGpuWarmupUploadDiagnosticOptions,
 ): GpuWarmupUploadDiagnostic {
@@ -105,7 +107,7 @@ export function createGpuWarmupUploadDiagnostic(
   });
 }
 
-/** 仅保留 DOM 发布的确定性、有界最慢集。 */
+/** 仅保留 DOM 发布的确定性、有界最慢集。 / English: Keep only the deterministic, bounded slowest set of DOM releases. */
 export function retainSlowGpuWarmupUploads(
   previous: readonly GpuWarmupUploadDiagnostic[],
   next: GpuWarmupUploadDiagnostic,
@@ -120,7 +122,7 @@ export function retainSlowGpuWarmupUploads(
   return Object.freeze(retained.slice(0, capacity));
 }
 
-/** 收集独特的 BaseTextures，而不改变可见性或图形顺序。 */
+/** 收集独特的 BaseTextures，而不改变可见性或图形顺序。 / English: Collect unique BaseTextures without changing visibility or graphics order. */
 export function collectGpuWarmupDiagnosticBaseTextures(
   root: GpuWarmupDisplayObjectLike,
 ): readonly GpuWarmupBaseTextureLike[] {
@@ -186,7 +188,7 @@ function describeBaseTexture(
 
 function sanitizeOpaqueCacheId(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  // Pixi 生成的 IDs 对于区分 Canvas/文本纹理很有用，但类似路径、类似 URL、查询承载和无界值不能安全地发布到 DOM 中。
+  // Pixi 生成的 IDs 对于区分 Canvas/文本纹理很有用，但类似路径、类似 URL、查询承载和无界值不能安全地发布到 DOM 中。 / English: Pixi-generated IDs are useful for differentiating Canvas/Text textures, but path-like, URL-like, query-bearers, and unbounded values ​​are not safe to post to the DOM.
   return /^[A-Za-z][A-Za-z0-9_.:-]{0,95}$/.test(value) ? value : null;
 }
 

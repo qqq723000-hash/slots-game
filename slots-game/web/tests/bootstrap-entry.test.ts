@@ -1,4 +1,4 @@
-// @ts-nocheck -- 源码契约与模块装配测试需要 Node 文件 API 和可控浏览器桩。
+// @ts-nocheck -- 源码契约与模块装配测试需要 Node 文件 API 和可控浏览器桩。 / English: @ts-nocheck -- Source contract and module assembly testing requires Node file API and controllable browser stubs.
 import { readFileSync } from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";

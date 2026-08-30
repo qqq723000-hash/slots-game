@@ -48,7 +48,7 @@ export const PRIMAL_WHEEL_POPUP_TIMELINE_MS = Object.freeze({
   reelFade: 1_000,
 });
 
-/** 所有值在玩家的独特 Wheel Spin 手势处都使用 S=0。 */
+/** 所有值在玩家的独特 Wheel Spin 手势处都使用 S=0。 / English: All values ​​use S=0 at the player's unique Wheel Spin gesture. */
 export const PRIMAL_WHEEL_TIMELINE_MS = Object.freeze({
   idleAcceleration: 200,
   configuredStop: 10_000,
@@ -71,7 +71,7 @@ export const PRIMAL_WHEEL_TIMELINE_MS = Object.freeze({
   total: 16_816.7,
 });
 
-/** 弹出+正常未跳过的S路径。排除无限期就绪门。 */
+/** 弹出+正常未跳过的S路径。排除无限期就绪门。 / English: Pop + normal unskipped S path. Exclude indefinitely ready gates. */
 export const PRIMAL_WHEEL_BOUNDED_PRESENTATION_MS =
   PRIMAL_WHEEL_POPUP_TIMELINE_MS.show + PRIMAL_WHEEL_TIMELINE_MS.total;
 
@@ -174,6 +174,8 @@ export function primalWheelRotationDegrees(positionSectors: number): number {
 
 /**
  * 仅从显式片段、官方奖项 ID 或权威命名的奖项/结果解析表现几何。未知的输入永远不会收到修饰哈希或乘数派生的回退路径。
+ *
+ * 英文 / English: Resolve performance geometry only from explicit fragments, official award IDs, or authoritatively named awards/results. Unknown inputs never receive a decorated hash or multiplier-derived fallback path.
  */
 export function resolvePrimalWheelSegment(
   selection: PrimalWheelAwardSelection | string | number,
@@ -212,7 +214,7 @@ export function resolvePrimalWheelSegment(
   return segment;
 }
 
-/** 空闲旋转器从零开始，在 200ms 之后达到 0.0001 扇区/毫秒。 */
+/** 空闲旋转器从零开始，在 200ms 之后达到 0.0001 扇区/毫秒。 / English: The idle spinner starts at zero and reaches 0.0001 sectors/ms after 200ms. */
 export function primalWheelIdleState(
   elapsedMs: number,
   initialPositionSectors = 0,
@@ -250,7 +252,7 @@ function validateStopOffset(stopOffsetSectors: number): number {
   return stopOffsetSectors;
 }
 
-/** 从实时空闲 p0/v0 构建不可变的官方停止多项式。 */
+/** 从实时空闲 p0/v0 构建不可变的官方停止多项式。 / English: Construct immutable official stopping polynomials from real-time idle p0/v0. */
 export function createPrimalWheelSpinPlan(options: {
   readonly segment: number;
   readonly launchState: Pick<
@@ -298,7 +300,7 @@ export function createPrimalWheelSpinPlan(options: {
   const curve3 = 8 * startPosition - 8 * curveTarget + 3 * curve1;
   const curve4 = -3 * startPosition + 3 * curveTarget - curve1;
 
-  // 捕获的范围完全低于通用微调器的 0.45 阈值。
+  // 捕获的范围完全低于通用微调器的 0.45 阈值。 / English: The captured range is well below the 0.45 threshold of the universal spinner.
   const bounceAmplitude = stopOffset < 0.45 ? 0 : -1.5 * (stopOffset - 0.45);
   if (bounceAmplitude !== 0) {
     throw new Error("Captured Primal Wheel offsets must have zero bounce amplitude");
@@ -327,6 +329,8 @@ export function createPrimalWheelSpinPlan(options: {
 
 /**
  * 在第一个接受的快速停止后，将挂钟 S 时间映射到 Spinner 时间。 STOPPING 之外的请求无效。接受的请求跳转到曲线端点，并且仍然保留完整的一秒停止预留来运行。
+ *
+ * 英文 / English: Maps the wall clock S time to the spinner time after the first accepted quick stop. Requests other than STOPPING are invalid. Accepted requests jump to the curve endpoint and still retain a full one-second stop reservation to run.
  */
 export function primalWheelQuickStopElapsed(
   spinElapsedMs: number,

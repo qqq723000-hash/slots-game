@@ -7,12 +7,12 @@ class ParallaxLayer extends Container {
   }
 }
 
-/** 一个逻辑相机，使每个世界层保持在不同的深度。 */
+/** 一个逻辑相机，使每个世界层保持在不同的深度。 / English: A logical camera that keeps each world layer at a different depth. */
 export class CameraRig extends Container {
   readonly farLayer = new ParallaxLayer(0.16);
   readonly terrainLayer = new ParallaxLayer(0.42);
   readonly actorLayer = new ParallaxLayer(0.72);
-  /** 预设的前景必须在角色之后渲染并共享背景变换。 */
+  /** 预设的前景必须在角色之后渲染并共享背景变换。 / English: The preset foreground must be rendered after the character and share the background transform. */
   readonly foregroundLayer = new ParallaxLayer(0.16);
   readonly gameLayer = new ParallaxLayer(1);
   readonly fxLayer = new ParallaxLayer(1.12);

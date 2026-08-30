@@ -121,7 +121,7 @@ describe("verified Free Spins / Wheel event artwork", () => {
       ...WHEEL_VERIFIED_SPINE_KEYS.map((key) => primalSpineSkeletonUrl(key)),
       PRIMAL_ASSETS.features.wheelBlue,
       PRIMAL_ASSETS.features.wheelRed,
-      // 刻意省略 dual，用于证明不完整包会失败关闭。
+      // 刻意省略 dual，用于证明不完整包会失败关闭。 / English: dual is deliberately omitted to prove that incomplete packages will fail to close.
     ]);
 
     await expect(verifiedFeatureArtworkFromPackage(loaded, "wheel"))

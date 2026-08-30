@@ -1,5 +1,8 @@
 // rgse2e 包包含仅供浏览器端到端测试套件使用的回环 RGS。它刻意组合生产领域及
 // HTTP 适配器；只有熵源、钱包传输和测试夹具进程控制使用测试替身。
+// English: The rgse2e package contains loopback RGS used only by browser end-to-end test suites. It intentionally
+// combines production domains and HTTP adapters; only entropy sources, wallet transfers, and test fixture process
+// control use test doubles.
 package rgse2e
 
 import (
@@ -67,6 +70,8 @@ func (s *countedSpinner) Spin(ctx context.Context, input game.SpinInput) (game.S
 }
 
 // idempotentWallet 模拟必要的原子扣款及入账操作，并拒绝使用不同指纹复用操作标识。
+// English: idempotentWallet simulates necessary atomic deduction and credit operations, and refuses to use
+// different fingerprint reuse operation identifiers.
 type idempotentWallet struct {
 	mu              sync.Mutex
 	balance         int64
@@ -444,6 +449,7 @@ func deterministicDefinition(scenario string) (game.Config, []uint64, int, error
 	}
 
 	// 基础结果在每列恰好包含一个怒气符号，且不存在可赔付连线。
+	// The base result contains exactly one Rage symbol in each column and no payable way.
 	base := []uint64{0, 0, 1, 0, 0, 2, 0, 0, 1, 0}
 	switch scenario {
 	case "wheel":

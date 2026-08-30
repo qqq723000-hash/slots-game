@@ -1,5 +1,7 @@
 #!/bin/sh
 # 对高风险边界逐项制造危险变体，证明静态契约会失败关闭。
+# English: Create dangerous variants of high-risk boundaries item by item to prove that static contracts will
+# fail to close.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

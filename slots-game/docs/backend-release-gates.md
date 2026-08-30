@@ -1,9 +1,15 @@
-# 后端发布门禁
+# 后端发布门禁 / Backend release gates
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document defines the fail-closed backend release gates, including the real PostgreSQL conformance path and its required evidence.
+A clean database and isolated DBA, migrator, and runtime identities must execute all fifteen concurrency and recovery tests; `make test-postgres` and `make verify-backend` must reject missing database URLs, skipped tests, or incomplete evidence.
+Passing repository gates does not certify a production topology or external wallet, operator, cluster, capacity, disaster-recovery, or regulatory readiness, all of which require separate environment evidence and approval.
 
 本项目的后端发布验证必须在干净的 PostgreSQL 实例上、使用 DBA、migrator、runtime
 三套隔离身份执行十五项真实数据库并发与

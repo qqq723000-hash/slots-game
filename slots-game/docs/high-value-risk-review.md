@@ -1,9 +1,13 @@
-# 高额派奖持久审批边界
+# Durable high-value payout review boundary / 高额派奖持久审批边界
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This optional fail-closed gate is disabled by default, so the existing `PREPARED` to wallet-terminal economic path is unchanged unless every required policy setting is present and valid. When enabled, a qualifying result and its policy evidence are persisted as `RISK_PENDING` in the authoritative PostgreSQL transaction before any wallet call, and expiry or review cannot invent a new RNG result. The feature is not a regulatory approval, AML system, or operator risk platform; production enablement still requires approved thresholds, reviewer identity, SSO and MFA, separation of duties, audit retention, operational procedures, and jurisdiction-specific acceptance.
 
 该功能是可选安全闸门，默认关闭。关闭时不会写 `RISK_PENDING`，现有
 `PREPARED -> WALLET_PENDING -> COMMITTED/REJECTED` 经济路径保持不变。它不是监管批准、

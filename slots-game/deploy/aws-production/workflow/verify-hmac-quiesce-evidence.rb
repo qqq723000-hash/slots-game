@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 # 验证 HMAC 停机证据的规范化内容、固定生产身份、目标边界与有效期。
+# English: Verify the normalized content, fixed artifactsion identity, target boundaries and validity period of
+# HMAC outage evidence.
 require "digest"
 require "json"
 require "time"

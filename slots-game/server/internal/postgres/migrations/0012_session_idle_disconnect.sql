@@ -2,6 +2,8 @@ ALTER TABLE rgs_sessions
     ADD COLUMN idle_disconnect_seconds bigint DEFAULT 1200,
     -- 该默认值只允许旧 writer 在维护交接期间完成 INSERT，并刻意让其立即超时；
     -- 只有签名的 v3 relaunch 才能建立未来的传输截止时间。
+    -- English: This default value only allows the old writer to complete INSERTs during maintenance handover,
+    -- and intentionally times out immediately; Only signed v3 relaunch can establish future transfer deadlines.
     ADD COLUMN idle_disconnect_at timestamptz DEFAULT clock_timestamp(),
     ADD COLUMN transport_generation bigint DEFAULT 1;
 

@@ -89,6 +89,10 @@ type measuredLoad struct {
 // TestPostgresHighConcurrencyProfile 是显式 opt-in 的破坏性测试数据库负载剖面。
 // 它绝不能指向生产库；脚本要求第二个独立确认变量，且生成物只写 ignored artifacts。
 // 功能不变量和执行计划始终失败闭合；未配置全部性能阈值时不构成发布容量门禁。
+// English: TestPostgresHighConcurrencyProfile is an explicitly opt-in destructive test database load profile. It
+// must not point to a production library; the script requires a second independent validation variable, and the
+// artifacts only write ignored artifacts. Functional invariants and execution plans always fail to close; when all
+// performance thresholds are not configured, it does not constitute the release of capacity gates.
 func TestPostgresHighConcurrencyProfile(t *testing.T) {
 	if os.Getenv("RGS_RUN_POSTGRES_HIGH_CONCURRENCY") != "1" {
 		t.Skip("set RGS_RUN_POSTGRES_HIGH_CONCURRENCY=1 to run the PostgreSQL load profile")
@@ -172,6 +176,9 @@ func TestPostgresHighConcurrencyProfile(t *testing.T) {
 
 	// 在隔离测试库中重建变更前索引布局与逐语句 PrepareRound，实现同一二进制、
 	// 同一 PostgreSQL 实例的可重复 A/B；defer 保证任何失败都恢复迁移声明的布局。
+	// English: Rebuild the pre-change index layout and statement-by-statement PrepareRound in the isolated test
+	// library to achieve repeatable A/B of the same binary and the same PostgreSQL instance; defer guarantees that any
+	// failure will restore the layout declared by the migration.
 	defer setHighConcurrencyIndexLayout(t, context.Background(), migratorDB, true)
 	setHighConcurrencyIndexLayout(t, ctx, migratorDB, false)
 	report.Scenarios = append(report.Scenarios,
@@ -481,6 +488,9 @@ func prepareRoundForLoad(
 
 // prepareRoundLegacyForLoad 保留本次优化前的八语句成功路径，仅供隔离数据库 A/B。
 // 它写入与生产实现完全相同的 round、ledger、session cursor 与 outbox 行，不参与运行时构建。
+// English: prepareRoundLegacyForLoad retains the eight-statement success path before this optimization, only for
+// isolated database A/B. It writes exactly the same round, ledger, session cursor and outbox lines as the
+// production implementation and does not participate in the runtime build.
 func prepareRoundLegacyForLoad(
 	ctx context.Context,
 	repository *Repository,

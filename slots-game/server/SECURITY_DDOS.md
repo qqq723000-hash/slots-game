@@ -1,9 +1,13 @@
-# RGS 应用层 DDoS 与资源耗尽防护
+# RGS application-layer DDoS and resource-exhaustion protection / RGS 应用层 DDoS 与资源耗尽防护
 
 <!-- personal-independent-project -->
 > **个人独立项目说明：** 本仓库的工程实现与交付文档由个人独立开发者维护，并按商用级源码交付标准建设。
 > 文中的生产、运营、平台、安全、审计、法务、合规与审批角色均为采用方在外部环境中需要落实的职责；
 > 仓库内容不代表已上线或已获得服务等级、商业授权、素材授权或监管认证，第三方组件与素材仍受各自许可和权利边界约束。
+
+## English summary / 英文摘要
+
+This document describes the in-process RGS protections that are implemented and testable, including bounded connections, timeouts, body limits, anonymous and verified-identity gates, dependency bulkheads, and low-cardinality observability. PostgreSQL remains authoritative for sessions, rounds, wallet outcomes, and idempotency, while Valkey admission limits new work and fails closed without becoming a balance or result store. The Go service cannot absorb Internet bandwidth floods, TLS-handshake attacks, reflection, or large botnets by itself, so approved edge protection, cloud quotas, capacity calibration, wallet limits, controlled abuse testing, and live incident acceptance remain external gates.
 
 本文描述 RGS 进程内已经实现并可由测试验证的保护。它不是“单靠 Go 服务防住 DDoS”的承诺：公网带宽、TLS 握手洪泛、反射放大和大规模僵尸网络必须先由 CDN、WAF、负载均衡、云厂商 DDoS 防护及网络配额吸收。应用层负责在边缘漏流或配置错误时，把 CPU、文件描述符、内存、PostgreSQL、Valkey 和钱包调用控制在确定边界内。
 

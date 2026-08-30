@@ -20,7 +20,7 @@ const clamp = (value: number): number => Math.min(1, Math.max(0, value));
 
 export type AuthoredBackdropPalette = "main" | "fire" | "snow";
 
-/** 在捕获的桌面控制器中跟踪 GameBackground 的分配。 */
+/** 在捕获的桌面控制器中跟踪 GameBackground 的分配。 / English: Track the assignment of GameBackground in the captured desktop controller. */
 export const PRIMAL_BACKGROUND_TRACK = Object.freeze({
   mobile: 0,
   base: 1,
@@ -34,6 +34,8 @@ export const PRIMAL_BACKGROUND_TRACK = Object.freeze({
 /**
  * 在 1280x720 桌面表面上捕获 1200x900 GameBackground 变换。 Pixi-Spine 此处使用骨架的居中原点； 0.8 包含比例和帧缓冲区中心，
  * 保留预设的街道级摄像机停止点。
+ *
+ * 英文 / English: Capture 1200x900 GameBackground transform on 1280x720 desktop surface. Pixi-Spine uses the skeleton's centered origin here; 0.8 contains the scale and framebuffer center, retaining the preset street-level camera stops.
  */
 export const PRIMAL_BACKGROUND_STAGE_TRANSFORM = Object.freeze({
   x: LOGICAL_WIDTH / 2,
@@ -80,7 +82,7 @@ export interface MonsterReactionFrame {
   readonly lightningAlpha: number;
 }
 
-/** 确定性的外观值；这里没有推导出任何游戏事实。 */
+/** 确定性的外观值；这里没有推导出任何游戏事实。 / English: Deterministic appearance value; no game facts are derived here. */
 export function monsterReactionFrame(progress: number, reducedMotion: boolean): MonsterReactionFrame {
   const value = clamp(progress);
   const envelope = Math.sin(Math.PI * value);
@@ -128,6 +130,8 @@ export type CityBackdropLoadPart = (typeof CITY_BACKDROP_LOAD_PARTS)[number];
 
 /**
  * 结合三个独立的背景分支，不允许陈旧或倒退的儿童记者向后移动公共启动栏。
+ *
+ * 英文 / English: Combine three independent background branches without allowing stale or regressive child progress reports to move the shared startup watermark backward.
  */
 export function createCityBackdropLoadProgressReporter(
   publish: (fraction: number) => void,
@@ -156,9 +160,11 @@ export function createCityBackdropLoadProgressReporter(
 /**
  * 源图稿包含两条 1366×2676 的垂直镜头轨道。Base 玩法显示街道底部；转轴扩展时镜头沿城市上移，
  * 同时特性能量交叉淡入受损的橙色画面。
+ *
+ * 英文 / English: The source artwork contains two 1366×2676 vertical camera tracks. Base play shows the bottom of the street; as the reels expand the camera moves up the city while the characteristic energy cross-fade into a damaged orange screen.
  */
 export class CityBackdrop extends Container {
-  /** 预设的前台由 PixiRenderer 安装在游戏层之前。 */
+  /** 预设的前台由 PixiRenderer 安装在游戏层之前。 / English: The default frontend is installed before the game layer by PixiRenderer. */
   readonly foregroundView = new Container();
   private readonly authoredParticles = new PrimalBackgroundParticles();
   private readonly fallback = new Graphics();
@@ -201,7 +207,7 @@ export class CityBackdrop extends Container {
 
   constructor() {
     super();
-    // 捕获的背景层次结构顺序是前景 Spine，后跟向上射击、侧向射击和雪粒子兄弟姐妹。加载后，Spine 被插入到索引零处；该主机保留粒子位置。
+    // 捕获的背景层次结构顺序是前景 Spine，后跟向上射击、侧向射击和雪粒子兄弟姐妹。加载后，Spine 被插入到索引零处；该主机保留粒子位置。 / English: The captured background hierarchy order is the foreground Spine, followed by the upshot, sideshot, and snow particle siblings. After loading, the spine is inserted at index zero; the host retains particle positions.
     this.foregroundView.addChild(this.authoredParticles);
     this.fallback.beginFill(0x14181a).drawRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT).endFill();
     this.fallback.beginFill(0x47200f, 0.42).drawEllipse(640, 610, 720, 220).endFill();
@@ -269,7 +275,7 @@ export class CityBackdrop extends Container {
         );
         const scale = LOGICAL_WIDTH / daylightRegion.width;
 
-        // 提供的 10018 图像包含两个柔软的冲击粉扑。将其用作低阿尔法视差面纱可以保留原始的绘画烟雾。
+        // 提供的 10018 图像包含两个柔软的冲击粉扑。将其用作低阿尔法视差面纱可以保留原始的绘画烟雾。 / English: The 10018 image provided contains two soft impact puffs. Using it as a low alpha parallax veil preserves the original painterly smoke.
         leftPuff = new Sprite(smokeTexture);
         leftPuff.anchor.set(0.5);
         leftPuff.position.set(210, 500);
@@ -304,11 +310,11 @@ export class CityBackdrop extends Container {
     const authoredLoad = loadPrimalSpineSet(["background", "backgroundFront"] as const)
       .then(({ background, backgroundFront }) => {
         if (this.disposed || signal?.aborted) return;
-        // 捕获的桌面布局适合预设的 1200×900 阶段高度（包含）：1280×720 解析为精确的 0.8 比例。
+        // 捕获的桌面布局适合预设的 1200×900 阶段高度（包含）：1280×720 解析为精确的 0.8 比例。 / English: The captured desktop layout fits the preset 1200×900 stage height (inclusive): 1280×720 resolves to an exact 0.8 scale.
         let backdrop: Spine | null = null;
         let foreground: Spine | null = null;
         try {
-          // 背景地图集使用 `add/normal_*` 名称来表示全尺寸 RGB 城市车牌。与符号导出不同，这些路径不是材质指令；完全遵循预设的 Spine 插槽混合模式。
+          // 背景地图集使用 `add/normal_*` 名称来表示全尺寸 RGB 城市车牌。与符号导出不同，这些路径不是材质指令；完全遵循预设的 Spine 插槽混合模式。 / English: The background atlas uses the `add/normal_*` names to represent full-size RGB city license plates. Unlike symbol exports, these paths are not material instructions; they follow the preset Spine slot blend modes exactly.
           backdrop = createSpineView(background, { regionAdditiveFallback: false });
           foreground = createSpineView(backgroundFront, { regionAdditiveFallback: false });
           backdrop.autoUpdate = false;
@@ -358,7 +364,7 @@ export class CityBackdrop extends Container {
           this.authoredBackdropHost.addChild(pendingAuthored.background);
           this.foregroundView.addChildAt(pendingAuthored.foreground, 0);
           this.restoreAuthoredPalette(this.persistentPalette);
-          // Spine 设置姿势拥有相同的位图板以及预设的烟/火/云时间线。保留手工制作的底片仅作为错误回退路径，这样场景就不会双重曝光。
+          // Spine 设置姿势拥有相同的位图板以及预设的烟/火/云时间线。保留手工制作的底片仅作为错误回退路径，这样场景就不会双重曝光。 / English: The Spine setup poses have the same bitmap board and preset smoke/fire/cloud timelines. Keep the hand-made negative only as a fallback path for errors so the scene isn't double-exposed.
           this.setFallbackArtworkVisible(false);
         }
         this.publishLoadProgress(1);
@@ -377,7 +383,7 @@ export class CityBackdrop extends Container {
         attemptActive = false;
         if (!this.disposed && this.loadPromise === attempt) {
           this.loadPromise = null;
-          // 重试开始新的单调运行；运行失败的侦听器将被 observeLoadProgress 删除，而不会收到向后通知。
+          // 重试开始新的单调运行；运行失败的侦听器将被 observeLoadProgress 删除，而不会收到向后通知。 / English: Retry starting a new monotonic run; listeners that fail will be removed by observeLoadProgress without receiving backward notifications.
           this.loadProgress = 0;
         }
       },
@@ -385,7 +391,7 @@ export class CityBackdrop extends Container {
     return attempt;
   }
 
-  /** 在 GPU 预热期间从图遍历中排除 4,100 个成员池。 */
+  /** 在 GPU 预热期间从图遍历中排除 4,100 个成员池。 / English: Exclude 4,100 member pools from graph traversal during GPU warm-up. */
   setParticleRenderingEnabled(enabled: boolean): void {
     this.authoredParticles.renderable = enabled;
   }
@@ -426,7 +432,7 @@ export class CityBackdrop extends Container {
       plate.width = LOGICAL_WIDTH;
       plate.height = this.trackHeight;
     }
-    // 前景底部对齐裁剪会露出图集下方空旷的雪地区域。Base 玩法是围绕街道视角制作的。
+    // 前景底部对齐裁剪会露出图集下方空旷的雪地区域。Base 玩法是围绕街道视角制作的。 / English: A bottom-aligned crop of the foreground reveals the empty snowy area below the gallery. Base gameplay is built around a street perspective.
     this.currentTrackY = this.baseTrackY();
     this.targetTrackY = this.currentTrackY;
     this.applyTrackPosition();
@@ -494,6 +500,8 @@ export class CityBackdrop extends Container {
   /**
    * 仅供 Free Spins 最终退出屏障调用。常规调色板切换继续保留预设的混合窗口；这里必须在
    * PRESENTATION_COMPLETE 前一次性提交 Base 镜头、设置姿势和空粒子池，避免下一帧再看到火/雪残影。
+   *
+   * 英文 / English: Only Free Spins final exit barrier call. Regular palette switching continues to retain the preset blending window; here the Base shot, set pose and empty particle pool must be submitted once before PRESENTATION_COMPLETE to avoid seeing fire/snow afterimages in the next frame.
    */
   settleFeatureExit(): void {
     this.rows = 3;
@@ -551,7 +559,7 @@ export class CityBackdrop extends Container {
     this.authoredParticles.setReducedMotion(reducedMotion);
   }
 
-  /** 将官方移动后台/前台节点作为一对 Z 锁定应用。 */
+  /** 将官方移动后台/前台节点作为一对 Z 锁定应用。 / English: Applies the official mobile backend/frontend nodes as a pair of Z-locks. */
   setResponsiveNodeTransform(transform: ResponsiveNodeTransform | null): void {
     if (!transform) {
       for (const layer of [this, this.foregroundView]) {
@@ -625,7 +633,7 @@ export class CityBackdrop extends Container {
     this.authoredIntroTimelineControlled = false;
     this.authoredIntroTimeMs = 0;
     this.setAuthoredAmbientPalette("main");
-    // 捕获 GameBackground 顺序：后台介绍排队主要空闲，而前台播放一次介绍并保持其最终姿势。
+    // 捕获 GameBackground 顺序：后台介绍排队主要空闲，而前台播放一次介绍并保持其最终姿势。 / English: Capture the GameBackground sequence: the background intro queues up mostly idle, while the foreground plays the intro once and holds its final pose.
     this.playAuthoredBase(this.authoredBackground, "intro", "bg_main_idle");
     this.playAuthoredOnTrack(
       this.authoredForeground,
@@ -644,7 +652,7 @@ export class CityBackdrop extends Container {
     this.authoredIntroActive = true;
   }
 
-  /** 从完全相同的过渡时间推进两个相机板。 */
+  /** 从完全相同的过渡时间推进两个相机板。 / English: Advance both camera boards from exactly the same transition time. */
   seekAuthoredIntro(timeMs: number): void {
     if (!this.authoredIntroTimelineControlled || !Number.isFinite(timeMs)) return;
     const targetMs = Math.max(this.authoredIntroTimeMs, Math.max(0, timeMs));
@@ -701,7 +709,7 @@ export class CityBackdrop extends Container {
     );
   }
 
-  /** 重新连接安全直接恢复，无需重播过渡。 */
+  /** 重新连接安全直接恢复，无需重播过渡。 / English: Reconnect securely resumes directly without replaying the transition. */
   restoreAuthoredPalette(palette: AuthoredBackdropPalette): void {
     this.persistentPalette = palette;
     const idle = palette === "snow"
@@ -709,7 +717,7 @@ export class CityBackdrop extends Container {
       : palette === "fire"
         ? "fs_bg_fire_idle"
         : "bg_main_idle";
-    // 重新连接/恢复的快照没有转换窗口，其中旧调色板可能会混合。首先清除每个叠加层，然后应用设置姿势中请求的空闲，以便火/雪附件无法在第 0 帧中幸存。
+    // 重新连接/恢复的快照没有转换窗口，其中旧调色板可能会混合。首先清除每个叠加层，然后应用设置姿势中请求的空闲，以便火/雪附件无法在第 0 帧中幸存。 / English: Reconnected/restored snapshots do not have a conversion window where old palettes may be mixed. First clear each overlay, then apply the requested idle in the Set Pose so that the fire/snow attachment does not survive frame 0.
     this.authoredBackground?.state.clearTrack(PRIMAL_BACKGROUND_TRACK.transition);
     this.authoredForeground?.state.clearTrack(PRIMAL_BACKGROUND_TRACK.transition);
     for (
@@ -719,8 +727,8 @@ export class CityBackdrop extends Container {
     ) {
       this.authoredBackground?.state.clearTrack(track);
     }
-    // 单独调用 clearTrack() 会让最后一个关键帧继续停留。直接恢复没有制作好的 150 毫秒退场窗口，
-    // 因此这里重置骨架姿态并应用请求的 Base 空闲动画，不再与已废弃的特性轨道条目混合。
+    // 单独调用 clearTrack() 会让最后一个关键帧继续停留。直接恢复没有制作好的 150 毫秒退场窗口， / English: Calling clearTrack() alone will cause the last keyframe to stay on. Directly restore the unmade 150 millisecond exit window,
+    // 因此这里重置骨架姿态并应用请求的 Base 空闲动画，不再与已废弃的特性轨道条目混合。 / English: So here the skeleton pose is reset and the requested Base idle animation is applied, no longer mixed with the deprecated property track entry.
     this.authoredBackground?.skeleton.setToSetupPose();
     this.authoredForeground?.skeleton.setToSetupPose();
     this.setAuthoredIdle(this.authoredBackground, idle, true);
@@ -785,7 +793,7 @@ export class CityBackdrop extends Container {
   }
 
   private setAuthoredAmbientPalette(palette: AuthoredBackdropPalette): void {
-    // 粒子系统是捕获的运行时中单独的前台层次结构兄弟。切换发射不会清除现有的池，因此火/雪残留物会在转换过程中自然衰减。
+    // 粒子系统是捕获的运行时中单独的前台层次结构兄弟。切换发射不会清除现有的池，因此火/雪残留物会在转换过程中自然衰减。 / English: Particle systems are captured as separate foreground hierarchical siblings in the runtime. Switching emission does not clear the existing pool, so fire/snow residue will naturally decay during the transition.
     this.authoredParticles.setPalette(palette);
     const view = this.authoredBackground;
     if (!view) return;
@@ -795,7 +803,7 @@ export class CityBackdrop extends Container {
       if (animation && view.state.hasAnimation(animation)) {
         view.state.setAnimation(track, animation, true);
       } else if (view.state.getCurrent(track)) {
-        // 官方共享的 Spine 包装器使用 150 毫秒的默认交叉淡入淡出。空动画让退役的火/雪附件混合回设置姿势，而不是突然消失或滞留。
+        // 官方共享的 Spine 包装器使用 150 毫秒的默认交叉淡入淡出。空动画让退役的火/雪附件混合回设置姿势，而不是突然消失或滞留。 / English: The officially shared Spine wrapper uses a default crossfade of 150 milliseconds. Empty animations allow decommissioned fire/snow attachments to blend back into the set pose instead of suddenly disappearing or lingering.
         view.state.setEmptyAnimation(track, SPINE_DEFAULT_MIX_SECONDS);
       }
     }

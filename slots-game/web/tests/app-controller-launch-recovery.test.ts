@@ -145,7 +145,7 @@ describe("AppController initial RGS session recovery", () => {
         code: PLAYER_FACING_ERROR_CODES.SESSION_TIMEOUT,
       }, "https://operator.example");
 
-      // RGS launch code 是一次性凭据；迟到回调不得恢复已经失败的启动。
+      // RGS launch code 是一次性凭据；迟到回调不得恢复已经失败的启动。 / English: The RGS launch code is a one-time credential; late callbacks may not resume a failed launch.
       probe.controller.handleSession({
         type: "session.opened",
         protocolVersion: 1,
@@ -279,13 +279,13 @@ describe("AppController initial RGS session recovery", () => {
       requestId: "refresh-correlation-3",
     });
 
-    // RgsGateway 的 terminal 顺序固定为 offline -> diagnostic -> operator recovery。
+    // RgsGateway 的 terminal 顺序固定为 offline -> diagnostic -> operator recovery。 / English: The terminal order of RgsGateway is fixed to offline -> diagnostic -> operator recovery.
     probe.controller.handleStatus("offline");
     probe.controller.handleError(error);
     expect(machine.phase).toBe("requesting");
     expect(reelRound.state).toBe("Spinning");
     probe.controller.handleOperatorSessionRequired(error);
-    // 重复通知必须保持幂等，不能再次推进状态机或再次发起宿主接管。
+    // 重复通知必须保持幂等，不能再次推进状态机或再次发起宿主接管。 / English: Repeated notifications must remain idempotent and cannot advance the state machine again or initiate a host takeover again.
     probe.controller.handleOperatorSessionRequired(error);
 
     expect(machine.phase).toBe("ready");

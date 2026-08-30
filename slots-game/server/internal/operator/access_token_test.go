@@ -118,6 +118,8 @@ func TestAccessTokenRejectsTamperingAndNonProfileShapes(t *testing.T) {
 	}
 
 	// 即使令牌签名正确，只要载荷包含重复成员也必须失效即关闭；本包刻意不实现宽松的 JWT 解析器。
+	// English: Even if the token is signed correctly, it must be invalidated and closed whenever the payload contains
+	// duplicate members; this package intentionally does not implement a relaxed JWT parser.
 	payload, err := json.Marshal(claims)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

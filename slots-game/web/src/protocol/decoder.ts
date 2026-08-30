@@ -32,7 +32,7 @@ export class ProtocolDecodeError extends Error {
   }
 }
 
-/** 只标记 spin.result 投影内部的固定校验边界，不携带任何业务值。 */
+/** 只标记 spin.result 投影内部的固定校验边界，不携带任何业务值。 / English: Only the fixed check boundary inside the spin.result projection is marked and does not carry any business value. */
 export type SpinResultProjectionDecodeStage =
   | "projection-message-shape"
   | "projection-message-grid"
@@ -178,8 +178,8 @@ function featureState(value: unknown, path: string): FeatureState {
   const state: FeatureState = {
     mode,
     freeSpinsRemaining: boundedInteger(decoded.freeSpinsRemaining, `${path}.freeSpinsRemaining`, 0, 1_000_000),
-    // 这两个字段晚于首版客户端投影。缺失时仅为旧会话夹具提供兼容默认值；
-    // 所有在线服务端状态仍会归一化为可安全重连的 Rage 投影。
+    // 这两个字段晚于首版客户端投影。缺失时仅为旧会话夹具提供兼容默认值； / English: These two fields postdate first version client projection. Only provides compatible defaults for old session fixtures when missing;
+    // 所有在线服务端状态仍会归一化为可安全重连的 Rage 投影。 / English: All online server state will still be normalized to a reconnect-safe Rage projection.
     rageLevel: decoded.rageLevel === undefined
       ? 1
       : boundedInteger(decoded.rageLevel, `${path}.rageLevel`, 1, 1_000_000),
@@ -357,8 +357,8 @@ function win(value: unknown, path: string, decodedGrid: GridCell[][]): Win {
   }
   const targetSymbol = symbol(decoded.symbol, `${path}.symbol`);
   const amountMinor = money(decoded.amountMinor, `${path}.amountMinor`);
-  // 兼容范围只存在于共享夹具/重放输入：v5 及更早记录没有显式 nominal，
-  // 归一化后下游始终得到完整的 paid facts。实时 RGS 边界会在进入此处前强制要求该字段。
+  // 兼容范围只存在于共享夹具/重放输入：v5 及更早记录没有显式 nominal， / English: Compatibility scope only exists for shared fixture/replay input: v5 and earlier records have no explicit nominal,
+  // 归一化后下游始终得到完整的 paid facts。实时 RGS 边界会在进入此处前强制要求该字段。 / English: After normalization, the downstream always gets complete paid facts. Live RGS boundaries will enforce this field before entering here.
   const nominalAmountMinor = decoded.nominalAmountMinor === undefined
     ? amountMinor
     : money(decoded.nominalAmountMinor, `${path}.nominalAmountMinor`);
@@ -385,8 +385,8 @@ function win(value: unknown, path: string, decodedGrid: GridCell[][]): Win {
       1_000_000,
     );
   }
-  // 兼容范围仅限同时缺少两个新字段的历史记录；在线响应必须携带并校验下方由服务端
-  // 解析完成的 Ways 明细，客户端不得自行补算。
+  // 兼容范围仅限同时缺少两个新字段的历史记录；在线响应必须携带并校验下方由服务端 / English: The compatibility range is limited to historical records that lack two new fields at the same time; the online response must carry and verify the following by the server
+  // 解析完成的 Ways 明细，客户端不得自行补算。 / English: The client must not recalculate the Ways details after parsing.
   if (!hasWays) return result;
   if (!payingSymbolSet.has(targetSymbol)) {
     throw new ProtocolDecodeError(`${path}.symbol must be a paying symbol when pathAwards are present`);
@@ -500,6 +500,8 @@ function win(value: unknown, path: string, decodedGrid: GridCell[][]): Win {
 /**
  * 实时结果把同一获奖符号聚合为一个 Win，但旧重放仍可能省略 Ways 明细；保留该兼容性时，
  * 必须拒绝重复身份或重复的现代路径，避免同一笔可见奖励被呈现多次。
+ *
+ * 英文 / English: Live results aggregate the same winning symbol into a single Win, but old replays may still omit Ways details; while retaining this compatibility, duplicate identities or duplicate modern paths must be rejected to avoid the same visible reward being presented multiple times.
  */
 function validateWinIdentities(wins: readonly Win[]): void {
   const seenIDs = new Set<string>();
@@ -531,7 +533,7 @@ function validateWinIdentities(wins: readonly Win[]): void {
   });
 }
 
-/** 与服务端 game.ValidateOutcomeStructure 的可见奖励核算规则保持完全一致。 */
+/** 与服务端 game.ValidateOutcomeStructure 的可见奖励核算规则保持完全一致。 / English: It is completely consistent with the visible reward accounting rules of server-side game.ValidateOutcomeStructure. */
 function validateVisibleAwardTotal(
   wins: readonly Win[],
   decodedEvents: readonly FeatureEvent[],
@@ -566,7 +568,7 @@ function monetaryEventPaidFacts(
   return null;
 }
 
-/** 精确复刻服务端的 Win -> PathAward -> monetary event 预算裁剪顺序。 */
+/** 精确复刻服务端的 Win -> PathAward -> monetary event 预算裁剪顺序。 / English: Exactly replicate the server-side Win -> PathAward -> monetary event budget clipping sequence. */
 function validatePaidAwardProjection(
   decodedWins: readonly Win[],
   decodedEvents: readonly FeatureEvent[],
@@ -691,6 +693,8 @@ function validateWheelAwardProjection(
  * v1 响应只暴露下一特性状态，不包含提交请求时的状态。以下事件边界仍能唯一确定 Vault 归属：
  * Kong 拥有前置扩展，终止事件声明结束模式，未终止的活动结果保留原模式；只有 Base 触发投影
  * 会在活动结果中携带 free_spins.started。
+ *
+ * 英文 / English: The v1 response only exposes the next feature state, not the state when the request was submitted. The following event boundaries can still uniquely determine Vault ownership: Kong has pre-expansion, the termination event declares the end mode, and the unterminated activity results retain the original mode; only the Base trigger projection will carry free_spins.started in the activity results.
  */
 function inferredVaultOriginMode(
   decodedEvents: readonly FeatureEvent[],
@@ -1218,8 +1222,8 @@ function validateResultReelProjection(
   const completesExpansion = decodedEvents.some((event) => (
     event.type === "free_spins.completed" && event.mode === "EXPANSION"
   ));
-  // Base 触发局已投影新的 EXPANSION 状态，但该局停轴仍是普通 3x3；之后每个 Kong
-  // 结果（含终局响应）都必须携带前置扩展事件，不能只依赖局后状态猜测版面。
+  // Base 触发局已投影新的 EXPANSION 状态，但该局停轴仍是普通 3x3；之后每个 Kong / English: The base triggering round has projected a new EXPANSION state, but the stopping axis of the round is still a normal 3x3; after that, every Kong
+  // 结果（含终局响应）都必须携带前置扩展事件，不能只依赖局后状态猜测版面。 / English: The results (including the final response) must carry pre-extended events and cannot only rely on the post-game status guessing layout.
   const isExpansionSpin = completesExpansion
     || (decodedFeatureState.mode === "EXPANSION" && !startsExpansion);
   const expanded = decodedEvents.find((event) => event.type === "grid.expanded");

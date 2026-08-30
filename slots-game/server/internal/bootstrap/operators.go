@@ -16,10 +16,14 @@ import (
 const (
 	// OperatorDocumentSchema 是生产模式。每个运营商拥有独立的访问令牌签名密钥，
 	// 并可在轮换该密钥时保留额外的验证密钥。
+	// English: OperatorDocumentSchema is the production schema. Each operator has an independent access token signing
+	// key and can retain additional verification keys when rotating this key.
 	OperatorDocumentSchema = "rgs-operators-v2"
 
 	// LegacyOperatorDocumentSchema 仅为向后兼容迁移而读取。它从一对全局密钥派生
 	// 所有租户密钥，生产运行时绝不能启用该模式。
+	// English: LegacyOperatorDocumentSchema is read only for backwards compatibility migrations. It derives all tenant
+	// keys from a pair of global keys and this mode must not be enabled for production runs.
 	LegacyOperatorDocumentSchema = "rgs-operators-v1"
 )
 
@@ -27,6 +31,8 @@ var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`
 
 // LoadedOperators 包含运行时不可变的信任及路由材料。VerificationKeys 可直接传给
 // operator.NewMemoryKeyRing 构造函数。
+// English: LoadedOperators contain runtime immutable trust and routing material. VerificationKeys can be passed
+// directly to the operator.NewMemoryKeyRing constructor.
 type LoadedOperators struct {
 	Schema           string                     `json:"schema"`
 	TokenIssuer      string                     `json:"tokenIssuer"`
@@ -58,6 +64,8 @@ type OperatorLoadOption func(*operatorLoadOptions) error
 
 // AllowInsecureWalletHTTPForDevelopment 只能由明确选择的开发运行时传入。
 // HTTPS 始终是失效即关闭的默认设置。
+// English: AllowInsecureWalletHTTPForDevelopment can only be passed in by explicitly selected development
+// runtimes. HTTPS is always the fail-or-close default.
 func AllowInsecureWalletHTTPForDevelopment() OperatorLoadOption {
 	return func(options *operatorLoadOptions) error {
 		options.allowInsecureWalletHTTP = true
@@ -67,6 +75,9 @@ func AllowInsecureWalletHTTPForDevelopment() OperatorLoadOption {
 
 // RequirePerOperatorAccessTokenKeys 拒绝在租户间共享同一访问令牌私钥的旧版文档。
 // 生产启动必须传入此选项；旧版路径仅用于受控迁移。
+// English: RequirePerOperatorAccessTokenKeys Rejects legacy documents that share the same access token private key
+// between tenants. This option must be passed in for production launches; legacy paths are only used for
+// controlled migrations.
 func RequirePerOperatorAccessTokenKeys() OperatorLoadOption {
 	return func(options *operatorLoadOptions) error {
 		options.requireIsolatedAccess = true
@@ -77,6 +88,10 @@ func RequirePerOperatorAccessTokenKeys() OperatorLoadOption {
 // LoadWalletMaterialOnlyForWorker 仅供不暴露公网 API 的后台 Worker 使用。它仍会
 // 严格解析租户文档和钱包密钥，但不会读取访问令牌、运营请求或运营响应私钥，避免
 // Worker 因复用 API 引导路径而获得不需要的签发能力。
+// English: LoadWalletMaterialOnlyForWorker is only used by background workers that do not expose public network
+// APIs. It will still strictly parse the tenant document and wallet key, but will not read the access token,
+// operation request or operation response private key, preventing the Worker from obtaining unnecessary issuance
+// capabilities due to reusing the API boot path.
 func LoadWalletMaterialOnlyForWorker() OperatorLoadOption {
 	return func(options *operatorLoadOptions) error {
 		options.walletMaterialOnly = true
@@ -96,6 +111,7 @@ type operatorDocumentEntry struct {
 	AccessTokenSigningKey       signingKeyDocument        `json:"accessTokenSigningKey"`
 	AccessTokenVerificationKeys []verificationKeyDocument `json:"accessTokenVerificationKeys"`
 	// 已弃用的 v1 字段；v2 文档会拒绝这些字段。
+	// English: Deprecated v1 fields; v2 documents reject them.
 	AccessTokenKeyID                string                    `json:"accessTokenKeyId"`
 	NotBefore                       string                    `json:"notBefore"`
 	NotAfter                        string                    `json:"notAfter"`
@@ -126,6 +142,8 @@ type walletDocument struct {
 }
 
 // LoadOperatorDocument 加载多租户信任文档。文档内的密钥文件路径相对于文档目录解析。
+// English: LoadOperatorDocument loads a multi-tenant trust document. Key file paths within a document are resolved
+// relative to the document directory.
 func LoadOperatorDocument(
 	documentPath, accessPrivateKeyPath, accessPublicKeyPath string,
 	optionFunctions ...OperatorLoadOption,
@@ -200,6 +218,7 @@ func LoadOperatorDocument(
 				return LoadedOperators{}, fmt.Errorf("%s access token keys: %w", contextName, err)
 			}
 			// 此构造函数同时验证签名材料、签发方及受众语义，且不会让引导层依赖未导出的验证器。
+			// This constructor validates signing material, issuer, and audience semantics together without making the bootstrap layer depend on unexported validators.
 			if _, err := operator.NewAccessTokenIssuer(accessSigning, operator.AccessTokenIssuerOptions{
 				Issuer: document.TokenIssuer, Audience: document.TokenAudience,
 			}); err != nil {

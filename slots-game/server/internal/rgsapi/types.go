@@ -2,6 +2,10 @@
 //
 // 本包只负责解析、认证、租户及会话绑定和响应形状。启动、轮次与钱包的持久化语义
 // 必须留在窄接口之后，禁止运营商特定适配逻辑渗入通用传输层。
+// English: The rgsapi package defines the HTTP transport contract that produces the RGS core. This package is only
+// responsible for parsing, authentication, tenant and session binding, and response shapes. The persistence
+// semantics of startup, rounds and wallets must remain behind narrow interfaces, prohibiting operator-specific
+// adaptation logic from seeping into the common transport layer.
 package rgsapi
 
 import (
@@ -33,6 +37,9 @@ const (
 var (
 	// 启动适配器用同一哨兵报告凭据生命周期，HTTP 层无需依赖具体启动码存储。
 	// 未知、过期、已消费或绑定不匹配必须全部折叠为该值，避免兑换端点成为枚举判定接口。
+	// English: The same sentry is used by the launch adapter to report credential lifecycle, and the HTTP layer does
+	// not need to rely on a specific launch code store. Unknown, expired, consumed or binding mismatch must all be
+	// collapsed to this value to avoid the redemption endpoint becoming an enumeration determination interface.
 	ErrLaunchUnavailable = errors.New("rgsapi: launch credential unavailable")
 	ErrUnavailable       = errors.New("rgsapi: dependency unavailable")
 )
@@ -40,6 +47,10 @@ var (
 type OperatorRequestVerifier interface {
 	// Authenticate 只验证签名并产出可信身份；HTTP 层据此准入后，必须在业务处理前
 	// 调用 ConsumeNonce。这样被限流的合法请求不会写随机数表，已准入请求仍保持防重放。
+	// English: Authenticate only verifies the signature and produces a trusted identity; after the HTTP layer is
+	// admitted accordingly, ConsumeNonce must be called before business processing. In this way, legitimate requests
+	// that are current-limited will not write to the random number table, and admitted requests are still protected
+	// from replay.
 	Authenticate(context.Context, *http.Request, []byte) (operator.VerifiedRequest, error)
 	ConsumeNonce(context.Context, operator.VerifiedRequest) error
 }
@@ -50,6 +61,8 @@ type AccessTokenVerifier interface {
 
 // ResponseSigningKeyResolver 为已验证或语法有效的声明租户选择 RGS 响应密钥；
 // 实现不得在查找失败时回退到其他租户的密钥。
+// English: ResponseSigningKeyResolver Selects an RGS response key for an authenticated or syntactically valid
+// claiming tenant; implementations MUST not fall back to a different tenant's key if the lookup fails.
 type ResponseSigningKeyResolver interface {
 	ResolveResponseSigningKey(context.Context, string) (operator.SigningKey, error)
 }
@@ -61,6 +74,8 @@ func (f ResponseSigningKeyResolverFunc) ResolveResponseSigningKey(ctx context.Co
 }
 
 // AdmissionDecision 明确区分配额耗尽和共享后端故障，避免把基础设施异常误报为 429。
+// English: AdmissionDecision clearly differentiates between quota exhaustion and shared backend failure to avoid
+// falsely reporting infrastructure exceptions as 429s.
 type AdmissionDecision uint8
 
 const (
@@ -77,6 +92,10 @@ type AdmissionResult struct {
 // Admission 是可选的非阻塞准入控制。生产实现必须限制键数量；需要跨副本限流时，
 // 还应由共享设施实施。Admission 用于已验证的运营商签名请求，ClientAdmission
 // 则只在访问令牌验证成功后按其不可变会话绑定调用。
+// English: Admission is an optional non-blocking admission control. Production implementations must limit the
+// number of keys; when throttling across replicas is required, this should also be enforced by a shared facility.
+// Admission is used for authenticated operator signature requests, ClientAdmission is only called on its immutable
+// session binding after successful access token verification.
 type Admission interface {
 	Admit(context.Context, string, time.Time) AdmissionResult
 }
@@ -99,12 +118,20 @@ func (f AdmissionResultFunc) Admit(ctx context.Context, key string, now time.Tim
 // CryptographicCapacity 是验签、令牌验证和运营商响应签名之前的非阻塞 CPU bulkhead。
 // 认证前不存在可信恢复身份，所有请求必须使用同一个匿名硬上限；容量耗尽返回 503，
 // 不能按攻击者可伪造的 path 分配预留，也不能伪装成调用方超过业务配额的 429。
+// English: CryptographicCapacity is a non-blocking CPU bulkhead prior to signature verification, token
+// verification, and operator response signing. There is no trusted recovery identity before authentication, and
+// all requests must use the same anonymous hard limit; capacity exhaustion returns 503, and reservations cannot be
+// allocated according to paths that can be forged by attackers, nor can they pretend to be callers exceeding the
+// business quota of 429.
 type CryptographicCapacity interface {
 	TryAcquire(context.Context) (release func(), result AdmissionResult)
 }
 
 // SecurityEventObserver 只接收已经完成分类的固定安全事件。实现不得附加运营商、
 // 密钥、随机数、玩家、会话或请求标识，避免安全日志与监控时序泄漏敏感信息。
+// English: SecurityEventObserver only receives fixed security events that have been classified. Implementations
+// must not attach operator, key, random number, player, session or request identifiers to avoid security logs and
+// monitoring timing leaking sensitive information.
 type SecurityEventObserver interface {
 	NonceReplay()
 }
@@ -112,6 +139,9 @@ type SecurityEventObserver interface {
 type LaunchService interface {
 	// CreateLaunch 必须先持久化创建（或幂等重放）会话，再返回一次性启动码；
 	// ExchangeSession 必须原子消费该启动码，之后才能签发访问令牌。
+	// English: CreateLaunch must first persist the creation (or idempotent replay) session and then return the
+	// one-time activation code; ExchangeSession must consume the activation code atomically before it can issue an
+	// access token.
 	CreateLaunch(context.Context, LaunchCommand) (LaunchResult, error)
 	ExchangeSession(context.Context, ExchangeCommand) (ExchangeResult, error)
 	RefreshSession(context.Context, RefreshCommand) (ExchangeResult, error)
@@ -129,6 +159,9 @@ type ResultDeliveryService interface {
 
 // RoundStatusReader 必须是具备隔离能力的状态服务，不能直接暴露原始存储库。
 // 处理器不得返回 PREPARED 结果；轮询发现损坏记录时必须持久隔离，禁止认领或调用钱包。
+// English: RoundStatusReader must be an isolation-capable status service and cannot directly expose the original
+// repository. The processor must not return a PREPARED result; when polling finds corrupt records, they must be
+// permanently isolated and are prohibited from claiming or calling the wallet.
 type RoundStatusReader interface {
 	GetRound(context.Context, rgs.RoundKey) (rgs.RoundRecord, error)
 }
@@ -148,17 +181,28 @@ type Config struct {
 	Admission           Admission
 	// ClientAdmission 的键只能来自已验证声明，禁止使用请求头、RemoteAddr
 	// 或 X-Forwarded-For 构造，避免伪造键和反向代理后的跨玩家误限流。
+	// English: ClientAdmission keys can only come from verified claims, and the use of request headers, RemoteAddr or
+	// X-Forwarded-For constructs is prohibited to avoid false key cross-player flow restrictions after reverse
+	// proxying.
 	ClientAdmission Admission
 	// LaunchAdmission 与 SpinAdmission 是按已验证 operator 聚合的跨副本高水位，
 	// 防止大量 session 把请求配额乘开。SpinAdmission 覆盖包括重放/冲突在内的全部
 	// Spin 尝试；仅首次合法、可持久化 round 的精确经济成本预算在 Coordinator 内
 	// 执行。状态查询、待交付结果、确认和令牌续期均不经过这两个新意图高水位。
+	// English: LaunchAdmission and SpinAdmission are cross-replica high watermarks aggregated by verified operators to
+	// prevent a large number of sessions from multiplying the request quota. SpinAdmission covers all Spin attempts
+	// including replays/conflicts; only the precise economic cost budget of the first legal, durable round is executed
+	// within the Coordinator. Status queries, pending results, confirmations, and token renewals do not pass these two
+	// new intent high-water marks.
 	LaunchAdmission       Admission
 	SpinAdmission         Admission
 	CryptographicCapacity CryptographicCapacity
 	// NewIntentCapacity 为 session exchange/launch/spin 持有一个进程内硬许可，使
 	// 公网新会话/经济意图不能耗尽 PostgreSQL 为 status、pending result、ACK 和
 	// refresh 预留的连接预算。
+	// English: NewIntentCapacity holds an in-process hard permission for session exchange/launch/spin so that new
+	// public sessions/economic intent cannot exhaust the connection budget that PostgreSQL reserves for status,
+	// pending result, ACK, and refresh.
 	NewIntentCapacity    NewIntentCapacity
 	SecurityEvents       SecurityEventObserver
 	MaxRequestBytes      int64
@@ -188,15 +232,23 @@ type LaunchCommand struct {
 
 // LaunchResult 是运营商启动器交给游戏客户端的短期凭据；消费语义由
 // LaunchService 实现，不能由无状态 HTTP 适配器自行推断。
+// English: LaunchResult is a short-term credential handed to the game client by the operator launcher; consumption
+// semantics are implemented by LaunchService and cannot be inferred by the stateless HTTP adapter on its own.
 type LaunchResult struct {
 	LaunchCode  string
 	ExchangeURL string
 	ExpiresAt   time.Time
 	// ValidatedAt 是 LaunchService 完成签发或重放时间裁决时使用的权威观测，
 	// 仅供适配器验证内部结果，不序列化到协议响应。
+	// English: ValidatedAt is the authoritative observation used by LaunchService when completing the issuance or
+	// replay time determination. It is only used by the adapter to verify the internal results and is not serialized
+	// into the protocol response.
 	ValidatedAt time.Time
 	// HistoricalReplay 是适配器内部元数据：只允许在启动幂等保留窗口内精确重放，
 	// 不能让新签发凭据继承一个已经过期的兑换窗口。
+	// English: HistoricalReplay is adapter internal metadata: exact replay is only allowed within the startup
+	// idempotent retention window, and new issued credentials cannot be allowed to inherit an expired redemption
+	// window.
 	HistoricalReplay bool
 }
 

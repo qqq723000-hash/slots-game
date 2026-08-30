@@ -93,6 +93,9 @@ func (e *Engine) Spin(ctx context.Context, input SpinInput) (SpinOutcome, error)
 		if surgeCount > 0 {
 			// 权威 PPS 计量器只累计已结算的一个或两个怒气符号结果。恰好三个怒气符号会直接
 			// 保证触发转盘，并报告未变化的持久计量值。
+			// English: The authoritative PPS meter only accumulates the results of one or two Rage symbols that have been
+			// resolved. Exactly three rage symbols will directly trigger the wheel, reporting an unchanged persistent meter
+			// value.
 			if surgeCount < 3 {
 				if next.RageCollected > MaxRageCollected-surgeCount {
 					return SpinOutcome{}, errors.New("Rage meter count exceeds the protocol limit")
@@ -104,6 +107,8 @@ func (e *Engine) Spin(ctx context.Context, input SpinInput) (SpinOutcome, error)
 			eventTotal := next.RageCollected
 			if triggered && surgeCount < 3 {
 				// 概率触发转盘时，权威的 21 子类型 PPS 同步状态为重置，以 1/0 表示。
+				// English: When the probability triggers the wheel, the authoritative 21 subtype PPS sync state is reset,
+				// represented by 1/0.
 				eventLevel = DefaultRageLevel
 				eventTotal = 0
 			}
@@ -125,6 +130,8 @@ func (e *Engine) Spin(ctx context.Context, input SpinInput) (SpinOutcome, error)
 				})
 				// 由一个或两个怒气符号概率触发的转盘会消耗 PPS 会话；21 子类型事件快照与最终状态
 				// 均重置为 1/0。
+				// English: Spins triggered by the probability of one or two Rage symbols consume PPS sessions; 21 subtype event
+				// snapshots and final states are reset to 1/0.
 				next.RageLevel = DefaultRageLevel
 				next.RageCollected = 0
 			}
@@ -445,6 +452,8 @@ func canonicalFeatureState(state FeatureState) FeatureState {
 	}
 	// 在引入 PPS 前，零表示空计量器。应在引擎边界将其规范化，使旧版内存调用方收敛到
 	// 已采集游戏的一级空闲状态。
+	// English: Before the introduction of PPS, zero represented an empty meter. It should be normalized at engine
+	// boundaries so that legacy memory callers converge to the first level idle state of the captured game.
 	if state.RageCollected == 0 && state.RageLevel == 0 {
 		state.RageLevel = DefaultRageLevel
 	}
@@ -591,6 +600,8 @@ func (e *Engine) generateGrid(rows int, mode FeatureMode) (Grid, error) {
 			cellWeights := weighted
 			// 权威的必定触发转盘语义要求恰好三个怒气符号。基础游戏网格确定三个怒气符号后，
 			// 后续格必须从移除怒气符号的同一权重中抽取，避免引擎生成所有协议边界都必须拒绝的结果。
+			// Authoritative guaranteed-wheel semantics require exactly three Rage symbols. After the base-game grid settles three Rage symbols,
+			// later cells must sample the same weights with Rage removed so the engine does not generate a result every protocol boundary must reject.
 			if mode == FeatureNone && settledRage == 3 {
 				cellWeights = withoutSymbol(weighted, SymbolSurge)
 			}

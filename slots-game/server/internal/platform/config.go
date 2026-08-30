@@ -58,6 +58,9 @@ type Config struct {
 	ExpectedDefinitionSHA256        string
 	// AccessPrivateKeyFile 与 AccessPublicKeyFile 仅支持已弃用的 rgs-operators-v1 迁移路径。
 	// 生产环境必须使用 rgs-operators-v2 中逐运营商配置的路径，且绝不读取这些全局密钥设置。
+	// English: AccessPrivateKeyFile and AccessPublicKeyFile only support the deprecated rgs-operators-v1 migration
+	// path. Production environments must use the per-operator configured paths in rgs-operators-v2 and never read
+	// these global key settings.
 	AccessPrivateKeyFile             string
 	AccessPublicKeyFile              string
 	LaunchHMACKeyFile                string
@@ -166,6 +169,9 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		SessionIdleDisconnectMax:     24 * time.Hour,
 		// AWS WAF/ALB 的受检正文窗口为 8 KiB。RGS 公网请求的最大合法字段即使采用
 		// 最坏的 JSON Unicode 转义也小于该值，因此应用边界不得接受 WAF 未完整检查的尾部。
+		// English: AWS WAF/ALB has an inspected body window of 8 KiB. The maximum legal field of an RGS public network
+		// request is smaller than this value even with the worst JSON Unicode escape, so application boundaries must not
+		// accept tails that are not fully inspected by WAF.
 		MaxRequestBytes:                  8 << 10,
 		MaxInFlightRequests:              256,
 		MaxCryptoInFlight:                64,
@@ -176,6 +182,8 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		PreAuthRateBurst:                 10_000,
 		SuccessAccessLogSamplePerMillion: 1_000_000,
 		// 只有显式配置 endpoint 才启用 tracing；启用后的资源与时间预算保持明确且有界。
+		// English: Tracing is enabled only if the endpoint is explicitly configured; resource and time budgets when
+		// enabled remain explicit and bounded.
 		TraceSampleRatio:             0.01,
 		TraceBatchTimeout:            time.Second,
 		TraceExportTimeout:           3 * time.Second,
@@ -187,6 +195,9 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 		SharedAdmissionRateBurst:     40,
 		// EDoS 默认值是 RGS 自身的保守成本护栏，不代表任何第三方钱包合同配额。
 		// 生产部署必须按供应商容量证据审定 Chart 中的显式值。
+		// English: The EDoS default is RGS's own conservative cost guardrail and does not represent any third-party wallet
+		// contract quota. Production deployments must validate the explicit value in the Chart with evidence of vendor
+		// capacity.
 		EconomicOperatorRatePerSecond: 20,
 		EconomicOperatorRateBurst:     40,
 		EconomicBackendRatePerSecond:  100,
@@ -203,6 +214,10 @@ func LoadConfigFrom(lookup EnvLookup) (Config, error) {
 	}
 	// 这些旧变量按未认证 method/path 分配公网或密码学恢复预留。path 可被任意
 	// 调用方伪造，静默忽略会让运维人员误以为合法恢复仍受保护，因此显式失败启动。
+	// English: These legacy variables are assigned public network or cryptographic recovery reservations by
+	// unauthenticated method/path. The path can be forged by any caller. Silently ignoring it will make the operation
+	// and maintenance personnel mistakenly think that legal recovery is still protected, so the startup fails
+	// explicitly.
 	for _, deprecated := range []string{
 		"RGS_RECOVERY_IN_FLIGHT_RESERVE",
 		"RGS_CRYPTO_RECOVERY_RESERVE",
@@ -468,6 +483,8 @@ func (c Config) Validate() error {
 	}
 	// 非回环运维监听可能被端口转发、测试入口或错误的安全组意外暴露；生产环境
 	// 已在上方必填项中拒绝空值，开发及预发布环境也必须在非回环时显式配置承载令牌。
+	// A non-loopback operations listener may be exposed accidentally by port forwarding, test ingress, or an incorrect security group;
+	// production already rejects empty required values above, and development or staging must also configure a bearer token explicitly for non-loopback listeners.
 	if c.Environment != Production && operationsListenerRequiresBearer(c.OperationsHTTPAddress) &&
 		strings.TrimSpace(c.OperationsBearerTokenFile) == "" {
 		return errors.New("RGS_OPERATIONS_BEARER_TOKEN_FILE is required for a non-loopback operations listener")
@@ -584,16 +601,25 @@ func (c Config) Validate() error {
 	}
 	// 这是每个 RGS 副本在签名验证和数据库访问之前的硬资源预算；必须有界，
 	// 避免配置错误把非阻塞闸门退化为无效保护或制造过量内存占用。
+	// English: This is the hard resource budget for each RGS replica before signature verification and database
+	// access; it must be bounded to avoid configuration errors that degrade non-blocking gates into ineffective
+	// protection or create excessive memory usage.
 	if c.MaxInFlightRequests < 1 || c.MaxInFlightRequests > 4_096 {
 		return errors.New("RGS_MAX_IN_FLIGHT_REQUESTS must be between 1 and 4096")
 	}
 	// 未认证 path 不能取得恢复优先级；公网和密码学 gate 都是单一匿名硬上限。
 	// 只有身份验证后的 DB 新意图预留与钱包 lookup 预留负责恢复进展。
+	// English: Unauthenticated paths cannot obtain recovery priority; both the public network and the cryptographic
+	// gate have a single anonymous hard limit. Only authenticated DB new intent reservations and wallet lookup
+	// reservations are responsible for recovery progress.
 	if c.MaxCryptoInFlight < 1 || c.MaxCryptoInFlight > 1_024 {
 		return errors.New("RGS_MAX_CRYPTO_IN_FLIGHT must be between 1 and 1024")
 	}
 	// 请求闸门无法覆盖慢请求头、未读正文回收和空闲长连接；监听器还必须
 	// 独立限制已接受连接总数，才能给文件描述符、TLS 状态和协程设置硬预算。
+	// English: Request gates cannot cover slow request headers, unread body recycling, and idle long connections;
+	// listeners must also independently limit the total number of accepted connections to set hard budgets for file
+	// descriptors, TLS status, and coroutines.
 	if c.MaxConnectionsPerListener < 1 || c.MaxConnectionsPerListener > 16_384 {
 		return errors.New("RGS_MAX_CONNECTIONS_PER_LISTENER must be between 1 and 16384")
 	}
@@ -603,6 +629,9 @@ func (c Config) Validate() error {
 	}
 	// 公网预认证速率只使用一个进程级桶，不按 IP、转发头或声明租户建键。
 	// 它是边缘设施失效时的高水位背压，应显著高于认证后业务配额但仍保持硬上限。
+	// English: The public network pre-authentication rate uses only one process-level bucket and does not create keys
+	// based on IP, forwarding headers or declared tenants. It is the high-water back pressure at which edge facilities
+	// fail and should be significantly higher than the post-certification business quota but still remain a hard cap.
 	if !finiteRate(c.PreAuthRatePerSecond) || c.PreAuthRatePerSecond < 1 || c.PreAuthRatePerSecond > 1_000_000 ||
 		c.PreAuthRateBurst < 1 || c.PreAuthRateBurst > 2_000_000 {
 		return errors.New("invalid pre-authentication rate limit configuration")
@@ -615,6 +644,9 @@ func (c Config) Validate() error {
 	}
 	// 连接池上限是每个 RGS 副本的预算；限制其范围并要求空闲连接数不超过打开连接数，
 	// 避免一次环境变量误配在扩容时耗尽 PostgreSQL 可用连接。
+	// English: The upper limit of the connection pool is the budget of each RGS copy; limit its scope and require that
+	// the number of idle connections does not exceed the number of open connections to avoid a misconfiguration of
+	// environment variables from depleting available PostgreSQL connections during expansion.
 	if c.DatabaseMaxOpenConns < 1 || c.DatabaseMaxOpenConns > 200 {
 		return errors.New("RGS_DB_MAX_OPEN_CONNS must be between 1 and 200")
 	}
@@ -805,6 +837,9 @@ func pathClean(path string) string {
 
 // listenAddressesConflict 保守地识别同一端口的重叠监听地址。生产环境宁可
 // 拒绝一个含糊的同端口配置，也不能让健康/指标接口意外暴露到公网监听器。
+// English: listenAddressesConflict conservatively identifies overlapping listening addresses for the same port. A
+// production environment would rather reject an ambiguous same-port configuration than accidentally expose the
+// health/metrics interface to a public network listener.
 func listenAddressesConflict(left, right string) bool {
 	leftHost, leftPort, leftErr := net.SplitHostPort(left)
 	rightHost, rightPort, rightErr := net.SplitHostPort(right)

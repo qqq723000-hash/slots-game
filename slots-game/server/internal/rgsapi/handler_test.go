@@ -557,6 +557,9 @@ func TestOperatorLaunchSignsRetainedHistoricalReplay(t *testing.T) {
 	security := newSecurityFixture(t)
 	// Pod 墙钟已越过文档保留边界，但 Store 权威观测仍在窗口内。
 	// HTTP 适配器必须使用 LaunchService 携带的裁决时间，不得以 Pod 时钟早拒。
+	// English: The Pod wall clock has crossed the document retention boundary, but the Store authoritative observation
+	// is still within the window. The HTTP adapter must use the arbitration time carried by the LaunchService and must
+	// not reject early based on the Pod clock.
 	historicalExpiry := security.now.Add(-launch.IdempotencyRetention - time.Hour)
 	authorityTime := historicalExpiry.Add(time.Minute)
 	launches := &fakeLaunchService{create: func(context.Context, LaunchCommand) (LaunchResult, error) {
@@ -760,6 +763,8 @@ func TestSpinSharedHighWaterAggregatesSessionsAndStillCountsReplay(t *testing.T)
 		{sessionID: "session-a", roundID: "round-a", token: tokenA, remoteAddr: "10.0.0.10:1001"},
 		// 已提交重放仍刻意计入普通高水位桶；精确经济预算位于 Coordinator 内，
 		// 因此不会对该重放再次扣费。
+		// English: Submitted replays are still intentionally counted in the normal high-water bucket; the precise economic
+		// budget is within the Coordinator, so the replay will not be charged again.
 		{sessionID: "session-a", roundID: "round-a", token: tokenA, remoteAddr: "10.0.0.11:1002"},
 		{sessionID: "session-b", roundID: "round-b", token: tokenB, remoteAddr: "10.0.0.12:1003"},
 	}
@@ -854,6 +859,7 @@ func TestOperatorRateLimitDoesNotConsumeNonce(t *testing.T) {
 	}
 
 	// 429 发生在任何业务副作用之前；同一签名请求稍后应可原样重试，随机数不能被提前消费。
+	// The 429 occurs before any business side effect; the same signed request must remain exactly retryable later, without consuming randomness early.
 	request.Body = io.NopCloser(bytes.NewReader(body))
 	request.ContentLength = int64(len(body))
 	launches := &fakeLaunchService{create: func(context.Context, LaunchCommand) (LaunchResult, error) {
@@ -1390,6 +1396,9 @@ func TestClientSpinBindsEveryTokenDimension(t *testing.T) {
 	coordinator := &fakeCoordinator{spin: func(_ context.Context, request rgs.SpinRequest) (rgs.SpinResult, error) {
 		// PostgreSQL 轮次恢复刻意不在 result_json 持久化纯传输 idle 元数据；HTTP
 		// 边界必须从当前权威会话补齐，且不能改变经济 hash。
+		// English: PostgreSQL round recovery intentionally does not persist pure transfer idle metadata in result_json;
+		// HTTP boundaries must be filled in from the current authoritative session, and the economic hash cannot be
+		// changed.
 		return committedResult(request), nil
 	}}
 	launches := &fakeLaunchService{authorize: func(_ context.Context, command SessionAuthorizationCommand) (rgs.Session, error) {
@@ -1418,6 +1427,7 @@ func TestClientSpinBindsEveryTokenDimension(t *testing.T) {
 	}
 	if launches.authorizeCalls != 2 || !launches.lastAuthorize.AllowIdleRecovery {
 		// 第一次授权在经济操作前隔离请求，第二次在提交结果返回后读取续期截止时间。
+		// The first authorization isolates the request before the economic operation; the second reads the renewed deadline after returning the committed result.
 		t.Fatalf("spin authorization calls = %d, last = %+v", launches.authorizeCalls, launches.lastAuthorize)
 	}
 
@@ -1501,6 +1511,7 @@ func TestRoundStatusIntegrityFailureReturnsLockedWithoutLeakingOutcome(t *testin
 	token := security.issueAccessToken(t, testDefinitionHash)
 	rounds := &fakeRoundReader{get: func(context.Context, rgs.RoundKey) (rgs.RoundRecord, error) {
 		// 生产环境中该对象为协调器状态服务，会在返回通用人工复核哨兵错误前持久执行隔离。
+		// In production this object is the coordinator state service, which persists quarantine before returning the generic manual-review sentinel.
 		return rgs.RoundRecord{}, rgs.ErrManualReview
 	}}
 	handler := security.newHandler(t, &fakeLaunchService{}, &fakeCoordinator{}, rounds)
@@ -1684,6 +1695,8 @@ func TestStrictJSONRejectsExcessiveNestingBeforeTypedDecode(t *testing.T) {
 	}
 
 	// 顶层对象也计入深度，因此其下最多再容纳 maximumDepth-1 层容器。
+	// English: Top-level objects also count toward depth, so they can contain at most maximumDepth-1 more containers
+	// below them.
 	var accepted nestedDocument
 	if err := decodeStrictJSON(makeArrayDocument(maximumDepth-1), &accepted); err != nil {
 		t.Fatalf("maximum nesting was rejected: %v", err)
@@ -1783,6 +1796,7 @@ func TestPendingResultAcceptsReverseProxyEmptyEOFBodyWrapper(t *testing.T) {
 	bodyObserved := make(chan *scriptedGETBody, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		// 模拟 Nginx/反向代理为零长度 GET 安装的 EOF 包装器，而不是 http.NoBody。
+		// English: Emulates the EOF wrapper installed by Nginx/reverse proxy for zero-length GET instead of http.NoBody.
 		body := &scriptedGETBody{readErr: io.EOF}
 		request.Body = body
 		request.ContentLength = 0

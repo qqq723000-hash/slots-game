@@ -1,6 +1,8 @@
 /**
  * 随包提供并由玩法契约锁定的 en_GB Primal Rampage 公开玩法文案。
  * 这只是客户端展示数据：不代表操作方审批或监管条款，也不是游戏数学的权威来源。
+ *
+ * 英文 / English: en_GB Primal Rampage public gameplay copy provided with the package and locked by the gameplay contract. This is client display data only: it does not represent operator approval or regulatory terms, nor is it an authoritative source of game mathematics.
  */
 
 export type PackagedPrimalGameRulesSectionId =

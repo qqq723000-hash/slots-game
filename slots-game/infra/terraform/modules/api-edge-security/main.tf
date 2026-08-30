@@ -65,6 +65,8 @@ resource "aws_wafv2_web_acl" "api" {
     }
   }
 
+  # ALB target health check 直达 Pod 的 8081 operations listener，且不经过 WAF。因此公网 listener
+  # 没有理由暴露这条未鉴权路径；应在它消耗源站连接或 goroutine 容量前于边缘拒绝。
   # ALB target health checks go directly to the Pod operations listener on 8081 and never
   # traverse WAF. The public listener therefore has no reason to expose this unauthenticated
   # path; reject it at the edge before it can consume origin connection or goroutine capacity.
@@ -103,6 +105,8 @@ resource "aws_wafv2_web_acl" "api" {
     }
   }
 
+  # 已签名公网协议仅包含两个路径命名空间和三种传输方法。应在托管规则或源站前拒绝无关扫描请求。
+  # 此处不应用 URI 转换，因此门禁不会改写应用签名所使用的规范路径。
   # The signed public protocol has only two path namespaces and three transport methods.
   # Reject unrelated scanners before managed rules or the origin. No URI transformation is
   # applied, so this gate does not rewrite the canonical path used by application signatures.
@@ -195,6 +199,10 @@ resource "aws_wafv2_web_acl" "api" {
   # 所有已定义公网业务请求的最坏合法 JSON（包含 ASCII 的 \uXXXX 展开）小于 8 KiB。
   # ALB 的 WAF body 检查窗口固定为 8 KiB，因此超过窗口必须在边缘失败闭合；RGS 同时
   # 使用相同全局硬上限，避免分块传输或 WAF 规则漂移把大 body 推给 Go 解析器。
+  # English: The worst-case legal JSON (including ASCII \uXXXX expansion) for all defined public service
+  # requests is less than 8 KiB. ALB's WAF body inspection window is fixed at 8 KiB, so the exceeding window
+  # must fail to close at the edge; RGS also Use the same global hard cap to avoid chunked transfers or WAF rule
+  # drift pushing large bodies to the Go parser.
   rule {
     name     = "body-size-limit"
     priority = 50
@@ -659,6 +667,9 @@ resource "aws_wafv2_web_acl_logging_configuration" "api" {
 
   # 正式 RGS 协议不使用 query；完整脱敏可防攻击者把 token/签名塞进 query 制造日志泄漏。
   # URI path 与 method 仍保留，供规则调优和事件响应使用。
+  # English: The production RGS protocol does not use query strings. Full redaction prevents attackers from
+  # placing tokens or signatures in a query to create log leaks; the URI path and method remain available for
+  # rule tuning and incident response.
   redacted_fields {
     query_string {}
   }
@@ -703,6 +714,8 @@ resource "aws_cloudwatch_metric_alarm" "waf_blocked_requests" {
   dimensions = {
     Region = data.aws_region.current.region
     Rule   = "ALL"
+    # AWS/WAFV2 使用 visibility_config.metric_name 发布 WebACL 维度，而不是资源名称。
+    # 两者刻意保持不同，并由契约测试锁定。
     # AWS/WAFV2 publishes the WebACL dimension using visibility_config.metric_name,
     # not the resource name. Keeping these distinct is intentional and contract-tested.
     WebACL = local.web_acl_metric

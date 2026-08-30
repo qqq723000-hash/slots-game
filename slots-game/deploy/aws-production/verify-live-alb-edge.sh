@@ -1,5 +1,7 @@
 #!/bin/sh
 # 发布后只读回查实际 ALB、WAF、target health 与前端 SG；不创建或修改 AWS 资源。
+# English: Read-only review of actual ALB, WAF, target health, and front-end SG after release; no AWS resources
+# are created or modified.
 set -eu
 
 delivery_json=${1:-}
@@ -146,6 +148,8 @@ ruby -rjson -e '
     }
 
   # NetworkPolicy 是可加性模型；任何另一条也会选中 RGS Pod 且包含 ingress allow 的策略都会放宽边界。
+  # English: NetworkPolicy is an additive model; any other policy that also selects the RGS Pod and contains
+  # ingress allow will relax the boundary.
   rgs_labels = rgs_selector
   selector_matches_rgs = lambda do |selector|
     abort "NetworkPolicy podSelector 必须是 Kubernetes LabelSelector" unless selector.is_a?(Hash)

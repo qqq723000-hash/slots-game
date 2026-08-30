@@ -2,6 +2,9 @@ name: slots-observability
 
 # 该 Compose 仅提供低资源单节点基线，不替代多可用区、长期归档或监管审批。
 # 所有镜像变量必须由发布系统传入带 @sha256: 的完整引用；禁止回退到 mutable tag。
+# English: This Compose only provides a low-resource single-node baseline and is not a replacement for multi-AZ,
+# long-term archiving, or regulatory approval. All image variables must be passed in complete references with
+# @sha256: by the publishing system; fallback to mutable tags is prohibited.
 services:
   prometheus:
     image: "${PROMETHEUS_IMAGE:?PROMETHEUS_IMAGE must be pinned by digest}"
@@ -25,19 +28,29 @@ services:
       - prometheus-data:/prometheus
     secrets:
       # 与 RGS 运维监听器共享同一受控 secret 文件；Prometheus 配置中不出现 token 值。
+      # English: Shares the same controlled secret file with the RGS operations listener; the token value does
+      # not appear in the Prometheus configuration.
       - rgs_operations_bearer_token
       # 告警路由凭据只能来自 secret 文件，不能写入规则或环境变量。
+      # English: Alert routing credentials can only come from secret files and cannot be written to rules or
+      # environment variables.
       - alertmanager_bearer_token
       # 私有 Alertmanager CA 必须以固定容器路径挂载，不得依赖镜像系统 trust store。
+      # English: The private Alertmanager CA must be mounted with a fixed container path and must not rely on
+      # the image system trust store.
       - source: alertmanager_root_ca
         target: alertmanager_root_ca.pem
     ports:
       # 安全不变量：默认只绑定回环地址；公网入口不得转发 Prometheus。
+      # English: Security invariant: only the loopback address is bound by default; the public entrance must not
+      # forward Prometheus.
       - "${OBSERVABILITY_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
     networks:
       - observability
       - rgs-operations
       # 只允许到外部 Alertmanager 的 HTTPS 出站；不得复用日志或公网业务网络。
+      # English: Only HTTPS outbound to external Alertmanager is allowed; logs or public business networks are
+      # not allowed to be reused.
       - alert-egress
     mem_limit: 256m
     cpus: 0.50
@@ -70,6 +83,8 @@ services:
       - /tmp:size=16m,mode=1777
     ports:
       # 安全不变量：生产应再置于 SSO/RBAC 反向代理之后，不能直接暴露公网。
+      # English: Security invariant: artifactsion should again be placed behind an SSO/RBAC reverse proxy and
+      # cannot be directly exposed to the public.
       - "${OBSERVABILITY_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
     networks:
       - observability
@@ -84,6 +99,8 @@ services:
     user: "65534:65534"
     group_add:
       # 宿主只给该专用组读取精确 RGS stdout 目录的 ACL；不得授予 docker/root 组。
+      # English: The host only gives this private group an ACL that reads the exact RGS stdout directory; it
+      # must not be granted to the docker/root group.
       - "${RGS_CONTAINER_LOG_GID:?set the dedicated read-only RGS log group id}"
     read_only: true
     cap_drop:
@@ -92,25 +109,38 @@ services:
       - no-new-privileges:true
     environment:
       # 仅允许经过审批的 HTTPS/mTLS 出口；认证应由受控 egress proxy 注入。
+      # English: Only approved HTTPS/mTLS egress is allowed; certification should be injected by a controlled
+      # egress proxy.
       RGS_CONTAINER_LOG_GLOB: "${RGS_CONTAINER_LOG_GLOB:?set the RGS stdout log glob}"
       RGS_LOG_SINK_URI: "${RGS_LOG_SINK_URI:?set the approved HTTPS log sink URI}"
       # Vector 0.57+ 默认关闭配置环境插值；这里只开放上面两个已做静态/发布校验的非秘密值。
+      # English: Vector 0.57+ turns off configuration environment interpolation by default; only the above two
+      # non-secret values that have been statically/released verified are open here.
       VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION: "true"
     volumes:
       # 不挂载 docker.sock。仅以只读方式暴露 RGS stdout 日志目录，缩小宿主权限面。
+      # English: Docker.sock is not mounted. Only expose the RGS stdout log directory in read-only mode to
+      # reduce the host permissions.
       - "${RGS_CONTAINER_LOG_ROOT:?set the read-only container log root}:/var/log/containers:ro"
       - ./vector.yaml:/etc/vector/vector.yaml:ro
       # 必须预创建为 65534 可写、其他主体不可写；用于 checkpoint 与有界磁盘缓冲。
+      # English: Must be pre-created as 65534 writable and not writable by other principals; used for
+      # checkpoints and bounded disk buffering.
       - "${RGS_VECTOR_DATA_DIR:?set the pre-provisioned Vector state directory}:/var/lib/vector"
     command:
       - --config
       - /etc/vector/vector.yaml
       # 首次部署时接收端不可达即退出；不能把“配置已加载”误当作日志链路已接通。
+      # English: When deployed for the first time, it will egress if the receiving end is unreachable;
+      # "Configuration loaded" cannot be mistaken for the log link being connected.
       - --require-healthy
     networks:
       - observability
       # 仅用于访问审批日志接收端；平台必须对 DNS/IP/端口做精确 egress allowlist。
       # 同时必须拒绝该网络任何主体向 Vector 9598 发起连接；指标仅供 observability 网络。
+      # English: It is only used to access the approval log receiving end; the platform must make a precise
+      # egress allowlist for DNS/IP/port. At the same time, any connection to Vector 9598 from any subject on
+      # this network must be denied; the indicator is for observability networks only.
       - log-egress
     mem_limit: 128m
     cpus: 0.25
@@ -118,9 +148,13 @@ services:
 secrets:
   grafana_admin_password:
     # 文件必须由密钥管理系统在部署时生成，禁止提交到仓库。
+    # English: The file must be generated by the key management system during deployment and is prohibited from
+    # being submitted to the warehouse.
     file: "${GRAFANA_ADMIN_PASSWORD_FILE:?set an untracked Grafana admin password file}"
   rgs_operations_bearer_token:
     # 同一文件需以只读 secret 挂载给 RGS；值不得进入环境变量、镜像层或日志。
+    # English: The same file needs to be mounted to RGS with a read-only secret; the value must not enter
+    # environment variables, image layers, or logs.
     file: "${RGS_OPERATIONS_BEARER_TOKEN_FILE:?set the RGS operations bearer token file}"
   alertmanager_bearer_token:
     file: "${ALERTMANAGER_BEARER_TOKEN_FILE:?set the Alertmanager bearer token file}"
@@ -133,14 +167,20 @@ networks:
   rgs-operations:
     external: true
     # 该网络只应连接 Prometheus 与 RGS 独立运维监听器，不应承载公网流量。
+    # English: This network should only connect Prometheus and RGS independent operations listeners, and should
+    # not carry public traffic.
     name: "${RGS_OPERATIONS_NETWORK:?set the private RGS operations network}"
   log-egress:
     external: true
     # 该网络只授予 Vector 到审批日志接收端的出站能力，不允许任何入站发布端口。
+    # English: This network only grants Vector outbound capabilities to the approval log receiving end and does
+    # not allow any inbound publishing ports.
     name: "${RGS_LOG_EGRESS_NETWORK:?set the restricted log egress network}"
   alert-egress:
     external: true
     # 该网络只授予 Prometheus 到审批 Alertmanager 的出站能力，不允许任何入站发布端口。
+    # English: This network only grants Prometheus outbound capabilities to the approving Alertmanager and does
+    # not allow any inbound publishing ports.
     name: "${RGS_ALERT_EGRESS_NETWORK:?set the restricted alert egress network}"
 
 volumes:

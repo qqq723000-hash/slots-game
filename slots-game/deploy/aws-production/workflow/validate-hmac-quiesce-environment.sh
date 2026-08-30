@@ -1,5 +1,7 @@
 #!/bin/sh
 # 该脚本只验证 HMAC 停机证据生产者的固定边界，不访问 AWS 或 Kubernetes。
+# English: This script only verifies the fixed boundaries of the HMAC outage evidence producer and does not
+# access AWS or Kubernetes.
 set -eu
 
 fail() {

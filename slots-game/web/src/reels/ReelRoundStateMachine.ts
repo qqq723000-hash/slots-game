@@ -1,6 +1,8 @@
 /**
  * 转轴表现生命周期刻意与 GameStateMachine 分离。GameStateMachine 负责连接与经济状态；
  * 本状态机只负责把一轮权威结果转化为视觉运动。
+ *
+ * 英文 / English: The reel presentation lifecycle is deliberately separated from the GameStateMachine. GameStateMachine is responsible for connecting with the economic state; this state machine is only responsible for converting the authoritative results of a round into visual movements.
  */
 export const REEL_ROUND_STATES = [
   "Idle",
@@ -28,7 +30,7 @@ export interface ReelRoundSnapshot {
   readonly state: ReelRoundState;
   readonly roundId: string | null;
   readonly rows: number | null;
-  /** 权威制动动画已开始的卷轴，按发布顺序排列。 */
+  /** 权威制动动画已开始的卷轴，按发布顺序排列。 / English: Reels where the authoritative brake animation has started, in order of release. */
   readonly stopStartedReels: readonly number[];
   readonly revision: number;
   readonly lastEvent: ReelRoundEvent["type"] | null;
@@ -69,7 +71,7 @@ function frozenSnapshot(
   });
 }
 
-/** 严格的 3 卷轴视觉状态机。它从不计算游戏结果。 */
+/** 严格的 3 卷轴视觉状态机。它从不计算游戏结果。 / English: Strict 3-reel visual state machine. It never calculates the outcome of the game. */
 export class ReelRoundStateMachine {
   private current = frozenSnapshot("Idle", null, null, [], 0, null);
   private readonly listeners = new Set<ReelRoundStateListener>();
@@ -228,7 +230,7 @@ export class ReelRoundStateMachine {
     try {
       listener(current, previous);
     } catch {
-      // 不允许 Debug/UI 观察者破坏权威回合。
+      // 不允许 Debug/UI 观察者破坏权威回合。 / English: Debug/UI observers are not allowed to disrupt authority rounds.
     }
   }
 }

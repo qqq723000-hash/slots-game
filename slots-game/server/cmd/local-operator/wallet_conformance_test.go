@@ -18,6 +18,9 @@ import (
 
 // TestLocalOperatorWalletV2ConformanceFixture 运行仓库内 RGS 适配器到本地 operator
 // 的真实签名线协议；它是可执行回归门禁，不代表任何外部钱包或监管机构认证。
+// English: TestLocalOperatorWalletV2ConformanceFixture runs the real signature wire protocol of the RGS adapter
+// within the warehouse to the local operator; it is an executable regression gatekeeper and does not represent any
+// external wallet or regulatory authority certification.
 func TestLocalOperatorWalletV2ConformanceFixture(t *testing.T) {
 	store := newMemoryWalletStore(10_000)
 	adapter, closeServer := newLocalOperatorConformanceWallet(t, store, nil)

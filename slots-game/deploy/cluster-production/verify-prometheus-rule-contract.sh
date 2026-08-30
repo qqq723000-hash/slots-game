@@ -1,5 +1,7 @@
 #!/bin/sh
 # 用固定摘要的 promtool 解析 Helm 实际渲染规则，防止 CRD 结构正确但 PromQL 语法失效。
+# English: Use fixed-digest promtool to parse Helm's actual rendering rules to prevent the CRD structure from
+# being correct but the PromQL syntax from being invalid.
 set -eu
 
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)

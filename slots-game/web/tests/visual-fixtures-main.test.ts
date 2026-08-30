@@ -1204,8 +1204,8 @@ describe("visual fixture presentation projection", () => {
     });
 
     expect(applyVisualFixtureTrace(dataset, trace("started"), scenario)).toBe(false);
-    // 官方 1ms PPS 屏障之后，源任务会刻意由后台持有，因此逻辑回合可能先于
-    // 后续像素完成。
+    // 官方 1ms PPS 屏障之后，源任务会刻意由后台持有，因此逻辑回合可能先于 / English: After the official 1ms PPS barrier, the source task is deliberately held in the background, so the logical turn may precede
+    // 后续像素完成。 / English: Subsequent pixels are completed.
     expect(applyVisualFixtureTrace(
       dataset,
       { type: "round.complete", sequence: 1 },
@@ -1625,8 +1625,8 @@ describe("visual fixture presentation projection", () => {
       { mode: "continue", action: "fast-stop", disabled: false },
       () => {
         realClickCount += 1;
-    // 真实处理器会同步发布 accepted，并可能发布更多嵌套演出轨迹。这些轨迹必须
-    // 已经观察到第 1 次点击。
+    // 真实处理器会同步发布 accepted，并可能发布更多嵌套演出轨迹。这些轨迹必须 / English: The real processor will publish accepted simultaneously, and possibly more nested performance tracks. These trajectories must
+    // 已经观察到第 1 次点击。 / English: Click 1 has been observed.
         expect(dataset.fixtureContinueClickCount).toBe("1");
         expect(applyVisualFixtureTrace(dataset, {
           type: "normal-win.continue-accepted",

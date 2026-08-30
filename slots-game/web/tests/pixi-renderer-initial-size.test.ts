@@ -109,7 +109,7 @@ describe("PixiRenderer canonical resize routing", () => {
       view,
       resize: vi.fn((width: number, height: number) => {
         resizeRequests.push({ width, height });
-        // Pixi 6.5.2 AbstractRenderer.resize 是唯一的 backing-store 量化器。
+        // Pixi 6.5.2 AbstractRenderer.resize 是唯一的 backing-store 量化器。 / English: Pixi 6.5.2 AbstractRenderer.resize is the only backing-store quantizer.
         view.width = Math.round(width * pixiRenderer.resolution);
         view.height = Math.round(height * pixiRenderer.resolution);
         screen.width = view.width / pixiRenderer.resolution;
@@ -168,7 +168,7 @@ describe("PixiRenderer canonical resize routing", () => {
     );
     expect(physicalWidthError).toBeLessThanOrEqual(0.5);
     expect(physicalHeightError).toBeLessThanOrEqual(0.5);
-    // autoDensity 直接发布量化后的逻辑 screen；应用层不再引入第二次分轴 CSS 拉伸。
+    // autoDensity 直接发布量化后的逻辑 screen；应用层不再引入第二次分轴 CSS 拉伸。 / English: autoDensity directly publishes the quantized logical screen; the application layer no longer introduces the second split-axis CSS stretching.
     expect(Number.parseFloat(view.style.width) / screen.width).toBe(1);
     expect(Number.parseFloat(view.style.height) / screen.height).toBe(1);
   });

@@ -1,5 +1,7 @@
 #!/bin/sh
 # 使用固定 Nginx 基础镜像真实构建最小 Web 候选，证明上游默认页面不会混入发布清单。
+# English: Really build a minimal web candidate using a fixed Nginx base image, proving that upstream default
+# pages don't get mixed into the release manifest.
 set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -102,6 +104,8 @@ NODE
 node "$static_verifier" "$context_root/web/dist" >/dev/null
 
 # 该固定上游摘要确实包含默认 50x.html；若前提变化，测试必须显式复审而不是静默变绿。
+# English: The fixed upstream digest does include the default 50x.html; if the prerequisite changes, the test
+# must be explicitly reviewed instead of silently turning green.
 base_container_id=$(docker create "$base_image")
 docker cp "$base_container_id:/usr/share/nginx/html/50x.html" "$test_root/base-50x.html" >/dev/null
 test -s "$test_root/base-50x.html"

@@ -27,6 +27,8 @@ rgs:
     rateBurst: 1000
     economic:
       # 平台 EDoS 护栏，不是第三方钱包承诺容量；上线前按合同/压测证据审定。
+      # English: The platform EDoS guardrail is not the promised capacity of the third-party wallet; it shall be
+      # verified based on the contract/stress test evidence before going online.
       operatorRatePerSecond: 20
       operatorRateBurst: 40
       backendRatePerSecond: 100
@@ -141,6 +143,8 @@ ingress:
   tlsSecretEnabled: true
   apiHost: ""
   # 公网业务使用 8080；负载均衡健康检查固定走私有 operations 监听器。
+  # English: public services use 8080; the load balancing health check is always configured with an operations
+  # listener.
   apiHealthCheckPath: /healthz
   apiHealthCheckPort: 8081
   webHost: ""
@@ -226,6 +230,8 @@ monitoring:
 observability:
   tracing:
     # 默认关闭且 endpoint 为空；只有发布审批显式启用后才创建 exporter 与出口规则。
+    # English: Off by default and endpoint is empty; exporter and export rules are created only after
+    # publication approval is explicitly enabled.
     enabled: false
     endpointURL: ""
     sampleRatio: 0.01

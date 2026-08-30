@@ -1,4 +1,4 @@
-// @ts-nocheck -- 浏览器门禁合同会直接执行 Node .mjs 运维辅助模块。
+// @ts-nocheck -- 浏览器门禁合同会直接执行 Node .mjs 运维辅助模块。 / English: @ts-nocheck -- The browser access control contract will directly execute the Node .mjs operation and maintenance auxiliary module.
 import { describe, expect, it, vi } from "vitest";
 
 import workflow from "../../../.github/workflows/frontend-conformance.yml?raw";
@@ -131,8 +131,8 @@ describe("non-production special-feature browser fixture contract", () => {
       workflow.indexOf("  verify-edge:"),
       workflow.indexOf("  verify-web-static-image:"),
     );
-    expect(edgeJob).toContain("timeout-minutes: 40");
-    expect(edgeJob).toContain("脚本 32 分钟硬截止");
+    expect(edgeJob).toContain("timeout-minutes: 45");
+    expect(edgeJob).toContain("脚本 35 分钟硬截止，作业保留 45 分钟");
     expect(frontendJob).not.toContain("test:visual-fixtures-browser-matrix");
   });
 
@@ -251,7 +251,7 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(isRecoverableCaptureClockPastTarget(firefoxClockError, target + 100, target)).toBe(true);
     expect(isRecoverableCaptureClockPastTarget(webkitClockError, target + 100, target)).toBe(true);
 
-    // 应用 timer 在 pauseAt 推进到目标时刻后才抛错；同文错误也不得被恢复逻辑吞掉。
+    // 应用 timer 在 pauseAt 推进到目标时刻后才抛错；同文错误也不得被恢复逻辑吞掉。 / English: The application timer will not throw an error until pauseAt is advanced to the target time; the same text error must not be swallowed up by the recovery logic.
     expect(isRecoverableCaptureClockPastTarget(directClockError, target + 1, target)).toBe(false);
     expect(isRecoverableCaptureClockPastTarget(directClockError, target, target)).toBe(false);
     expect(isRecoverableCaptureClockPastTarget(chromiumClockError, target, target)).toBe(false);
@@ -720,17 +720,20 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain(
       "const chromiumDesktopKongScenarioDeadlineMs = 360_000",
     );
-    expect(fixtureBrowserGate).toContain("const edgeKingScenarioDeadlineMs = 240_000");
+    expect(fixtureBrowserGate).toContain(
+      "const edgeDesktopExtendedScenarioDeadlineMs = 180_000",
+    );
+    expect(fixtureBrowserGate).toContain("const edgeKingScenarioDeadlineMs = 300_000");
     expect(fixtureBrowserGate).toContain("const edgeDesktopKongScenarioDeadlineMs = 360_000");
-    expect(fixtureBrowserGate).toContain("const edgeCapSummaryScenarioDeadlineMs = 300_000");
+    expect(fixtureBrowserGate).toContain("const edgeCapSummaryScenarioDeadlineMs = 360_000");
     expect(fixtureBrowserGate).toContain("const slowExtendedScenarioDeadlineMs = 240_000");
     expect(fixtureBrowserGate).toContain("const slowKongScenarioDeadlineMs = 270_000");
     expect(fixtureBrowserGate).toContain("const standardBrowserDeadlineMs = 20 * 60_000");
     expect(fixtureBrowserGate).toContain("const slowBrowserDeadlineMs = 32 * 60_000");
-    expect(fixtureBrowserGate).toContain("const edgeBrowserDeadlineMs = 32 * 60_000");
+    expect(fixtureBrowserGate).toContain("const edgeBrowserDeadlineMs = 35 * 60_000");
     expect(fixtureBrowserGate).toContain("const standardMaximumBrowserBudgetMs = 21 * 60_000");
     expect(fixtureBrowserGate).toContain("const slowMaximumBrowserBudgetMs = 33 * 60_000");
-    expect(fixtureBrowserGate).toContain("const edgeMaximumBrowserBudgetMs = 33 * 60_000");
+    expect(fixtureBrowserGate).toContain("const edgeMaximumBrowserBudgetMs = 36 * 60_000");
     expect(fixtureBrowserGate).toContain(
       "const browserTimingBudgets = Object.freeze(Object.fromEntries(supportedBrowsers.map(",
     );
@@ -765,6 +768,9 @@ describe("non-production special-feature browser fixture contract", () => {
     const edgeDesktopKongIndex = deadlineResolver.indexOf(
       "return edgeDesktopKongScenarioDeadlineMs",
     );
+    const edgeDesktopExtendedIndex = deadlineResolver.indexOf(
+      "return edgeDesktopExtendedScenarioDeadlineMs",
+    );
     const edgeCapSummaryIndex = deadlineResolver.indexOf(
       "return edgeCapSummaryScenarioDeadlineMs",
     );
@@ -772,6 +778,11 @@ describe("non-production special-feature browser fixture contract", () => {
       "return chromiumDesktopKongScenarioDeadlineMs",
     );
     const sharedSlowKongIndex = deadlineResolver.indexOf("return slowKongScenarioDeadlineMs");
+    expect(edgeDesktopExtendedIndex).toBeGreaterThan(-1);
+    expect(edgeDesktopExtendedIndex).toBeLessThan(
+      deadlineResolver.indexOf("const extendedDesktopScenario"),
+    );
+    expect(deadlineResolver).toContain('contract.motion === "normal"');
     expect(edgeDesktopKongIndex).toBeGreaterThan(-1);
     expect(edgeDesktopKongIndex).toBeLessThan(sharedSlowKongIndex);
     expect(edgeCapSummaryIndex).toBeGreaterThan(-1);
@@ -821,18 +832,35 @@ describe("non-production special-feature browser fixture contract", () => {
       maximumBrowserScenarioBudgetMs: 1_770_000,
       scenarioDeadlineMsByRun: chromiumScenarioDeadlineMsByRun,
     })).toEqual({ maximumBrowserScenarioBudgetMs: 1_770_000 });
-    const edgeScenarioDeadlineMsByRun = [150_000, 150_000, 240_000, 360_000,
-      300_000, 150_000, 240_000, 270_000];
+    const edgeScenarioDeadlineMsByRun = [180_000, 180_000, 300_000, 360_000,
+      360_000, 150_000, 240_000, 270_000];
+    expect(edgeScenarioDeadlineMsByRun[0]).toBe(180_000);
+    expect(edgeScenarioDeadlineMsByRun[1]).toBe(180_000);
+    expect(edgeScenarioDeadlineMsByRun[5]).toBe(150_000);
     expect(edgeScenarioDeadlineMsByRun[3]).toBe(360_000);
-    expect(edgeScenarioDeadlineMsByRun[4]).toBe(300_000);
+    expect(edgeScenarioDeadlineMsByRun[4]).toBe(360_000);
     expect(edgeScenarioDeadlineMsByRun[7]).toBe(270_000);
     expect(validateVisualFixtureTimingBudget({
       ...validBudget,
-      browserDeadlineMs: 32 * 60_000,
-      maximumBrowserBudgetMs: 33 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_860_000,
+      browserDeadlineMs: 35 * 60_000,
+      maximumBrowserBudgetMs: 36 * 60_000,
+      maximumBrowserScenarioBudgetMs: 2_040_000,
       scenarioDeadlineMsByRun: edgeScenarioDeadlineMsByRun,
-    })).toEqual({ maximumBrowserScenarioBudgetMs: 1_860_000 });
+    })).toEqual({ maximumBrowserScenarioBudgetMs: 2_040_000 });
+    expect(() => validateVisualFixtureTimingBudget({
+      ...validBudget,
+      browserDeadlineMs: 34 * 60_000,
+      maximumBrowserBudgetMs: 36 * 60_000,
+      maximumBrowserScenarioBudgetMs: 2_040_000,
+      scenarioDeadlineMsByRun: edgeScenarioDeadlineMsByRun,
+    })).toThrow("必须为浏览器启动与清理保留时间");
+    expect(() => validateVisualFixtureTimingBudget({
+      ...validBudget,
+      browserDeadlineMs: 35 * 60_000,
+      maximumBrowserBudgetMs: 35 * 60_000,
+      maximumBrowserScenarioBudgetMs: 2_040_000,
+      scenarioDeadlineMsByRun: edgeScenarioDeadlineMsByRun,
+    })).toThrow("浏览器级墙钟截止必须小于总预算");
     expect(() => validateVisualFixtureTimingBudget({
       ...validBudget,
       browserDeadlineMs: 1_140_000,

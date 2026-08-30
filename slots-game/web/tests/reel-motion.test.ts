@@ -132,7 +132,7 @@ describe("reel cruise motion", () => {
         for (let reel = 0; reel < 3; reel += 1) {
           const beforeWrap = decorativeSpinCells(reel, rows + 2, 17, mode);
           const afterWrap = decorativeSpinCells(reel, rows + 2, 18, mode);
-    // 即将回绕时，视图 j 位于 phase 归零后视图 j+1 所占的屏幕位置。
+    // 即将回绕时，视图 j 位于 phase 归零后视图 j+1 所占的屏幕位置。 / English: When it is about to wrap around, view j is located at the screen position occupied by view j+1 after phase zeroing.
           for (let index = 0; index < beforeWrap.length - 1; index += 1) {
             expect(afterWrap[index + 1]).toEqual(beforeWrap[index]);
           }

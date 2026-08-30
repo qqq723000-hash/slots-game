@@ -5,19 +5,21 @@ import {
 } from "./primalAnimationTiming";
 
 export const REEL_ACCELERATION_MS = PRIMAL_REEL_TIMING_MS.acceleration;
-/** 捕获的 ReelSpinner 巡航速度，以逻辑行表示。 */
+/** 捕获的 ReelSpinner 巡航速度，以逻辑行表示。 / English: Captured ReelSpinner cruise speed, expressed as logical lines. */
 export const PRIMAL_REEL_SPIN_SPEED_ROWS_PER_MS = 0.02;
-// 现有像素空间 ReelView API 的兼容性比例。源 160px 行在捕获的三行柜中以 0.656 比例显示。
+// 现有像素空间 ReelView API 的兼容性比例。源 160px 行在捕获的三行柜中以 0.656 比例显示。 / English: Compatibility scale for existing pixel-space ReelView APIs. The source 160px row is displayed at 0.656 scale in the captured three-row bin.
 const REEL_COMPATIBILITY_ROW_HEIGHT_PX = 104.96;
 export const REEL_BASE_SPEED_PX_PER_MS = 2.0992;
-/** 官方 30fps 调度程序在停滞帧后最多处理五个时钟周期。 */
+/** 官方 30fps 调度程序在停滞帧后最多处理五个时钟周期。 / English: The official 30fps scheduler handles up to five clock cycles after a stalled frame. */
 export const MAX_REEL_FRAME_DELTA_MS = (5 / 30) * 1_000;
-/** 捕获的 ReelSpinner.stopPos = ceil(position) + 5。 */
+/** 捕获的 ReelSpinner.stopPos = ceil(position) + 5。 / English: Captured ReelSpinner.stopPos = ceil(position) + 5. */
 export const REEL_STOP_ADVANCE_ROWS = 5;
-/** 捕获的停止/弹跳连接速度。这是表现动作，而不是数学。 */
+/** 捕获的停止/弹跳连接速度。这是表现动作，而不是数学。 / English: Captured stop/bounce connection speed. This is performance action, not math. */
 export const REEL_STOP_END_SPEED_ROWS_PER_MS = 0.0015;
 /**
  * 当停止在小数阶段开始时，最早插入的结果行在普通的屏幕外前驱上方开始五个视图行。
+ *
+ * 英文 / English: When stopping starts at the decimal stage, the earliest inserted result row starts five view rows above the normal off-screen predecessor.
  */
 export const REEL_PRESENTATION_FIRST_VIEW_ROW = -REEL_STOP_ADVANCE_ROWS;
 export const REEL_PRESENTATION_TRAILING_VIEW_ROWS = 1;
@@ -66,7 +68,7 @@ export interface ReelStopMotionConfig {
   readonly totalMs: number;
 }
 
-/** 从游戏中捕获的精确 ReelSpinner.setStopMode 运动参数。 */
+/** 从游戏中捕获的精确 ReelSpinner.setStopMode 运动参数。 / English: Precise ReelSpinner.setStopMode motion parameters captured from the game. */
 export const PRIMAL_REEL_STOP_MOTION_CONFIG: Readonly<
   Record<ReelStopMode, ReelStopMotionConfig>
 > = Object.freeze({
@@ -110,6 +112,8 @@ type CapturedReelStripSet = readonly [
 /**
  * 来自 GameReelManager.createReelStripSets() 的精确客户端条带集。他们只驾驶模糊的旅行；权威停止网格仍然来自服务器，
  * 这些值绝不能被视为 RNG 权重。
+ *
+ * 英文 / English: Exact client stripe sets from GameReelManager.createReelStripSets(). They only drive fuzzy trips; the authoritative stopping grid still comes from the server and these values ​​must not be considered RNG weights.
  */
 export const PRIMAL_CAPTURED_VISUAL_STRIP_IDS: Readonly<
   Record<ReelVisualStripMode, CapturedReelStripSet>
@@ -201,6 +205,8 @@ export function reelSpinProfile(reel: number): ReelSpinProfile {
 
 /**
  * 行空间中的官方启动曲线：第一个 300ms 为 0.02*u 行/毫秒，随后是恒定的 0.02 行/毫秒巡航速度。
+ *
+ * 英文 / English: Official launch curve in line space: 0.02*u lines/ms for the first 300ms, followed by a constant 0.02 lines/ms cruise speed.
  */
 export function reelStartVelocityRowsAt(
   elapsedMs: number,
@@ -213,6 +219,8 @@ export function reelStartVelocityRowsAt(
 
 /**
  * 行空间中的官方起始曲线：加速期间 3*u^2 行。在 300ms 之后，它以恒定的巡航速度从第 3 行继续。
+ *
+ * 英文 / English: Official starting curve in row space: 3*u^2 rows during acceleration. After 300ms, it continues from line 3 at constant cruising speed.
  */
 export function reelStartPositionDeltaRowsAt(
   elapsedMs: number,
@@ -229,13 +237,15 @@ export function reelStartPositionDeltaRowsAt(
   return 3 * multiplier * u ** 2;
 }
 
-/** 为当前 ReelView 保留像素空间采样器的兼容性。 */
+/** 为当前 ReelView 保留像素空间采样器的兼容性。 / English: Preserves pixel space sampler compatibility for the current ReelView. */
 export function reelVelocityAt(elapsedMs: number, profile: ReelSpinProfile): number {
   return reelStartVelocityRowsAt(elapsedMs, profile) * REEL_COMPATIBILITY_ROW_HEIGHT_PX;
 }
 
 /**
  * 为现有调用者保留的兼容性像素空间距离。上面的显式行空间 API 与机柜/单元尺寸无关。
+ *
+ * 英文 / English: Compatibility pixel space distance reserved for existing callers. The explicit row space API above is independent of cabinet/unit size.
  */
 export function reelDistanceAt(elapsedMs: number, profile: ReelSpinProfile): number {
   return reelStartPositionDeltaRowsAt(elapsedMs, profile) * REEL_COMPATIBILITY_ROW_HEIGHT_PX;
@@ -243,6 +253,8 @@ export function reelDistanceAt(elapsedMs: number, profile: ReelSpinProfile): num
 
 /**
  * 投影连续旋转器位置，而不在新一轮中重置它。官方微调保留`_pos`；只有卷带选择才能将该值重置为零。
+ *
+ * 英文 / English: Project the continuous spinner position without resetting it in a new round. Official spinner retains `_pos`; only tape selection can reset this value to zero.
  */
 export function reelPositionRowsAt(
   originRows: number,
@@ -272,7 +284,7 @@ export function decorativeSpinCells(
   const strip = PRIMAL_CAPTURED_VISUAL_STRIP_IDS[mode]?.[reel];
   if (!strip) throw new Error(`Unknown captured visual strip ${mode}:${reel}`);
   return Array.from({ length: count }, (_, index) => {
-    // 容器向下移动。当其子单元相位从 cellHeight 回绕到零时，视图 j+1 占据视图 j 的先前屏幕位置，因此其标识也必须同样变为旧的 j 标识。
+    // 容器向下移动。当其子单元相位从 cellHeight 回绕到零时，视图 j+1 占据视图 j 的先前屏幕位置，因此其标识也必须同样变为旧的 j 标识。 / English: The container moves downward. When its subcell phase wraps from cellHeight to zero, view j+1 occupies view j's previous screen position, so its identity must likewise change to the old j identity.
     const stripIndex = index - wholeCellSteps;
     const wrappedIndex = ((stripIndex % strip.length) + strip.length) % strip.length;
     return { symbol: capturedVisualSymbol(strip[wrappedIndex] ?? 0) };
@@ -289,6 +301,8 @@ export function reelPresentationCellCount(rowCount: number): number {
 
 /**
  * 打造一条旅行展示带。服务器单元占据不可变的逻辑带坐标，因此随着全单元阶段的推进从上方进入；它们永远不会在第二个结果网格上混合。
+ *
+ * 英文 / English: Create a travel display strip. Server units occupy immutable logical band coordinates and therefore come from above as the full-unit stage progresses; they are never blended on the second result grid.
  */
 export function reelPresentationCells(
   reel: number,
@@ -358,14 +372,14 @@ function buildReelStopMotionPlan(
   });
 }
 
-/** 返回从游戏中捕获的三个不可变运动轮廓之一。 */
+/** 返回从游戏中捕获的三个不可变运动轮廓之一。 / English: Returns one of three immutable motion contours captured from the game. */
 export function reelStopMotionConfig(mode: ReelStopMode): ReelStopMotionConfig {
   const config = PRIMAL_REEL_STOP_MOTION_CONFIG[mode];
   if (!config) throw new Error(`Unknown reel stop mode ${String(mode)}`);
   return config;
 }
 
-/** 用于官方 NORMAL、FAST 和 SLOW 停止运动的显式模式 API。 */
+/** 用于官方 NORMAL、FAST 和 SLOW 停止运动的显式模式 API。 / English: Explicit mode API for official NORMAL, FAST and SLOW stop motion. */
 export function createReelStopMotionPlanForMode(
   startRows: number,
   startVelocityRowsPerMs: number,
@@ -380,6 +394,8 @@ export function createReelStopMotionPlanForMode(
 
 /**
  * 兼容性 API 为当前调用者保留提供总时间。新的状态机代码应使用 createReelStopMotionPlanForMode 代替。
+ *
+ * 英文 / English: The Compatibility API provides the total time that the current caller remains available. New state machine code should use createReelStopMotionPlanForMode instead.
  */
 export function createReelStopMotionPlan(
   startRows: number,
@@ -406,6 +422,8 @@ function clampedStopTime(plan: ReelStopMotionPlan, elapsedMs: number): number {
 
 /**
  * 仅当视觉制动达到其整数目标后，已确定的叠加才可以取得所有权。语义 STOPPED 可以到达 RAF 样本之间，因此视图使用此门而不是硬切割仍在行进的条带。
+ *
+ * 英文 / English: An established overlay can only take ownership once the visual brake reaches its integer target. Semantic STOPPED can reach between RAF samples, so the view uses this gate instead of hard-cutting the still-traveling strip.
  */
 export function reelStopHasReachedImpact(
   plan: ReelStopMotionPlan,
@@ -414,7 +432,7 @@ export function reelStopHasReachedImpact(
   return plan.brakeMs <= 0 || clampedStopTime(plan, elapsedMs) >= plan.brakeMs;
 }
 
-/** 三次埃尔米特制动之后是捕获的正三次反弹。 */
+/** 三次埃尔米特制动之后是捕获的正三次反弹。 / English: Triple Hermit braking was followed by a captured positive triple rally. */
 export function reelStopPositionRowsAt(
   plan: ReelStopMotionPlan,
   elapsedMs: number,
@@ -441,7 +459,7 @@ export function reelStopPositionRowsAt(
     + plan.endVelocityRowsPerMs * plan.bounceMs * u * (1 - u) ** 2;
 }
 
-/** 分析速度保持从同一时钟采样的模糊和停止位置。 */
+/** 分析速度保持从同一时钟采样的模糊和停止位置。 / English: Analysis speed maintains blur and stop positions sampled from the same clock. */
 export function reelStopVelocityRowsAt(
   plan: ReelStopMotionPlan,
   elapsedMs: number,
@@ -470,6 +488,8 @@ export function reelStopVelocityRowsAt(
 /**
  * 用于影响/土地效应的兼容性采样器。 ReelView 位置由 reelStopPositionRowsAt 驱动，因此移动条、模糊和插入单元共享一个时钟。
  * alpha 字段现在描述原子端点切换：永远不会存在条带和结果网格混合的帧。
+ *
+ * 英文 / English: Compatibility sampler for impact/land effects. ReelView position is driven by reelStopPositionRowsAt, so the moving bar, blur, and inset units share one clock. The alpha field now describes atomic endpoint switching: there is never a frame where the strip and resulting mesh are mixed.
  */
 export function reelSettleFrame(
   progress: number,

@@ -127,8 +127,8 @@ export async function clickWithPrimaryActionLease({
     throw new Error(`主控件输入租约在 ${totalTimeoutMs}ms 内未获得 trusted pointer 时间`);
   }
 
-  // 回调必须先安装事件时刻的租约守卫，再发出可信指针；陈旧租约只有在
-  // 阻断该事件后才能返回 false。
+  // 回调必须先安装事件时刻的租约守卫，再发出可信指针；陈旧租约只有在 / English: The callback must first install the lease guard at the event time before issuing a trusted pointer; the stale lease can only be
+  // 阻断该事件后才能返回 false。 / English: Return false only after blocking the event.
   const eventAccepted = await attemptClick(beforeEventRemainingMs);
   if (eventAccepted === false) return false;
   if (eventAccepted !== true) {

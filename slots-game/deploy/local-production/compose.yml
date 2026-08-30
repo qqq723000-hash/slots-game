@@ -45,6 +45,8 @@ services:
     security_opt: [no-new-privileges:true]
     entrypoint: [/bin/sh, /source/local/initialize-volumes.sh]
     # 该一次性容器会读取全部源秘密，只做本地卷分发，必须完全禁用网络。
+    # English: This disposable container reads all source secrets, only does local volume distribution, and the
+    # network must be completely disabled.
     network_mode: none
     tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=16m"]
     secrets:
@@ -477,6 +479,8 @@ services:
       - "/var/cache/nginx:rw,noexec,nosuid,nodev,size=16m"
     healthcheck:
       # BusyBox wget 通过显式 CA 文件同时验证证书链和 slots.localhost 主机名。
+      # English: BusyBox wget verifies both the certificate chain and the slots.localhost hostname via an
+      # explicit CA file.
       test: [CMD, env, SSL_CERT_FILE=/run/ingress-secrets/local-production-root-ca.pem, wget, -q, -T, "3", -O, /dev/null, https://slots.localhost:8443/healthz]
       interval: 10s
       timeout: 5s
@@ -659,6 +663,8 @@ networks:
   alert: {internal: true}
   log_egress: {internal: true}
   # 仅用于回环端口发布；关闭 IP masquerade，不为容器提供公网 NAT。
+  # English: Only used for loopback port publishing; turn off IP masquerade and do not provide public NAT for
+  # containers.
   host_access:
     driver: bridge
     driver_opts:

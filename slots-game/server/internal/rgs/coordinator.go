@@ -11,6 +11,8 @@ import (
 )
 
 // DefinitionRegistry 只解析不可变且已批准的游戏定义版本；禁止静默回退到更新版本。
+// English: DefinitionRegistry only resolves immutable and approved versions of the game definition; silent
+// rollback to newer versions is prohibited.
 type DefinitionRegistry interface {
 	Resolve(context.Context, string, string, string) (game.Spinner, error)
 }
@@ -50,6 +52,9 @@ const persistedRoundIntegrityFailure = "persisted round integrity validation fai
 
 // ManualReviewReason* 是提交钱包回执失败时持久化到轮次、钱包账本和审计 Outbox 的
 // 稳定低基数原因码。错误链可能携带 DSN、钱包地址或玩家标识，禁止直接作为原因保存。
+// English: ManualReviewReason* is a stable low-cardinality reason code that is persisted to rounds, wallet
+// ledgers, and audit outboxes when submitting wallet receipts fails. The error chain may carry a DSN, wallet
+// address or player ID and is prohibited from being saved directly as a cause.
 const (
 	ManualReviewReasonWalletReceiptInvalid   = "WALLET_RECEIPT_INVALID"
 	ManualReviewReasonCommitRevisionConflict = "COMMIT_REVISION_CONFLICT"
@@ -58,12 +63,18 @@ const (
 
 // walletIntentAdmitter 只进行本进程、无副作用的快速容量检查。最终准入仍由
 // SubmitRound 的非阻塞舱壁决定，因此检查成功绝不构成资金操作已获准的承诺。
+// English: walletIntentAdmitter only performs a quick capacity check of this process with no side effects. Final
+// admission remains subject to SubmitRound's non-blocking bulkhead, so a successful inspection in no way
+// constitutes a commitment that funding operations have been approved.
 type walletIntentAdmitter interface {
 	AdmitNewIntent(string) error
 }
 
 // EconomicIntentAdmitter 只在 Repository 已锁定会话且确认 round 不存在后调用。
 // 它可以等待一个有界共享准入 RTT，但不得执行钱包、RNG 或持久化副作用。
+// English: EconomicIntentAdmitter is only called after the Repository has locked the session and confirmed that
+// the round does not exist. It can wait for a bounded shared admission RTT, but must not perform wallet, RNG, or
+// persistence side effects.
 type EconomicIntentAdmitter interface {
 	AdmitNewEconomicIntent(context.Context, string, int) error
 }
@@ -134,6 +145,9 @@ func NewCoordinator(
 
 // Spin 在调用外部钱包前先准备并持久化不可变结果，再执行原子扣款/派彩命令并提交会话迁移。
 // 所有重试都必须先解析已持久化的轮次聚合，绝不能重新运行 RNG。
+// English: Spin prepares and persists the immutable results before calling the external wallet, then executes the
+// atomic deduction/payout command and submits the session migration. All retries must first resolve the persisted
+// round aggregate and must never rerun the RNG.
 func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (returned SpinResult, err error) {
 	ctx, span := telemetry.Start(ctx, "rgs.coordinator.spin")
 	defer func() { telemetry.End(span, err) }()
@@ -145,6 +159,9 @@ func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (returned S
 	if err != nil || !SupportedSettlementProfile(walletProfile) {
 		// 已持久化终态的精确重放不依赖当前钱包路由是否在线。只有新意图才需要
 		// 当前 Profile；这避免配置摘除或供应商故障破坏历史结果交付。
+		// English: Accurate replay of the persisted final state does not depend on whether the current wallet route is
+		// online. Only new intents require the current Profile; this avoids configuration stripping or vendor failure from
+		// disrupting historical result delivery.
 		existing, existingErr := c.repository.GetRound(ctx, request.Key())
 		if existingErr == nil {
 			if existing.Fingerprint != fingerprint {
@@ -168,6 +185,9 @@ func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (returned S
 	record, prepared, err := c.repository.PrepareRound(ctx, request, fingerprint, walletProfile, func(session Session) (SpinResult, error) {
 		// PrepareOutcome 由存储层在会话锁内、且仅对首次出现的 round 调用一次；
 		// 因此 committed/prepared 重放和同 round 并发不会重复消耗经济成本预算。
+		// English: PrepareOutcome is called by the storage layer within the session lock and only once for the first
+		// occurrence of round; therefore committed/prepared replay and same-round concurrency do not repeatedly consume
+		// the economic cost budget.
 		if c.intentAdmitter != nil {
 			if err := c.intentAdmitter.AdmitNewIntent(request.OperatorID); err != nil {
 				return SpinResult{}, errors.Join(ErrWalletUnavailable, err)
@@ -179,12 +199,17 @@ func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (returned S
 		}
 		// 存储层仍会重复验证这一不变量；先在共享成本扣减前验证一次，避免
 		// 定义/RNG 或内部结果错误变成可反复消耗后端钱包预算的反向 EDoS。
+		// English: The storage layer still verifies this invariant repeatedly; verifying it once before sharing cost
+		// deductions prevents definition/RNG or internal result errors from turning into reverse EDoS that can repeatedly
+		// consume the backend wallet budget.
 		if err := validatePreparedResult(session, request, result); err != nil {
 			return SpinResult{}, err
 		}
 		if c.economicIntentAdmission != nil {
 			// 当前 SubmitRound 的供应商成本固定为一个单位；不要从 bet 金额或
 			// 未验证请求字段推断成本。接口保留显式单位供未来已审定路由使用。
+			// English: The supplier cost for SubmitRound is currently fixed at one unit; do not infer the cost from the bet
+			// amount or the unvalidated request field. The interface reserves explicit units for use by future audited routes.
 			if err := c.economicIntentAdmission.AdmitNewEconomicIntent(ctx, request.OperatorID, 1); err != nil {
 				return SpinResult{}, err
 			}
@@ -206,6 +231,9 @@ func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (returned S
 	} else {
 		// 已存在轮次的客户端重试只观察持久状态；恢复钱包的唯一所有者是持有
 		// fenced claim 的初始请求或 Worker，禁止重试请求再次触发外部写入。
+		// English: Client retries for existing rounds only observe persistent state; the only owner of the recovery wallet
+		// is the initial request or worker holding the fenced claim, and retry requests are prohibited from triggering
+		// external writes again.
 		result, err = c.waitForRound(ctx, record)
 	}
 	if err == nil && !prepared {
@@ -215,6 +243,8 @@ func (c *Coordinator) Spin(ctx context.Context, request SpinRequest) (returned S
 }
 
 // Reconcile 恢复已经准备好的轮次，不会再次计算游戏数学；并发工作器和进程重启均可安全调用。
+// English: Reconcile resumes an already prepared turn without recalculating game math; safe to call from both
+// concurrent workers and process restarts.
 func (c *Coordinator) Reconcile(ctx context.Context, key RoundKey) (returned SpinResult, err error) {
 	ctx, span := telemetry.Start(ctx, "rgs.coordinator.reconcile")
 	defer func() { telemetry.End(span, err) }()
@@ -244,6 +274,10 @@ func (c *Coordinator) Reconcile(ctx context.Context, key RoundKey) (returned Spi
 // GetRound 是只读状态查询路径。持久化完整性校验失败时，它只允许执行故障安全隔离迁移；
 // 禁止计算游戏数学、领取钱包租约或调用钱包。状态读取统一经过协调器，可防止轮询首次发现的
 // 损坏记录继续具备经济操作资格。
+// English: GetRound is a read-only status query path. It only allows failsafe isolation migrations to be performed
+// when persistence integrity checks fail; it is prohibited to calculate game math, claim wallet leases, or make
+// wallet calls. Status reads are uniformly routed through the coordinator, preventing corrupt records first
+// discovered by polling from continuing to qualify for economical operation.
 func (c *Coordinator) GetRound(ctx context.Context, key RoundKey) (RoundRecord, error) {
 	if err := validateRoundKey(key); err != nil {
 		return RoundRecord{}, err
@@ -260,6 +294,8 @@ func (c *Coordinator) GetRound(ctx context.Context, key RoundKey) (RoundRecord, 
 
 // GetPendingResultDelivery 查询令牌绑定会话中唯一尚未确认交付的已提交结果，
 // 不要求客户端自行保留 roundId 字段。
+// English: GetPendingResultDelivery queries the only submitted result in the token binding session that has not
+// yet confirmed delivery, and does not require the client to retain the roundId field itself.
 func (c *Coordinator) GetPendingResultDelivery(ctx context.Context, operatorID, sessionID string) (ResultDelivery, error) {
 	if !identifierPattern.MatchString(operatorID) || !identifierPattern.MatchString(sessionID) {
 		return ResultDelivery{}, ErrInvalidRequest
@@ -276,6 +312,9 @@ func (c *Coordinator) GetPendingResultDelivery(ctx context.Context, operatorID, 
 
 // AcknowledgeResultDelivery 只记录客户端已消费不可变的提交结果；
 // 经济状态早已由 CommitRound 最终确定，此操作不得修改余额或特性状态。
+// English: AcknowledgeResultDelivery only records the immutable submission results that have been consumed by the
+// client; the economic status has already been finalized by CommitRound, and this operation must not modify the
+// balance or feature status.
 func (c *Coordinator) AcknowledgeResultDelivery(
 	ctx context.Context,
 	receipt ResultDeliveryAcknowledgement,
@@ -380,12 +419,17 @@ func (c *Coordinator) waitForRound(ctx context.Context, initial RoundRecord) (Sp
 		}
 		// 钱包结果待定时采用有上限的指数退避，避免每个并发请求以固定高频率
 		// 轮询数据库和钱包；上限同时保证外部结算完成后仍能及时收敛。
+		// Pending wallet results use bounded exponential backoff so concurrent requests do not poll the database and wallet at a fixed high rate;
+		// the cap also preserves timely convergence after external settlement completes.
 		pollInterval = nextPollInterval(pollInterval, c.pollMaximumInterval)
 	}
 }
 
 // ReconcileClaim 只执行存储层声明的一项钱包动作。APPLY claim 在返回调用者前已经
 // 持久推进为 LOOKUP，因此任何进程崩溃都只能从状态查询继续，不会盲目重扣。
+// English: ReconcileClaim only performs one wallet action declared by the storage layer. APPLY claim has been
+// persistently advanced to LOOKUP before returning to the caller, so any process crash can only continue from the
+// status query and will not blindly re-deduct.
 func (c *Coordinator) ReconcileClaim(
 	ctx context.Context,
 	claim WalletRecoveryClaim,
@@ -524,6 +568,10 @@ func (c *Coordinator) executeClaimAndSchedule(
 // executeClaimAndScheduleDetached 在 PREPARE+claim 已经提交后脱离客户端取消信号，
 // 但保留 trace/value。外部调用和后续 DB 写各自有独立硬截止，确保客户端断线不会
 // 把已持久化 saga 留在已知 NOT_SENT 却无法退款、或钱包成功却无法提交的半状态。
+// English: executeClaimAndScheduleDetached detaches the client cancellation signal after the PREPARE+claim has
+// been submitted, but retains the trace/value. External calls and subsequent DB writes each have independent hard
+// cutoffs to ensure that client disconnection will not leave the persisted saga in a semi-state where NOT_SENT is
+// known but cannot be refunded, or the wallet is successful but cannot be submitted.
 func (c *Coordinator) executeClaimAndScheduleDetached(
 	parent context.Context,
 	claim WalletRecoveryClaim,
@@ -637,6 +685,9 @@ func commitManualReviewReason(err error) string {
 
 // resolveStaleClaim 绝不重放旧 claim 的写操作。它只读取最新持久状态；若新的 owner
 // 仍在处理则保持 pending，若已终结则复用统一的终态映射。
+// English: resolveStaleClaim never replays old claim writes. It only reads the latest persistent state; if the new
+// owner is still being processed, it remains pending, and if it has been terminated, it reuses the unified final
+// state mapping.
 func (c *Coordinator) resolveStaleClaim(
 	ctx context.Context,
 	key RoundKey,

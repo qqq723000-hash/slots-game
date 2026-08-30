@@ -3,6 +3,8 @@
 set -eu
 
 # TLS 运行副本与 PGDATA 共用专属数据卷，根文件系统可保持只读。
+# English: The TLS running copy shares a dedicated data volume with PGDATA, and the root file system can remain
+# read-only.
 tls_dir=/var/lib/postgresql/data/tls
 mkdir -p "$tls_dir"
 cp /run/postgres-input/postgres-server.pem "$tls_dir/server.crt"
