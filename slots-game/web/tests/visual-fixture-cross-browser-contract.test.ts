@@ -132,7 +132,7 @@ describe("non-production special-feature browser fixture contract", () => {
       workflow.indexOf("  verify-web-static-image:"),
     );
     expect(edgeJob).toContain("timeout-minutes: 40");
-    expect(edgeJob).toContain("脚本 32 分钟硬截止");
+    expect(edgeJob).toContain("脚本 35 分钟硬截止");
     expect(frontendJob).not.toContain("test:visual-fixtures-browser-matrix");
   });
 
@@ -720,17 +720,17 @@ describe("non-production special-feature browser fixture contract", () => {
     expect(fixtureBrowserGate).toContain(
       "const chromiumDesktopKongScenarioDeadlineMs = 360_000",
     );
-    expect(fixtureBrowserGate).toContain("const edgeKingScenarioDeadlineMs = 240_000");
+    expect(fixtureBrowserGate).toContain("const edgeKingScenarioDeadlineMs = 300_000");
     expect(fixtureBrowserGate).toContain("const edgeDesktopKongScenarioDeadlineMs = 360_000");
-    expect(fixtureBrowserGate).toContain("const edgeCapSummaryScenarioDeadlineMs = 300_000");
+    expect(fixtureBrowserGate).toContain("const edgeCapSummaryScenarioDeadlineMs = 360_000");
     expect(fixtureBrowserGate).toContain("const slowExtendedScenarioDeadlineMs = 240_000");
     expect(fixtureBrowserGate).toContain("const slowKongScenarioDeadlineMs = 270_000");
     expect(fixtureBrowserGate).toContain("const standardBrowserDeadlineMs = 20 * 60_000");
     expect(fixtureBrowserGate).toContain("const slowBrowserDeadlineMs = 32 * 60_000");
-    expect(fixtureBrowserGate).toContain("const edgeBrowserDeadlineMs = 32 * 60_000");
+    expect(fixtureBrowserGate).toContain("const edgeBrowserDeadlineMs = 35 * 60_000");
     expect(fixtureBrowserGate).toContain("const standardMaximumBrowserBudgetMs = 21 * 60_000");
     expect(fixtureBrowserGate).toContain("const slowMaximumBrowserBudgetMs = 33 * 60_000");
-    expect(fixtureBrowserGate).toContain("const edgeMaximumBrowserBudgetMs = 33 * 60_000");
+    expect(fixtureBrowserGate).toContain("const edgeMaximumBrowserBudgetMs = 36 * 60_000");
     expect(fixtureBrowserGate).toContain(
       "const browserTimingBudgets = Object.freeze(Object.fromEntries(supportedBrowsers.map(",
     );
@@ -821,18 +821,18 @@ describe("non-production special-feature browser fixture contract", () => {
       maximumBrowserScenarioBudgetMs: 1_770_000,
       scenarioDeadlineMsByRun: chromiumScenarioDeadlineMsByRun,
     })).toEqual({ maximumBrowserScenarioBudgetMs: 1_770_000 });
-    const edgeScenarioDeadlineMsByRun = [150_000, 150_000, 240_000, 360_000,
-      300_000, 150_000, 240_000, 270_000];
+    const edgeScenarioDeadlineMsByRun = [150_000, 150_000, 300_000, 360_000,
+      360_000, 150_000, 240_000, 270_000];
     expect(edgeScenarioDeadlineMsByRun[3]).toBe(360_000);
-    expect(edgeScenarioDeadlineMsByRun[4]).toBe(300_000);
+    expect(edgeScenarioDeadlineMsByRun[4]).toBe(360_000);
     expect(edgeScenarioDeadlineMsByRun[7]).toBe(270_000);
     expect(validateVisualFixtureTimingBudget({
       ...validBudget,
-      browserDeadlineMs: 32 * 60_000,
-      maximumBrowserBudgetMs: 33 * 60_000,
-      maximumBrowserScenarioBudgetMs: 1_860_000,
+      browserDeadlineMs: 35 * 60_000,
+      maximumBrowserBudgetMs: 36 * 60_000,
+      maximumBrowserScenarioBudgetMs: 1_980_000,
       scenarioDeadlineMsByRun: edgeScenarioDeadlineMsByRun,
-    })).toEqual({ maximumBrowserScenarioBudgetMs: 1_860_000 });
+    })).toEqual({ maximumBrowserScenarioBudgetMs: 1_980_000 });
     expect(() => validateVisualFixtureTimingBudget({
       ...validBudget,
       browserDeadlineMs: 1_140_000,
