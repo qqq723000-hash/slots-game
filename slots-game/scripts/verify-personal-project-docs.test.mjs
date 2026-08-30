@@ -56,6 +56,39 @@ test("rejects a notice-only translation or a missing English explanation", () =>
   );
 });
 
+test("does not count closed or unterminated multiline HTML comments as documentation", () => {
+  const chineseOnlyDocument = `# 中文文档\n\n${PERSONAL_PROJECT_NOTICE}\n\n${chineseBody}\n`;
+  const englishOnlyDocument = `# English document\n\n${PERSONAL_PROJECT_NOTICE}\n\n${englishBody}\n`;
+
+  for (const hiddenEnglish of [
+    `<!--\nmetadata\n\n${englishBody}\n-->`,
+    `<!--\n${englishBody}`,
+  ]) {
+    const document = `${chineseOnlyDocument}\n${hiddenEnglish}\n`;
+    assert.equal(hasSubstantiveEnglishDocumentation(document), false);
+    assert.throws(
+      () => validateDocumentationContent("hidden-english.md", document),
+      /substantive English documentation is missing/u,
+    );
+  }
+
+  for (const hiddenChinese of [
+    `<!--\nmetadata\n\n${chineseBody}\n-->`,
+    `<!--\n${chineseBody}`,
+  ]) {
+    const document = `${englishOnlyDocument}\n${hiddenChinese}\n`;
+    assert.equal(hasSubstantiveChineseDocumentation(document), false);
+    assert.throws(
+      () => validateDocumentationContent("hidden-chinese.md", document),
+      /substantive Chinese documentation is missing/u,
+    );
+  }
+
+  const visibleAfterComment = `${chineseOnlyDocument}\n<!--\nmetadata\n\nignored\n-->\n\n${englishBody}\n`;
+  assert.equal(hasSubstantiveEnglishDocumentation(visibleAfterComment), true);
+  assert.doesNotThrow(() => validateDocumentationContent("visible-after-comment.md", visibleAfterComment));
+});
+
 test("recognizes Markdown extensions without a case-sensitive bypass", () => {
   assert.equal(isMarkdownDocumentName("README.md"), true);
   assert.equal(isMarkdownDocumentName("RUNBOOK.MD"), true);

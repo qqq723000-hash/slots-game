@@ -62,10 +62,10 @@ function countOccurrences(content, needle) {
 function proseBlocks(content) {
   return content
     .replace(/```[\s\S]*?```/gu, "\n")
+    .replace(/<!--[\s\S]*?(?:-->|$)/gu, "\n")
     .split(/\r?\n\s*\r?\n/gu)
     .map((block) => block.split(/\r?\n/gu).filter((line) => !/^\s*>/u.test(line)).join(" "))
     .map((block) => block
-      .replace(/<!--.*?-->/gu, " ")
       .replace(/`[^`]*`/gu, " ")
       .replace(/https?:\/\/\S+/gu, " ")
       .replace(/^\s*#{1,6}\s*/u, "")
