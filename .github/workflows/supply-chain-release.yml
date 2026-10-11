@@ -137,13 +137,13 @@ jobs:
         run: ./deploy/supply-chain/scan.sh source "$SUPPLY_CHAIN_REPORT_DIR/source"
 
       - name: Set up reviewed Go toolchain
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 1.26.6
           cache-dependency-path: slots-game/server/go.sum
 
       - name: Set up reviewed Node.js toolchain
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.22.0
           cache: npm
@@ -272,7 +272,7 @@ jobs:
 
       - name: Upload unprivileged verification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-verification-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -349,7 +349,7 @@ jobs:
 
       - name: Set up reviewed Buildx and digest-pinned BuildKit
         id: buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           version: v0.34.1
           driver: docker-container
@@ -410,7 +410,7 @@ jobs:
 
       - name: Upload immutable RGS release bundle for the publish boundary
         id: upload-rgs-bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-bundle-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/bundle
@@ -422,7 +422,7 @@ jobs:
 
       - name: Upload isolated RGS build evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-rgs-verification-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -497,7 +497,7 @@ jobs:
 
       - name: Set up reviewed Buildx and digest-pinned BuildKit
         id: buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           version: v0.34.1
           driver: docker-container
@@ -506,7 +506,7 @@ jobs:
           install: true
 
       - name: Set up the reviewed Node.js runtime for exact Web byte verification
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.22.0
 
@@ -630,7 +630,7 @@ jobs:
 
       - name: Upload immutable approved Web release bundle
         id: upload-web-bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-bundle-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.SUPPLY_CHAIN_REPORT_DIR }}/bundle
@@ -642,7 +642,7 @@ jobs:
 
       - name: Upload Web approval-build evidence without approval plaintext
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-web-verification-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -755,7 +755,7 @@ jobs:
 
     steps:
       - name: Download the exact upstream release artifact by immutable artifact ID
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ inputs.artifact == 'web-runtime' && needs.build-approved-web.outputs.artifact_id || needs.build-rgs.outputs.artifact_id }}
           path: ${{ env.BUNDLE_DOWNLOAD_DIR }}
@@ -897,7 +897,7 @@ jobs:
             "$PUBLISH_EVIDENCE_DIR/release-image.docker.tar.sha256"
 
       - name: Assume the release-only AWS role after offline bundle verification
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -1107,7 +1107,7 @@ jobs:
 
       - name: Upload privileged publish/sign evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-publish-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.PUBLISH_EVIDENCE_DIR }}
