@@ -32,7 +32,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@pixi-spine/base": "3.1.0",
+    "@pixi-spine/base": "4.0.6",
     "@pixi-spine/runtime-4.1": "3.1.0",
     "@pixi/unsafe-eval": "6.5.2",
     "pixi.js": "6.5.2"
@@ -60,7 +60,7 @@
     "@pixi/sprite": "6.5.2",
     "@pixi/ticker": "6.5.2",
     "@pixi/utils": "6.5.2",
-    "@pixi-spine/base": "3.1.0",
+    "@pixi-spine/base": "4.0.6",
     "@pixi-spine/loader-base": "3.1.0",
     "@pixi-spine/loader-uni": "3.1.0",
     "@pixi-spine/runtime-3.7": "3.1.0",
